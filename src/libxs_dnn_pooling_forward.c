@@ -40,7 +40,7 @@ libxs_dnn_err_t libxs_dnn_pooling_st_fwd_custom_f32_f32_c16(libxs_dnn_pooling* h
 
   if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_MAX ) {
 # define LIBXS_DNN_POOLING_FWD_MAX
-    typedef int   element_mask_type;
+    typedef int element_mask_type;
 # include "template/libxs_dnn_pooling_st_fwd_custom_f32_bf16_c16_avx512.tpl.c"
 # undef LIBXS_DNN_POOLING_FWD_MAX
   } else if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_AVG ) {
@@ -68,7 +68,7 @@ libxs_dnn_err_t libxs_dnn_pooling_st_fwd_custom_f32_f32_c32(libxs_dnn_pooling* h
 
   if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_MAX ) {
 # define LIBXS_DNN_POOLING_FWD_MAX
-    typedef int   element_mask_type;
+    typedef int element_mask_type;
 # include "template/libxs_dnn_pooling_st_fwd_custom_f32_bf16_c32_avx512.tpl.c"
 # undef LIBXS_DNN_POOLING_FWD_MAX
   } else if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_AVG ) {
@@ -96,7 +96,7 @@ libxs_dnn_err_t libxs_dnn_pooling_st_fwd_custom_f32_f32_c64(libxs_dnn_pooling* h
 
   if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_MAX ) {
 # define LIBXS_DNN_POOLING_FWD_MAX
-    typedef int   element_mask_type;
+    typedef int element_mask_type;
 # include "template/libxs_dnn_pooling_st_fwd_custom_f32_bf16_c64_avx512.tpl.c"
 # undef LIBXS_DNN_POOLING_FWD_MAX
   } else if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_AVG ) {
@@ -125,7 +125,7 @@ libxs_dnn_err_t libxs_dnn_pooling_st_fwd_custom_bf16_bf16_c16(libxs_dnn_pooling*
 # define LIBXS_DNN_POOLING_FWD_BF16
   if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_MAX ) {
 # define LIBXS_DNN_POOLING_FWD_MAX
-    typedef int   element_mask_type;
+    typedef int element_mask_type;
 # include "template/libxs_dnn_pooling_st_fwd_custom_f32_bf16_c16_avx512.tpl.c"
 # undef LIBXS_DNN_POOLING_FWD_MAX
   } else if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_AVG ) {
@@ -155,7 +155,7 @@ libxs_dnn_err_t libxs_dnn_pooling_st_fwd_custom_bf16_bf16_c32(libxs_dnn_pooling*
 # define LIBXS_DNN_POOLING_FWD_BF16
   if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_MAX ) {
 # define LIBXS_DNN_POOLING_FWD_MAX
-    typedef int   element_mask_type;
+    typedef int element_mask_type;
 # include "template/libxs_dnn_pooling_st_fwd_custom_f32_bf16_c32_avx512.tpl.c"
 # undef LIBXS_DNN_POOLING_FWD_MAX
   } else if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_AVG ) {
@@ -185,7 +185,7 @@ libxs_dnn_err_t libxs_dnn_pooling_st_fwd_custom_bf16_bf16_c64(libxs_dnn_pooling*
 # define LIBXS_DNN_POOLING_FWD_BF16
   if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_MAX ) {
 # define LIBXS_DNN_POOLING_FWD_MAX
-    typedef int   element_mask_type;
+    typedef int element_mask_type;
 # include "template/libxs_dnn_pooling_st_fwd_custom_f32_bf16_c64_avx512.tpl.c"
 # undef LIBXS_DNN_POOLING_FWD_MAX
   } else if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_AVG ) {
@@ -231,8 +231,10 @@ LIBXS_API_INTERN libxs_dnn_err_t libxs_dnn_pooling_st_fwd_custom(libxs_dnn_pooli
   } else if ( ( libxs_target_archid >= LIBXS_X86_AVX512 ) &&
        (handle->ofmblock == 32) ) {
     if (handle->desc.datatype_in == LIBXS_DNN_DATATYPE_F32 && handle->desc.datatype_out == LIBXS_DNN_DATATYPE_F32 ) {
+      LIBXS_ASSERT(NULL != handle->mask);
       status = libxs_dnn_pooling_st_fwd_custom_f32_f32_c32( handle, start_thread, tid);
     } else if (handle->desc.datatype_in == LIBXS_DNN_DATATYPE_BF16 && handle->desc.datatype_out == LIBXS_DNN_DATATYPE_BF16 ) {
+      LIBXS_ASSERT(NULL != handle->mask);
       status = libxs_dnn_pooling_st_fwd_custom_bf16_bf16_c32( handle, start_thread, tid);
     } else {
       status = LIBXS_DNN_ERR_UNSUPPORTED_DATATYPE;
@@ -241,8 +243,10 @@ LIBXS_API_INTERN libxs_dnn_err_t libxs_dnn_pooling_st_fwd_custom(libxs_dnn_pooli
   } else if ( ( libxs_target_archid >= LIBXS_X86_AVX512 ) &&
        (handle->ofmblock == 64) ) {
     if (handle->desc.datatype_in == LIBXS_DNN_DATATYPE_F32 && handle->desc.datatype_out == LIBXS_DNN_DATATYPE_F32 ) {
+      LIBXS_ASSERT(NULL != handle->mask);
       status = libxs_dnn_pooling_st_fwd_custom_f32_f32_c64( handle, start_thread, tid);
     } else if (handle->desc.datatype_in == LIBXS_DNN_DATATYPE_BF16 && handle->desc.datatype_out == LIBXS_DNN_DATATYPE_BF16 ) {
+      LIBXS_ASSERT(NULL != handle->mask);
       status = libxs_dnn_pooling_st_fwd_custom_bf16_bf16_c64( handle, start_thread, tid);
     } else {
       status = LIBXS_DNN_ERR_UNSUPPORTED_DATATYPE;
@@ -257,7 +261,7 @@ LIBXS_API_INTERN libxs_dnn_err_t libxs_dnn_pooling_st_fwd_custom(libxs_dnn_pooli
 
       if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_MAX ) {
 # define LIBXS_DNN_POOLING_FWD_MAX
-        typedef int   element_mask_type;
+        typedef int element_mask_type;
 # include "template/libxs_dnn_pooling_st_fwd_custom_generic.tpl.c"
 # undef LIBXS_DNN_POOLING_FWD_MAX
       } else if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_AVG ) {
@@ -274,7 +278,7 @@ LIBXS_API_INTERN libxs_dnn_err_t libxs_dnn_pooling_st_fwd_custom(libxs_dnn_pooli
 # define LIBXS_DNN_POOLING_FWD_BF16
       if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_MAX ) {
 # define LIBXS_DNN_POOLING_FWD_MAX
-        typedef int   element_mask_type;
+        typedef int element_mask_type;
 # include "template/libxs_dnn_pooling_st_fwd_custom_generic.tpl.c"
 # undef LIBXS_DNN_POOLING_FWD_MAX
       } else if ( handle->desc.pooling_type == LIBXS_DNN_POOLING_AVG ) {
