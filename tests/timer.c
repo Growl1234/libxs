@@ -9,13 +9,18 @@
 ******************************************************************************/
 #include <libxs.h>
 #include <stdlib.h>
+#include <math.h>
 
+#if !defined(USE_CHECK) && (defined(_WIN32) || defined(__linux__))
+# define USE_CHECK
+#endif
 #if !defined(USE_NOINIT)
 # define USE_NOINIT
 #endif
 #if !defined(USE_QUIET)
 # define USE_QUIET
 #endif
+
 #if !defined(MAX_NSECONDS)
 # define MAX_NSECONDS 16
 #endif
@@ -27,6 +32,9 @@
 # include <stdio.h>
 # define FPRINTF(STREAM, ...) fprintf(STREAM, __VA_ARGS__)
 #else
+# if !defined(USE_CHECK)
+#   include <stdio.h>
+#endif
 # define FPRINTF(STREAM, ...)
 #endif
 
@@ -88,6 +96,7 @@ int main(int argc, char* argv[])
 #if defined(_WIN32) || defined(__linux__)
   return result;
 #else
+  if (EXIT_SUCCESS != result) fprintf(stderr, "delta=%i%%\n", result);
   return EXIT_SUCCESS;
 #endif
 }
