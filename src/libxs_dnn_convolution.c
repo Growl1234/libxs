@@ -711,9 +711,9 @@ LIBXS_API_INLINE libxs_dnn_err_t libxs_dnn_convolution_setup( libxs_dnn_layer* h
   handle->avoid_acc_load = libxs_dnn_convolution_setup_avoid_acc_load(handle);
   handle->fwd_flags = libxs_dnn_convolution_setup_init_fwd_gemm_flags(handle);
   handle->use_fallback_fwd_loops = libxs_dnn_convolution_setup_fallback_loops_fwd(handle);
-  handle->code_fwd[0].pmm = 0;
-  handle->code_fwd[1].pmm = 0;
-  handle->code_fwd[2].pmm = 0;
+  handle->code_fwd[0].ptr = 0;
+  handle->code_fwd[1].ptr = 0;
+  handle->code_fwd[2].ptr = 0;
 
 #if 0
   /* Spit out FWD parameters that are selected...  */
@@ -761,9 +761,9 @@ LIBXS_API_INLINE libxs_dnn_err_t libxs_dnn_convolution_setup( libxs_dnn_layer* h
   printf("Block oj = %d\n", handle->block_bwd_oj);
 #endif
 
-  handle->code_bwd[0].pmm = 0;
-  handle->code_bwd[1].pmm = 0;
-  handle->code_bwd[2].pmm = 0;
+  handle->code_bwd[0].ptr = 0;
+  handle->code_bwd[1].ptr = 0;
+  handle->code_bwd[2].ptr = 0;
   /* Transpose kernel used for filter transpose in bwd pass  */
   tr_desc = libxs_trans_descriptor_init(&blob, sizeof(float), 64, 16, 64);
   handle->tr_kernel = libxs_dispatch_trans(tr_desc);
@@ -800,8 +800,8 @@ LIBXS_API_INLINE libxs_dnn_err_t libxs_dnn_convolution_setup( libxs_dnn_layer* h
   printf("Block upd ifm = %d\n", handle->block_upd_ifm);
 #endif
 
-  handle->code_upd[0].pmm = 0;
-  handle->code_upd[1].pmm = 0;
+  handle->code_upd[0].ptr = 0;
+  handle->code_upd[1].ptr = 0;
 
   /*****************************/
   /* Barrier and scratch setup */
@@ -2379,17 +2379,17 @@ LIBXS_API libxs_dnn_err_t libxs_dnn_get_codegen_success(libxs_dnn_layer* handle,
   if (0 != handle) {
     switch (kind) {
       case LIBXS_DNN_COMPUTE_KIND_FWD: {
-                                           if (handle->code_fwd[0].pmm == 0) {
+                                           if (handle->code_fwd[0].ptr == 0) {
                                              status = LIBXS_DNN_WARN_FALLBACK;
                                            }
                                          } break;
       case LIBXS_DNN_COMPUTE_KIND_BWD: {
-                                           if (handle->code_bwd[0].pmm == 0) {
+                                           if (handle->code_bwd[0].ptr == 0) {
                                              status = LIBXS_DNN_WARN_FALLBACK;
                                            }
                                          } break;
       case LIBXS_DNN_COMPUTE_KIND_UPD: {
-                                           if (handle->code_upd[0].pmm == 0) {
+                                           if (handle->code_upd[0].ptr == 0) {
                                              status = LIBXS_DNN_WARN_FALLBACK;
                                            }
                                          } break;
