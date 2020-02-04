@@ -1,7 +1,21 @@
-#include <libxs.h>
+/******************************************************************************
+* Copyright (c) 2009-2026 Hans Pabst                                          *
+* Copyright (c) 2009-2026 Intel Corporation                                   *
+* This file is part of the LIBXS library.                                     *
+*                                                                             *
+* For information on the license, see the LICENSE file.                       *
+* Further information: https://github.com/hfp/libxs/                              *
+* SPDX-License-Identifier: BSD-3-Clause                                       *
+******************************************************************************/
+#if !defined(INCLUDE_LIBXS_LAST)
+# include <libxs.h>
+#endif
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
+#if defined(INCLUDE_LIBXS_LAST)
+# include <libxs.h>
+#endif
 
 #define N 1000000
 
