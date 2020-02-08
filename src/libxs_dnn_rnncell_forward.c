@@ -85,7 +85,6 @@ libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_ck_bf16_bf16_emu(libxs_dnn_rnncell* 
   return status;
 }
 
-#if defined(LIBXS_INTRINSICS_AVX512_CPX)
 LIBXS_API_INTERN LIBXS_INTRINSICS(LIBXS_X86_AVX512_CPX)
 libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_ck_bf16_bf16(libxs_dnn_rnncell* handle, int start_thread, int tid)
 {
@@ -116,13 +115,6 @@ libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_ck_bf16_bf16(libxs_dnn_rnncell* hand
 #endif
   return status;
 }
-#else
-LIBXS_API_INTERN LIBXS_INTRINSICS(LIBXS_X86_AVX512_CORE)
-libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_ck_bf16_bf16(libxs_dnn_rnncell* handle, int start_thread, int tid)
-{
-  return libxs_dnn_rnncell_st_fwd_nc_ck_bf16_bf16_emu( handle, start_thread, tid );
-}
-#endif
 
 LIBXS_API_INTERN LIBXS_INTRINSICS(LIBXS_X86_AVX512)
 libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_ncnc_kcck_f32_f32(libxs_dnn_rnncell* handle, int start_thread, int tid)
@@ -224,7 +216,6 @@ libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_kcck_bf16_bf16_emu(libxs_dnn_rnncell
   return status;
 }
 
-#if defined(LIBXS_INTRINSICS_AVX512_CPX)
 LIBXS_API_INTERN LIBXS_INTRINSICS(LIBXS_X86_AVX512_CPX)
 libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_kcck_bf16_bf16(libxs_dnn_rnncell* handle, int start_thread, int tid)
 {
@@ -256,13 +247,6 @@ libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_kcck_bf16_bf16(libxs_dnn_rnncell* ha
 #endif
   return status;
 }
-#else
-LIBXS_API_INTERN LIBXS_INTRINSICS(LIBXS_X86_AVX512_CORE)
-libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_kcck_bf16_bf16(libxs_dnn_rnncell* handle, int start_thread, int tid)
-{
-  return libxs_dnn_rnncell_st_fwd_nc_kcck_bf16_bf16_emu( handle, start_thread, tid );
-}
-#endif
 
 LIBXS_API_INTERN libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_ck(libxs_dnn_rnncell* handle, int start_thread, int tid)
 {
