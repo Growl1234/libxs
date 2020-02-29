@@ -722,7 +722,7 @@ LIBXS_EXTERN_C typedef struct LIBXS_RETARGETABLE libxs_build_request {
   } descriptor;
   libxs_build_kind kind;
   /* used by user-kind */
-  size_t value_size;
+  size_t user_size;
 } libxs_build_request;
 
 typedef enum libxs_malloc_flags {
