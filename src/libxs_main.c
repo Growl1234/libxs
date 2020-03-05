@@ -1021,6 +1021,7 @@ LIBXS_API LIBXS_ATTRIBUTE_CTOR void libxs_init(void)
       internal_init();
     }
   }
+  LIBXS_ASSERT(1 < libxs_ninit);
 }
 
 
