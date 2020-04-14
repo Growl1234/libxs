@@ -309,14 +309,13 @@ LIBXS_API_INLINE int libxs_dnn_convolution_setup_fwd_padding_copy( libxs_dnn_lay
 }
 
 LIBXS_API_INLINE void libxs_dnn_convolution_setup_fwd_scratch( libxs_dnn_layer* handle ) {
+  handle->fwd_packing_padding_scratch_size = 0;
   /* packing of input */
   if ( handle->pack_input != 0 ) {
     handle->fwd_packing_padding_scratch_size = (size_t)handle->desc.N * handle->desc.C *
                                                  handle->desc.H/handle->desc.u *
                                                  handle->desc.W/handle->desc.v *
                                                  libxs_dnn_typesize(handle->datatype_in);
-  } else {
-    handle->fwd_packing_padding_scratch_size = 0;
   }
   /* logical padding with copying in the fly */
   if ( handle->fwd_padding_copy != 0 ) {
@@ -324,8 +323,6 @@ LIBXS_API_INLINE void libxs_dnn_convolution_setup_fwd_scratch( libxs_dnn_layer* 
                                                  (handle->desc.H + 2*handle->desc.pad_h) *
                                                  (handle->desc.W + 2*handle->desc.pad_w) *
                                                  libxs_dnn_typesize(handle->datatype_in);
-  } else {
-    handle->fwd_packing_padding_scratch_size = 0;
   }
   /* output buffer in high precision when we use BF16 */
   if ( ( handle->datatype_in == LIBXS_DNN_DATATYPE_BF16 ) ||
@@ -496,13 +493,14 @@ LIBXS_API_INLINE void libxs_dnn_convolution_setup_bwd_scratch( libxs_dnn_layer* 
   /* transpose of weights */
   handle->bwd_filter_trans_scratch_size = (size_t)handle->desc.C * handle->desc.K *
                                             handle->desc.R * handle->desc.S;
+
+  handle->bwd_packing_padding_scratch_size = 0;
   /* packing of input */
   if ( handle->pack_input_bwd != 0 ) {
+    printf("using input packing \n");
     handle->bwd_packing_padding_scratch_size = (size_t)handle->desc.N * handle->desc.C *
                                                  handle->ofhp * handle->ofwp *
                                                  libxs_dnn_typesize(handle->datatype_in);
-  } else {
-    handle->bwd_packing_padding_scratch_size = 0;
   }
   /* logical padding with copying in the fly */
   if ( handle->use_fallback_bwd_loops != 0 ) {
@@ -510,8 +508,6 @@ LIBXS_API_INLINE void libxs_dnn_convolution_setup_bwd_scratch( libxs_dnn_layer* 
                                                  (handle->desc.H + 2*handle->desc.pad_h) *
                                                  (handle->desc.W + 2*handle->desc.pad_w) *
                                                  libxs_dnn_typesize(handle->datatype_in);
-  } else {
-    handle->bwd_packing_padding_scratch_size = 0;
   }
   /* input bufffer in high precision when we use BF16 */
   if ( handle->datatype_in == LIBXS_DNN_DATATYPE_BF16 ) {
@@ -815,14 +811,13 @@ LIBXS_API_INLINE int libxs_dnn_convolution_setup_upd_padding_copy( libxs_dnn_lay
 }
 
 LIBXS_API_INLINE void libxs_dnn_convolution_setup_upd_scratch( libxs_dnn_layer* handle ) {
+  handle->upd_packing_padding_scratch_size = 0;
   /* packing of input */
   if ( handle->upd_pack_input != 0 ) {
     handle->upd_packing_padding_scratch_size = (size_t)handle->desc.N * handle->desc.C *
                                                  handle->desc.H/handle->desc.u *
                                                  handle->desc.W/handle->desc.v *
                                                  libxs_dnn_typesize(handle->datatype_in);
-  } else {
-    handle->upd_packing_padding_scratch_size = 0;
   }
   /* logical padding with copying in the fly */
   if ( handle->upd_padding_copy != 0 ) {
@@ -830,8 +825,6 @@ LIBXS_API_INLINE void libxs_dnn_convolution_setup_upd_scratch( libxs_dnn_layer* 
                                                  (handle->desc.H + 2*handle->desc.pad_h) *
                                                  (handle->desc.W + 2*handle->desc.pad_w) *
                                                  libxs_dnn_typesize(handle->datatype_in);
-  } else {
-    handle->upd_packing_padding_scratch_size = 0;
   }
   /* output/input buffer to transpose when we use bf16 */
   if ( handle->datatype_in == LIBXS_DNN_DATATYPE_BF16 ) {
