@@ -554,7 +554,7 @@ typedef enum libxs_atomic_kind {
 #     define LIBXS_LOCK_TRYREAD_spin(LOCK) LIBXS_LOCK_TRYLOCK_spin(LOCK)
 #     define LIBXS_LOCK_ACQREAD_spin(LOCK) LIBXS_LOCK_ACQUIRE_spin(LOCK)
 #     define LIBXS_LOCK_RELREAD_spin(LOCK) LIBXS_LOCK_RELEASE_spin(LOCK)
-#     if (201811/*OpenMP 5.0*/ <= _OPENMP)
+#     if (201811 <= _OPENMP/*v5.0*/)
 #       define LIBXS_LOCK_INIT_spin(LOCK, ATTR) omp_init_lock_with_hint(LOCK, *(ATTR))
 #       define LIBXS_LOCK_ATTR_TYPE_spin omp_lock_hint_t
 #       define LIBXS_LOCK_ATTR_INIT_spin(ATTR) (*(ATTR) = omp_lock_hint_none)
@@ -577,7 +577,7 @@ typedef enum libxs_atomic_kind {
 #     define LIBXS_LOCK_TRYREAD_mutex(LOCK) LIBXS_LOCK_TRYLOCK_mutex(LOCK)
 #     define LIBXS_LOCK_ACQREAD_mutex(LOCK) LIBXS_LOCK_ACQUIRE_mutex(LOCK)
 #     define LIBXS_LOCK_RELREAD_mutex(LOCK) LIBXS_LOCK_RELEASE_mutex(LOCK)
-#     if (201811/*OpenMP 5.0*/ <= _OPENMP)
+#     if (201811 <= _OPENMP/*v5.0*/)
 #       define LIBXS_LOCK_INIT_mutex(LOCK, ATTR) omp_init_lock_with_hint(LOCK, *(ATTR))
 #       define LIBXS_LOCK_ATTR_TYPE_mutex omp_lock_hint_t
 #       define LIBXS_LOCK_ATTR_INIT_mutex(ATTR) (*(ATTR) = omp_lock_hint_none)
@@ -600,7 +600,7 @@ typedef enum libxs_atomic_kind {
 #     define LIBXS_LOCK_TRYREAD_rwlock(LOCK) LIBXS_LOCK_TRYLOCK_rwlock(LOCK)
 #     define LIBXS_LOCK_ACQREAD_rwlock(LOCK) LIBXS_LOCK_ACQUIRE_rwlock(LOCK)
 #     define LIBXS_LOCK_RELREAD_rwlock(LOCK) LIBXS_LOCK_RELEASE_rwlock(LOCK)
-#     if (201811/*OpenMP 5.0*/ <= _OPENMP)
+#     if (201811 <= _OPENMP/*v5.0*/)
 #       define LIBXS_LOCK_INIT_rwlock(LOCK, ATTR) omp_init_lock_with_hint(LOCK, *(ATTR))
 #       define LIBXS_LOCK_ATTR_TYPE_rwlock omp_lock_hint_t
 #       define LIBXS_LOCK_ATTR_INIT_rwlock(ATTR) (*(ATTR) = omp_lock_hint_none)
