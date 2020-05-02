@@ -1183,8 +1183,6 @@ LIBXS_API libxs_dnn_layer* libxs_dnn_create_conv_layer(
     handle->buffer_format = conv_desc.buffer_format;
     handle->filter_format = conv_desc.filter_format;
     handle->fuse_ops = conv_desc.fuse_ops;
-    handle->post_bn = handle->desc.post_bn;
-    handle->pre_bn = handle->desc.pre_bn;
     handle->options = conv_desc.options;
 
     /* derive additional values */
