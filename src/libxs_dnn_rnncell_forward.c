@@ -20,6 +20,7 @@ LIBXS_API_INTERN libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_kcck_f32_f32(libxs_
 LIBXS_API_INTERN libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_kcck_bf16_bf16(libxs_dnn_rnncell* handle, int start_thread, int tid);
 LIBXS_API_INTERN libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_kcck_bf16_bf16_emu(libxs_dnn_rnncell* handle, int start_thread, int tid);
 
+
 LIBXS_API_INTERN LIBXS_INTRINSICS(LIBXS_X86_AVX512)
 libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_ck_f32_f32(libxs_dnn_rnncell* handle, int start_thread, int tid)
 {
@@ -63,6 +64,10 @@ libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_ck_bf16_bf16_emu(libxs_dnn_rnncell* 
 #if defined(LIBXS_INTRINSICS_AVX512_CORE) /*__AVX512F__, __AVX512BW__, __AVX512DQ__*/
   typedef libxs_bfloat16 element_input_type;
   typedef libxs_bfloat16 element_filter_type;
+
+  /* some portable macrros fof BF16 <-> FP32 */
+# include "template/libxs_dnn_bf16_macros_define.tpl.c"
+
   if ( handle->desc.cell_type == LIBXS_DNN_RNNCELL_RNN_RELU ) {
     status = LIBXS_DNN_ERR_NOT_IMPLEMENTED;
   } else if ( handle->desc.cell_type == LIBXS_DNN_RNNCELL_RNN_SIGMOID ) {
@@ -78,6 +83,8 @@ libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_ck_bf16_bf16_emu(libxs_dnn_rnncell* 
   } else {
     /* should not happen */
   }
+
+# include "template/libxs_dnn_bf16_macros_undefine.tpl.c"
 #else /* should not happen */
   LIBXS_UNUSED(handle); LIBXS_UNUSED(start_thread); LIBXS_UNUSED(tid);
   status = LIBXS_DNN_ERR_UNSUPPORTED_ARCH;
@@ -92,6 +99,11 @@ libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_ck_bf16_bf16(libxs_dnn_rnncell* hand
 #if defined(LIBXS_INTRINSICS_AVX512_CPX) /*__AVX512F__, __AVX512BW__, __AVX512DQ__, __AVX512BF16__*/
   typedef libxs_bfloat16 element_input_type;
   typedef libxs_bfloat16 element_filter_type;
+
+#define LIBXS_DNN_BF16_USE_CPX_AVX512_NI
+  /* some portable macrros fof BF16 <-> FP32 */
+# include "template/libxs_dnn_bf16_macros_define.tpl.c"
+
   if ( handle->desc.cell_type == LIBXS_DNN_RNNCELL_RNN_RELU ) {
     status = LIBXS_DNN_ERR_NOT_IMPLEMENTED;
   } else if ( handle->desc.cell_type == LIBXS_DNN_RNNCELL_RNN_SIGMOID ) {
@@ -100,15 +112,16 @@ libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_ck_bf16_bf16(libxs_dnn_rnncell* hand
     status = LIBXS_DNN_ERR_NOT_IMPLEMENTED;
   } else if ( handle->desc.cell_type == LIBXS_DNN_RNNCELL_LSTM ) {
 #define LIBXS_RNN_CELL_AVX512
-#define LIBXS_DNN_RNNCELL_FWD_AVX512_CPX
 # include "template/libxs_dnn_rnncell_st_lstm_fwd_nc_ck_generic_bf16.tpl.c"
-#undef LIBXS_DNN_RNNCELL_FWD_AVX512_CPX
 #undef LIBXS_RNN_CELL_AVX512
   } else if ( handle->desc.cell_type == LIBXS_DNN_RNNCELL_GRU ) {
     status = LIBXS_DNN_ERR_NOT_IMPLEMENTED;
   } else {
     /* should not happen */
   }
+
+# include "template/libxs_dnn_bf16_macros_undefine.tpl.c"
+#undef LIBXS_DNN_BF16_USE_CPX_AVX512_NI
 #else /* should not happen */
   LIBXS_UNUSED(handle); LIBXS_UNUSED(start_thread); LIBXS_UNUSED(tid);
   status = LIBXS_DNN_ERR_UNSUPPORTED_ARCH;
@@ -194,6 +207,10 @@ libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_kcck_bf16_bf16_emu(libxs_dnn_rnncell
   typedef libxs_bfloat16 element_input_type;
   typedef libxs_bfloat16 element_output_type;
   typedef libxs_bfloat16 element_filter_type;
+
+  /* some portable macrros fof BF16 <-> FP32 */
+# include "template/libxs_dnn_bf16_macros_define.tpl.c"
+
   if ( handle->desc.cell_type == LIBXS_DNN_RNNCELL_RNN_RELU ) {
     status = LIBXS_DNN_ERR_NOT_IMPLEMENTED;
   } else if ( handle->desc.cell_type == LIBXS_DNN_RNNCELL_RNN_SIGMOID ) {
@@ -209,6 +226,8 @@ libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_kcck_bf16_bf16_emu(libxs_dnn_rnncell
   } else {
     /* should not happen */
   }
+
+# include "template/libxs_dnn_bf16_macros_undefine.tpl.c"
 #else /* should not happen */
   LIBXS_UNUSED(handle); LIBXS_UNUSED(start_thread); LIBXS_UNUSED(tid);
   status = LIBXS_DNN_ERR_UNSUPPORTED_ARCH;
@@ -224,6 +243,11 @@ libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_kcck_bf16_bf16(libxs_dnn_rnncell* ha
   typedef libxs_bfloat16 element_input_type;
   typedef libxs_bfloat16 element_output_type;
   typedef libxs_bfloat16 element_filter_type;
+
+#define LIBXS_DNN_BF16_USE_CPX_AVX512_NI
+  /* some portable macrros fof BF16 <-> FP32 */
+# include "template/libxs_dnn_bf16_macros_define.tpl.c"
+
   if ( handle->desc.cell_type == LIBXS_DNN_RNNCELL_RNN_RELU ) {
     status = LIBXS_DNN_ERR_NOT_IMPLEMENTED;
   } else if ( handle->desc.cell_type == LIBXS_DNN_RNNCELL_RNN_SIGMOID ) {
@@ -232,15 +256,16 @@ libxs_dnn_err_t libxs_dnn_rnncell_st_fwd_nc_kcck_bf16_bf16(libxs_dnn_rnncell* ha
     status = LIBXS_DNN_ERR_NOT_IMPLEMENTED;
   } else if ( handle->desc.cell_type == LIBXS_DNN_RNNCELL_LSTM ) {
 #define LIBXS_RNN_CELL_AVX512
-#define LIBXS_DNN_RNNCELL_FWD_AVX512_CPX
 # include "template/libxs_dnn_rnncell_st_lstm_fwd_nc_kcck_bf16.tpl.c"
-#undef LIBXS_DNN_RNNCELL_FWD_AVX512_CPX
 #undef LIBXS_RNN_CELL_AVX512
   } else if ( handle->desc.cell_type == LIBXS_DNN_RNNCELL_GRU ) {
     status = LIBXS_DNN_ERR_NOT_IMPLEMENTED;
   } else {
     /* should not happen */
   }
+
+# include "template/libxs_dnn_bf16_macros_undefine.tpl.c"
+#undef LIBXS_DNN_BF16_USE_CPX_AVX512_NI
 #else /* should not happen */
   LIBXS_UNUSED(handle); LIBXS_UNUSED(start_thread); LIBXS_UNUSED(tid);
   status = LIBXS_DNN_ERR_UNSUPPORTED_ARCH;
