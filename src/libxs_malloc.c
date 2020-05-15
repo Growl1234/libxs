@@ -1495,17 +1495,12 @@ LIBXS_API_INLINE void* internal_xmalloc_xmap(const char* dir, size_t size, int f
     /* coverity[secure_temp] */
     i = mkstemp(filename);
     if (0 <= i) {
-#if defined(MAP_LOCKED)
-      const int xflags = (flags | LIBXS_MAP_SHARED) & ~MAP_LOCKED;
-#else
-      const int xflags = (flags | LIBXS_MAP_SHARED);
-#endif
-
       if (0 == unlink(filename) && 0 == ftruncate(i, size)) {
-        void *const xmap = mmap(*rx, size, PROT_READ | PROT_EXEC, xflags, i, 0/*offset*/);
+        const int mflags = (flags | LIBXS_MAP_SHARED);
+        void *const xmap = mmap(*rx, size, PROT_READ | PROT_EXEC, mflags, i, 0/*offset*/);
         if (MAP_FAILED != xmap) {
           LIBXS_ASSERT(NULL != xmap);
-          result = mmap(NULL, size, PROT_READ | PROT_WRITE, xflags, i, 0/*offset*/);
+          result = mmap(NULL, size, PROT_READ | PROT_WRITE, mflags, i, 0/*offset*/);
           if (MAP_FAILED != result) {
             LIBXS_ASSERT(NULL != result);
             internal_xmalloc_mhint(xmap, size);
@@ -1657,7 +1652,7 @@ LIBXS_API_INTERN int libxs_xmalloc(void** memory, size_t size, size_t alignment,
 #endif
       if (NULL == info || size != info->size) {
 #if defined(_WIN32)
-        const int xflags = (0 != (LIBXS_MALLOC_FLAG_X & flags) ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE);
+        const int mflags = (0 != (LIBXS_MALLOC_FLAG_X & flags) ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE);
         static SIZE_T alloc_alignmax = 0, alloc_pagesize = 0;
         if (0 == alloc_alignmax) { /* first/one time */
           SYSTEM_INFO system_info;
@@ -1679,7 +1674,7 @@ LIBXS_API_INTERN int libxs_xmalloc(void** memory, size_t size, size_t alignment,
                 && ERROR_SUCCESS == GetLastError()/*may has failed (regardless of TRUE)*/)
               {
                 /* VirtualAlloc cannot be used to reallocate memory */
-                buffer = VirtualAlloc(NULL, alloc_size, MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES, xflags);
+                buffer = VirtualAlloc(NULL, alloc_size, MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES, mflags);
               }
               tp.Privileges[0].Attributes = 0; /* disable privilege */
               AdjustTokenPrivileges(process_token, FALSE, &tp, 0, (PTOKEN_PRIVILEGES)NULL, 0);
@@ -1693,7 +1688,7 @@ LIBXS_API_INTERN int libxs_xmalloc(void** memory, size_t size, size_t alignment,
         }
         if (alloc_failed == buffer) { /* small allocation or retry with regular page size */
           /* VirtualAlloc cannot be used to reallocate memory */
-          buffer = VirtualAlloc(NULL, alloc_size, MEM_RESERVE | MEM_COMMIT, xflags);
+          buffer = VirtualAlloc(NULL, alloc_size, MEM_RESERVE | MEM_COMMIT, mflags);
         }
         if (alloc_failed != buffer) {
           flags |= LIBXS_MALLOC_FLAG_MMAP; /* select the corresponding deallocation */
@@ -1708,7 +1703,7 @@ LIBXS_API_INTERN int libxs_xmalloc(void** memory, size_t size, size_t alignment,
 # if defined(MAP_32BIT)
         static size_t map32 = LIBXS_SCRATCH_UNLIMITED;
 # endif
-        int xflags = 0
+        const int mflags = 0
 # if defined(MAP_NORESERVE)
           | (LIBXS_MALLOC_ALIGNMAX < size ? 0 : MAP_NORESERVE)
 # endif
@@ -1724,7 +1719,7 @@ LIBXS_API_INTERN int libxs_xmalloc(void** memory, size_t size, size_t alignment,
           | MAP_UNINITIALIZED
 # endif
 # if defined(MAP_LOCKED)
-          | MAP_LOCKED
+          | (0 == (LIBXS_MALLOC_FLAG_X & flags) ? MAP_LOCKED : 0)
 # endif
         ;
         static int prefault = 0;
@@ -1748,7 +1743,7 @@ LIBXS_API_INTERN int libxs_xmalloc(void** memory, size_t size, size_t alignment,
           LIBXS_ASSERT(NULL != info || NULL == *memory); /* no memory mapping of foreign pointer */
 # endif
           buffer = mmap(NULL == info ? NULL : info->pointer, alloc_size, PROT_READ | PROT_WRITE,
-            MAP_PRIVATE | LIBXS_MAP_ANONYMOUS | prefault | xflags, -1, 0/*offset*/);
+            MAP_PRIVATE | LIBXS_MAP_ANONYMOUS | prefault | mflags, -1, 0/*offset*/);
         }
         else { /* executable buffer requested */
           static /*LIBXS_TLS*/ int fallback = -1; /* considers fall-back allocation method */
@@ -1775,11 +1770,11 @@ LIBXS_API_INTERN int libxs_xmalloc(void** memory, size_t size, size_t alignment,
             LIBXS_ASSERT(0 <= fallback);
           }
           if (0 == fallback) {
-            buffer = internal_xmalloc_xmap("/tmp", alloc_size, xflags, &reloc);
+            buffer = internal_xmalloc_xmap("/tmp", alloc_size, mflags, &reloc);
             if (alloc_failed == buffer) {
 # if defined(MAP_32BIT)
-              if (0 != (MAP_32BIT & xflags)) {
-                buffer = internal_xmalloc_xmap("/tmp", alloc_size, xflags & ~MAP_32BIT, &reloc);
+              if (0 != (MAP_32BIT & mflags)) {
+                buffer = internal_xmalloc_xmap("/tmp", alloc_size, mflags & ~MAP_32BIT, &reloc);
               }
               if (alloc_failed != buffer) map32 = 0; else
 # endif
@@ -1793,11 +1788,11 @@ LIBXS_API_INTERN int libxs_xmalloc(void** memory, size_t size, size_t alignment,
                 envloc = getenv("JITDUMPDIR");
                 if (NULL == envloc) envloc = "";
               }
-              buffer = internal_xmalloc_xmap(envloc, alloc_size, xflags, &reloc);
+              buffer = internal_xmalloc_xmap(envloc, alloc_size, mflags, &reloc);
               if (alloc_failed == buffer) {
 # if defined(MAP_32BIT)
-                if (0 != (MAP_32BIT & xflags)) {
-                  buffer = internal_xmalloc_xmap(envloc, alloc_size, xflags & ~MAP_32BIT, &reloc);
+                if (0 != (MAP_32BIT & mflags)) {
+                  buffer = internal_xmalloc_xmap(envloc, alloc_size, mflags & ~MAP_32BIT, &reloc);
                 }
                 if (alloc_failed != buffer) map32 = 0; else
 # endif
@@ -1811,11 +1806,11 @@ LIBXS_API_INTERN int libxs_xmalloc(void** memory, size_t size, size_t alignment,
                   envloc = getenv("HOME");
                   if (NULL == envloc) envloc = "";
                 }
-                buffer = internal_xmalloc_xmap(envloc, alloc_size, xflags, &reloc);
+                buffer = internal_xmalloc_xmap(envloc, alloc_size, mflags, &reloc);
                 if (alloc_failed == buffer) {
 # if defined(MAP_32BIT)
-                  if (0 != (MAP_32BIT & xflags)) {
-                    buffer = internal_xmalloc_xmap(envloc, alloc_size, xflags & ~MAP_32BIT, &reloc);
+                  if (0 != (MAP_32BIT & mflags)) {
+                    buffer = internal_xmalloc_xmap(envloc, alloc_size, mflags & ~MAP_32BIT, &reloc);
                   }
                   if (alloc_failed != buffer) map32 = size; else
 # endif
@@ -1825,12 +1820,12 @@ LIBXS_API_INTERN int libxs_xmalloc(void** memory, size_t size, size_t alignment,
               if (3 <= fallback) { /* continue with fall-back */
                 if (3 == fallback) { /* 4th try */
                   buffer = mmap(reloc, alloc_size, PROT_READ | PROT_WRITE | PROT_EXEC,
-                    MAP_PRIVATE | LIBXS_MAP_ANONYMOUS | xflags, -1, 0/*offset*/);
+                    MAP_PRIVATE | LIBXS_MAP_ANONYMOUS | mflags, -1, 0/*offset*/);
                   if (alloc_failed == buffer) {
 # if defined(MAP_32BIT)
-                    if (0 != (MAP_32BIT & xflags)) {
+                    if (0 != (MAP_32BIT & mflags)) {
                       buffer = mmap(reloc, alloc_size, PROT_READ | PROT_WRITE | PROT_EXEC,
-                        MAP_PRIVATE | LIBXS_MAP_ANONYMOUS | (xflags & ~MAP_32BIT), -1, 0/*offset*/);
+                        MAP_PRIVATE | LIBXS_MAP_ANONYMOUS | (mflags & ~MAP_32BIT), -1, 0/*offset*/);
                     }
                     if (alloc_failed != buffer) map32 = size; else
 # endif
@@ -1850,13 +1845,13 @@ LIBXS_API_INTERN int libxs_xmalloc(void** memory, size_t size, size_t alignment,
         }
         else { /* allocation failed */
 # if defined(MAP_HUGETLB) /* no further attempts to rely on huge pages */
-          if (0 != (xflags & MAP_HUGETLB)) {
+          if (0 != (mflags & MAP_HUGETLB)) {
             flags &= ~LIBXS_MALLOC_FLAG_MMAP; /* select deallocation */
             hugetlb = size;
           }
 # endif
 # if defined(MAP_32BIT) /* no further attempts to map to 32-bit */
-          if (0 != (xflags & MAP_32BIT)) {
+          if (0 != (mflags & MAP_32BIT)) {
             flags &= ~LIBXS_MALLOC_FLAG_MMAP; /* select deallocation */
             map32 = size;
           }
