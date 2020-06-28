@@ -285,7 +285,6 @@ libxs_dnn_err_t libxs_dnn_fusedbatchnorm_st_fwd_custom_bf16_bf16_c32(libxs_dnn_f
   return status;
 }
 
-
 LIBXS_API_INTERN LIBXS_INTRINSICS(LIBXS_X86_AVX512)
 libxs_dnn_err_t libxs_dnn_fusedbatchnorm_st_fwd_custom_bf16_bf16_c64(libxs_dnn_fusedbatchnorm* handle, int start_thread, int tid)
 {
@@ -337,7 +336,6 @@ libxs_dnn_err_t libxs_dnn_fusedbatchnorm_st_fwd_custom_bf16_bf16_c64(libxs_dnn_f
 #endif
   return status;
 }
-
 
 LIBXS_API_INTERN libxs_dnn_err_t libxs_dnn_fusedbatchnorm_st_fwd_custom(libxs_dnn_fusedbatchnorm* handle, int start_thread, int tid)
 {
