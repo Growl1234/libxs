@@ -1712,7 +1712,9 @@ LIBXS_API_INTERN int libxs_build(const libxs_build_request* request, unsigned in
           char tc_option[16] = { 0 };
           int decompress_A = 0;
           int sparsity_factor_A = 1;
-          if ( (request->descriptor.gemm->meltw_operation == LIBXS_MELTW_OPERATION_DECOMPRESS_A) || (request->descriptor.gemm->meltw_operation == LIBXS_MELTW_OPERATION_COLBIAS_ACT_DECOMPRESS_A) ) {
+          if ((request->descriptor.gemm->meltw_operation == LIBXS_MELTW_OPERATION_DECOMPRESS_A) ||
+              (request->descriptor.gemm->meltw_operation == LIBXS_MELTW_OPERATION_COLBIAS_ACT_DECOMPRESS_A))
+          {
             decompress_A = 1;
             sparsity_factor_A = (int)request->descriptor.gemm->meltw_param;
           }
@@ -2375,12 +2377,15 @@ LIBXS_API_INLINE libxs_code_pointer internal_find_code(libxs_descriptor* desc, s
 }
 
 
-LIBXS_API_INTERN const libxs_kernel_xinfo* libxs_get_kernel_xinfo(libxs_code_pointer code, const libxs_descriptor** desc, size_t* code_size)
+LIBXS_API_INTERN const libxs_kernel_xinfo* libxs_get_kernel_xinfo(libxs_code_pointer code,
+  const libxs_descriptor** desc, size_t* code_size)
 {
   libxs_kernel_xinfo* result = NULL;
   void *const result_address = &result;
   int flags = LIBXS_MALLOC_FLAG_X;
-  if (NULL != code.ptr_const && EXIT_SUCCESS == libxs_get_malloc_xinfo(code.ptr_const, code_size, &flags, (void**)result_address) && NULL != result) {
+  if (NULL != code.ptr_const && EXIT_SUCCESS == libxs_get_malloc_xinfo(
+    code.ptr_const, code_size, &flags, (void**)result_address) && NULL != result)
+  {
     if (NULL != desc) {
       if (NULL != internal_registry && NULL != internal_registry_keys && result->registered < (LIBXS_CAPACITY_REGISTRY)
 #if defined(LIBXS_HASH_COLLISION)
@@ -2666,7 +2671,8 @@ LIBXS_API void* libxs_xregister(const void* key, size_t key_size, size_t value_s
 #endif
     LIBXS_MEMCPY127(wrap.user.desc, key, key_size);
     wrap.kind = (libxs_descriptor_kind)(LIBXS_DESCRIPTOR_SIGSIZE >= key_size
-      ? LIBXS_KERNEL_KIND_USER : LIBXS_DESCRIPTOR_BIG(LIBXS_KERNEL_KIND_USER));
+      ? ((libxs_descriptor_kind)LIBXS_KERNEL_KIND_USER)
+      : LIBXS_DESCRIPTOR_BIG(LIBXS_KERNEL_KIND_USER));
     dst = internal_find_code(&wrap, key_size, value_size).ptr;
     if (NULL != dst) {
       size_t size;
@@ -2719,7 +2725,8 @@ LIBXS_API void* libxs_xdispatch(const void* key, size_t key_size)
 #endif
     LIBXS_MEMCPY127(wrap.user.desc, key, key_size);
     wrap.kind = (libxs_descriptor_kind)(LIBXS_DESCRIPTOR_SIGSIZE >= key_size
-      ? LIBXS_KERNEL_KIND_USER : LIBXS_DESCRIPTOR_BIG(LIBXS_KERNEL_KIND_USER));
+      ? ((libxs_descriptor_kind)LIBXS_KERNEL_KIND_USER)
+      : LIBXS_DESCRIPTOR_BIG(LIBXS_KERNEL_KIND_USER));
     result = internal_find_code(&wrap, key_size, 0/*user_size*/).ptr;
   }
 #if !defined(NDEBUG)
@@ -2761,7 +2768,8 @@ LIBXS_API libxs_xmmfunction libxs_xmmdispatch(const libxs_gemm_descriptor* descr
 #endif
     LIBXS_ASSIGN127(&wrap.gemm.desc, descriptor);
     wrap.kind = (libxs_descriptor_kind)(0 == (batch_reduce & descriptor->flags)
-      ? LIBXS_KERNEL_KIND_MATMUL : LIBXS_DESCRIPTOR_BIG(LIBXS_KERNEL_KIND_MATMUL));
+      ? ((libxs_descriptor_kind)LIBXS_KERNEL_KIND_MATMUL)
+      : LIBXS_DESCRIPTOR_BIG(LIBXS_KERNEL_KIND_MATMUL));
     if (0 != (0x80 & descriptor->prefetch)) { /* "sign"-bit of byte-value is set */
       wrap.gemm.desc.prefetch = (unsigned char)libxs_get_gemm_prefetch(LIBXS_PREFETCH_AUTO);
     }
@@ -3622,7 +3630,8 @@ LIBXS_API libxs_sububmmfunction_reducebatch_offs libxs_sububmmdispatch_reducebat
 }
 
 
-LIBXS_API libxs_dmmfunction_reducebatch_strd libxs_dmmdispatch_reducebatch_strd(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
+LIBXS_API libxs_dmmfunction_reducebatch_strd libxs_dmmdispatch_reducebatch_strd(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const double* alpha, const double* beta, const int* flags, const int* prefetch)
 {
@@ -3644,7 +3653,8 @@ LIBXS_API libxs_dmmfunction_reducebatch_strd libxs_dmmdispatch_reducebatch_strd(
 }
 
 
-LIBXS_API libxs_smmfunction_reducebatch_strd libxs_smmdispatch_reducebatch_strd(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
+LIBXS_API libxs_smmfunction_reducebatch_strd libxs_smmdispatch_reducebatch_strd(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const float* alpha, const float* beta, const int* flags, const int* prefetch)
 {
@@ -3666,7 +3676,8 @@ LIBXS_API libxs_smmfunction_reducebatch_strd libxs_smmdispatch_reducebatch_strd(
 }
 
 
-LIBXS_API libxs_bsmmfunction_reducebatch_strd libxs_bsmmdispatch_reducebatch_strd(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
+LIBXS_API libxs_bsmmfunction_reducebatch_strd libxs_bsmmdispatch_reducebatch_strd(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const float* alpha, const float* beta, const int* flags, const int* prefetch)
 {
@@ -3688,7 +3699,8 @@ LIBXS_API libxs_bsmmfunction_reducebatch_strd libxs_bsmmdispatch_reducebatch_str
 }
 
 
-LIBXS_API libxs_bmmfunction_reducebatch_strd libxs_bmmdispatch_reducebatch_strd(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
+LIBXS_API libxs_bmmfunction_reducebatch_strd libxs_bmmdispatch_reducebatch_strd(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const float* alpha, const float* beta, const int* flags, const int* prefetch)
 {
@@ -3710,7 +3722,8 @@ LIBXS_API libxs_bmmfunction_reducebatch_strd libxs_bmmdispatch_reducebatch_strd(
 }
 
 
-LIBXS_API libxs_wimmfunction_reducebatch_strd libxs_wimmdispatch_reducebatch_strd(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
+LIBXS_API libxs_wimmfunction_reducebatch_strd libxs_wimmdispatch_reducebatch_strd(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const int* alpha, const int* beta, const int* flags, const int* prefetch)
 {
@@ -3732,7 +3745,8 @@ LIBXS_API libxs_wimmfunction_reducebatch_strd libxs_wimmdispatch_reducebatch_str
 }
 
 
-LIBXS_API libxs_ssbimmfunction_reducebatch_strd libxs_ssbimmdispatch_reducebatch_strd(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
+LIBXS_API libxs_ssbimmfunction_reducebatch_strd libxs_ssbimmdispatch_reducebatch_strd(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const int* alpha, const int* beta, const int* flags, const int* prefetch)
 {
@@ -3754,7 +3768,8 @@ LIBXS_API libxs_ssbimmfunction_reducebatch_strd libxs_ssbimmdispatch_reducebatch
 }
 
 
-LIBXS_API libxs_usbimmfunction_reducebatch_strd libxs_usbimmdispatch_reducebatch_strd(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
+LIBXS_API libxs_usbimmfunction_reducebatch_strd libxs_usbimmdispatch_reducebatch_strd(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const int* alpha, const int* beta, const int* flags, const int* prefetch)
 {
@@ -3776,7 +3791,8 @@ LIBXS_API libxs_usbimmfunction_reducebatch_strd libxs_usbimmdispatch_reducebatch
 }
 
 
-LIBXS_API libxs_subimmfunction_reducebatch_strd libxs_subimmdispatch_reducebatch_strd(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
+LIBXS_API libxs_subimmfunction_reducebatch_strd libxs_subimmdispatch_reducebatch_strd(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const int* alpha, const int* beta, const int* flags, const int* prefetch)
 {
@@ -3798,7 +3814,8 @@ LIBXS_API libxs_subimmfunction_reducebatch_strd libxs_subimmdispatch_reducebatch
 }
 
 
-LIBXS_API libxs_uubimmfunction_reducebatch_strd libxs_uubimmdispatch_reducebatch_strd(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
+LIBXS_API libxs_uubimmfunction_reducebatch_strd libxs_uubimmdispatch_reducebatch_strd(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const int* alpha, const int* beta, const int* flags, const int* prefetch)
 {
@@ -3820,7 +3837,8 @@ LIBXS_API libxs_uubimmfunction_reducebatch_strd libxs_uubimmdispatch_reducebatch
 }
 
 
-LIBXS_API libxs_sububmmfunction_reducebatch_strd libxs_sububmmdispatch_reducebatch_strd(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
+LIBXS_API libxs_sububmmfunction_reducebatch_strd libxs_sububmmdispatch_reducebatch_strd(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const int* alpha, const int* beta, const int* flags, const int* prefetch)
 {
@@ -3830,7 +3848,8 @@ LIBXS_API libxs_sububmmfunction_reducebatch_strd libxs_sububmmdispatch_reducebat
     NULL != lda ? *lda : (0 == (LIBXS_GEMM_FLAG_TRANS_A & gemm_flags) ? m : k),
     NULL != ldb ? *ldb : (0 == (LIBXS_GEMM_FLAG_TRANS_B & gemm_flags) ? k : n),
     NULL != ldc ? *ldc : m, NULL != alpha ? *alpha : LIBXS_ALPHA, NULL != beta ? *beta : LIBXS_BETA,
-    gemm_flags | LIBXS_GEMM_FLAG_B_UNSIGNED | LIBXS_GEMM_FLAG_C_UNSIGNED | LIBXS_GEMM_FLAG_BATCH_REDUCE_STRIDE, libxs_get_gemm_xprefetch(prefetch));
+    gemm_flags | LIBXS_GEMM_FLAG_B_UNSIGNED | LIBXS_GEMM_FLAG_C_UNSIGNED | LIBXS_GEMM_FLAG_BATCH_REDUCE_STRIDE,
+    libxs_get_gemm_xprefetch(prefetch));
   /*const*/ libxs_xmmfunction result;
   desc->c1 = (unsigned long long)stride_a;
   desc->c2 = (unsigned long long)stride_b;
@@ -3842,7 +3861,8 @@ LIBXS_API libxs_sububmmfunction_reducebatch_strd libxs_sububmmdispatch_reducebat
 }
 
 
-LIBXS_API libxs_dmmfunction_reducebatch_strd libxs_dmmdispatch_reducebatch_strd_unroll(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
+LIBXS_API libxs_dmmfunction_reducebatch_strd libxs_dmmdispatch_reducebatch_strd_unroll(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const double* alpha, const double* beta, const int* flags, const int* prefetch)
 {
@@ -3865,7 +3885,8 @@ LIBXS_API libxs_dmmfunction_reducebatch_strd libxs_dmmdispatch_reducebatch_strd_
 }
 
 
-LIBXS_API libxs_smmfunction_reducebatch_strd libxs_smmdispatch_reducebatch_strd_unroll(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
+LIBXS_API libxs_smmfunction_reducebatch_strd libxs_smmdispatch_reducebatch_strd_unroll(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const float* alpha, const float* beta, const int* flags, const int* prefetch)
 {
@@ -3888,7 +3909,8 @@ LIBXS_API libxs_smmfunction_reducebatch_strd libxs_smmdispatch_reducebatch_strd_
 }
 
 
-LIBXS_API libxs_bsmmfunction_reducebatch_strd libxs_bsmmdispatch_reducebatch_strd_unroll(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
+LIBXS_API libxs_bsmmfunction_reducebatch_strd libxs_bsmmdispatch_reducebatch_strd_unroll(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const float* alpha, const float* beta, const int* flags, const int* prefetch)
 {
@@ -3911,7 +3933,8 @@ LIBXS_API libxs_bsmmfunction_reducebatch_strd libxs_bsmmdispatch_reducebatch_str
 }
 
 
-LIBXS_API libxs_bmmfunction_reducebatch_strd libxs_bmmdispatch_reducebatch_strd_unroll(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
+LIBXS_API libxs_bmmfunction_reducebatch_strd libxs_bmmdispatch_reducebatch_strd_unroll(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const float* alpha, const float* beta, const int* flags, const int* prefetch)
 {
@@ -3934,7 +3957,8 @@ LIBXS_API libxs_bmmfunction_reducebatch_strd libxs_bmmdispatch_reducebatch_strd_
 }
 
 
-LIBXS_API libxs_wimmfunction_reducebatch_strd libxs_wimmdispatch_reducebatch_strd_unroll(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
+LIBXS_API libxs_wimmfunction_reducebatch_strd libxs_wimmdispatch_reducebatch_strd_unroll(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const int* alpha, const int* beta, const int* flags, const int* prefetch)
 {
@@ -3957,7 +3981,8 @@ LIBXS_API libxs_wimmfunction_reducebatch_strd libxs_wimmdispatch_reducebatch_str
 }
 
 
-LIBXS_API libxs_ssbimmfunction_reducebatch_strd libxs_ssbimmdispatch_reducebatch_strd_unroll(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
+LIBXS_API libxs_ssbimmfunction_reducebatch_strd libxs_ssbimmdispatch_reducebatch_strd_unroll(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const int* alpha, const int* beta, const int* flags, const int* prefetch)
 {
@@ -3980,7 +4005,8 @@ LIBXS_API libxs_ssbimmfunction_reducebatch_strd libxs_ssbimmdispatch_reducebatch
 }
 
 
-LIBXS_API libxs_usbimmfunction_reducebatch_strd libxs_usbimmdispatch_reducebatch_strd_unroll(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
+LIBXS_API libxs_usbimmfunction_reducebatch_strd libxs_usbimmdispatch_reducebatch_strd_unroll(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const int* alpha, const int* beta, const int* flags, const int* prefetch)
 {
@@ -4003,7 +4029,8 @@ LIBXS_API libxs_usbimmfunction_reducebatch_strd libxs_usbimmdispatch_reducebatch
 }
 
 
-LIBXS_API libxs_subimmfunction_reducebatch_strd libxs_subimmdispatch_reducebatch_strd_unroll(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
+LIBXS_API libxs_subimmfunction_reducebatch_strd libxs_subimmdispatch_reducebatch_strd_unroll(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const int* alpha, const int* beta, const int* flags, const int* prefetch)
 {
@@ -4026,7 +4053,8 @@ LIBXS_API libxs_subimmfunction_reducebatch_strd libxs_subimmdispatch_reducebatch
 }
 
 
-LIBXS_API libxs_uubimmfunction_reducebatch_strd libxs_uubimmdispatch_reducebatch_strd_unroll(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
+LIBXS_API libxs_uubimmfunction_reducebatch_strd libxs_uubimmdispatch_reducebatch_strd_unroll(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const int* alpha, const int* beta, const int* flags, const int* prefetch)
 {
@@ -4049,7 +4077,8 @@ LIBXS_API libxs_uubimmfunction_reducebatch_strd libxs_uubimmdispatch_reducebatch
 }
 
 
-LIBXS_API libxs_sububmmfunction_reducebatch_strd libxs_sububmmdispatch_reducebatch_strd_unroll(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
+LIBXS_API libxs_sububmmfunction_reducebatch_strd libxs_sububmmdispatch_reducebatch_strd_unroll(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
   const int* alpha, const int* beta, const int* flags, const int* prefetch)
 {
@@ -4059,7 +4088,8 @@ LIBXS_API libxs_sububmmfunction_reducebatch_strd libxs_sububmmdispatch_reducebat
     NULL != lda ? *lda : (0 == (LIBXS_GEMM_FLAG_TRANS_A & gemm_flags) ? m : k),
     NULL != ldb ? *ldb : (0 == (LIBXS_GEMM_FLAG_TRANS_B & gemm_flags) ? k : n),
     NULL != ldc ? *ldc : m, NULL != alpha ? *alpha : LIBXS_ALPHA, NULL != beta ? *beta : LIBXS_BETA,
-    gemm_flags | LIBXS_GEMM_FLAG_B_UNSIGNED | LIBXS_GEMM_FLAG_C_UNSIGNED | LIBXS_GEMM_FLAG_BATCH_REDUCE_STRIDE, libxs_get_gemm_xprefetch(prefetch));
+    gemm_flags | LIBXS_GEMM_FLAG_B_UNSIGNED | LIBXS_GEMM_FLAG_C_UNSIGNED | LIBXS_GEMM_FLAG_BATCH_REDUCE_STRIDE,
+    libxs_get_gemm_xprefetch(prefetch));
   /*const*/ libxs_xmmfunction result;
   desc->c1 = (unsigned long long)stride_a;
   desc->c2 = (unsigned long long)stride_b;
@@ -4070,10 +4100,11 @@ LIBXS_API libxs_sububmmfunction_reducebatch_strd libxs_sububmmdispatch_reducebat
   result = libxs_xmmdispatch(desc);
   return result.sububmrs;
 }
+
 
 /* GEMMs fused with eltwise kernels */
-/* -------------------------------- */
-LIBXS_API libxs_bmmfunction_reducebatch_strd_meltwfused libxs_bmmdispatch_reducebatch_strd_meltwfused(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
+LIBXS_API libxs_bmmfunction_reducebatch_strd_meltwfused libxs_bmmdispatch_reducebatch_strd_meltwfused(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc, const float* alpha, const float* beta, const int* flags, const int* prefetch,
   libxs_meltw_operation meltw_op, libxs_datatype meltw_dt, libxs_meltw_flags meltw_flags, unsigned char meltw_param, unsigned int meltw_ldx, unsigned int meltw_ldy, unsigned int meltw_ldz)
 {
@@ -4101,7 +4132,9 @@ LIBXS_API libxs_bmmfunction_reducebatch_strd_meltwfused libxs_bmmdispatch_reduce
   return result.bmrs_meltwfused;
 }
 
-LIBXS_API libxs_bmmfunction_reducebatch_strd_meltwfused libxs_bmmdispatch_reducebatch_strd_meltwfused_unroll(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
+
+LIBXS_API libxs_bmmfunction_reducebatch_strd_meltwfused libxs_bmmdispatch_reducebatch_strd_meltwfused_unroll(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc, const float* alpha, const float* beta, const int* flags, const int* prefetch,
   libxs_meltw_operation meltw_op, libxs_datatype meltw_dt, libxs_meltw_flags meltw_flags, unsigned char meltw_param, unsigned int meltw_ldx, unsigned int meltw_ldy, unsigned int meltw_ldz)
 {
@@ -4130,7 +4163,9 @@ LIBXS_API libxs_bmmfunction_reducebatch_strd_meltwfused libxs_bmmdispatch_reduce
   return result.bmrs_meltwfused;
 }
 
-LIBXS_API libxs_bsmmfunction_reducebatch_strd_meltwfused libxs_bsmmdispatch_reducebatch_strd_meltwfused(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
+
+LIBXS_API libxs_bsmmfunction_reducebatch_strd_meltwfused libxs_bsmmdispatch_reducebatch_strd_meltwfused(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc, const float* alpha, const float* beta, const int* flags, const int* prefetch,
   libxs_meltw_operation meltw_op, libxs_datatype meltw_dt, libxs_meltw_flags meltw_flags, unsigned char meltw_param, unsigned int meltw_ldx, unsigned int meltw_ldy, unsigned int meltw_ldz)
 {
@@ -4158,7 +4193,9 @@ LIBXS_API libxs_bsmmfunction_reducebatch_strd_meltwfused libxs_bsmmdispatch_redu
   return result.bsmrs_meltwfused;
 }
 
-LIBXS_API libxs_bsmmfunction_reducebatch_strd_meltwfused libxs_bsmmdispatch_reducebatch_strd_meltwfused_unroll(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
+
+LIBXS_API libxs_bsmmfunction_reducebatch_strd_meltwfused libxs_bsmmdispatch_reducebatch_strd_meltwfused_unroll(
+  libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint stride_a, libxs_blasint stride_b, libxs_blasint unroll_hint,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc, const float* alpha, const float* beta, const int* flags, const int* prefetch,
   libxs_meltw_operation meltw_op, libxs_datatype meltw_dt, libxs_meltw_flags meltw_flags, unsigned char meltw_param, unsigned int meltw_ldx, unsigned int meltw_ldy, unsigned int meltw_ldz)
 {
@@ -4186,6 +4223,7 @@ LIBXS_API libxs_bsmmfunction_reducebatch_strd_meltwfused libxs_bsmmdispatch_redu
   result = libxs_xmmdispatch(desc);
   return result.bsmrs_meltwfused;
 }
+
 
 LIBXS_API libxs_xmcopyfunction libxs_dispatch_mcopy(const libxs_mcopy_descriptor* descriptor)
 {
@@ -4236,7 +4274,10 @@ LIBXS_API libxs_xmeltwfunction libxs_dispatch_meltw(const libxs_meltw_descriptor
 }
 
 
-LIBXS_API libxs_meltwfunction_copy libxs_dispatch_meltw_copy(libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo, libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_copy_flags flags) {
+LIBXS_API libxs_meltwfunction_copy libxs_dispatch_meltw_copy(
+  libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_copy_flags flags)
+{
   libxs_descriptor_blob blob;
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init(&blob,
     in_type, out_type, m, n, (ldi == NULL) ? m : *ldi, (ldo == NULL) ? m : *ldo,
@@ -4248,7 +4289,10 @@ LIBXS_API libxs_meltwfunction_copy libxs_dispatch_meltw_copy(libxs_blasint m, li
 }
 
 
-LIBXS_API libxs_meltwfunction_zero libxs_dispatch_meltw_zero(libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo, libxs_datatype in_type, libxs_datatype out_type) {
+LIBXS_API libxs_meltwfunction_zero libxs_dispatch_meltw_zero(
+  libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  libxs_datatype in_type, libxs_datatype out_type)
+{
   libxs_descriptor_blob blob;
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init(&blob,
     in_type, out_type, m, n, (ldi == NULL) ? m : *ldi, (ldo == NULL) ? m : *ldo,
@@ -4260,7 +4304,10 @@ LIBXS_API libxs_meltwfunction_zero libxs_dispatch_meltw_zero(libxs_blasint m, li
 }
 
 
-LIBXS_API libxs_meltwfunction_add libxs_dispatch_meltw_add(libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo, libxs_datatype in_type, libxs_datatype out_type) {
+LIBXS_API libxs_meltwfunction_add libxs_dispatch_meltw_add(
+  libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  libxs_datatype in_type, libxs_datatype out_type)
+{
   libxs_descriptor_blob blob;
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init(&blob,
     in_type, out_type, m, n, (ldi == NULL) ? m : *ldi, (ldo == NULL) ? m : *ldo,
@@ -4272,7 +4319,10 @@ LIBXS_API libxs_meltwfunction_add libxs_dispatch_meltw_add(libxs_blasint m, libx
 }
 
 
-LIBXS_API libxs_meltwfunction_mul libxs_dispatch_meltw_mul(libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo, libxs_datatype in_type, libxs_datatype out_type) {
+LIBXS_API libxs_meltwfunction_mul libxs_dispatch_meltw_mul(
+  libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  libxs_datatype in_type, libxs_datatype out_type)
+{
   libxs_descriptor_blob blob;
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init(&blob,
     in_type, out_type, m, n, (ldi == NULL) ? m : *ldi, (ldo == NULL) ? m : *ldo,
@@ -4284,7 +4334,10 @@ LIBXS_API libxs_meltwfunction_mul libxs_dispatch_meltw_mul(libxs_blasint m, libx
 }
 
 
-LIBXS_API libxs_meltwfunction_relu libxs_dispatch_meltw_relu(libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo, libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_relu_flags flags, unsigned char param) {
+LIBXS_API libxs_meltwfunction_relu libxs_dispatch_meltw_relu(
+  libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_relu_flags flags, unsigned char param)
+{
   libxs_descriptor_blob blob;
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init(&blob,
     in_type, out_type, m, n, (ldi == NULL) ? m : *ldi, (ldo == NULL) ? m : *ldo,
@@ -4296,7 +4349,10 @@ LIBXS_API libxs_meltwfunction_relu libxs_dispatch_meltw_relu(libxs_blasint m, li
 }
 
 
-LIBXS_API libxs_meltwfunction_cvtfp32bf16 libxs_dispatch_meltw_cvtfp32bf16(libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo, libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_cvt_flags flags) {
+LIBXS_API libxs_meltwfunction_cvtfp32bf16 libxs_dispatch_meltw_cvtfp32bf16(
+  libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_cvt_flags flags)
+{
   libxs_descriptor_blob blob;
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init(&blob,
     in_type, out_type, m, n, (ldi == NULL) ? m : *ldi, (ldo == NULL) ? m : *ldo,
@@ -4308,7 +4364,10 @@ LIBXS_API libxs_meltwfunction_cvtfp32bf16 libxs_dispatch_meltw_cvtfp32bf16(libxs
 }
 
 
-LIBXS_API libxs_meltwfunction_cvtfp32bf16_act libxs_dispatch_meltw_cvtfp32bf16_act(libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo, libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_cvta_flags flags, unsigned char param) {
+LIBXS_API libxs_meltwfunction_cvtfp32bf16_act libxs_dispatch_meltw_cvtfp32bf16_act(
+  libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_cvta_flags flags, unsigned char param)
+{
   libxs_descriptor_blob blob;
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init(&blob,
     in_type, out_type, m, n, (ldi == NULL) ? m : *ldi, (ldo == NULL) ? m : *ldo,
@@ -4319,7 +4378,11 @@ LIBXS_API libxs_meltwfunction_cvtfp32bf16_act libxs_dispatch_meltw_cvtfp32bf16_a
   return result.meltw_cvtfp32bf16_act;
 }
 
-LIBXS_API libxs_meltwfunction_act_cvtfp32bf16 libxs_dispatch_meltw_act_cvtfp32bf16(libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo, libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_acvt_flags flags, unsigned char param) {
+
+LIBXS_API libxs_meltwfunction_act_cvtfp32bf16 libxs_dispatch_meltw_act_cvtfp32bf16(
+  libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_acvt_flags flags, unsigned char param)
+{
   libxs_descriptor_blob blob;
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init(&blob,
     in_type, out_type, m, n, (ldi == NULL) ? m : *ldi, (ldo == NULL) ? m : *ldo,
@@ -4330,7 +4393,11 @@ LIBXS_API libxs_meltwfunction_act_cvtfp32bf16 libxs_dispatch_meltw_act_cvtfp32bf
   return result.meltw_act_cvtfp32bf16;
 }
 
-LIBXS_API libxs_meltwfunction_reduce libxs_dispatch_meltw_reduce(libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo, libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_redu_flags flags, unsigned char param) {
+
+LIBXS_API libxs_meltwfunction_reduce libxs_dispatch_meltw_reduce(
+  libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_redu_flags flags, unsigned char param)
+{
   libxs_descriptor_blob blob;
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init(&blob,
     in_type, out_type, m, n, (ldi == NULL) ? m : *ldi, (ldo == NULL) ? m : *ldo,
@@ -4341,7 +4408,11 @@ LIBXS_API libxs_meltwfunction_reduce libxs_dispatch_meltw_reduce(libxs_blasint m
   return result.meltw_reduce;
 }
 
-LIBXS_API libxs_meltwfunction_reduce_cols_idx libxs_dispatch_meltw_reduce_cols_idx(libxs_blasint m, const libxs_blasint* ldi, const libxs_blasint* ldo, libxs_datatype in_type, libxs_datatype out_type, libxs_datatype idx_type) {
+
+LIBXS_API libxs_meltwfunction_reduce_cols_idx libxs_dispatch_meltw_reduce_cols_idx(
+  libxs_blasint m, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  libxs_datatype in_type, libxs_datatype out_type, libxs_datatype idx_type)
+{
   libxs_descriptor_blob blob;
   libxs_blasint idx_dtype_size = libxs_typesize(idx_type);
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init(&blob,
@@ -4353,7 +4424,11 @@ LIBXS_API libxs_meltwfunction_reduce_cols_idx libxs_dispatch_meltw_reduce_cols_i
   return result.meltw_reduce_cols_idx;
 }
 
-LIBXS_API libxs_meltwfunction_opreduce_vecs_idx libxs_dispatch_meltw_opreduce_vecs_idx(libxs_blasint m, const libxs_blasint* ldi, const libxs_blasint* ldo, libxs_datatype in_type, libxs_datatype out_type, libxs_datatype idx_type, libxs_meltw_opreduce_vecs_flags flags) {
+
+LIBXS_API libxs_meltwfunction_opreduce_vecs_idx libxs_dispatch_meltw_opreduce_vecs_idx(
+  libxs_blasint m, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  libxs_datatype in_type, libxs_datatype out_type, libxs_datatype idx_type, libxs_meltw_opreduce_vecs_flags flags)
+{
   libxs_descriptor_blob blob;
   libxs_blasint idx_dtype_size = libxs_typesize(idx_type);
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init(&blob,
@@ -4365,7 +4440,11 @@ LIBXS_API libxs_meltwfunction_opreduce_vecs_idx libxs_dispatch_meltw_opreduce_ve
   return result.meltw_opreduce_vecs_idx;
 }
 
-LIBXS_API libxs_meltwfunction_scale libxs_dispatch_meltw_scale(libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo, libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_scal_flags flags, unsigned char param) {
+
+LIBXS_API libxs_meltwfunction_scale libxs_dispatch_meltw_scale(
+  libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_scal_flags flags, unsigned char param)
+{
   libxs_descriptor_blob blob;
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init(&blob,
     in_type, out_type, m, n, (ldi == NULL) ? m : *ldi, (ldo == NULL) ? m : *ldo,
@@ -4376,7 +4455,11 @@ LIBXS_API libxs_meltwfunction_scale libxs_dispatch_meltw_scale(libxs_blasint m, 
   return result.meltw_scale;
 }
 
-LIBXS_API libxs_meltwfunction_transform libxs_dispatch_meltw_transform(libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo, libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_transform_flags flags) {
+
+LIBXS_API libxs_meltwfunction_transform libxs_dispatch_meltw_transform(
+  libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  libxs_datatype in_type, libxs_datatype out_type, libxs_meltw_transform_flags flags)
+{
   libxs_descriptor_blob blob;
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init(&blob,
     in_type, out_type, m, n, (ldi == NULL) ? m : *ldi, (ldo == NULL) ? m : *ldo,
@@ -4386,6 +4469,7 @@ LIBXS_API libxs_meltwfunction_transform libxs_dispatch_meltw_transform(libxs_bla
 
   return result.meltw_transform;
 }
+
 
 LIBXS_API libxs_xtransfunction libxs_dispatch_trans(const libxs_trans_descriptor* descriptor)
 {
@@ -4681,7 +4765,9 @@ LIBXS_API void libxs_release_kernel(const void* kernel)
     libxs_kernel_xinfo* extra = NULL;
     void *const extra_address = &extra;
     LIBXS_INIT
-    if (EXIT_SUCCESS == libxs_get_malloc_xinfo(kernel, NULL/*size*/, NULL/*flags*/, (void**)extra_address) && NULL != extra) {
+    if (EXIT_SUCCESS == libxs_get_malloc_xinfo(
+      kernel, NULL/*size*/, NULL/*flags*/, (void**)extra_address) && NULL != extra)
+    {
       const unsigned int regindex = extra->registered;
       if ((LIBXS_CAPACITY_REGISTRY) <= regindex) {
         libxs_xfree(kernel, 0/*no check*/);
