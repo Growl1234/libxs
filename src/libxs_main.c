@@ -5429,7 +5429,7 @@ LIBXS_API void LIBXS_FSYMBOL(libxs_xregister)(void** regval, const void* key, co
   if (NULL != regval && NULL != key && NULL != keysize && NULL != valsize)
 #endif
   {
-    unsigned int hash;
+    unsigned int hash = 0;
     *regval = libxs_xregister(key, *keysize, *valsize, valinit, &hash);
     if (NULL != keyhash) {
       *keyhash = (hash & 0x7FFFFFFF/*sign-bit*/);
@@ -5454,7 +5454,7 @@ LIBXS_API void LIBXS_FSYMBOL(libxs_xdispatch)(void** regval, const void* key, co
   if (NULL != regval && NULL != key && NULL != keysize)
 #endif
   {
-    unsigned int hash;
+    unsigned int hash = 0;
     *regval = libxs_xdispatch(key, *keysize, &hash);
     if (NULL != keyhash) {
       *keyhash = (hash & 0x7FFFFFFF/*sign-bit*/);
