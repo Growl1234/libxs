@@ -474,10 +474,7 @@ LIBXS_API const char* libxs_stristr(const char* a, const char* b)
             break;
           }
         }
-        if ('\0' != *c) {
-          result = NULL;
-        }
-        else break;
+        if ('\0' == *c) break;
       }
     } while ('\0' != *a);
   }
