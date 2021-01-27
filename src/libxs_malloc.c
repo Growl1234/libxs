@@ -39,6 +39,7 @@
 #   include <sys/utsname.h>
 # endif
 # include <sys/types.h>
+# include <sys/stat.h>
 # include <unistd.h>
 # include <errno.h>
 # if defined(__MAP_ANONYMOUS)
@@ -50,7 +51,7 @@
 # else
 #  define LIBXS_MAP_ANONYMOUS 0x20
 # endif
-# if defined(MAP_SHARED) && 0
+# if defined(MAP_SHARED)
 #   define LIBXS_MAP_SHARED MAP_SHARED
 # else
 #   define LIBXS_MAP_SHARED 0
@@ -311,7 +312,7 @@ LIBXS_EXTERN_C typedef struct iJIT_Method_Load_V2 {
 # endif
 
 # define INTERNAL_XMALLOC(I, FALLBACK, ENVVAR, ENVDEF, MAPSTATE, MFLAGS, SIZE, BUFFER, REPTR) \
-  if ((I) == (FALLBACK)) { \
+  if (/*0 == (I) ||*/ (I) == (FALLBACK)) { \
     static const char* internal_xmalloc_env_ = NULL; \
     if (NULL == internal_xmalloc_env_) { \
       internal_xmalloc_env_ = getenv(ENVVAR); \
@@ -320,7 +321,7 @@ LIBXS_EXTERN_C typedef struct iJIT_Method_Load_V2 {
     (BUFFER) = internal_xmalloc_xmap(internal_xmalloc_env_, SIZE, MFLAGS, REPTR); \
     if (MAP_FAILED == (BUFFER)) { \
       IF_INTERNAL_XMALLOC_MAP32(internal_xmalloc_env_, MAPSTATE, MFLAGS, SIZE, BUFFER, REPTR) \
-        (FALLBACK) = (I) + 1; \
+        /*if ((I) == (FALLBACK))*/ (FALLBACK) = (I) + 1; \
     } \
   }
 
@@ -1633,12 +1634,16 @@ LIBXS_API_INLINE void* internal_xmalloc_xmap(const char* dir, size_t size, int f
     /* coverity[secure_temp] */
     i = mkstemp(filename);
     if (0 <= i) {
-      if (0 == unlink(filename) && 0 == ftruncate(i, size)) {
+      if (0 == unlink(filename) && 0 == ftruncate(i, size) /*&& 0 == chmod(filename, S_IRWXU)*/) {
         const int mflags = (flags | LIBXS_MAP_SHARED);
         void *const xmap = mmap(*rx, size, PROT_READ | PROT_EXEC, mflags, i, 0/*offset*/);
         if (MAP_FAILED != xmap) {
           LIBXS_ASSERT(NULL != xmap);
+#if defined(MAP_32BIT)
+          result = mmap(NULL, size, PROT_READ | PROT_WRITE, mflags & ~MAP_32BIT, i, 0/*offset*/);
+#else
           result = mmap(NULL, size, PROT_READ | PROT_WRITE, mflags, i, 0/*offset*/);
+#endif
           if (MAP_FAILED != result) {
             LIBXS_ASSERT(NULL != result);
             internal_xmalloc_mhint(xmap, size);
@@ -1952,12 +1957,17 @@ LIBXS_API int libxs_xmalloc(void** memory, size_t size, size_t alignment,
                 if (3 == fallback) { /* 4th try */
                   buffer = mmap(reloc, alloc_size, PROT_READ | PROT_WRITE | PROT_EXEC,
 # if defined(MAP_32BIT)
-                    MAP_PRIVATE | LIBXS_MAP_ANONYMOUS | (mflags & ~MAP_32BIT),
+                    MAP_PRIVATE | LIBXS_MAP_ANONYMOUS | (0 == map32 ? (mflags & ~MAP_32BIT) : mflags),
 # else
                     MAP_PRIVATE | LIBXS_MAP_ANONYMOUS | mflags,
 # endif
                     -1, 0/*offset*/);
-                  if (MAP_FAILED == buffer) fallback = 4;
+                  if (MAP_FAILED == buffer) {
+                    fallback = 4;
+# if defined(MAP_32BIT)
+                    map32 = 0;
+# endif
+                  }
                 }
                 if (4 == fallback && MAP_FAILED != buffer) { /* final */
                   LIBXS_ASSERT(fallback == LIBXS_MALLOC_FINAL + 1);
