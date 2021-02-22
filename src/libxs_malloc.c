@@ -848,7 +848,7 @@ LIBXS_API_INTERN void internal_scratch_malloc(void** memory, size_t size, size_t
 # endif
             *memory = LIBXS_ALIGN(head - alloc_size, align_size);
           }
-          else { /* fall-back to local memory allocation */
+          else { /* fallback to local memory allocation */
             const size_t incsize = req_size - LIBXS_MIN(pool_size, req_size);
             pool->instance.incsize = LIBXS_MAX(pool->instance.incsize, incsize);
 # if (0 != LIBXS_SYNC) && defined(LIBXS_MALLOC_SCRATCH_JOIN)
@@ -913,7 +913,7 @@ LIBXS_API_INTERN void internal_scratch_malloc(void** memory, size_t size, size_t
               LIBXS_ATOMIC_ADD_FETCH(&internal_malloc_scratch_nmallocs, 1, LIBXS_ATOMIC_RELAXED);
             }
           }
-          else { /* fall-back to local allocation */
+          else { /* fallback to local allocation */
             LIBXS_ATOMIC_SUB_FETCH(&pool->instance.counter, 1, LIBXS_ATOMIC_SEQ_CST);
             if (0 != libxs_verbosity /* library code is expected to be mute */
               && 1 == LIBXS_ATOMIC_ADD_FETCH(&error_once, 1, LIBXS_ATOMIC_RELAXED))
@@ -931,11 +931,11 @@ LIBXS_API_INTERN void internal_scratch_malloc(void** memory, size_t size, size_t
           }
         }
       }
-      else { /* fall-back to local memory allocation */
+      else { /* fallback to local memory allocation */
         local_size = size;
       }
     }
-    else { /* fall-back to local memory allocation */
+    else { /* fallback to local memory allocation */
       local_size = size;
     }
     if (0 != local_size)
@@ -948,7 +948,7 @@ LIBXS_API_INTERN void internal_scratch_malloc(void** memory, size_t size, size_t
         && /* library code is expected to be mute */0 != libxs_verbosity
         && 1 == LIBXS_ATOMIC_ADD_FETCH(&error_once, 1, LIBXS_ATOMIC_RELAXED))
       {
-        fprintf(stderr, "LIBXS ERROR: scratch memory fall-back failed!\n");
+        fprintf(stderr, "LIBXS ERROR: scratch memory fallback failed!\n");
         LIBXS_ASSERT(NULL == *memory);
       }
       if ((LIBXS_MALLOC_INTERNAL_CALLER) != caller) {
@@ -1342,7 +1342,7 @@ LIBXS_API_INTERN void libxs_malloc_init(void)
     }
 # endif /*defined(LIBXS_MALLOC_HOOK_IMALLOC)*/
   }
-  else { /* fall-back: potentially recursive */
+  else { /* fallback: potentially recursive */
 # if (defined(LIBXS_BUILD) && (1 < (LIBXS_BUILD)))
     libxs_malloc_fn.memalign.ptr = __libc_memalign;
     libxs_malloc_fn.malloc.ptr = __libc_malloc;
@@ -1721,7 +1721,7 @@ LIBXS_API_INTERN void* internal_xmalloc(void** ptr, internal_malloc_info_type** 
       result = internal_xrealloc(ptr, info, size, realloc, __real_free);
 #endif
     }
-    else { /* fall-back with regular allocation */
+    else { /* fallback with regular allocation */
       result = (NULL == context
         ? malloc_fn.function(size)
         : malloc_fn.ctx_form(size, context));
@@ -1835,7 +1835,7 @@ LIBXS_API int libxs_xmalloc(void** memory, size_t size, size_t alignment,
         if (NULL != buffer) {
           flags |= LIBXS_MALLOC_FLAG_MMAP; /* select the corresponding deallocation */
         }
-        else if (0 == (LIBXS_MALLOC_FLAG_MMAP & flags)) { /* fall-back allocation */
+        else if (0 == (LIBXS_MALLOC_FLAG_MMAP & flags)) { /* fallback allocation */
           buffer = internal_xmalloc(memory, &info, alloc_size, context, malloc_fn, free_fn);
         }
 #else /* !defined(_WIN32) */
@@ -1930,7 +1930,7 @@ LIBXS_API int libxs_xmalloc(void** memory, size_t size, size_t alignment,
 # endif
         }
         else { /* executable buffer requested */
-          static /*LIBXS_TLS*/ int entrypoint = -1; /* fall-back allocation method */
+          static /*LIBXS_TLS*/ int entrypoint = -1; /* fallback allocation method */
 # if defined(MAP_HUGETLB) && defined(LIBXS_MALLOC_HUGE_PAGES)
           LIBXS_ASSERT(0 == (MAP_HUGETLB & mflags));
 # endif
@@ -1984,7 +1984,7 @@ LIBXS_API int libxs_xmalloc(void** memory, size_t size, size_t alignment,
           flags |= LIBXS_MALLOC_FLAG_MMAP; /* select deallocation */
         }
         else { /* allocation failed */
-          if (0 == (LIBXS_MALLOC_FLAG_MMAP & flags)) { /* ultimate fall-back */
+          if (0 == (LIBXS_MALLOC_FLAG_MMAP & flags)) { /* ultimate fallback */
             buffer = (NULL != malloc_fn.function
               ? (NULL == context ? malloc_fn.function(alloc_size) : malloc_fn.ctx_form(alloc_size, context))
               : (NULL));
@@ -2261,7 +2261,7 @@ LIBXS_API_INTERN int libxs_malloc_attrib(void** memory, int flags, const char* n
 #endif
         }
 #if !defined(_WIN32)
-        else { /* malloc-based fall-back */
+        else { /* malloc-based fallback */
           int mprotect_result;
 # if !defined(LIBXS_MALLOC_CRC_OFF) && defined(LIBXS_VTUNE) /* check checksum */
 #   if defined(LIBXS_MALLOC_CRC_LIGHT)
