@@ -1481,6 +1481,7 @@ LIBXS_API void libxs_set_target_archid(int id)
     case LIBXS_X86_AVX512_KNM:
     case LIBXS_X86_AVX512_MIC:
     case LIBXS_X86_AVX512:
+    case LIBXS_X86_AVX512_VL256:
     case LIBXS_X86_AVX2:
     case LIBXS_X86_AVX:
     case LIBXS_X86_SSE42:
@@ -1551,6 +1552,9 @@ LIBXS_API void libxs_set_target_arch(const char* arch)
 #if defined(LIBXS_PLATFORM_X86)
     else if (0 < jit) {
       target_archid = LIBXS_X86_GENERIC + jit;
+    }
+    else if (arch == libxs_stristr(arch, "avx512_vl256")) {
+      target_archid = LIBXS_X86_AVX512_VL256;
     }
     else if (arch == libxs_stristr(arch, "spr") || arch == libxs_stristr(arch, "amx")) {
       target_archid = LIBXS_X86_AVX512_SPR;
