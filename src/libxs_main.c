@@ -326,7 +326,6 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void* __real_malloc(size_t size)
 #else
 # if defined(LIBXS_MALLOC_HOOK_DYNAMIC)
   if (NULL != libxs_malloc_fn.malloc.ptr) {
-    LIBXS_ASSERT(malloc != libxs_malloc_fn.malloc.ptr);
     result = libxs_malloc_fn.malloc.ptr(size);
   }
   else
@@ -349,7 +348,6 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void* __real_calloc(size_t num, size_t siz
   void* result;
 #if defined(LIBXS_MALLOC_HOOK_DYNAMIC)
   if (NULL != libxs_malloc_fn.calloc.ptr) {
-    LIBXS_ASSERT(calloc != libxs_malloc_fn.calloc.ptr);
     result = libxs_malloc_fn.calloc.ptr(num, size);
   }
   else
@@ -375,7 +373,6 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void* __real_realloc(void* ptr, size_t siz
   void* result;
 #if defined(LIBXS_MALLOC_HOOK_DYNAMIC)
   if (NULL != libxs_malloc_fn.realloc.ptr) {
-    LIBXS_ASSERT(realloc != libxs_malloc_fn.realloc.ptr);
     result = libxs_malloc_fn.realloc.ptr(ptr, size);
   }
   else
@@ -395,7 +392,6 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void __real_free(void* ptr)
   if (NULL != ptr) {
 #if defined(LIBXS_MALLOC_HOOK_DYNAMIC)
     if (NULL != libxs_malloc_fn.free.ptr) {
-      LIBXS_ASSERT(free != libxs_malloc_fn.free.ptr);
       libxs_malloc_fn.free.ptr(ptr);
     }
     else
@@ -653,7 +649,7 @@ LIBXS_API_INTERN void internal_dump(FILE* ostream, int urgent)
 #if defined(_WIN32)
             Sleep((DWORD)(1000 * seconds));
 #else
-            LIBXS_EXPECT(EXIT_SUCCESS, sleep(seconds));
+            LIBXS_EXPECT(EXIT_SUCCESS == sleep(seconds));
 #endif
           }
           else for(;;) LIBXS_SYNC_YIELD;
@@ -964,7 +960,7 @@ LIBXS_API_INTERN void internal_init(void)
         && (NULL == omp_proc_bind || 0 == *omp_proc_bind))
       {
         static char affinity[] = "OMP_PROC_BIND=TRUE";
-        LIBXS_EXPECT(EXIT_SUCCESS, LIBXS_PUTENV(affinity));
+        LIBXS_EXPECT(EXIT_SUCCESS == LIBXS_PUTENV(affinity));
         if (LIBXS_VERBOSITY_HIGH < libxs_verbosity || 0 > libxs_verbosity) { /* library code is expected to be mute */
           fprintf(stderr, "LIBXS: prepared to pin threads.\n");
         }
@@ -973,7 +969,7 @@ LIBXS_API_INTERN void internal_init(void)
 # if defined(LIBXS_INTERCEPT_DYNAMIC) && 1
     else if (NULL == getenv("I_MPI_SHM_HEAP")) {
       static char shmheap[] = "I_MPI_SHM_HEAP=1";
-      LIBXS_EXPECT(EXIT_SUCCESS, LIBXS_PUTENV(shmheap));
+      LIBXS_EXPECT(EXIT_SUCCESS == LIBXS_PUTENV(shmheap));
     }
 # endif
 #endif
@@ -1417,7 +1413,7 @@ LIBXS_API LIBXS_ATTRIBUTE_DTOR void libxs_finalize(void)
 #endif
                 nchar = LIBXS_SNPRINTF(name, sizeof(name), "%010u.user", id);
                 if (0 < nchar && (int)sizeof(name) > nchar) {
-                  LIBXS_EXPECT(EXIT_SUCCESS, libxs_dump("LIBXS-USER-DUMP", name, code.ptr_const, size, 0/*unique*/));
+                  LIBXS_EXPECT(EXIT_SUCCESS == libxs_dump("LIBXS-USER-DUMP", name, code.ptr_const, size, 0/*unique*/));
                 }
               }
 #if !defined(NDEBUG)
@@ -1488,7 +1484,8 @@ LIBXS_API void libxs_set_target_archid(int id)
     case LIBXS_X86_SSE3:
     case LIBXS_AARCH64_V81:
     case LIBXS_AARCH64_V82:
-    case LIBXS_AARCH64_A64FX: {
+    case LIBXS_AARCH64_A64FX:
+    case LIBXS_AARCH64_APPL_M1: {
       target_archid = id;
     } break;
     case LIBXS_TARGET_ARCH_GENERIC:
@@ -1610,6 +1607,10 @@ LIBXS_API void libxs_set_target_arch(const char* arch)
     else if (arch == libxs_stristr(arch, "a64fx"))
     {
       target_archid = LIBXS_AARCH64_A64FX;
+    }
+    else if (arch == libxs_stristr(arch, "appl_m1"))
+    {
+      target_archid = LIBXS_AARCH64_APPL_M1;
     }
 #endif
     else if (arch == libxs_stristr(arch, "generic")) {
@@ -3456,6 +3457,29 @@ LIBXS_API libxs_bmmfunction_reducebatch_offs libxs_bmmdispatch_reducebatch_offs(
   return result.bmro;
 }
 
+LIBXS_API libxs_bmmfunction_reducebatch_offs_meltwfused libxs_bmmdispatch_reducebatch_offs_meltwfused(libxs_blasint m, libxs_blasint n, libxs_blasint k,
+  const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
+  const float* alpha, const float* beta, const int* flags, const int* prefetch,
+  libxs_meltw_operation meltw_op, libxs_datatype meltw_dt, libxs_meltw_flags meltw_flags, unsigned char meltw_param, unsigned int meltw_ldx, unsigned int meltw_ldy, unsigned int meltw_ldz)
+{
+  const int gemm_flags = (NULL == flags ? (LIBXS_FLAGS | LIBXS_GEMM_FLAG_VNNI_A) : *flags);
+  libxs_descriptor_blob blob;
+  /*const*/ libxs_xmmfunction result;
+  /*const*/ libxs_gemm_descriptor *const desc = libxs_bgemm_descriptor_init(&blob, m, n, k,
+    NULL != lda ? *lda : (0 == (LIBXS_GEMM_FLAG_TRANS_A & gemm_flags) ? m : k),
+    NULL != ldb ? *ldb : (0 == (LIBXS_GEMM_FLAG_TRANS_B & gemm_flags) ? k : n),
+    NULL != ldc ? *ldc : m, NULL != alpha ? *alpha : LIBXS_ALPHA, NULL != beta ? *beta : LIBXS_BETA,
+    gemm_flags | LIBXS_GEMM_FLAG_BATCH_REDUCE_OFFSET, libxs_get_gemm_xprefetch(prefetch));
+  desc->meltw_datatype_aux = (unsigned char)meltw_dt;
+  desc->meltw_flags = (unsigned short)meltw_flags;
+  desc->meltw_operation = (unsigned char)meltw_op;
+  desc->meltw_param = (unsigned char)meltw_param;
+  desc->meltw_ldx = (unsigned int) meltw_ldx;
+  desc->meltw_ldy = (unsigned int) meltw_ldy;
+  desc->meltw_ldz = (unsigned int) meltw_ldz;
+  result = libxs_xmmdispatch(desc);
+  return result.bmro_meltwfused;
+}
 
 LIBXS_API libxs_wimmfunction_reducebatch_offs libxs_wimmdispatch_reducebatch_offs(libxs_blasint m, libxs_blasint n, libxs_blasint k,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
@@ -3624,6 +3648,30 @@ LIBXS_API libxs_bmmfunction_reducebatch_offs libxs_bmmdispatch_reducebatch_offs_
   return result.bmro;
 }
 
+LIBXS_API libxs_bmmfunction_reducebatch_offs_meltwfused libxs_bmmdispatch_reducebatch_offs_meltwfused_unroll(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint unroll_hint,
+  const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
+  const float* alpha, const float* beta, const int* flags, const int* prefetch,
+  libxs_meltw_operation meltw_op, libxs_datatype meltw_dt, libxs_meltw_flags meltw_flags, unsigned char meltw_param, unsigned int meltw_ldx, unsigned int meltw_ldy, unsigned int meltw_ldz)
+{
+  const int gemm_flags = (NULL == flags ? (LIBXS_FLAGS | LIBXS_GEMM_FLAG_VNNI_A) : *flags);
+  libxs_descriptor_blob blob;
+  /*const*/ libxs_xmmfunction result;
+  /*const*/ libxs_gemm_descriptor *const desc = libxs_bgemm_descriptor_init(&blob, m, n, k,
+    NULL != lda ? *lda : (0 == (LIBXS_GEMM_FLAG_TRANS_A & gemm_flags) ? m : k),
+    NULL != ldb ? *ldb : (0 == (LIBXS_GEMM_FLAG_TRANS_B & gemm_flags) ? k : n),
+    NULL != ldc ? *ldc : m, NULL != alpha ? *alpha : LIBXS_ALPHA, NULL != beta ? *beta : LIBXS_BETA,
+    gemm_flags | LIBXS_GEMM_FLAG_BATCH_REDUCE_OFFSET, libxs_get_gemm_xprefetch(prefetch));
+  desc->meltw_datatype_aux = (unsigned char)meltw_dt;
+  desc->meltw_flags = (unsigned short)meltw_flags;
+  desc->meltw_operation = (unsigned char)meltw_op;
+  desc->meltw_param = (unsigned char)meltw_param;
+  desc->meltw_ldx = (unsigned int) meltw_ldx;
+  desc->meltw_ldy = (unsigned int) meltw_ldy;
+  desc->meltw_ldz = (unsigned int) meltw_ldz;
+  desc->c3 = (unsigned char)(((unroll_hint < 255) && (unroll_hint > 0)) ? unroll_hint : 0);
+  result = libxs_xmmdispatch(desc);
+  return result.bmro_meltwfused;
+}
 
 LIBXS_API libxs_wimmfunction_reducebatch_offs libxs_wimmdispatch_reducebatch_offs_unroll(libxs_blasint m, libxs_blasint n, libxs_blasint k, libxs_blasint unroll_hint,
   const libxs_blasint* lda, const libxs_blasint* ldb, const libxs_blasint* ldc,
