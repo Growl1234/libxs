@@ -286,7 +286,8 @@ LIBXS_API const char* libxs_cpuid_name(int id)
     case LIBXS_X86_SSE3: {
       target_arch = "sse3";
     } break;
-    case LIBXS_AARCH64_V81: {
+    case LIBXS_AARCH64_V81:
+    case LIBXS_AARCH64_V82: {
       target_arch = "aarch64";
     } break;
     case LIBXS_AARCH64_A64FX: {
@@ -298,7 +299,9 @@ LIBXS_API const char* libxs_cpuid_name(int id)
     case LIBXS_TARGET_ARCH_GENERIC: {
       target_arch = "generic";
     } break;
-    default: if (LIBXS_X86_GENERIC <= id) {
+    default: if (LIBXS_X86_GENERIC <= id
+              && LIBXS_X86_ALLFEAT >= id)
+    {
       target_arch = "x86_64";
     }
     else {
