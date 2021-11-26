@@ -432,7 +432,7 @@ LIBXS_API unsigned int libxs_hash(const void* data, unsigned int size, unsigned 
 }
 
 
-LIBXS_API unsigned long long libxs_hash_string(const char* string)
+LIBXS_API unsigned long long libxs_hash_string(const char string[])
 {
   unsigned long long result;
   const size_t length = (NULL != string ? strlen(string) : 0);
@@ -457,7 +457,7 @@ LIBXS_API unsigned long long libxs_hash_string(const char* string)
 }
 
 
-LIBXS_API const char* libxs_stristr(const char* a, const char* b)
+LIBXS_API const char* libxs_stristr(const char a[], const char b[])
 {
   const char* result = NULL;
   if (NULL != a && NULL != b && '\0' != *a && '\0' != *b) {
