@@ -4401,8 +4401,9 @@ LIBXS_API libxs_xmeltwfunction libxs_dispatch_meltw(const libxs_meltw_descriptor
 }
 
 LIBXS_API libxs_meltwfunction_opreduce_vecs_idx libxs_dispatch_meltw_opreduce_vecs_idx(
-  libxs_blasint m, const libxs_blasint* ldi, const libxs_blasint* ldo,
-  libxs_datatype in_type, libxs_datatype out_type, libxs_datatype idx_type, libxs_meltw_opreduce_vecs_flags flags, unsigned short bcast_param)
+  const libxs_blasint m, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  const libxs_datatype in_type, const libxs_datatype out_type, const libxs_datatype idx_type,
+  const libxs_meltw_opreduce_vecs_flags flags, const unsigned short bcast_param )
 {
   libxs_descriptor_blob blob;
   libxs_blasint idx_dtype_size = libxs_typesize(idx_type);
@@ -4420,8 +4421,9 @@ LIBXS_API libxs_meltwfunction_opreduce_vecs_idx libxs_dispatch_meltw_opreduce_ve
 
 
 LIBXS_API libxs_meltwfunction_unary libxs_dispatch_meltw_unary(
-  libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo,
-  libxs_datatype in_type, libxs_datatype compute_type, libxs_datatype out_type, libxs_meltw_unary_flags flags, libxs_meltw_unary_type type)
+  const libxs_blasint m, const libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldo,
+  const libxs_datatype in_type, const libxs_datatype compute_type, const libxs_datatype out_type,
+  const libxs_meltw_unary_flags flags, const libxs_meltw_unary_type type )
 {
   libxs_descriptor_blob blob;
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init2(&blob,
@@ -4435,8 +4437,9 @@ LIBXS_API libxs_meltwfunction_unary libxs_dispatch_meltw_unary(
 
 
 LIBXS_API libxs_meltwfunction_binary libxs_dispatch_meltw_binary(
-  libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldi2, const libxs_blasint* ldo,
-  libxs_datatype in_type, libxs_datatype compute_type, libxs_datatype out_type, libxs_meltw_binary_flags flags, libxs_meltw_binary_type type)
+  const libxs_blasint m, const libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldi2, const libxs_blasint* ldo,
+  const libxs_datatype in_type, const libxs_datatype compute_type, const libxs_datatype out_type,
+  const libxs_meltw_binary_flags flags, const libxs_meltw_binary_type type)
 {
   libxs_descriptor_blob blob;
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init2(&blob,
@@ -4450,8 +4453,9 @@ LIBXS_API libxs_meltwfunction_binary libxs_dispatch_meltw_binary(
 
 
 LIBXS_API libxs_meltwfunction_ternary libxs_dispatch_meltw_ternary(
-  libxs_blasint m, libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldi2, const libxs_blasint* ldi3, const libxs_blasint* ldo,
-  libxs_datatype in_type, libxs_datatype compute_type, libxs_datatype out_type, libxs_meltw_ternary_flags flags, libxs_meltw_ternary_type type)
+  const libxs_blasint m, const libxs_blasint n, const libxs_blasint* ldi, const libxs_blasint* ldi2, const libxs_blasint* ldi3, const libxs_blasint* ldo,
+  const libxs_datatype in_type, const libxs_datatype compute_type, const libxs_datatype out_type,
+  const libxs_meltw_ternary_flags flags, const libxs_meltw_ternary_type type)
 {
   libxs_descriptor_blob blob;
   const libxs_meltw_descriptor *const desc = libxs_meltw_descriptor_init2(&blob,
