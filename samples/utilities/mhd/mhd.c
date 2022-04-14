@@ -58,6 +58,11 @@
  */
 int main(int argc, char* argv[])
 {
+#if 1
+  LIBXS_UNUSED( argc );
+  LIBXS_UNUSED( argv );
+  return EXIT_SUCCESS;
+#else
   const char* filename_in = (1 < argc ? argv[1] : "mhd_in.mhd");
   const size_t nrepeat = (size_t)LIBXS_MAX(2 < argc ? strtoul(argv[2], 0, 10) : 1, 1);
   const int kw = LIBXS_MAX(3 < argc ? atoi(argv[3]) : 32, 1);
@@ -406,5 +411,6 @@ int main(int argc, char* argv[])
 
   assert(EXIT_SUCCESS == result);
   return result;
+#endif
 }
 
