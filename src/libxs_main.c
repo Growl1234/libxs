@@ -2999,7 +2999,10 @@ LIBXS_API libxs_xmmfunction libxs_xmmdispatch(const libxs_gemm_descriptor* descr
 #if !defined(LIBXS_UNPACKED) /* CCE/Classic */
   LIBXS_ASSERT((sizeof(*descriptor) + sizeof(libxs_descriptor_kind)) <= (LIBXS_DESCRIPTOR_MAXSIZE));
 #endif
-  if (NULL != descriptor) {
+#if !defined(NDEBUG)
+  if (NULL != descriptor)
+#endif
+  {
     libxs_descriptor wrap /*= { 0 }*/;
 #if defined(LIBXS_UNPACKED) /* CCE/Classic */
     LIBXS_MEMSET127(&wrap, 0, sizeof(*descriptor));
@@ -3023,9 +3026,11 @@ LIBXS_API libxs_xmmfunction libxs_xmmdispatch(const libxs_gemm_descriptor* descr
     }
 #endif
   }
+#if !defined(NDEBUG)
   else { /* quietly accept NULL-descriptor */
     result.xmm = NULL;
   }
+#endif
   return result;
 }
 
