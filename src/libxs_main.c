@@ -1717,7 +1717,8 @@ LIBXS_API unsigned char libxs_typesize(libxs_datatype datatype)
 LIBXS_API int libxs_dvalue(libxs_datatype datatype, const void* value, double* dvalue)
 {
   int result = EXIT_SUCCESS;
-  if (NULL != value && NULL != dvalue) {
+  LIBXS_ASSERT(NULL != dvalue);
+  if (NULL != value) {
     switch ((int)datatype) {
       case LIBXS_DATATYPE_F64: *dvalue =         (*(const double   *)value); break;
       case LIBXS_DATATYPE_F32: *dvalue = (double)(*(const float    *)value); break;
@@ -1727,9 +1728,6 @@ LIBXS_API int libxs_dvalue(libxs_datatype datatype, const void* value, double* d
       case LIBXS_DATATYPE_I8:  *dvalue = (double)(*(const char     *)value); break;
       default: result = EXIT_FAILURE;
     }
-  }
-  else {
-    result = EXIT_FAILURE;
   }
   return result;
 }
@@ -3057,7 +3055,7 @@ LIBXS_API libxs_gemmfunction libxs_dispatch_gemm_v2( const libxs_gemm_shape gemm
     return NULL;
   }
 
-  /* use the XGEMM ABI which utiliztes an arg struct */
+  /* use the XGEMM ABI which utilizes an arg struct */
   l_gemm_flags |= LIBXS_GEMM_FLAG_USE_XGEMM_ABI;
 
   /* build descriptor */
@@ -3086,7 +3084,7 @@ LIBXS_API libxs_gemmfunction libxs_dispatch_brgemm_v2( const libxs_gemm_shape ge
     return NULL;
   }
 
-  /* use the XGEMM ABI which utiliztes an arg struct */
+  /* use the XGEMM ABI which utilizes an arg struct */
   l_gemm_flags |= LIBXS_GEMM_FLAG_USE_XGEMM_ABI;
 
   /* set BRGEMM option */
@@ -3139,7 +3137,7 @@ LIBXS_API libxs_gemmfunction_ext libxs_dispatch_brgemm_ext_v2( const libxs_gemm_
     return NULL;
   }
 
-  /* use the XGEMM ABI which utiliztes an arg struct */
+  /* use the XGEMM ABI which utilizes an arg struct */
   l_gemm_flags |= LIBXS_GEMM_FLAG_USE_XGEMM_EXT_ABI;
 
   /* set BRGEMM option */
@@ -3468,7 +3466,7 @@ LIBXS_API libxs_gemmfunction libxs_create_packed_spgemm_csr_v2(
     return NULL;
   }
 
-  /* use the XGEMM ABI which utiliztes an arg struct */
+  /* use the XGEMM ABI which utilizes an arg struct */
   l_gemm_flags |= LIBXS_GEMM_FLAG_USE_XGEMM_ABI;
 
   /* build descriptor */
@@ -3511,7 +3509,7 @@ LIBXS_API libxs_gemmfunction libxs_create_packed_spgemm_csc_v2(
     return NULL;
   }
 
-  /* use the XGEMM ABI which utiliztes an arg struct */
+  /* use the XGEMM ABI which utilizes an arg struct */
   l_gemm_flags |= LIBXS_GEMM_FLAG_USE_XGEMM_ABI;
 
   /* build descriptor */
@@ -3550,7 +3548,7 @@ LIBXS_API libxs_gemmfunction libxs_create_packed_gemm_ac_rm_v2( const libxs_gemm
     return NULL;
   }
 
-  /* use the XGEMM ABI which utiliztes an arg struct */
+  /* use the XGEMM ABI which utilizes an arg struct */
   l_gemm_flags |= LIBXS_GEMM_FLAG_USE_XGEMM_ABI;
 
   /* build descriptor */
@@ -3586,7 +3584,7 @@ LIBXS_API libxs_gemmfunction libxs_create_packed_gemm_bc_rm_v2( const libxs_gemm
     return NULL;
   }
 
-  /* use the XGEMM ABI which utiliztes an arg struct */
+  /* use the XGEMM ABI which utilizes an arg struct */
   l_gemm_flags |= LIBXS_GEMM_FLAG_USE_XGEMM_ABI;
 
   /* build descriptor */
@@ -3626,7 +3624,7 @@ LIBXS_API libxs_gemmfunction libxs_create_spgemm_csr_areg_v2( const libxs_gemm_s
     return NULL;
   }
 
-  /* use the XGEMM ABI which utiliztes an arg struct */
+  /* use the XGEMM ABI which utilizes an arg struct */
   l_gemm_flags |= LIBXS_GEMM_FLAG_USE_XGEMM_ABI;
 
   /* build descriptor */
