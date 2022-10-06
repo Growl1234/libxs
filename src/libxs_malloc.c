@@ -2297,6 +2297,11 @@ LIBXS_API_INTERN int libxs_malloc_attrib(void** memory, int flags, const char* n
 #   endif
 # endif   /* treat memory protection errors as soft error; ignore return value */
           munmap(buffer, alloc_size);
+# if defined(__APPLE__) && defined(__arm64__)
+          if (0 == (LIBXS_MALLOC_FLAG_W & flags)) {
+            pthread_jit_write_protect_np(1/*true*/);
+          }
+# endif
 #endif
         }
 #if !defined(_WIN32)
@@ -2310,6 +2315,11 @@ LIBXS_API_INTERN int libxs_malloc_attrib(void** memory, int flags, const char* n
             (unsigned int)(((char*)&info->hash) - ((char*)info))));
 #   endif
 # endif   /* treat memory protection errors as soft error; ignore return value */
+# if defined(__APPLE__) && defined(__arm64__)
+          if (0 == (LIBXS_MALLOC_FLAG_W & flags)) {
+            pthread_jit_write_protect_np(1/*true*/);
+          }
+# else
           xattrib_result = libxs_malloc_xattrib(buffer, flags, alloc_size);
           if (EXIT_SUCCESS != xattrib_result) {
             if (0 != libxs_se) { /* hard-error in case of SELinux */
@@ -2326,11 +2336,7 @@ LIBXS_API_INTERN int libxs_malloc_attrib(void** memory, int flags, const char* n
               fprintf(stderr, "LIBXS WARNING: read-only request for JIT-buffer failed!\n");
             }
           }
-        }
-#endif
-#if defined(__APPLE__) && defined(__arm64__)
-        if (0 == (LIBXS_MALLOC_FLAG_W & flags)) {
-          pthread_jit_write_protect_np(1/*true*/);
+# endif
         }
 #endif
       }
