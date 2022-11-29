@@ -233,6 +233,7 @@ LIBXS_API libxs_mhd_elemtype libxs_mhd_typeinfo(const char elemname[])
   return result;
 }
 
+
 LIBXS_API_INLINE int internal_mhd_readline(char buffer[], char split, size_t* key_end, size_t* value_begin)
 {
   int result = EXIT_SUCCESS;
@@ -255,7 +256,6 @@ LIBXS_API_INLINE int internal_mhd_readline(char buffer[], char split, size_t* ke
   else {
     result = EXIT_FAILURE;
   }
-
   return result;
 }
 
@@ -458,7 +458,6 @@ LIBXS_API int libxs_mhd_read_header(const char header_filename[], size_t filenam
   else {
     result = EXIT_FAILURE;
   }
-
   return result;
 }
 
@@ -536,7 +535,6 @@ LIBXS_API int libxs_mhd_element_comparison(
   else {
     result = EXIT_FAILURE;
   }
-
   return result;
 }
 
@@ -585,7 +583,10 @@ LIBXS_API_INLINE int internal_mhd_minmax(const void* data, size_t nelements,
 }
 
 
-LIBXS_API_INLINE int internal_mhd_read(FILE* file, void* data, const size_t size[], const size_t pitch[],
+LIBXS_API_INTERN int internal_mhd_read(FILE* /*file*/, void* /*data*/, const size_t /*size*/[], const size_t /*pitch*/[],
+  size_t /*ndims*/, size_t /*ncomponents*/, libxs_mhd_elemtype /*type_stored*/, libxs_mhd_elemtype /*type_data*/,
+  size_t /*typesize*/, libxs_mhd_element_handler /*handle_element*/, int /*minmax*/, void* /*minval*/, void* /*maxval*/);
+LIBXS_API_INTERN int internal_mhd_read(FILE* file, void* data, const size_t size[], const size_t pitch[],
   size_t ndims, size_t ncomponents, libxs_mhd_elemtype type_stored, libxs_mhd_elemtype type_data,
   size_t typesize, libxs_mhd_element_handler handle_element, int minmax, void* minval, void* maxval)
 {
@@ -674,7 +675,6 @@ LIBXS_API_INLINE int internal_mhd_read(FILE* file, void* data, const size_t size
   else {
     result = EXIT_FAILURE;
   }
-
   return result;
 }
 
@@ -765,12 +765,14 @@ LIBXS_API int libxs_mhd_read(const char filename[],
   else {
     result = EXIT_FAILURE;
   }
-
   return result;
 }
 
 
-LIBXS_API_INLINE int internal_mhd_write(FILE* file, const void* data, const size_t size[], const size_t pitch[],
+LIBXS_API_INTERN int internal_mhd_write(FILE* /*file*/, const void* /*data*/, const size_t /*size*/[], const size_t /*pitch*/[],
+  size_t /*ndims*/, size_t /*ncomponents*/, libxs_mhd_elemtype /*type_data*/, libxs_mhd_elemtype /*type*/,
+  size_t /*typesize_data*/, size_t /*typesize*/, int /*minmax*/, void* /*minval*/, void* /*maxval*/);
+LIBXS_API_INTERN int internal_mhd_write(FILE* file, const void* data, const size_t size[], const size_t pitch[],
   size_t ndims, size_t ncomponents, libxs_mhd_elemtype type_data, libxs_mhd_elemtype type,
   size_t typesize_data, size_t typesize, int minmax, void* minval, void* maxval)
 {
@@ -851,7 +853,6 @@ LIBXS_API_INLINE int internal_mhd_write(FILE* file, const void* data, const size
       result = EXIT_FAILURE;
     }
   }
-
   return result;
 }
 
@@ -947,7 +948,5 @@ LIBXS_API int libxs_mhd_write(const char filename[],
   else {
     result = EXIT_FAILURE;
   }
-
   return result;
 }
-
