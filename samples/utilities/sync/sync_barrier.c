@@ -9,7 +9,6 @@
 ******************************************************************************/
 #include <libxs_timer.h>
 #include <libxs_sync.h>
-#include <math.h>
 
 #if defined(_OPENMP)
 # include <omp.h>

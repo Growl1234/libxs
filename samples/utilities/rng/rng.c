@@ -8,7 +8,6 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 #include <libxs.h>
-#include <stdio.h>
 #include <time.h>
 
 
