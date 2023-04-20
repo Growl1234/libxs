@@ -9,7 +9,6 @@
 ******************************************************************************/
 #include <libxs_cpuid.h>
 #include <libxs_generator.h>
-#include <libxs_mem.h>
 #include <libxs_sync.h>
 #include "libxs_main.h"
 #include <ctype.h>
@@ -94,7 +93,7 @@ LIBXS_API_INTERN int libxs_cpuid_x86_amx_enable(void)
   /* setup failed */
   if (0 != status || !(bitmask & (1<<18))) return -1;
 
-  /* setup successfull */
+  /* setup successful */
   return 0;
 }
 # else
