@@ -23,7 +23,6 @@
 # endif
 #endif
 #if defined(_WIN32)
-# include <windows.h>
 # include <malloc.h>
 # include <intrin.h>
 #else
@@ -37,7 +36,6 @@
 # endif
 # include <sys/types.h>
 # include <sys/stat.h>
-# include <unistd.h>
 # include <errno.h>
 # if defined(__MAP_ANONYMOUS)
 #   define LIBXS_MAP_ANONYMOUS __MAP_ANONYMOUS
