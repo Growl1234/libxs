@@ -160,7 +160,7 @@ int main(int argc, char* argv[])
       const libxs_gemm_shape gemm_shape = libxs_create_gemm_shape(
         rnd[i].m, rnd[i].n, rnd[i].k, rnd[i].m/*lda*/, rnd[i].k/*ldb*/, rnd[i].m/*ldc*/,
         LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64);
-      libxs_dispatch_gemm_v2(gemm_shape, flags, prefetch);
+      libxs_dispatch_gemm(gemm_shape, flags, prefetch);
 #endif
     }
     tcgen = libxs_timer_ncycles(start, libxs_timer_tick());
@@ -182,7 +182,7 @@ int main(int argc, char* argv[])
             const libxs_gemm_shape gemm_shape = libxs_create_gemm_shape(
               rnd[j].m, rnd[j].n, rnd[j].k, rnd[j].m/*lda*/, rnd[j].k/*ldb*/, rnd[j].m/*ldc*/,
               LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64);
-            libxs_dispatch_gemm_v2(gemm_shape, flags, prefetch);
+            libxs_dispatch_gemm(gemm_shape, flags, prefetch);
 #endif
           }
 #         pragma omp master
@@ -203,7 +203,7 @@ int main(int argc, char* argv[])
           const libxs_gemm_shape gemm_shape = libxs_create_gemm_shape(
             rnd[j].m, rnd[j].n, rnd[j].k, rnd[j].m/*lda*/, rnd[j].k/*ldb*/, rnd[j].m/*ldc*/,
             LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64);
-          libxs_dispatch_gemm_v2(gemm_shape, flags, prefetch);
+          libxs_dispatch_gemm(gemm_shape, flags, prefetch);
 #endif
         }
         tdsp1 += libxs_timer_ncycles(start, libxs_timer_tick());
@@ -228,7 +228,7 @@ int main(int argc, char* argv[])
           const libxs_gemm_shape gemm_shape = libxs_create_gemm_shape(
             rnd[i].m, rnd[i].n, rnd[i].k, rnd[i].m/*lda*/, rnd[i].k/*ldb*/, rnd[i].m/*ldc*/,
             LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64);
-          libxs_dispatch_gemm_v2(gemm_shape, flags, prefetch);
+          libxs_dispatch_gemm(gemm_shape, flags, prefetch);
 #endif
         }
 #       pragma omp master
@@ -249,7 +249,7 @@ int main(int argc, char* argv[])
         const libxs_gemm_shape gemm_shape = libxs_create_gemm_shape(
           rnd[i].m, rnd[i].n, rnd[i].k, rnd[i].m/*lda*/, rnd[i].k/*ldb*/, rnd[i].m/*ldc*/,
           LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64);
-        libxs_dispatch_gemm_v2(gemm_shape, flags, prefetch);
+        libxs_dispatch_gemm(gemm_shape, flags, prefetch);
 #endif
       }
       tcgen += libxs_timer_ncycles(start, libxs_timer_tick());
@@ -272,7 +272,7 @@ int main(int argc, char* argv[])
             const libxs_gemm_shape gemm_shape = libxs_create_gemm_shape(
               rnd[j].m, rnd[j].n, rnd[j].k, rnd[j].m/*lda*/, rnd[j].k/*ldb*/, rnd[j].m/*ldc*/,
               LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64);
-            libxs_dispatch_gemm_v2(gemm_shape, flags, prefetch);
+            libxs_dispatch_gemm(gemm_shape, flags, prefetch);
 #endif
           }
 #         pragma omp master
@@ -293,7 +293,7 @@ int main(int argc, char* argv[])
           const libxs_gemm_shape gemm_shape = libxs_create_gemm_shape(
             rnd[j].m, rnd[j].n, rnd[j].k, rnd[j].m/*lda*/, rnd[j].k/*ldb*/, rnd[j].m/*ldc*/,
             LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64);
-          libxs_dispatch_gemm_v2(gemm_shape, flags, prefetch);
+          libxs_dispatch_gemm(gemm_shape, flags, prefetch);
 #endif
         }
         tdsp0 += libxs_timer_ncycles(start, libxs_timer_tick());
@@ -319,7 +319,7 @@ int main(int argc, char* argv[])
         const libxs_gemm_shape gemm_shape = libxs_create_gemm_shape(
           rnd[j].m, rnd[j].n, rnd[j].k, rnd[j].m/*lda*/, rnd[j].k/*ldb*/, rnd[j].m/*ldc*/,
           LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64, LIBXS_DATATYPE_F64);
-        const libxs_gemmfunction kernel = libxs_dispatch_gemm_v2(gemm_shape, flags, prefetch);
+        const libxs_gemmfunction kernel = libxs_dispatch_gemm(gemm_shape, flags, prefetch);
 # endif
         if (NULL != kernel) {
 # if defined(MKLJIT)
