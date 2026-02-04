@@ -42,7 +42,7 @@
   (0 >= (DENREF) ? (FALLBACK) : ((NOMINATOR) / LIBXS_MATDIFF_DIV_DEN(DENREF)))
 
 
-LIBXS_API int libxs_matdiff(libxs_matdiff_info* info,
+LIBXS_API int libxs_matdiff(libxs_matdiff_info_t* info,
   libxs_datatype datatype, libxs_matdiff_int m, libxs_matdiff_int n, const void* ref, const void* tst,
   const libxs_matdiff_int* ldref, const libxs_matdiff_int* ldtst)
 {
@@ -194,7 +194,7 @@ LIBXS_API int libxs_matdiff(libxs_matdiff_info* info,
           const int envi = atoi(env), reshape = (1 < envi || -1 > envi);
           size_t shape[2] = { 0 }, size[2] = { 0 };
           char filename[256] = "";
-          libxs_mhd_element_handler_info info_dst;
+          libxs_mhd_element_handler_info_t info_dst;
           LIBXS_MEMZERO127(&info_dst);
           if (0 == reshape) {
             shape[0] = (size_t)mm; shape[1] = (size_t)nn;
@@ -287,7 +287,7 @@ LIBXS_API int libxs_matdiff(libxs_matdiff_info* info,
 }
 
 
-LIBXS_API double libxs_matdiff_epsilon(const libxs_matdiff_info* input)
+LIBXS_API double libxs_matdiff_epsilon(const libxs_matdiff_info_t* input)
 {
   double result;
   if (NULL != input) {
@@ -354,7 +354,7 @@ LIBXS_API double libxs_matdiff_epsilon(const libxs_matdiff_info* input)
 }
 
 
-LIBXS_API void libxs_matdiff_reduce(libxs_matdiff_info* output, const libxs_matdiff_info* input)
+LIBXS_API void libxs_matdiff_reduce(libxs_matdiff_info_t* output, const libxs_matdiff_info_t* input)
 {
   if (NULL != output && NULL != input) {
     /* epsilon is determined before updating the output */
@@ -413,7 +413,7 @@ LIBXS_API void libxs_matdiff_reduce(libxs_matdiff_info* output, const libxs_matd
 }
 
 
-LIBXS_API void libxs_matdiff_clear(libxs_matdiff_info* info)
+LIBXS_API void libxs_matdiff_clear(libxs_matdiff_info_t* info)
 {
   if (NULL != info) {
     union { int raw; float value; } inf = { 0 };
@@ -668,10 +668,10 @@ LIBXS_API double libxs_kahan_sum(double value, double* accumulator, double* comp
 #if defined(LIBXS_BUILD) && (!defined(LIBXS_NOFORTRAN) || defined(__clang_analyzer__))
 
 /* implementation provided for Fortran 77 compatibility */
-LIBXS_API void LIBXS_FSYMBOL(libxs_matdiff)(libxs_matdiff_info* /*info*/,
+LIBXS_API void LIBXS_FSYMBOL(libxs_matdiff)(libxs_matdiff_info_t* /*info*/,
   const int* /*datatype*/, const libxs_matdiff_int* /*m*/, const libxs_matdiff_int* /*n*/, const void* /*ref*/, const void* /*tst*/,
   const libxs_matdiff_int* /*ldref*/, const libxs_matdiff_int* /*ldtst*/);
-LIBXS_API void LIBXS_FSYMBOL(libxs_matdiff)(libxs_matdiff_info* info,
+LIBXS_API void LIBXS_FSYMBOL(libxs_matdiff)(libxs_matdiff_info_t* info,
   const int* datatype, const libxs_matdiff_int* m, const libxs_matdiff_int* n, const void* ref, const void* tst,
   const libxs_matdiff_int* ldref, const libxs_matdiff_int* ldtst)
 {
@@ -686,16 +686,16 @@ LIBXS_API void LIBXS_FSYMBOL(libxs_matdiff)(libxs_matdiff_info* info,
 
 
 /* implementation provided for Fortran 77 compatibility */
-LIBXS_API void LIBXS_FSYMBOL(libxs_matdiff_reduce)(libxs_matdiff_info* /*output*/, const libxs_matdiff_info* /*input*/);
-LIBXS_API void LIBXS_FSYMBOL(libxs_matdiff_reduce)(libxs_matdiff_info* output, const libxs_matdiff_info* input)
+LIBXS_API void LIBXS_FSYMBOL(libxs_matdiff_reduce)(libxs_matdiff_info_t* /*output*/, const libxs_matdiff_info_t* /*input*/);
+LIBXS_API void LIBXS_FSYMBOL(libxs_matdiff_reduce)(libxs_matdiff_info_t* output, const libxs_matdiff_info_t* input)
 {
   libxs_matdiff_reduce(output, input);
 }
 
 
 /* implementation provided for Fortran 77 compatibility */
-LIBXS_API void LIBXS_FSYMBOL(libxs_matdiff_clear)(libxs_matdiff_info* /*info*/);
-LIBXS_API void LIBXS_FSYMBOL(libxs_matdiff_clear)(libxs_matdiff_info* info)
+LIBXS_API void LIBXS_FSYMBOL(libxs_matdiff_clear)(libxs_matdiff_info_t* /*info*/);
+LIBXS_API void LIBXS_FSYMBOL(libxs_matdiff_clear)(libxs_matdiff_info_t* info)
 {
   libxs_matdiff_clear(info);
 }
