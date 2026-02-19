@@ -358,6 +358,7 @@ LIBXS_API double libxs_matdiff_epsilon(const libxs_matdiff_info_t* input)
 LIBXS_API void libxs_matdiff_reduce(libxs_matdiff_info_t* output, const libxs_matdiff_info_t* input)
 {
   if (NULL != output && NULL != input) {
+    ++output->r; /* increment reduction counter */
     /* epsilon is determined before updating the output */
     if (libxs_matdiff_epsilon(output) <= libxs_matdiff_epsilon(input)) {
       const double ta = LIBXS_ABS(input->v_tst), ra = LIBXS_ABS(input->v_ref);
@@ -368,7 +369,7 @@ LIBXS_API void libxs_matdiff_reduce(libxs_matdiff_info_t* output, const libxs_ma
       output->rsq = input->rsq;
       output->m = input->m;
       output->n = input->n;
-      output->i = input->r;
+      output->i = output->r;
     }
     else if (output->linf_abs <= input->linf_abs
           || output->linf_rel <= input->linf_rel)
@@ -380,7 +381,7 @@ LIBXS_API void libxs_matdiff_reduce(libxs_matdiff_info_t* output, const libxs_ma
       output->rsq = input->rsq;
       output->m = input->m;
       output->n = input->n;
-      output->i = input->r;
+      output->i = output->r;
     }
     if (output->norm1_abs <= input->norm1_abs) {
       output->norm1_abs = input->norm1_abs;
@@ -405,8 +406,6 @@ LIBXS_API void libxs_matdiff_reduce(libxs_matdiff_info_t* output, const libxs_ma
     output->avg_tst = 0.5 * (output->avg_tst + input->avg_tst);
     output->l1_ref += input->l1_ref;
     output->l1_tst += input->l1_tst;
-    if (0 != output->r || 0 == input->r) ++output->r;
-    else output->r = input->r;
   }
   else {
     libxs_matdiff_clear(output);
