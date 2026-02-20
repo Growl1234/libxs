@@ -86,6 +86,7 @@ int main(int argc, char* argv[])
       LIBXS_DATATYPE_U8
     };
     libxs_mhd_element_handler_info_t mhdinfo = { 0 };
+    libxs_mhd_info_t mhd_write_info = { 2, 1, LIBXS_DATATYPE_UNKNOWN, 0 };
     const size_t nelemtypes = sizeof(elemtypes) / sizeof(*elemtypes);
     const size_t nchannels = 1, mhdsize = n / nchannels;
     size_t shape[2], y = 0, typesize = 0;
@@ -107,6 +108,7 @@ int main(int argc, char* argv[])
       if (elsize == typesize) {
         mhdinfo.hint = LIBXS_MHD_ELEMENT_CONVERSION_MODULUS;
         mhdinfo.type = LIBXS_DATATYPE_U8;
+        mhd_write_info.type = elemtypes[j];
         elemtype = (int)j;
         break;
       }
@@ -133,9 +135,9 @@ int main(int argc, char* argv[])
           }
           if (0 == random) {
             if (0 <= elemtype) {
-              result = libxs_mhd_write("shuffle_rng.mhd", NULL/*offset*/, shape, NULL/*pitch*/, 2,
-                nchannels, elemtypes[elemtype], data2, &mhdinfo, NULL/*handler*/, NULL/*header_size*/,
-                NULL/*extension_header*/, NULL/*extension*/, 0/*extension_size*/);
+              result = libxs_mhd_write("shuffle_rng.mhd", NULL/*offset*/, shape, NULL/*pitch*/,
+                &mhd_write_info, data2, &mhdinfo, NULL/*handler*/, NULL/*extension_header*/,
+                NULL/*extension*/, 0/*extension_size*/);
             }
           }
           else n1 = uint_bsort_asc(data2, elsize, n);
@@ -159,9 +161,9 @@ int main(int argc, char* argv[])
           }
           if (0 == random) {
             if (0 <= elemtype) {
-              result = libxs_mhd_write("shuffle_ds1.mhd", NULL/*offset*/, shape, NULL/*pitch*/, 2,
-                nchannels, elemtypes[elemtype], data2, &mhdinfo, NULL/*handler*/, NULL/*header_size*/,
-                NULL/*extension_header*/, NULL/*extension*/, 0/*extension_size*/);
+              result = libxs_mhd_write("shuffle_ds1.mhd", NULL/*offset*/, shape, NULL/*pitch*/,
+                &mhd_write_info, data2, &mhdinfo, NULL/*handler*/, NULL/*extension_header*/,
+                NULL/*extension*/, 0/*extension_size*/);
             }
           }
           else n2 = uint_bsort_asc(data2, elsize, n);
@@ -184,9 +186,9 @@ int main(int argc, char* argv[])
           }
           if (0 == random) {
             if (0 <= elemtype) {
-              result = libxs_mhd_write("shuffle_ds2.mhd", NULL/*offset*/, shape, NULL/*pitch*/, 2,
-                nchannels, elemtypes[elemtype], data2, &mhdinfo, NULL/*handler*/, NULL/*header_size*/,
-                NULL/*extension_header*/, NULL/*extension*/, 0/*extension_size*/);
+              result = libxs_mhd_write("shuffle_ds2.mhd", NULL/*offset*/, shape, NULL/*pitch*/,
+                &mhd_write_info, data2, &mhdinfo, NULL/*handler*/, NULL/*extension_header*/,
+                NULL/*extension*/, 0/*extension_size*/);
             }
           }
           else n3 = uint_bsort_asc(data2, elsize, n);
