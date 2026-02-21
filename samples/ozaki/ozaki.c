@@ -135,18 +135,14 @@ LIBXS_API_INLINE void rescale_digits(int8_t dst[NSLICES], const int8_t src[NSLIC
     const int sh = delta;
     for (i = 0; i < NSLICES; ++i) {
       const int32_t v = ((int32_t)src[i]) << sh;
-      if (v > INT8_MAX) dst[i] = INT8_MAX;
-      else if (v < INT8_MIN) dst[i] = INT8_MIN;
-      else dst[i] = (int8_t)v;
+      dst[i] = (int8_t)LIBXS_CLMP(v, INT8_MIN, INT8_MAX);
     }
   }
   else {
     const int sh = -delta;
     for (i = 0; i < NSLICES; ++i) {
       const int32_t v = ((int32_t)src[i]) >> sh;
-      if (v > INT8_MAX) dst[i] = INT8_MAX;
-      else if (v < INT8_MIN) dst[i] = INT8_MIN;
-      else dst[i] = (int8_t)v;
+      dst[i] = (int8_t)LIBXS_CLMP(v, INT8_MIN, INT8_MAX);
     }
   }
 }
@@ -162,7 +158,7 @@ LIBXS_API_INLINE double reconstruct_from_digits(const int8_t digits[NSLICES],
     const int16_t digit = (int16_t)digits[slice];
     if (0 != digit) {
       int sh = exp_base + slice_low_bit[slice];
-      if (sh > 60) sh = 60; else if (sh < -60) sh = -60;
+      sh = LIBXS_CLMP(sh, -60, 60);
       if (sh >= 0) {
         recon += (double)digit * (double)(1ULL << sh);
       }
@@ -438,7 +434,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
                   if (0 != dot) {
                     int sh = (int)expa_row[mi] + (int)expb_col[nj] - 2150 + low_bit_sum;
                     double contrib = sym_alpha * (double)dot;
-                    if (sh > 60) sh = 60; else if (sh < -60) sh = -60;
+                    sh = LIBXS_CLMP(sh, -60, 60);
                     if (sh >= 0) {
                       contrib *= (double)(1ULL << sh);
                     }
@@ -465,7 +461,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
                   if (0 != dot) {
                     int sh = (int)expa_row[mi] + (int)expb_col[nj] - 2150 + low_bit_sum;
                     double contrib = (*alpha) * (double)dot;
-                    if (sh > 60) sh = 60; else if (sh < -60) sh = -60;
+                    sh = LIBXS_CLMP(sh, -60, 60);
                     if (sh >= 0) {
                       contrib *= (double)(1ULL << sh);
                     }
