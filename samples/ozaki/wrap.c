@@ -20,7 +20,7 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_REAL(const char* transa, const c
   if (NULL == gemm_original) {
     union { const void* pfin; gemm_function_t pfout; } wrapper;
     static volatile LIBXS_ATOMIC_LOCKTYPE lock = 0;
-    LIBXS_ATOMIC_ACQUIRE(&lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_SEQ_CST);
+    LIBXS_ATOMIC_ACQUIRE(&lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
     if (NULL == gemm_original) {
       dlerror(); /* clear an eventual error status */
       wrapper.pfin = dlsym(LIBXS_RTLD_NEXT, LIBXS_STRINGIFY(GEMM));
@@ -28,7 +28,7 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_REAL(const char* transa, const c
         gemm_original = wrapper.pfout;
       }
     }
-    LIBXS_ATOMIC_RELEASE(&lock, LIBXS_ATOMIC_SEQ_CST);
+    LIBXS_ATOMIC_RELEASE(&lock, LIBXS_ATOMIC_LOCKORDER);
   }
 
   if (NULL != gemm_original) {
