@@ -71,7 +71,7 @@
 #endif
 
 
-LIBXS_API void libxs_cpuid_model(char model[], size_t* model_size)
+LIBXS_API_INTERN void libxs_cpuid_model(char model[], size_t* model_size)
 {
   if (NULL != model_size && 0 != *model_size) {
     if (NULL != model) {
@@ -116,7 +116,7 @@ LIBXS_API void libxs_cpuid_model(char model[], size_t* model_size)
 }
 
 
-LIBXS_API int libxs_cpuid_x86(libxs_cpuid_info_t* info)
+LIBXS_API_INTERN int libxs_cpuid_x86(libxs_cpuid_info_t* info)
 {
   static int result = LIBXS_TARGET_ARCH_UNKNOWN;
 #if defined(LIBXS_PLATFORM_X86)
@@ -231,7 +231,6 @@ LIBXS_API int libxs_cpuid_x86(libxs_cpuid_info_t* info)
         LIBXS_ASSERT(0 != model_size || '\0' == *info->model);
         LIBXS_CPUID_X86(0x80000007, 0/*ecx*/, eax, ebx, ecx, edx);
         info->constant_tsc = LIBXS_CPUID_CHECK(edx, 0x00000100);
-        info->has_context = has_context;
       }
     }
   }
