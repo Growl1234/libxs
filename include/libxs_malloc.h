@@ -13,7 +13,7 @@
 #include "libxs_sync.h"
 
 
-/** Information about pooled memory. */
+/** Lock-type used for this domain. */
 typedef LIBXS_LOCK_TYPE(LIBXS_LOCK) libxs_malloc_lock_t;
 
 /**

@@ -137,7 +137,7 @@ int main(int argc, char* argv[])
   for (i = 0; i < size_total; ++i) {
     bench_value_t* v = (bench_value_t*)libxs_registry_set(
       registry, &keys[i], sizeof(bench_key_t),
-      sizeof(bench_value_t), &vals[i]);
+      &vals[i], sizeof(bench_value_t));
     if (NULL == v) { result = EXIT_FAILURE; goto cleanup; }
   }
   cycles = libxs_timer_ncycles(start, libxs_timer_tick());
@@ -238,7 +238,7 @@ int main(int argc, char* argv[])
       for (i = 0; i < size_total; ++i) {
         bench_value_t* v = (bench_value_t*)libxs_registry_set(
           registry, &keys[i], sizeof(bench_key_t),
-          sizeof(bench_value_t), &vals[i]);
+          &vals[i], sizeof(bench_value_t));
         if (NULL == v) result = EXIT_FAILURE;
       }
     }
@@ -274,7 +274,7 @@ int main(int argc, char* argv[])
     { const int half = size_total / 2;
       for (i = 0; i < half; ++i) {
         if (NULL == libxs_registry_set(registry, &keys[i], sizeof(bench_key_t),
-          sizeof(bench_value_t), &vals[i]))
+          &vals[i], sizeof(bench_value_t)))
         { result = EXIT_FAILURE; goto cleanup; }
       }
       start = libxs_timer_tick();
@@ -286,7 +286,7 @@ int main(int argc, char* argv[])
           for (w = half; w < size_total; ++w) {
             bench_value_t* v = (bench_value_t*)libxs_registry_set(
               registry, &keys[w], sizeof(bench_key_t),
-              sizeof(bench_value_t), &vals[w]);
+              &vals[w], sizeof(bench_value_t));
             if (NULL == v) result = EXIT_FAILURE;
           }
         }
