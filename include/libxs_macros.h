@@ -29,8 +29,8 @@
  * platform is desired, but only fallback code is
  * present at best.
  */
-#if !defined(LIBXS_PLATFORM_FORCE) && 0
-# define LIBXS_PLATFORM_FORCE
+#if !defined(__PLATFORM_FORCE) && 0
+# define __PLATFORM_FORCE
 #endif
 
 #if !defined(LIBXS_PLATFORM_X86) && ( \
@@ -52,7 +52,7 @@
 #if !defined(LIBXS_PLATFORM_SUPPORTED)
 # if defined(LIBXS_PLATFORM_X86) || defined(LIBXS_PLATFORM_AARCH64) || defined(LIBXS_PLATFORM_RV64)
 #   define LIBXS_PLATFORM_SUPPORTED
-# elif !defined(LIBXS_PLATFORM_FORCE)
+# elif !defined(__PLATFORM_FORCE)
 #   error LIBXS requires X86_64, AArch64, RV64 or compatible CPUs!
 # endif
 #endif
@@ -67,7 +67,7 @@
       (defined(__powerpc64))
 #   define LIBXS_UNLIMITED 0xFFFFFFFFFFFFFFFF
 #   define LIBXS_BITS 64
-# elif !defined(LIBXS_PLATFORM_FORCE) && defined(NDEBUG)
+# elif !defined(__PLATFORM_FORCE) && defined(NDEBUG)
 #   error LIBXS is only supported on 64-bit platforms!
 # else /* JIT-generated code (among other issues) is not supported! */
 #   define LIBXS_UNLIMITED 0xFFFFFFFF
@@ -501,16 +501,16 @@
 #   define LIBXS_RESTRICT
 # endif
 #endif /*LIBXS_RESTRICT*/
-#if !defined(LIBXS_OPENMP_SIMD)
+#if !defined(__OPENMP_SIMD)
 # if defined(LIBXS_INTEL_COMPILER) && (1500 <= LIBXS_INTEL_COMPILER)
-#   define LIBXS_OPENMP_SIMD
+#   define __OPENMP_SIMD
 # elif defined(_OPENMP) && (201307/*v4.0*/ <= _OPENMP)
-#   define LIBXS_OPENMP_SIMD
+#   define __OPENMP_SIMD
 # endif
 #endif
 
 #if !defined(LIBXS_INTEL_COMPILER) || (LIBXS_INTEL_COMPILER < 9900)
-# if defined(LIBXS_OPENMP_SIMD)
+# if defined(__OPENMP_SIMD)
 #   define LIBXS_PRAGMA_SIMD_REDUCTION(EXPRESSION) LIBXS_PRAGMA(omp simd reduction(EXPRESSION))
 #   define LIBXS_PRAGMA_SIMD_COLLAPSE(N) LIBXS_PRAGMA(omp simd collapse(N))
 #   define LIBXS_PRAGMA_SIMD_PRIVATE(...) LIBXS_PRAGMA(omp simd private(__VA_ARGS__))
@@ -541,7 +541,7 @@
 # define LIBXS_PRAGMA_VALIGNED_VAR(A) LIBXS_ASSUME_ALIGNED(A, LIBXS_ALIGNMENT);
 /*# define LIBXS_UNUSED(VARIABLE) LIBXS_PRAGMA(unused(VARIABLE))*/
 #else
-# if defined(LIBXS_OPENMP_SIMD) && (201811/*v5.0*/ <= _OPENMP) && !defined(__PGLLVM__)
+# if defined(__OPENMP_SIMD) && (201811/*v5.0*/ <= _OPENMP) && !defined(__PGLLVM__)
 #   define LIBXS_PRAGMA_NONTEMPORAL(...) LIBXS_PRAGMA(omp simd nontemporal(__VA_ARGS__))
 # else
 #   define LIBXS_PRAGMA_NONTEMPORAL(...)
