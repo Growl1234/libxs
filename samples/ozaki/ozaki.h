@@ -8,6 +8,7 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 #include "gemm.h"
+#include <libxs_malloc.h>
 #include <libxs_mhd.h>
 #include <libxs_sync.h>
 
