@@ -31,6 +31,9 @@
 #if !defined(BLOCK_K)
 # define BLOCK_K 16
 #endif
+#if !defined(BATCH_K)
+# define BATCH_K 1
+#endif
 
 #if !defined(MAX_NSLICES)
 # if GEMM_IS_DOUBLE
@@ -326,9 +329,9 @@ LIBXS_API_INLINE void gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
   else fclose(file);
 
   if (EXIT_SUCCESS == result) {
-    /* avoid repeated dumps */
-    gemm_eps = libxs_matdiff_epsilon(&gemm_diff);
-    gemm_rsq = gemm_diff.rsq;
+  /* avoid repeated dumps */
+  gemm_eps = libxs_matdiff_epsilon(&gemm_diff);
+  gemm_rsq = gemm_diff.rsq;
   }
   else if (0 != gemm_verbose) {
     fprintf(stderr, "ERROR: dumping A and B matrix failed!\n");
