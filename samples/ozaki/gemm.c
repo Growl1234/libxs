@@ -184,6 +184,7 @@ int main(int argc, char* argv[])
     }
   }
 
+  libxs_finalize();
   free(a);
   free(b);
   free(c);
