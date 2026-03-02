@@ -168,15 +168,66 @@ extern LIBXS_TLS int gemm_dump_inhibit;
 LIBXS_APIVAR_PRIVATE(double gemm_eps);
 LIBXS_APIVAR_PRIVATE(double gemm_rsq);
 
-/* ================================================================ */
-/* Shared int8 dot-product infrastructure (VNNI + scalar fallback)  */
-/* ================================================================ */
+/* Shared int8 dot-product infrastructure (VNNI + scalar fallback).
+ * VPDPBSSD: true signed×signed int8 dot product (AVX-VNNI-INT8).
+ * Only one VPDPBSSD is needed per vector — no bias correction —
+ * halving throughput demand versus the VPDPBUSD workaround below.
+ * Guard: __AVXVNNIINT8__ is defined by GCC >= 12 / Clang >= 16
+ * when -mavxvnniint8 (or implied by -march=graniterapids-d, etc.)
+ * is active. The LIBXS_INTRINSICS_AVX512 guard is still needed for
+ * the underlying immintrin.h include and multi-versioning support. */
+#if defined(LIBXS_INTRINSICS_AVX512) && defined(__AVXVNNIINT8__)
 
-/* For signed int8 dot products: VPDPBUSD treats the first operand as
- * unsigned by XOR with 0x80 (+128), then subtract 128*sum(b[]) to
- * compensate.  AVX-512 VNNI exposes VPDPBUSD at all three register
- * widths (XMM/128, YMM/256, ZMM/512); we select the narrowest that
- * covers BLOCK_K bytes, falling back to scalar for other sizes. */
+# if 16 == BLOCK_K /* 128-bit: one __m128i */
+
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
+int32_t ozaki_dot_i8_bssd(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
+{
+  const __m128i va = _mm_loadu_si128((const __m128i*)a);
+  const __m128i vb = _mm_loadu_si128((const __m128i*)b);
+  __m128i dp = _mm_dpbssd_epi32(_mm_setzero_si128(), va, vb);
+  dp = _mm_hadd_epi32(dp, dp);
+  dp = _mm_hadd_epi32(dp, dp);
+  return _mm_extract_epi32(dp, 0);
+}
+
+# elif 32 == BLOCK_K /* 256-bit: one __m256i */
+
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
+int32_t ozaki_dot_i8_bssd(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
+{
+  const __m256i va = _mm256_loadu_si256((const __m256i*)a);
+  const __m256i vb = _mm256_loadu_si256((const __m256i*)b);
+  __m256i dp = _mm256_dpbssd_epi32(_mm256_setzero_si256(), va, vb);
+  { const __m128i hi = _mm256_extracti128_si256(dp, 1);
+    __m128i lo = _mm256_castsi256_si128(dp);
+    lo = _mm_add_epi32(lo, hi);
+    lo = _mm_hadd_epi32(lo, lo);
+    lo = _mm_hadd_epi32(lo, lo);
+    return _mm_extract_epi32(lo, 0);
+  }
+}
+
+# elif 64 == BLOCK_K /* 512-bit: one __m512i */
+
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
+int32_t ozaki_dot_i8_bssd(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
+{
+  const __m512i va = _mm512_loadu_si512((const __m512i*)a);
+  const __m512i vb = _mm512_loadu_si512((const __m512i*)b);
+  __m512i dp = _mm512_dpbssd_epi32(_mm512_setzero_si512(), va, vb);
+  return _mm512_reduce_add_epi32(dp);
+}
+
+# endif /* BLOCK_K width selection */
+#endif /* LIBXS_INTRINSICS_AVX512 && __AVXVNNIINT8__ */
+
+
+/* VPDPBUSD: unsigned×signed int8 dot product with bias correction.
+ * XOR with 0x80 converts signed a[] to unsigned, then VPDPBUSD
+ * computes u8×s8 dot; subtracting 128*sum(b[]) compensates the
+ * bias.  Requires two VPDPBUSD calls per vector (one for dp, one
+ * for the b-sum used in compensation). */
 #if defined(LIBXS_INTRINSICS_AVX512)
 
 # if 16 == BLOCK_K /* 128-bit: one __m128i */
@@ -250,12 +301,17 @@ LIBXS_API_INLINE int32_t ozaki_dot_i8_sw(const int8_t a[BLOCK_K], const int8_t b
 }
 
 
-/* Function pointer type for int8 dot product dispatch. */
+/* Function pointer type for int8 dot product dispatch.
+ * Dispatch priority: VPDPBSSD (signed×signed, 1 instruction) >
+ * VPDPBUSD+bias (unsigned×signed, 2 instructions) > scalar. */
 typedef int32_t (*ozaki_dot_i8_fn)(const int8_t[BLOCK_K], const int8_t[BLOCK_K]);
 
 #if defined(LIBXS_INTRINSICS_AVX512) && \
     (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
-# if (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH) /* VNNI guaranteed */
+# if defined(__AVXVNNIINT8__)
+    /* VPDPBSSD available at compile time: prefer it unconditionally */
+#   define ozaki_dot_i8_init() ozaki_dot_i8_bssd
+# elif (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH) /* VNNI guaranteed */
 #   define ozaki_dot_i8_init() ozaki_dot_i8_vnni
 # else /* runtime dispatch */
 #   define ozaki_dot_i8_init() \
@@ -268,16 +324,22 @@ typedef int32_t (*ozaki_dot_i8_fn)(const int8_t[BLOCK_K], const int8_t[BLOCK_K])
 
 /** Extract IEEE-754 biased exponent and full mantissa (with implicit bit)
  *  into uint64_t.  Returns sign (+1 or -1); for zero/subnormal/NaN/Inf
- *  sets exp_biased=0 and mantissa=0, returns +1. */
+ *  sets exp_biased=0 and mantissa=0, returns +1.
+ *
+ *  Special-value detection is done entirely via the raw exponent field
+ *  after bit-extraction, avoiding the previous float cast which was
+ *  incorrect for double precision (finite doubles > ~3.4e38 overflow
+ *  to float-Inf, producing a false positive). */
 LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value,
   int16_t* exp_biased, uint64_t* mantissa)
 {
-  const union { uint32_t raw; float value; } inf = { 0x7F800000U };
+  uint64_t bits;
+  uint64_t frac;
+  uint16_t exp_raw;
   int sign;
 
-  if (value == (GEMM_REAL_TYPE)0 || LIBXS_ISNAN(value)
-    || (float)value == inf.value || (float)value == -inf.value)
-  {
+  /* Fast zero check avoids bit extraction for the common sparse case */
+  if (value == (GEMM_REAL_TYPE)0) {
     *exp_biased = 0; *mantissa = 0;
     return 1;
   }
@@ -285,23 +347,23 @@ LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value,
   sign = (value < (GEMM_REAL_TYPE)0) ? -1 : 1;
   if (value < (GEMM_REAL_TYPE)0) value = -value;
 
-  { uint64_t bits;
 #if GEMM_IS_DOUBLE
-    { union { double d; uint64_t u; } cvt; cvt.d = value; bits = cvt.u; }
+  { union { double d; uint64_t u; } cvt; cvt.d = value; bits = cvt.u; }
 #else
-    { union { float f; uint32_t u; } cvt; cvt.f = value; bits = cvt.u; }
+  { union { float f; uint32_t u; } cvt; cvt.f = value; bits = cvt.u; }
 #endif
-    { const uint64_t frac = bits & ((1ULL << OZ_MANT_BITS) - 1ULL);
-      const uint16_t exp_raw = (uint16_t)(
-        (bits >> OZ_MANT_BITS) & OZ_EXP_MASK);
-      if (0 == exp_raw) { /* subnormal treated as zero */
-        *exp_biased = 0; *mantissa = 0;
-        return sign;
-      }
-      *exp_biased = (int16_t)exp_raw;
-      *mantissa = (1ULL << OZ_MANT_BITS) | frac;
-    }
+  exp_raw = (uint16_t)((bits >> OZ_MANT_BITS) & OZ_EXP_MASK);
+  frac = bits & ((1ULL << OZ_MANT_BITS) - 1ULL);
+
+  /* exp_raw == 0: subnormal (treated as zero).
+   * exp_raw == OZ_EXP_MASK: Inf (frac==0) or NaN (frac!=0). */
+  if (0 == exp_raw || exp_raw == (uint16_t)OZ_EXP_MASK) {
+    *exp_biased = 0; *mantissa = 0;
+    return (0 == exp_raw) ? sign : 1;
   }
+
+  *exp_biased = (int16_t)exp_raw;
+  *mantissa = (1ULL << OZ_MANT_BITS) | frac;
   return sign;
 }
 

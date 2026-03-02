@@ -88,6 +88,20 @@ LIBXS_API_INLINE unsigned int oz2_mod(uint32_t x, int pidx)
 }
 
 
+/** Bounded modular reduction for mixed-radix digits: v mod oz2_moduli[pidx].
+ *  v must be a Garner digit, i.e. v < max(moduli) = 128.
+ *  Since min(moduli) = 61, floor(127/61) = 2, so at most two conditional
+ *  subtracts suffice — avoiding the Barrett multiply in the O(nprimes^2)
+ *  Garner inner loop. */
+LIBXS_API_INLINE unsigned int oz2_mod_digit(unsigned int v, int pidx)
+{
+  const unsigned int p = oz2_moduli[pidx];
+  if (v >= p) v -= p;
+  if (v >= p) v -= p;
+  return v;
+}
+
+
 /** Fast 64-bit modular reduction: x mod oz2_moduli[pidx] (table-indexed wrapper). */
 LIBXS_API_INLINE unsigned int oz2_mod64(uint64_t x, int pidx)
 {
@@ -113,6 +127,126 @@ LIBXS_API_INLINE void oz2_reduce(uint64_t mantissa, int delta,
     residues[i] = (uint8_t)oz2_mod64(mantissa, i);
   }
 }
+
+
+/* AVX-512 vectorized Barrett reduction for batched Garner.
+ * Processes OZ2_BATCH (= 16) uint32 values in a single __m512i. */
+#if defined(LIBXS_INTRINSICS_AVX512) && 16 == OZ2_BATCH
+
+/** Unsigned 32-bit high-multiply: floor(a * b / 2^32) for 16 lanes.
+ *  Emulates the missing _mm512_mulhi_epu32 via even/odd _mm512_mul_epu32. */
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
+__m512i oz2_mulhi_epu32(__m512i a, __m512i b)
+{
+  const __m512i even = _mm512_srli_epi64(_mm512_mul_epu32(a, b), 32);
+  const __m512i a_odd = _mm512_srli_epi64(a, 32);
+  const __m512i b_odd = _mm512_srli_epi64(b, 32);
+  const __m512i odd = _mm512_srli_epi64(_mm512_mul_epu32(a_odd, b_odd), 32);
+  return _mm512_or_si512(even, _mm512_slli_epi64(odd, 32));
+}
+
+/** Barrett reduction on 16 uint32 values: x mod p.
+ *  rcp = floor(2^32 / p).  Computes q = floor(x * rcp / 2^32),
+ *  r = x - q*p, then one conditional correction if r >= p. */
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
+__m512i oz2_mod_vec(__m512i x, unsigned int p, unsigned int rcp)
+{
+  const __m512i vp = _mm512_set1_epi32((int)p);
+  const __m512i vrcp = _mm512_set1_epi32((int)rcp);
+  const __m512i q = oz2_mulhi_epu32(x, vrcp);
+  __m512i r = _mm512_sub_epi32(x, _mm512_mullo_epi32(q, vp));
+  { const __mmask16 ge = _mm512_cmpge_epu32_mask(r, vp);
+    r = _mm512_mask_sub_epi32(r, ge, r, vp);
+  }
+  return r;
+}
+
+/** AVX-512 batched CRT reconstruction via Garner's algorithm.
+ *  Uses transposed internal layout vt[prime][batch] for contiguous
+ *  SIMD access, bounded subtracts for digit reduction, and vectorized
+ *  Barrett for the Garner product reduction. */
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
+void oz2_reconstruct_batch_avx512(
+  unsigned int batch_res[OZ2_BATCH][OZ2_NPRIMES_MAX],
+  unsigned int garner_inv[OZ2_NPRIMES_MAX][OZ2_NPRIMES_MAX],
+  int nprimes, int bsz, double result[OZ2_BATCH])
+{
+  /* Transposed layout: vt[prime_idx][OZ2_BATCH] for contiguous SIMD loads */
+  unsigned int vt[OZ2_NPRIMES_MAX][OZ2_BATCH];
+  __m512i u_vec;
+  int i, j, bi;
+  nprimes = LIBXS_CLMP(nprimes, 1, OZ2_NPRIMES_MAX);
+
+  /* Garner's algorithm: SIMD across batch elements */
+  LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
+  for (i = 0; i < nprimes; ++i) {
+    const unsigned int pi = oz2_moduli[i];
+    const unsigned int rcp_i = oz2_rcp[i];
+    const __m512i vpi = _mm512_set1_epi32((int)pi);
+
+    /* Load residues for prime i across batch elements (strided gather) */
+    { unsigned int tmp[OZ2_BATCH];
+      for (bi = 0; bi < bsz; ++bi) tmp[bi] = batch_res[bi][i];
+      for (bi = bsz; bi < OZ2_BATCH; ++bi) tmp[bi] = 0;
+      u_vec = _mm512_loadu_si512((__m512i*)tmp);
+    }
+
+    for (j = 0; j < i; ++j) {
+      const unsigned int inv_ji = garner_inv[j][i];
+      const __m512i vinv = _mm512_set1_epi32((int)inv_ji);
+
+      /* Load vt[j] — contiguous */
+      __m512i vj_vec = _mm512_loadu_si512((__m512i*)vt[j]);
+
+      /* Bounded subtract: reduce vt[j][bi] mod pi.
+       * Digits < max(moduli) = 128, min(moduli) = 61: two subtracts suffice. */
+      { __mmask16 ge = _mm512_cmpge_epu32_mask(vj_vec, vpi);
+        vj_vec = _mm512_mask_sub_epi32(vj_vec, ge, vj_vec, vpi);
+        ge = _mm512_cmpge_epu32_mask(vj_vec, vpi);
+        vj_vec = _mm512_mask_sub_epi32(vj_vec, ge, vj_vec, vpi);
+      }
+
+      /* diff = (u >= vj) ? (u - vj) : (pi + u - vj) */
+      { const __mmask16 ge = _mm512_cmpge_epu32_mask(u_vec, vj_vec);
+        const __m512i d_pos = _mm512_sub_epi32(u_vec, vj_vec);
+        const __m512i d_neg = _mm512_sub_epi32(
+          _mm512_add_epi32(vpi, u_vec), vj_vec);
+        __m512i diff_vec = _mm512_mask_blend_epi32(ge, d_neg, d_pos);
+
+        /* u = (diff * inv_ji) mod pi via vectorized Barrett */
+        diff_vec = _mm512_mullo_epi32(diff_vec, vinv);
+        u_vec = oz2_mod_vec(diff_vec, pi, rcp_i);
+      }
+    }
+
+    /* Store u into vt[i] */
+    _mm512_storeu_si512((__m512i*)vt[i], u_vec);
+  }
+
+  /* Sign detection, complement, Horner — per element (transpose back) */
+  { unsigned int v_scalar[OZ2_BATCH][OZ2_NPRIMES_MAX];
+    unsigned int tmp[OZ2_BATCH];
+    for (i = 0; i < nprimes; ++i) {
+      _mm512_storeu_si512((__m512i*)tmp,
+        _mm512_loadu_si512((__m512i*)vt[i]));
+      for (bi = 0; bi < bsz; ++bi) v_scalar[bi][i] = tmp[bi];
+    }
+    for (bi = 0; bi < bsz; ++bi) {
+      const int is_negative = (v_scalar[bi][nprimes - 1]
+        >= (unsigned int)(oz2_moduli[nprimes - 1] + 1) / 2) ? 1 : 0;
+      double r;
+      if (0 != is_negative) {
+        for (i = 0; i < nprimes; ++i) {
+          v_scalar[bi][i] = oz2_moduli[i] - 1 - v_scalar[bi][i];
+        }
+      }
+      r = oz2_horner_grouped(v_scalar[bi], nprimes);
+      result[bi] = (0 != is_negative) ? -(r + 1.0) : r;
+    }
+  }
+}
+
+#endif /* LIBXS_INTRINSICS_AVX512 && OZ2_BATCH == 16 */
 
 
 /** Preprocess rows of A for one (ib, kb) tile.
@@ -294,11 +428,14 @@ LIBXS_API_INLINE double oz2_reconstruct(
     unsigned int u = residues[i];
     const unsigned int pi = oz2_moduli[i];
     for (j = 0; j < i; ++j) {
-      /* v[j] < m_j; reduce v[j] into [0, m_i) before subtraction.
-       * Moduli range (<= 128) means v[j] may exceed m_i: use Barrett. */
-      const unsigned int vj = oz2_mod(v[j], i);
-      const unsigned int diff = (u >= vj) ? (u - vj) : (pi + u - vj);
-      u = oz2_mod(diff * garner_inv[j][i], i);
+      /* v[j] < m_j <= 128; reduce into [0, m_i) via bounded subtract
+       * (avoids Barrett multiply; floor(127/61) = 2 so two subtracts suffice). */
+      unsigned int vj = v[j];
+      if (vj >= pi) vj -= pi;
+      if (vj >= pi) vj -= pi;
+      { const unsigned int diff = (u >= vj) ? (u - vj) : (pi + u - vj);
+        u = oz2_mod(diff * garner_inv[j][i], i);
+      }
     }
     v[i] = u;
   }
@@ -348,9 +485,13 @@ LIBXS_API_INLINE uint64_t oz2_reconstruct_mantissa(
     unsigned int u = (unsigned int)residues[i];
     const unsigned int pi = oz2_moduli[i];
     for (j = 0; j < i; ++j) {
-      const unsigned int vj = oz2_mod(v[j], i);
-      const unsigned int diff = (u >= vj) ? (u - vj) : (pi + u - vj);
-      u = oz2_mod(diff * garner_inv[j][i], i);
+      /* Bounded subtract: v[j] < m_j <= 128, two subtracts suffice. */
+      unsigned int vj = v[j];
+      if (vj >= pi) vj -= pi;
+      if (vj >= pi) vj -= pi;
+      { const unsigned int diff = (u >= vj) ? (u - vj) : (pi + u - vj);
+        u = oz2_mod(diff * garner_inv[j][i], i);
+      }
     }
     v[i] = u;
   }
@@ -387,9 +528,13 @@ LIBXS_API_INLINE void oz2_reconstruct_batch(
     for (j = 0; j < i; ++j) {
       const unsigned int inv_ji = garner_inv[j][i];
       for (bi = 0; bi < bsz; ++bi) {
-        const unsigned int vj = oz2_mod(v[bi][j], i);
-        const unsigned int diff = (u[bi] >= vj) ? (u[bi] - vj) : (pi + u[bi] - vj);
-        u[bi] = oz2_mod(diff * inv_ji, i);
+        /* Bounded subtract: v[bi][j] < m_j <= 128, two subtracts suffice. */
+        unsigned int vj = v[bi][j];
+        if (vj >= pi) vj -= pi;
+        if (vj >= pi) vj -= pi;
+        { const unsigned int diff = (u[bi] >= vj) ? (u[bi] - vj) : (pi + u[bi] - vj);
+          u[bi] = oz2_mod(diff * inv_ji, i);
+        }
       }
     }
 
@@ -659,8 +804,24 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb,
                 }
 
                 /* Batched CRT reconstruction -> signed doubles */
+#if defined(LIBXS_INTRINSICS_AVX512) && 16 == OZ2_BATCH
+# if (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH)
+                oz2_reconstruct_batch_avx512(batch_res, garner_inv,
+                  nprimes, (int)bsz, batch_val);
+# else
+                if (LIBXS_X86_AVX512 <= ozaki_target_arch) {
+                  oz2_reconstruct_batch_avx512(batch_res, garner_inv,
+                    nprimes, (int)bsz, batch_val);
+                } else
+                {
+                  oz2_reconstruct_batch(batch_res, garner_inv, nprimes,
+                    (int)bsz, batch_val);
+                }
+# endif
+#else
                 oz2_reconstruct_batch(batch_res, garner_inv, nprimes,
                   (int)bsz, batch_val);
+#endif
 
                 for (bi = 0; bi < (int)bsz; ++bi) {
                   /* Apply exponent scale and alpha; guard against 0*Inf=NaN
