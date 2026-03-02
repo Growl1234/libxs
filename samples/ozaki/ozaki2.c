@@ -129,6 +129,9 @@ LIBXS_API_INLINE void oz2_reduce(uint64_t mantissa, int delta,
 }
 
 
+/* Forward declaration: needed by oz2_reconstruct_batch_avx512 (defined below). */
+LIBXS_API_INLINE double oz2_horner_grouped(const unsigned int v[], int nprimes);
+
 /* AVX-512 batched CRT reconstruction via Garner's algorithm.
  * Processes OZ2_BATCH (= 16) uint32 values in a single __m512i.
  * Uses libxs_mulhi_epu32 and libxs_mod_u32x16 from libxs_utils.h. */
