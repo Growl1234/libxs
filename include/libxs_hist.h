@@ -12,9 +12,6 @@
 #include "libxs_sync.h"
 
 
-/** Lock-type used for this domain. */
-typedef LIBXS_LOCK_TYPE(LIBXS_LOCK) libxs_hist_lock_t;
-
 /** Opaque histogram type. */
 LIBXS_EXTERN_C typedef struct libxs_hist_t libxs_hist_t;
 
@@ -29,10 +26,10 @@ LIBXS_API void libxs_hist_create(libxs_hist_t** hist, int nbuckets, int nqueue, 
 LIBXS_API void libxs_hist_destroy(libxs_hist_t* hist);
 
 /** Insert values; vals[0] determines the bucket (lock can be NULL). */
-LIBXS_API void libxs_hist_set(libxs_hist_lock_t* lock, libxs_hist_t* hist, const double vals[]);
+LIBXS_API void libxs_hist_set(libxs_lock_t* lock, libxs_hist_t* hist, const double vals[]);
 
 /** Query statistics; commits queued items if pending (lock can be NULL). */
-LIBXS_API void libxs_hist_get(libxs_hist_lock_t* lock, const libxs_hist_t* hist,
+LIBXS_API void libxs_hist_get(libxs_lock_t* lock, const libxs_hist_t* hist,
   const int** buckets, int* nbuckets, double range[2], const double** vals, int* nvals);
 
 /** Adjust function: transforms value given the bucket's count. */

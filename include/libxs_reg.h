@@ -32,9 +32,6 @@
 /** Opaque registry type. */
 typedef struct libxs_registry_t libxs_registry_t;
 
-/** Lock type for explicit-lock function variants. */
-typedef LIBXS_LOCK_TYPE(LIBXS_LOCK) libxs_registry_lock_t;
-
 /** Create registry object. Returns EXIT_SUCCESS or EXIT_FAILURE. */
 LIBXS_API int libxs_registry_create(libxs_registry_t** registry);
 
@@ -71,32 +68,32 @@ LIBXS_API void* libxs_registry_set(libxs_registry_t* registry, const void* key, 
   const void* value_init, size_t value_size);
 /** Similar to libxs_registry_set but using a caller-provided lock. */
 LIBXS_API void* libxs_registry_set_lock(libxs_registry_t* registry, const void* key, size_t key_size,
-  const void* value_init, size_t value_size, libxs_registry_lock_t* lock);
+  const void* value_init, size_t value_size, libxs_lock_t* lock);
 
 /** Query registered value by key; returns NULL if not found. */
 LIBXS_API void* libxs_registry_get(libxs_registry_t* registry, const void* key, size_t key_size);
 /** Similar to libxs_registry_get but using a caller-provided lock. */
 LIBXS_API void* libxs_registry_get_lock(libxs_registry_t* registry, const void* key, size_t key_size,
-  libxs_registry_lock_t* lock);
+  libxs_lock_t* lock);
 
 /** Check whether a key exists. Returns non-zero if found, zero otherwise. */
 LIBXS_API int libxs_registry_has(libxs_registry_t* registry, const void* key, size_t key_size);
 /** Similar to libxs_registry_has but using a caller-provided lock. */
 LIBXS_API int libxs_registry_has_lock(libxs_registry_t* registry, const void* key, size_t key_size,
-  libxs_registry_lock_t* lock);
+  libxs_lock_t* lock);
 
 /** Query the stored value size (Bytes) for a given key. Returns 0 if not found. */
 LIBXS_API size_t libxs_registry_value_size(libxs_registry_t* registry,
   const void* key, size_t key_size);
 /** Similar to libxs_registry_value_size but using a caller-provided lock. */
 LIBXS_API size_t libxs_registry_value_size_lock(libxs_registry_t* registry,
-  const void* key, size_t key_size, libxs_registry_lock_t* lock);
+  const void* key, size_t key_size, libxs_lock_t* lock);
 
 /** Remove key-value pair from registry and release associated memory. */
 LIBXS_API void libxs_registry_remove(libxs_registry_t* registry, const void* key, size_t key_size);
 /** Similar to libxs_registry_remove but using a caller-provided lock. */
 LIBXS_API void libxs_registry_remove_lock(libxs_registry_t* registry, const void* key, size_t key_size,
-  libxs_registry_lock_t* lock);
+  libxs_lock_t* lock);
 
 /** Structure to receive the status of the registry. */
 LIBXS_EXTERN_C typedef struct libxs_registry_info_t {

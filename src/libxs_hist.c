@@ -60,7 +60,7 @@ LIBXS_API void libxs_hist_destroy(libxs_hist_t* hist)
 }
 
 
-LIBXS_API void libxs_hist_set(libxs_hist_lock_t* lock, libxs_hist_t* hist, const double vals[])
+LIBXS_API void libxs_hist_set(libxs_lock_t* lock, libxs_hist_t* hist, const double vals[])
 {
   if (NULL != hist) {
     int i, j, k;
@@ -102,7 +102,7 @@ LIBXS_API void libxs_hist_set(libxs_hist_lock_t* lock, libxs_hist_t* hist, const
 }
 
 
-LIBXS_API void libxs_hist_get(libxs_hist_lock_t* lock, const libxs_hist_t* hist,
+LIBXS_API void libxs_hist_get(libxs_lock_t* lock, const libxs_hist_t* hist,
   const int** buckets, int* nbuckets, double range[2], const double** vals, int* nvals)
 {
   int *b = NULL, m = 0, n = 0, i, j, k;

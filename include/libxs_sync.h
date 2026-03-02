@@ -725,6 +725,9 @@ LIBXS_EXTERN void funlockfile(FILE*) LIBXS_NOTHROW;
 #define LIBXS_STDIO_RELEASE() libxs_stdio_release()
 
 
+/** General-purpose lock type for application use. */
+typedef LIBXS_LOCK_TYPE(LIBXS_LOCK) libxs_lock_t;
+
 /** Utility function to receive the process ID of the calling process. */
 LIBXS_API unsigned int libxs_pid(void);
 /**

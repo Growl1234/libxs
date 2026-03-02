@@ -42,8 +42,8 @@ typedef struct internal_malloc_chunk_t {
   size_t size, nmallocs;
 } internal_malloc_chunk_t;
 
-LIBXS_APIVAR_DEFINE(libxs_malloc_lock_t internal_malloc_plocks[LIBXS_MALLOC_NLOCKS]);
-LIBXS_APIVAR_DEFINE(libxs_malloc_lock_t internal_malloc_plock);
+LIBXS_APIVAR_DEFINE(libxs_lock_t internal_malloc_plocks[LIBXS_MALLOC_NLOCKS]);
+LIBXS_APIVAR_DEFINE(libxs_lock_t internal_malloc_plock);
 LIBXS_APIVAR_DEFINE(internal_malloc_chunk_t* internal_malloc_all);
 LIBXS_APIVAR_DEFINE(internal_malloc_chunk_t** internal_malloc_pool);
 LIBXS_APIVAR_DEFINE(size_t internal_malloc_pool_size);
@@ -64,7 +64,7 @@ LIBXS_API void libxs_pmalloc_init(size_t size, size_t* num, void* pool[], void* 
 }
 
 
-LIBXS_API void* libxs_pmalloc_lock(void* pool[], size_t* num, libxs_malloc_lock_t* lock)
+LIBXS_API void* libxs_pmalloc_lock(void* pool[], size_t* num, libxs_lock_t* lock)
 {
   void *pointer;
   LIBXS_ASSERT(NULL != pool && NULL != num);
@@ -80,12 +80,12 @@ LIBXS_API void* libxs_pmalloc_lock(void* pool[], size_t* num, libxs_malloc_lock_
 LIBXS_API void* libxs_pmalloc(void* pool[], size_t* num)
 {
   const unsigned int hash = LIBXS_CRCPTR(LIBXS_MALLOC_SEED, pool);
-  libxs_malloc_lock_t *const lock = internal_malloc_plocks + LIBXS_MOD2(hash, LIBXS_MALLOC_NLOCKS);
+  libxs_lock_t *const lock = internal_malloc_plocks + LIBXS_MOD2(hash, LIBXS_MALLOC_NLOCKS);
   return libxs_pmalloc_lock(pool, num, lock);
 }
 
 
-LIBXS_API void libxs_pfree_lock(const void* pointer, void* pool[], size_t* num, libxs_malloc_lock_t* lock)
+LIBXS_API void libxs_pfree_lock(const void* pointer, void* pool[], size_t* num, libxs_lock_t* lock)
 {
   LIBXS_ASSERT(NULL != pool && NULL != num);
   if (NULL != pointer) {
@@ -101,7 +101,7 @@ LIBXS_API void libxs_pfree(const void* pointer, void* pool[], size_t* num)
   LIBXS_ASSERT(NULL != pool && NULL != num);
   if (NULL != pointer) {
     const unsigned int hash = LIBXS_CRCPTR(LIBXS_MALLOC_SEED, pool);
-    libxs_malloc_lock_t *const lock = internal_malloc_plocks + LIBXS_MOD2(hash, LIBXS_MALLOC_NLOCKS);
+    libxs_lock_t *const lock = internal_malloc_plocks + LIBXS_MOD2(hash, LIBXS_MALLOC_NLOCKS);
     libxs_pfree_lock(pointer, pool, num, lock);
   }
 }
