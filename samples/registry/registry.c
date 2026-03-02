@@ -136,7 +136,7 @@ int main(int argc, char* argv[])
   for (i = 0; i < size_total; ++i) {
     bench_value_t* v = (bench_value_t*)libxs_registry_set(
       registry, &keys[i], sizeof(bench_key_t),
-      &vals[i], sizeof(bench_value_t));
+      &vals[i], sizeof(bench_value_t), NULL);
     if (NULL == v) { result = EXIT_FAILURE; goto cleanup; }
   }
   cycles = libxs_timer_ncycles(start, libxs_timer_tick());
@@ -162,7 +162,7 @@ int main(int argc, char* argv[])
       for (i = 0; i < size_total; ++i) {
         const int j = (int)((shuffle * (size_t)i) % (size_t)size_total);
         const bench_value_t* v = (const bench_value_t*)libxs_registry_get(
-          registry, &keys[j], sizeof(bench_key_t));
+          registry, &keys[j], sizeof(bench_key_t), NULL);
         if (NULL == v) { result = EXIT_FAILURE; goto cleanup; }
       }
       total_cycles += libxs_timer_ncycles(start, libxs_timer_tick());
@@ -182,7 +182,7 @@ int main(int argc, char* argv[])
       for (i = 0; i < size_total; ++i) {
         const int j = i % local_size; /* cycle through a small set */
         const bench_value_t* v = (const bench_value_t*)libxs_registry_get(
-          registry, &keys[j], sizeof(bench_key_t));
+          registry, &keys[j], sizeof(bench_key_t), NULL);
         if (NULL == v) { result = EXIT_FAILURE; goto cleanup; }
       }
       total_cycles += libxs_timer_ncycles(start, libxs_timer_tick());
@@ -208,7 +208,7 @@ int main(int argc, char* argv[])
         for (i = 0; i < size_total; ++i) {
           const int j = (int)((shuffle * (size_t)i) % (size_t)size_total);
           const bench_value_t* v = (const bench_value_t*)libxs_registry_get(
-            registry, &keys[j], sizeof(bench_key_t));
+            registry, &keys[j], sizeof(bench_key_t), NULL);
           if (NULL == v) result = EXIT_FAILURE;
         }
 #       pragma omp master
@@ -239,7 +239,7 @@ int main(int argc, char* argv[])
       for (i = 0; i < size_total; ++i) {
         bench_value_t* v = (bench_value_t*)libxs_registry_set(
           registry, &keys[i], sizeof(bench_key_t),
-          &vals[i], sizeof(bench_value_t));
+          &vals[i], sizeof(bench_value_t), NULL);
         if (NULL == v) result = EXIT_FAILURE;
       }
     }
@@ -251,7 +251,7 @@ int main(int argc, char* argv[])
     /* verify */
     for (i = 0; i < size_total && EXIT_SUCCESS == result; ++i) {
       const bench_value_t* v = (const bench_value_t*)libxs_registry_get(
-        registry, &keys[i], sizeof(bench_key_t));
+        registry, &keys[i], sizeof(bench_key_t), NULL);
       if (NULL == v || v->data[0] != vals[i].data[0]) result = EXIT_FAILURE;
     }
     if (EXIT_SUCCESS != result) {
@@ -275,7 +275,7 @@ int main(int argc, char* argv[])
     { const int half = size_total / 2;
       for (i = 0; i < half; ++i) {
         if (NULL == libxs_registry_set(registry, &keys[i], sizeof(bench_key_t),
-          &vals[i], sizeof(bench_value_t)))
+          &vals[i], sizeof(bench_value_t), NULL))
         { result = EXIT_FAILURE; goto cleanup; }
       }
       start = libxs_timer_tick();
@@ -287,7 +287,7 @@ int main(int argc, char* argv[])
           for (w = half; w < size_total; ++w) {
             bench_value_t* v = (bench_value_t*)libxs_registry_set(
               registry, &keys[w], sizeof(bench_key_t),
-              &vals[w], sizeof(bench_value_t));
+              &vals[w], sizeof(bench_value_t), NULL);
             if (NULL == v) result = EXIT_FAILURE;
           }
         }
@@ -295,7 +295,7 @@ int main(int argc, char* argv[])
           int r;
           for (r = 0; r < half; ++r) {
             const int j = (int)(((size_t)r * shuffle) % (size_t)half);
-            (void)libxs_registry_get(registry, &keys[j], sizeof(bench_key_t));
+            (void)libxs_registry_get(registry, &keys[j], sizeof(bench_key_t), NULL);
           }
         }
       }

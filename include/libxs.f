@@ -233,8 +233,8 @@
           !> Register a key-value pair. Returns a pointer
           !> to the stored value, or C_NULL_PTR on failure.
           FUNCTION libxs_registry_set(registry,                         &
-     &    key, key_size, value_init, value_size)                        &
-     &    BIND(C)
+     &    key, key_size, value_init, value_size,                        &
+     &    lock) BIND(C)
             IMPORT :: C_PTR, C_SIZE_T
             TYPE(C_PTR), INTENT(IN), VALUE :: registry
             TYPE(C_PTR), INTENT(IN), VALUE :: key
@@ -243,37 +243,41 @@
             TYPE(C_PTR), INTENT(IN), VALUE :: value_init
             INTEGER(C_SIZE_T), INTENT(IN), VALUE ::                     &
      &      value_size
+            TYPE(C_PTR), INTENT(IN), VALUE :: lock
             TYPE(C_PTR) :: libxs_registry_set
           END FUNCTION
           !> Query a value by key. Returns C_NULL_PTR
           !> if the key is not found.
           FUNCTION libxs_registry_get(registry,                         &
-     &    key, key_size) BIND(C)
+     &    key, key_size, lock) BIND(C)
             IMPORT :: C_PTR, C_SIZE_T
             TYPE(C_PTR), INTENT(IN), VALUE :: registry
             TYPE(C_PTR), INTENT(IN), VALUE :: key
             INTEGER(C_SIZE_T), INTENT(IN), VALUE ::                     &
      &      key_size
+            TYPE(C_PTR), INTENT(IN), VALUE :: lock
             TYPE(C_PTR) :: libxs_registry_get
           END FUNCTION
           !> Check if a key exists (non-zero if found).
           FUNCTION libxs_registry_has(registry,                         &
-     &    key, key_size) BIND(C)
+     &    key, key_size, lock) BIND(C)
             IMPORT :: C_PTR, C_SIZE_T, C_INT
             TYPE(C_PTR), INTENT(IN), VALUE :: registry
             TYPE(C_PTR), INTENT(IN), VALUE :: key
             INTEGER(C_SIZE_T), INTENT(IN), VALUE ::                     &
      &      key_size
+            TYPE(C_PTR), INTENT(IN), VALUE :: lock
             INTEGER(C_INT) :: libxs_registry_has
           END FUNCTION
           !> Remove a key-value pair from the registry.
           SUBROUTINE libxs_registry_remove(registry,                    &
-     &    key, key_size) BIND(C)
+     &    key, key_size, lock) BIND(C)
             IMPORT :: C_PTR, C_SIZE_T
             TYPE(C_PTR), INTENT(IN), VALUE :: registry
             TYPE(C_PTR), INTENT(IN), VALUE :: key
             INTEGER(C_SIZE_T), INTENT(IN), VALUE ::                     &
      &      key_size
+            TYPE(C_PTR), INTENT(IN), VALUE :: lock
           END SUBROUTINE
           !> Get registry information.
           !> Returns 0 on success.

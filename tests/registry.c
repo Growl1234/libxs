@@ -38,29 +38,29 @@ static int test_null_args(void)
   TEST_CHECK(NULL != registry);
 
   /* set: NULL key */
-  TEST_CHECK(NULL == libxs_registry_set(registry, NULL, sizeof(key), "abc", 4));
+  TEST_CHECK(NULL == libxs_registry_set(registry, NULL, sizeof(key), "abc", 4, NULL));
   /* set: zero key_size */
-  TEST_CHECK(NULL == libxs_registry_set(registry, &key, 0, "abc", 4));
+  TEST_CHECK(NULL == libxs_registry_set(registry, &key, 0, "abc", 4, NULL));
   /* set: key_size exceeds maximum */
-  TEST_CHECK(NULL == libxs_registry_set(registry, &key, LIBXS_REGKEY_MAXSIZE + 1, "abc", 4));
+  TEST_CHECK(NULL == libxs_registry_set(registry, &key, LIBXS_REGKEY_MAXSIZE + 1, "abc", 4, NULL));
   /* set: zero value_size */
-  TEST_CHECK(NULL == libxs_registry_set(registry, &key, sizeof(key), NULL, 0));
+  TEST_CHECK(NULL == libxs_registry_set(registry, &key, sizeof(key), NULL, 0, NULL));
   /* set: NULL registry */
-  TEST_CHECK(NULL == libxs_registry_set(NULL, &key, sizeof(key), "abc", 4));
+  TEST_CHECK(NULL == libxs_registry_set(NULL, &key, sizeof(key), "abc", 4, NULL));
 
   /* get: NULL registry */
-  TEST_CHECK(NULL == libxs_registry_get(NULL, &key, sizeof(key)));
+  TEST_CHECK(NULL == libxs_registry_get(NULL, &key, sizeof(key), NULL));
   /* get: NULL key */
-  TEST_CHECK(NULL == libxs_registry_get(registry, NULL, sizeof(key)));
+  TEST_CHECK(NULL == libxs_registry_get(registry, NULL, sizeof(key), NULL));
   /* get: zero key_size */
-  TEST_CHECK(NULL == libxs_registry_get(registry, &key, 0));
+  TEST_CHECK(NULL == libxs_registry_get(registry, &key, 0, NULL));
   /* get: key_size exceeds maximum */
-  TEST_CHECK(NULL == libxs_registry_get(registry, &key, LIBXS_REGKEY_MAXSIZE + 1));
+  TEST_CHECK(NULL == libxs_registry_get(registry, &key, LIBXS_REGKEY_MAXSIZE + 1, NULL));
 
   /* free: NULL registry / NULL key (must not crash) */
-  libxs_registry_remove(NULL, &key, sizeof(key));
-  libxs_registry_remove(registry, NULL, sizeof(key));
-  libxs_registry_remove(registry, &key, 0);
+  libxs_registry_remove(NULL, &key, sizeof(key), NULL);
+  libxs_registry_remove(registry, NULL, sizeof(key), NULL);
+  libxs_registry_remove(registry, &key, 0, NULL);
 
   /* begin/next: NULL registry */
   TEST_CHECK(NULL == libxs_registry_begin(NULL, NULL, NULL));
@@ -89,27 +89,27 @@ static int test_set_get_basic(void)
   TEST_CHECK(NULL != registry);
 
   /* deferred init: register without value, then fill in */
-  v = (char*)libxs_registry_set(registry, &key, sizeof(key), NULL, sizeof(hello));
+  v = (char*)libxs_registry_set(registry, &key, sizeof(key), NULL, sizeof(hello), NULL);
   TEST_CHECK(NULL != v);
   memcpy(v, hello, sizeof(hello));
 
   /* retrieve: must match the deferred value */
-  v = (char*)libxs_registry_get(registry, &key, sizeof(key));
+  v = (char*)libxs_registry_get(registry, &key, sizeof(key), NULL);
   TEST_CHECK(NULL != v);
   TEST_CHECK(0 == strcmp(v, hello));
 
   /* re-register with same-size value: overwrites in-place */
-  v = (char*)libxs_registry_set(registry, &key, sizeof(key), world, sizeof(world));
+  v = (char*)libxs_registry_set(registry, &key, sizeof(key), world, sizeof(world), NULL);
   TEST_CHECK(NULL != v);
   TEST_CHECK(0 == strcmp(v, world));
 
   /* re-register with LARGER value: auto-realloc succeeds */
-  v = (char*)libxs_registry_set(registry, &key, sizeof(key), toolarge, sizeof(toolarge));
+  v = (char*)libxs_registry_set(registry, &key, sizeof(key), toolarge, sizeof(toolarge), NULL);
   TEST_CHECK(NULL != v);
   TEST_CHECK(0 == strcmp(v, toolarge));
 
   /* retrieve confirms the larger value is stored */
-  v = (char*)libxs_registry_get(registry, &key, sizeof(key));
+  v = (char*)libxs_registry_get(registry, &key, sizeof(key), NULL);
   TEST_CHECK(NULL != v);
   TEST_CHECK(0 == strcmp(v, toolarge));
 
@@ -128,24 +128,24 @@ static int test_free_and_reregister(void)
   libxs_registry_create(&registry);
   TEST_CHECK(NULL != registry);
 
-  v = (char*)libxs_registry_set(registry, &key, sizeof(key), small, sizeof(small));
+  v = (char*)libxs_registry_set(registry, &key, sizeof(key), small, sizeof(small), NULL);
   TEST_CHECK(NULL != v);
 
-  libxs_registry_remove(registry, &key, sizeof(key));
+  libxs_registry_remove(registry, &key, sizeof(key), NULL);
 
   /* get after free must return NULL */
-  TEST_CHECK(NULL == libxs_registry_get(registry, &key, sizeof(key)));
+  TEST_CHECK(NULL == libxs_registry_get(registry, &key, sizeof(key), NULL));
 
   /* double-free must not crash */
-  libxs_registry_remove(registry, &key, sizeof(key));
+  libxs_registry_remove(registry, &key, sizeof(key), NULL);
 
   /* re-register with larger payload succeeds (tombstone reused) */
-  v = (char*)libxs_registry_set(registry, &key, sizeof(key), large, sizeof(large));
+  v = (char*)libxs_registry_set(registry, &key, sizeof(key), large, sizeof(large), NULL);
   TEST_CHECK(NULL != v);
   TEST_CHECK(0 == strcmp(v, large));
 
   /* retrieve confirms re-registration */
-  v = (char*)libxs_registry_get(registry, &key, sizeof(key));
+  v = (char*)libxs_registry_get(registry, &key, sizeof(key), NULL);
   TEST_CHECK(NULL != v);
   TEST_CHECK(0 == strcmp(v, large));
 
@@ -171,7 +171,7 @@ static int test_iteration(void)
   /* populate */
   for (i = 0; i < n; ++i) {
     int* v = (int*)libxs_registry_set(registry, &keys[i], sizeof(keys[0]),
-      &keys[i], sizeof(int));
+      &keys[i], sizeof(int), NULL);
     TEST_CHECK(NULL != v && *v == keys[i]);
   }
 
@@ -216,13 +216,13 @@ static int test_info(void)
   TEST_CHECK(0 < info.capacity);
   TEST_CHECK(LIBXS_ISPOT(info.capacity));
 
-  TEST_CHECK(NULL != libxs_registry_set(registry, &key1, sizeof(key1), val, sizeof(val)));
-  TEST_CHECK(NULL != libxs_registry_set(registry, &key2, sizeof(key2), val, sizeof(val)));
+  TEST_CHECK(NULL != libxs_registry_set(registry, &key1, sizeof(key1), val, sizeof(val), NULL));
+  TEST_CHECK(NULL != libxs_registry_set(registry, &key2, sizeof(key2), val, sizeof(val), NULL));
   TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(registry, &info));
   TEST_CHECK(2 == info.size);
   TEST_CHECK(0 < info.nbytes);
 
-  libxs_registry_remove(registry, &key1, sizeof(key1));
+  libxs_registry_remove(registry, &key1, sizeof(key1), NULL);
   TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(registry, &info));
   TEST_CHECK(1 == info.size);
 
@@ -243,7 +243,7 @@ static int test_growth(void)
   TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(registry, &info));
   { const size_t initial_cap = info.capacity;
     for (i = 0; i < count; ++i) {
-      int* v = (int*)libxs_registry_set(registry, &i, sizeof(i), &i, sizeof(int));
+      int* v = (int*)libxs_registry_set(registry, &i, sizeof(i), &i, sizeof(int), NULL);
       TEST_CHECK(NULL != v && *v == i);
     }
     TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(registry, &info));
@@ -253,7 +253,7 @@ static int test_growth(void)
 
     /* verify all entries survive the growth/rehash */
     for (i = 0; i < count; ++i) {
-      const int* v = (const int*)libxs_registry_get(registry, &i, sizeof(i));
+      const int* v = (const int*)libxs_registry_get(registry, &i, sizeof(i), NULL);
       TEST_CHECK(NULL != v && *v == i);
     }
   }
@@ -275,20 +275,20 @@ static int test_struct_key(void)
   memset(&k1, 0, sizeof(k1));
   k1.x = 42; k1.tag = 'A'; k1.y = 1.0;
 
-  v = (double*)libxs_registry_set(registry, &k1, sizeof(k1), &val, sizeof(val));
+  v = (double*)libxs_registry_set(registry, &k1, sizeof(k1), &val, sizeof(val), NULL);
   TEST_CHECK(NULL != v && *v == val);
 
   /* same logical key, same binary init */
   memset(&k2, 0, sizeof(k2));
   k2.x = 42; k2.tag = 'A'; k2.y = 1.0;
 
-  v = (double*)libxs_registry_get(registry, &k2, sizeof(k2));
+  v = (double*)libxs_registry_get(registry, &k2, sizeof(k2), NULL);
   TEST_CHECK(NULL != v && *v == val);
 
   /* different key */
   memset(&k2, 0, sizeof(k2));
   k2.x = 42; k2.tag = 'B'; k2.y = 1.0;
-  TEST_CHECK(NULL == libxs_registry_get(registry, &k2, sizeof(k2)));
+  TEST_CHECK(NULL == libxs_registry_get(registry, &k2, sizeof(k2), NULL));
 
   libxs_registry_destroy(registry);
   return EXIT_SUCCESS;
@@ -305,12 +305,12 @@ static int test_tls_cache(void)
   libxs_registry_create(&registry);
   TEST_CHECK(NULL != registry);
 
-  v = (char*)libxs_registry_set(registry, &key, sizeof(key), val, sizeof(val));
+  v = (char*)libxs_registry_set(registry, &key, sizeof(key), val, sizeof(val), NULL);
   TEST_CHECK(NULL != v);
 
   /* first get populates TLS cache, second get hits it (both must return same pointer) */
-  { const char* v1 = (const char*)libxs_registry_get(registry, &key, sizeof(key));
-    const char* v2 = (const char*)libxs_registry_get(registry, &key, sizeof(key));
+  { const char* v1 = (const char*)libxs_registry_get(registry, &key, sizeof(key), NULL);
+    const char* v2 = (const char*)libxs_registry_get(registry, &key, sizeof(key), NULL);
     TEST_CHECK(NULL != v1 && NULL != v2);
     TEST_CHECK(v1 == v2); /* same pointer */
     TEST_CHECK(0 == strcmp(v1, val));
@@ -318,12 +318,12 @@ static int test_tls_cache(void)
 
   /* many repeated gets must all succeed (hammer cache path) */
   for (i = 0; i < 1000; ++i) {
-    TEST_CHECK(NULL != libxs_registry_get(registry, &key, sizeof(key)));
+    TEST_CHECK(NULL != libxs_registry_get(registry, &key, sizeof(key), NULL));
   }
 
   /* free invalidates cache; subsequent get must return NULL */
-  libxs_registry_remove(registry, &key, sizeof(key));
-  TEST_CHECK(NULL == libxs_registry_get(registry, &key, sizeof(key)));
+  libxs_registry_remove(registry, &key, sizeof(key), NULL);
+  TEST_CHECK(NULL == libxs_registry_get(registry, &key, sizeof(key), NULL));
 
   libxs_registry_destroy(registry);
   return EXIT_SUCCESS;
@@ -340,20 +340,20 @@ static int test_multiple_registries(void)
   libxs_registry_create(&r2);
   TEST_CHECK(NULL != r1 && NULL != r2);
 
-  p = (int*)libxs_registry_set(r1, &key, sizeof(key), &v1, sizeof(int));
+  p = (int*)libxs_registry_set(r1, &key, sizeof(key), &v1, sizeof(int), NULL);
   TEST_CHECK(NULL != p && *p == v1);
-  p = (int*)libxs_registry_set(r2, &key, sizeof(key), &v2, sizeof(int));
+  p = (int*)libxs_registry_set(r2, &key, sizeof(key), &v2, sizeof(int), NULL);
   TEST_CHECK(NULL != p && *p == v2);
 
   /* get from each registry returns its own value */
-  p = (int*)libxs_registry_get(r1, &key, sizeof(key));
+  p = (int*)libxs_registry_get(r1, &key, sizeof(key), NULL);
   TEST_CHECK(NULL != p && *p == v1);
-  p = (int*)libxs_registry_get(r2, &key, sizeof(key));
+  p = (int*)libxs_registry_get(r2, &key, sizeof(key), NULL);
   TEST_CHECK(NULL != p && *p == v2);
 
   /* destroy one, other is unaffected */
   libxs_registry_destroy(r1);
-  p = (int*)libxs_registry_get(r2, &key, sizeof(key));
+  p = (int*)libxs_registry_get(r2, &key, sizeof(key), NULL);
   TEST_CHECK(NULL != p && *p == v2);
 
   libxs_registry_destroy(r2);
@@ -369,19 +369,19 @@ static int test_has(void)
   libxs_registry_create(&registry);
   TEST_CHECK(NULL != registry);
 
-  TEST_CHECK(0 == libxs_registry_has(registry, &key, sizeof(key)));
-  TEST_CHECK(NULL != libxs_registry_set(registry, &key, sizeof(key), &val, sizeof(val)));
-  TEST_CHECK(0 != libxs_registry_has(registry, &key, sizeof(key)));
-  TEST_CHECK(0 == libxs_registry_has(registry, &missing, sizeof(missing)));
+  TEST_CHECK(0 == libxs_registry_has(registry, &key, sizeof(key), NULL));
+  TEST_CHECK(NULL != libxs_registry_set(registry, &key, sizeof(key), &val, sizeof(val), NULL));
+  TEST_CHECK(0 != libxs_registry_has(registry, &key, sizeof(key), NULL));
+  TEST_CHECK(0 == libxs_registry_has(registry, &missing, sizeof(missing), NULL));
 
   /* NULL / invalid args */
-  TEST_CHECK(0 == libxs_registry_has(NULL, &key, sizeof(key)));
-  TEST_CHECK(0 == libxs_registry_has(registry, NULL, sizeof(key)));
-  TEST_CHECK(0 == libxs_registry_has(registry, &key, 0));
+  TEST_CHECK(0 == libxs_registry_has(NULL, &key, sizeof(key), NULL));
+  TEST_CHECK(0 == libxs_registry_has(registry, NULL, sizeof(key), NULL));
+  TEST_CHECK(0 == libxs_registry_has(registry, &key, 0, NULL));
 
   /* remove → no longer found */
-  libxs_registry_remove(registry, &key, sizeof(key));
-  TEST_CHECK(0 == libxs_registry_has(registry, &key, sizeof(key)));
+  libxs_registry_remove(registry, &key, sizeof(key), NULL);
+  TEST_CHECK(0 == libxs_registry_has(registry, &key, sizeof(key), NULL));
 
   libxs_registry_destroy(registry);
   return EXIT_SUCCESS;
@@ -397,19 +397,19 @@ static int test_value_size(void)
   libxs_registry_create(&registry);
   TEST_CHECK(NULL != registry);
 
-  TEST_CHECK(0 == libxs_registry_value_size(registry, &key, sizeof(key)));
+  TEST_CHECK(0 == libxs_registry_value_size(registry, &key, sizeof(key), NULL));
 
-  TEST_CHECK(NULL != libxs_registry_set(registry, &key, sizeof(key), small, sizeof(small)));
-  TEST_CHECK(sizeof(small) == libxs_registry_value_size(registry, &key, sizeof(key)));
+  TEST_CHECK(NULL != libxs_registry_set(registry, &key, sizeof(key), small, sizeof(small), NULL));
+  TEST_CHECK(sizeof(small) == libxs_registry_value_size(registry, &key, sizeof(key), NULL));
 
   /* auto-realloc to larger → value_size grows */
-  TEST_CHECK(NULL != libxs_registry_set(registry, &key, sizeof(key), large, sizeof(large)));
-  TEST_CHECK(sizeof(large) == libxs_registry_value_size(registry, &key, sizeof(key)));
+  TEST_CHECK(NULL != libxs_registry_set(registry, &key, sizeof(key), large, sizeof(large), NULL));
+  TEST_CHECK(sizeof(large) == libxs_registry_value_size(registry, &key, sizeof(key), NULL));
 
   /* NULL / invalid args */
-  TEST_CHECK(0 == libxs_registry_value_size(NULL, &key, sizeof(key)));
-  TEST_CHECK(0 == libxs_registry_value_size(registry, NULL, sizeof(key)));
-  TEST_CHECK(0 == libxs_registry_value_size(registry, &key, 0));
+  TEST_CHECK(0 == libxs_registry_value_size(NULL, &key, sizeof(key), NULL));
+  TEST_CHECK(0 == libxs_registry_value_size(registry, NULL, sizeof(key), NULL));
+  TEST_CHECK(0 == libxs_registry_value_size(registry, &key, 0, NULL));
 
   libxs_registry_destroy(registry);
   return EXIT_SUCCESS;
