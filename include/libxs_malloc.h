@@ -24,9 +24,9 @@ LIBXS_API void* libxs_pmalloc_lock(void* pool[], size_t* num, libxs_lock_t* lock
 LIBXS_API void* libxs_pmalloc(void* pool[], size_t* num);
 
 /** Bring pointer back into the pool by using original num-counter (libxs_pmalloc_init). */
-LIBXS_API void libxs_pfree_lock(const void* pointer, void* pool[], size_t* num, libxs_lock_t* lock);
+LIBXS_API void libxs_pfree_lock(void* pointer, void* pool[], size_t* num, libxs_lock_t* lock);
 /** Similar to libxs_pfree_lock but using an internal lock. */
-LIBXS_API void libxs_pfree(const void* pointer, void* pool[], size_t* num);
+LIBXS_API void libxs_pfree(void* pointer, void* pool[], size_t* num);
 
 /** Allocate from a pool which can reach steady-sate (libxs_malloc_pool). */
 LIBXS_API void* libxs_malloc(size_t size,
@@ -36,7 +36,7 @@ LIBXS_API void* libxs_malloc(size_t size,
    */
   size_t alignment);
 /** Free memory allocated by libxs_malloc. */
-LIBXS_API void libxs_free(const void* pointer);
+LIBXS_API void libxs_free(void* pointer);
 
 /** Information about allocated memory (pointer). */
 LIBXS_EXTERN_C typedef struct libxs_malloc_info_t {

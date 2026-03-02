@@ -85,18 +85,18 @@ LIBXS_API void* libxs_pmalloc(void* pool[], size_t* num)
 }
 
 
-LIBXS_API void libxs_pfree_lock(const void* pointer, void* pool[], size_t* num, libxs_lock_t* lock)
+LIBXS_API void libxs_pfree_lock(void* pointer, void* pool[], size_t* num, libxs_lock_t* lock)
 {
   LIBXS_ASSERT(NULL != pool && NULL != num);
   if (NULL != pointer) {
     if (NULL != lock) LIBXS_ATOMIC_ACQUIRE(lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
-    LIBXS_VALUE_ASSIGN(pool[*num], pointer); ++(*num);
+    pool[*num] = pointer; ++(*num);
     if (NULL != lock) LIBXS_ATOMIC_RELEASE(lock, LIBXS_ATOMIC_LOCKORDER);
   }
 }
 
 
-LIBXS_API void libxs_pfree(const void* pointer, void* pool[], size_t* num)
+LIBXS_API void libxs_pfree(void* pointer, void* pool[], size_t* num)
 {
   LIBXS_ASSERT(NULL != pool && NULL != num);
   if (NULL != pointer) {
@@ -228,7 +228,7 @@ LIBXS_API void* libxs_malloc(size_t size, size_t alignment)
 }
 
 
-LIBXS_API void libxs_free(const void* pointer)
+LIBXS_API void libxs_free(void* pointer)
 {
   if (NULL != pointer) {
     internal_malloc_chunk_t *const chunk = *(void**)((uintptr_t)pointer - sizeof(void*));
