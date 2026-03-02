@@ -38,7 +38,7 @@
  */
 LIBXS_EXTERN_C typedef struct libxs_cpuid_info_t {
   /** CPU model name obtained from the OS (e.g., /proc/cpuinfo). */
-  char model[1024];
+  char model[256];
   /** Non-zero if the timestamp counter is invariant/monotonic (see libxs_timer_info). */
   int constant_tsc;
 } libxs_cpuid_info_t;
