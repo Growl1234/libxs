@@ -321,7 +321,7 @@ typedef enum libxs_atomic_kind {
 # define LIBXS_ATOMIC_RELEASE(DST_PTR, KIND) do { \
           LIBXS_ASSERT_MSG(0 != *(DST_PTR), "LIBXS_ATOMIC_RELEASE"); \
           LIBXS_ATOMIC(LIBXS_ATOMIC_STORE_ZERO, 8)(DST_PTR, KIND); } while(0)
-# define LIBXS_ATOMIC_SYNC(KIND) _ReadWriteBarrier()
+# define LIBXS_ATOMIC_SYNC(KIND) MemoryBarrier()
 # if !defined(LIBXS_SYNC_NPAUSE)
 #   define LIBXS_SYNC_NPAUSE 4096
 # endif
