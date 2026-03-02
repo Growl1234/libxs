@@ -129,37 +129,10 @@ LIBXS_API_INLINE void oz2_reduce(uint64_t mantissa, int delta,
 }
 
 
-/* AVX-512 vectorized Barrett reduction for batched Garner.
- * Processes OZ2_BATCH (= 16) uint32 values in a single __m512i. */
+/* AVX-512 batched CRT reconstruction via Garner's algorithm.
+ * Processes OZ2_BATCH (= 16) uint32 values in a single __m512i.
+ * Uses libxs_mulhi_epu32 and libxs_mod_u32x16 from libxs_utils.h. */
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == OZ2_BATCH
-
-/** Unsigned 32-bit high-multiply: floor(a * b / 2^32) for 16 lanes.
- *  Emulates the missing _mm512_mulhi_epu32 via even/odd _mm512_mul_epu32. */
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
-__m512i oz2_mulhi_epu32(__m512i a, __m512i b)
-{
-  const __m512i even = _mm512_srli_epi64(_mm512_mul_epu32(a, b), 32);
-  const __m512i a_odd = _mm512_srli_epi64(a, 32);
-  const __m512i b_odd = _mm512_srli_epi64(b, 32);
-  const __m512i odd = _mm512_srli_epi64(_mm512_mul_epu32(a_odd, b_odd), 32);
-  return _mm512_or_si512(even, _mm512_slli_epi64(odd, 32));
-}
-
-/** Barrett reduction on 16 uint32 values: x mod p.
- *  rcp = floor(2^32 / p).  Computes q = floor(x * rcp / 2^32),
- *  r = x - q*p, then one conditional correction if r >= p. */
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
-__m512i oz2_mod_vec(__m512i x, unsigned int p, unsigned int rcp)
-{
-  const __m512i vp = _mm512_set1_epi32((int)p);
-  const __m512i vrcp = _mm512_set1_epi32((int)rcp);
-  const __m512i q = oz2_mulhi_epu32(x, vrcp);
-  __m512i r = _mm512_sub_epi32(x, _mm512_mullo_epi32(q, vp));
-  { const __mmask16 ge = _mm512_cmpge_epu32_mask(r, vp);
-    r = _mm512_mask_sub_epi32(r, ge, r, vp);
-  }
-  return r;
-}
 
 /** AVX-512 batched CRT reconstruction via Garner's algorithm.
  *  Uses transposed internal layout vt[prime][batch] for contiguous
@@ -215,7 +188,7 @@ void oz2_reconstruct_batch_avx512(
 
         /* u = (diff * inv_ji) mod pi via vectorized Barrett */
         diff_vec = _mm512_mullo_epi32(diff_vec, vinv);
-        u_vec = oz2_mod_vec(diff_vec, pi, rcp_i);
+        u_vec = libxs_mod_u32x16(diff_vec, pi, rcp_i);
       }
     }
 

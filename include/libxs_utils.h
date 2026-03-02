@@ -412,4 +412,39 @@ LIBXS_API unsigned int LIBXS_INTRINSICS_BITSCANBWD64(unsigned long long n);
 /** LIBXS_ILOG2 definition matches ceil(log2(N)). */
 LIBXS_API unsigned int LIBXS_ILOG2(unsigned long long n);
 
+
+/**
+ * AVX-512 unsigned 32-bit high-multiply: floor(a * b / 2^32) for 16 lanes.
+ * Emulates the missing _mm512_mulhi_epu32 via even/odd _mm512_mul_epu32.
+ */
+#if defined(LIBXS_INTRINSICS_AVX512)
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
+__m512i libxs_mulhi_epu32(__m512i a, __m512i b)
+{
+  const __m512i even = _mm512_srli_epi64(_mm512_mul_epu32(a, b), 32);
+  const __m512i a_odd = _mm512_srli_epi64(a, 32);
+  const __m512i b_odd = _mm512_srli_epi64(b, 32);
+  const __m512i odd = _mm512_srli_epi64(_mm512_mul_epu32(a_odd, b_odd), 32);
+  return _mm512_or_si512(even, _mm512_slli_epi64(odd, 32));
+}
+
+/**
+ * AVX-512 vectorized Barrett reduction: x mod p for 16 uint32 lanes.
+ * rcp = floor(2^32 / p) as returned by libxs_barrett_rcp().
+ * This is the SIMD counterpart of the scalar libxs_mod_u32.
+ */
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
+__m512i libxs_mod_u32x16(__m512i x, unsigned int p, unsigned int rcp)
+{
+  const __m512i vp = _mm512_set1_epi32((int)p);
+  const __m512i vrcp = _mm512_set1_epi32((int)rcp);
+  const __m512i q = libxs_mulhi_epu32(x, vrcp);
+  __m512i r = _mm512_sub_epi32(x, _mm512_mullo_epi32(q, vp));
+  { const __mmask16 ge = _mm512_cmpge_epu32_mask(r, vp);
+    r = _mm512_mask_sub_epi32(r, ge, r, vp);
+  }
+  return r;
+}
+#endif /* LIBXS_INTRINSICS_AVX512 */
+
 #endif /*LIBXS_UTILS_H*/
