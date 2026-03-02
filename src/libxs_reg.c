@@ -315,7 +315,7 @@ LIBXS_API void* libxs_registry_set(libxs_registry_t* registry,
 
 LIBXS_API void* libxs_registry_set_lock(libxs_registry_t* registry,
   const void* key, size_t key_size,
-  const void* value_init, size_t value_size, libxs_registry_lock_t* lock)
+  const void* value_init, size_t value_size, libxs_lock_t* lock)
 {
   void* result = NULL;
   if (NULL == registry || NULL == key || 0 == key_size || 0 == value_size
@@ -391,7 +391,7 @@ LIBXS_API void* libxs_registry_get(libxs_registry_t* registry,
 
 
 LIBXS_API void* libxs_registry_get_lock(libxs_registry_t* registry,
-  const void* key, size_t key_size, libxs_registry_lock_t* lock)
+  const void* key, size_t key_size, libxs_lock_t* lock)
 {
   void* result = NULL;
   if (NULL == registry || NULL == key || 0 == key_size
@@ -454,7 +454,7 @@ LIBXS_API void libxs_registry_remove(libxs_registry_t* registry,
 
 
 LIBXS_API void libxs_registry_remove_lock(libxs_registry_t* registry,
-  const void* key, size_t key_size, libxs_registry_lock_t* lock)
+  const void* key, size_t key_size, libxs_lock_t* lock)
 {
   if (NULL == registry || NULL == key || 0 == key_size
     || key_size > LIBXS_REGKEY_MAXSIZE)
@@ -542,7 +542,7 @@ LIBXS_API int libxs_registry_has(libxs_registry_t* registry,
 
 
 LIBXS_API int libxs_registry_has_lock(libxs_registry_t* registry,
-  const void* key, size_t key_size, libxs_registry_lock_t* lock)
+  const void* key, size_t key_size, libxs_lock_t* lock)
 {
   int result = 0;
   if (NULL == registry || NULL == key || 0 == key_size
@@ -588,7 +588,7 @@ LIBXS_API size_t libxs_registry_value_size(libxs_registry_t* registry,
 
 
 LIBXS_API size_t libxs_registry_value_size_lock(libxs_registry_t* registry,
-  const void* key, size_t key_size, libxs_registry_lock_t* lock)
+  const void* key, size_t key_size, libxs_lock_t* lock)
 {
   size_t result = 0;
   if (NULL == registry || NULL == key || 0 == key_size
