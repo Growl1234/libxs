@@ -164,6 +164,7 @@ int main(int argc, char* argv[])
     "Other");
 #endif
 
+  BENCHMARK(LIBXS_LOCK_DEFAULT, "default", nthreads, work_r, work_w, wratioperc, nlat, ntpt);
 #if defined(LIBXS_LOCK_SYSTEM_SPINLOCK)
   BENCHMARK(LIBXS_LOCK_SPINLOCK, "OS-native", nthreads, work_r, work_w, wratioperc, nlat, ntpt);
 #else
