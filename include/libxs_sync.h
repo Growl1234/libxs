@@ -352,7 +352,7 @@ typedef enum libxs_atomic_kind {
 #endif
 
 #if (0 != LIBXS_SYNC)
-# define LIBXS_LOCK_DEFAULT LIBXS_LOCK_SPINLOCK
+# define LIBXS_LOCK_DEFAULT LIBXS_LOCK_ATOMIC
 # if !defined(LIBXS_LOCK_SYSTEM_SPINLOCK) && !(defined(_OPENMP) && defined(LIBXS_SYNC_OMP)) && \
     (!defined(__linux__) || defined(__USE_XOPEN2K)) && 0/*disabled*/
 #   define LIBXS_LOCK_SYSTEM_SPINLOCK
@@ -679,12 +679,30 @@ typedef enum libxs_atomic_kind {
 #     define LIBXS_LOCK_ATTR_DESTROY_rwlock(ATTR) LIBXS_UNUSED(ATTR)
 #   endif
 # endif
+  /* Atomic spinlock kind: always uses LIBXS_ATOMIC_* primitives (no OS/OMP dependency). */
+# define LIBXS_LOCK_ATOMIC atomic
+# define LIBXS_LOCK_ACQUIRED_atomic 0
+# define LIBXS_LOCK_TYPE_ISPOD_atomic 1
+# define LIBXS_LOCK_TYPE_ISRW_atomic 0
+# define LIBXS_LOCK_TYPE_atomic volatile LIBXS_ATOMIC_LOCKTYPE
+# define LIBXS_LOCK_INIT_atomic(LOCK, ATTR) do { LIBXS_UNUSED(ATTR); (*(LOCK) = 0); } while(0)
+# define LIBXS_LOCK_DESTROY_atomic(LOCK) LIBXS_UNUSED(LOCK)
+# define LIBXS_LOCK_TRYLOCK_atomic(LOCK) (LIBXS_LOCK_ACQUIRED_atomic + !LIBXS_ATOMIC_TRYLOCK(LOCK, LIBXS_ATOMIC_LOCKORDER))
+# define LIBXS_LOCK_ACQUIRE_atomic(LOCK) LIBXS_ATOMIC_ACQUIRE(LOCK, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER)
+# define LIBXS_LOCK_RELEASE_atomic(LOCK) LIBXS_ATOMIC_RELEASE(LOCK, LIBXS_ATOMIC_LOCKORDER)
+# define LIBXS_LOCK_TRYREAD_atomic(LOCK) LIBXS_LOCK_TRYLOCK_atomic(LOCK)
+# define LIBXS_LOCK_ACQREAD_atomic(LOCK) LIBXS_LOCK_ACQUIRE_atomic(LOCK)
+# define LIBXS_LOCK_RELREAD_atomic(LOCK) LIBXS_LOCK_RELEASE_atomic(LOCK)
+# define LIBXS_LOCK_ATTR_TYPE_atomic int
+# define LIBXS_LOCK_ATTR_INIT_atomic(ATTR) LIBXS_UNUSED(ATTR)
+# define LIBXS_LOCK_ATTR_DESTROY_atomic(ATTR) LIBXS_UNUSED(ATTR)
 #else /* no synchronization */
 # define LIBXS_LOCK_DEFAULT int
 # define LIBXS_SYNC_YIELD LIBXS_SYNC_PAUSE
 # define LIBXS_LOCK_SPINLOCK spinlock_dummy
 # define LIBXS_LOCK_MUTEX mutex_dummy
 # define LIBXS_LOCK_RWLOCK rwlock_dummy
+# define LIBXS_LOCK_ATOMIC atomic_dummy
 # define LIBXS_LOCK_ACQUIRED(KIND) 0
 # define LIBXS_LOCK_TYPE_ISPOD(KIND) 1
 # define LIBXS_LOCK_TYPE_ISRW(KIND) 0
