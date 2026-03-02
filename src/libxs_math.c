@@ -50,7 +50,7 @@ LIBXS_API int libxs_matdiff(libxs_matdiff_info_t* info,
   int ldr = (NULL == ldref ? m : *ldref), ldt = (NULL == ldtst ? m : *ldtst);
   if (NULL == ref && NULL != tst) { ref = tst; tst = NULL; result_swap = 1; }
   if (NULL != ref && NULL != info && m <= ldr && m <= ldt) {
-    static int matdiff_shuffle = -1; /* cache getenv result across calls */
+    static LIBXS_TLS int matdiff_shuffle = -1; /* cache getenv result per-thread */
     const size_t ntotal = (size_t)m * (size_t)n;
     int mm = m, nn = n;
     double pos_inf;
@@ -293,7 +293,12 @@ LIBXS_API double libxs_matdiff_epsilon(const libxs_matdiff_info_t* input)
 {
   double result;
   if (NULL != input) {
-    const char *const matdiff_env = getenv("LIBXS_MATDIFF");
+    static LIBXS_TLS const char* matdiff_env_cache = (const char*)(uintptr_t)-1;
+    const char* matdiff_env;
+    if ((const char*)(uintptr_t)-1 == matdiff_env_cache) {
+      matdiff_env_cache = getenv("LIBXS_MATDIFF");
+    }
+    matdiff_env = matdiff_env_cache;
     if (0 < input->rsq) {
       result = LIBXS_MIN(input->normf_rel, input->linf_abs) / input->rsq;
     }
@@ -310,7 +315,14 @@ LIBXS_API double libxs_matdiff_epsilon(const libxs_matdiff_info_t* input)
       char *const env = strncpy(buffer, matdiff_env, sizeof(buffer) - 1);
       const char *arg, *filename = NULL;
       buffer[sizeof(buffer) - 1] = '\0'; /* ensure NUL-termination */
-      arg = strtok(env, LIBXS_MATH_DELIMS);
+      { /* manual tokenization (thread-safe, replaces strtok) */
+        const char *p = env;
+        char s[2] = {'\0'};
+        while (*s = *p, NULL != strpbrk(s, LIBXS_MATH_DELIMS)) ++p; /* skip leading delims */
+        arg = ('\0' != *p ? p : NULL);
+        while ('\0' != *p && (*s = *p, NULL == strpbrk(s, LIBXS_MATH_DELIMS))) ++p;
+        if ('\0' != *p) *(char*)(uintptr_t)p++ = '\0'; /* NUL-terminate first token */
+      }
       if (NULL != arg && 0 == stat(arg, &stat_info) && LIBXS_MATH_ISDIR(stat_info.st_mode)) {
         const int nchars = LIBXS_SNPRINTF(buffer + offset, sizeof(buffer) - offset,
           "%s/libxs_matdiff.log", arg);
@@ -326,15 +338,27 @@ LIBXS_API double libxs_matdiff_epsilon(const libxs_matdiff_info_t* input)
           ? LIBXS_SNPRINTF(buffer + offset, sizeof(buffer) - offset, "%.17g", result)
           : 0);
         if (0 < nchars && (2 * (offset + nchars)) < sizeof(buffer)) {
-          offset += nchars;
-          arg = strtok(NULL, LIBXS_MATH_DELIMS);
-          while (NULL != arg) {
-            nchars = LIBXS_SNPRINTF(buffer + offset, sizeof(buffer) - offset, " %s", arg);
-            if (0 < nchars && (2 * (offset + nchars)) < sizeof(buffer)) offset += nchars;
-            else break;
-            arg = strtok(NULL, LIBXS_MATH_DELIMS);
+          const char *p2 = env + envlen; /* scan remaining tokens from end of first token */
+          char s2[2] = {'\0'};
+          /* advance p2 past first token's NUL to the rest of the env copy */
+          { const char *t = arg;
+            while ('\0' != *t) ++t;
+            p2 = t + 1; /* points past NUL separator into remainder */
           }
-          if (NULL == arg) { /* all args consumed */
+          offset += nchars;
+          for (;;) {
+            while (p2 < env + envlen && (*s2 = *p2, NULL != strpbrk(s2, LIBXS_MATH_DELIMS))) ++p2;
+            if (p2 >= env + envlen || '\0' == *p2) break;
+            arg = p2;
+            while (p2 < env + envlen && '\0' != *p2 && (*s2 = *p2, NULL == strpbrk(s2, LIBXS_MATH_DELIMS))) ++p2;
+            { const size_t arglen = (size_t)(p2 - arg);
+              nchars = LIBXS_SNPRINTF(buffer + offset, sizeof(buffer) - offset, " %.*s", (int)arglen, arg);
+            }
+            if (0 < nchars && (2 * (offset + nchars)) < sizeof(buffer)) offset += nchars;
+            else { arg = NULL; break; }
+          }
+          arg = NULL; /* all args consumed */
+          { /* append command line and write log */
             nchars = libxs_print_cmdline(buffer + offset, sizeof(buffer) - offset, " [", "]");
             if (0 < nchars && (2 * (offset + nchars)) < sizeof(buffer)) {
               FILE *const file = fopen(filename, "a");

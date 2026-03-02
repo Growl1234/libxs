@@ -328,10 +328,11 @@ LIBXS_API_INTERN size_t internal_parse_nbytes(const char* nbytes, size_t ndefaul
   size_t result = ndefault;
   if (NULL != nbytes && '\0' != *nbytes) {
     size_t u = internal_strlen(nbytes, 32) - 1;
-    const char units[] = "kmgKMG", *const unit = strchr(units, nbytes[u]);
+    const char units[] = "kmgKMG";
+    const char *const unit = ('\0' != nbytes[u] ? strchr(units, nbytes[u]) : NULL);
     char* end = NULL;
     /* take parsed value with increased type-width */
-    const long long int ibytes = strtol(nbytes, &end, 10);
+    const long long int ibytes = strtoll(nbytes, &end, 10);
     if (NULL != end && ( /* no obvious error */
       /* must match allowed set of units */
       (NULL != unit && *unit == *end) ||

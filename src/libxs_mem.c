@@ -658,15 +658,15 @@ LIBXS_API int libxs_shuffle2(void* dst, const void* src, size_t elemsize, size_t
         switch (elemsize) {
           case 8: for (; i < size; i += 8, j += s) {
             if (count < j) j -= count;
-            *(unsigned long long*)(out + i) = *(const unsigned long long*)(inp + size - 8 * j);
+            LIBXS_MEMCPY(out + i, inp + size - 8 * j, 8);
           } break;
           case 4: for (; i < size; i += 4, j += s) {
             if (count < j) j -= count;
-            *(unsigned int*)(out + i) = *(const unsigned int*)(inp + size - 4 * j);
+            LIBXS_MEMCPY(out + i, inp + size - 4 * j, 4);
           } break;
           case 2: for (; i < size; i += 2, j += s) {
             if (count < j) j -= count;
-            *(unsigned short*)(out + i) = *(const unsigned short*)(inp + size - 2 * j);
+            LIBXS_MEMCPY(out + i, inp + size - 2 * j, 2);
           } break;
           case 1: for (; i < size; ++i, j += s) {
             if (count < j) j -= count;

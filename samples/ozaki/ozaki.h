@@ -69,9 +69,11 @@
 # define OZ2_NPRIMES_DEFAULT 8
 #endif
 
-/** Implement the public gemm_ozN function: call the _diff kernel,
+/**
+ *  Implement the public gemm_ozN function: call the _diff kernel,
  *  then handle verbose output, diff accumulation, and matrix dumps.
- *  DIFF_FN is the _diff kernel (gemm_oz1_diff or gemm_oz2_diff). */
+ *  DIFF_FN is the _diff kernel (gemm_oz1_diff or gemm_oz2_diff).
+ */
 #define OZAKI_GEMM_WRAPPER(DIFF_FN) \
   if (0 == gemm_verbose) { \
     DIFF_FN(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, \
@@ -322,14 +324,16 @@ typedef int32_t (*ozaki_dot_i8_fn)(const int8_t[BLOCK_K], const int8_t[BLOCK_K])
 #endif
 
 
-/** Extract IEEE-754 biased exponent and full mantissa (with implicit bit)
+/**
+ *  Extract IEEE-754 biased exponent and full mantissa (with implicit bit)
  *  into uint64_t.  Returns sign (+1 or -1); for zero/subnormal/NaN/Inf
  *  sets exp_biased=0 and mantissa=0, returns +1.
  *
  *  Special-value detection is done entirely via the raw exponent field
  *  after bit-extraction, avoiding the previous float cast which was
  *  incorrect for double precision (finite doubles > ~3.4e38 overflow
- *  to float-Inf, producing a false positive). */
+ *  to float-Inf, producing a false positive).
+ */
 LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value,
   int16_t* exp_biased, uint64_t* mantissa)
 {
@@ -368,10 +372,12 @@ LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value,
 }
 
 
-/** Split a (pre-aligned) mantissa into signed 7-bit digits.
+/**
+ *  Split a (pre-aligned) mantissa into signed 7-bit digits.
  *  The mantissa is expected to be in the same format as produced
  *  by ozaki_extract_ieee (implicit bit at position OZ_MANT_BITS),
- *  but may have been right-shifted for exponent alignment. */
+ *  but may have been right-shifted for exponent alignment.
+ */
 LIBXS_API_INLINE void ozaki_split_digits(uint64_t mantissa, int sign,
   int8_t digits[MAX_NSLICES])
 {
@@ -402,9 +408,11 @@ LIBXS_API_INLINE void ozaki_split_digits(uint64_t mantissa, int sign,
 }
 
 
-/** Scale a tile of C by beta, optionally capturing the pre-scaled block.
+/**
+ *  Scale a tile of C by beta, optionally capturing the pre-scaled block.
  *  Per BLAS spec, beta=0 must zero out C unconditionally (C may hold NaN
- *  or Inf when uninitialized); a plain multiply would give NaN. */
+ *  or Inf when uninitialized); a plain multiply would give NaN.
+ */
 LIBXS_API_INLINE void ozaki_scale_block_beta(GEMM_REAL_TYPE* mb, GEMM_INT_TYPE ldc,
   GEMM_INT_TYPE iblk, GEMM_INT_TYPE jblk, const GEMM_REAL_TYPE* beta,
   GEMM_REAL_TYPE* ref_blk, int capture_ref)

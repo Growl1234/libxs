@@ -195,9 +195,11 @@
 # define LIBXS_PRAGMA_OPTIMIZE_ON
 #endif
 
-/** Mark a symbol as a weak reference (#pragma weak).
+/**
+ * Mark a symbol as a weak reference (#pragma weak).
  * Supported by GCC, Clang, and classic Unix compilers.
- * On unsupported compilers the macro expands to nothing. */
+ * On unsupported compilers the macro expands to nothing.
+ */
 #if defined(__GNUC__) || defined(__clang__) || \
    (defined(__SUNPRO_C) || defined(__SUNPRO_CC))
 # define LIBXS_PRAGMA_WEAK(SYMBOL) LIBXS_PRAGMA(weak SYMBOL)

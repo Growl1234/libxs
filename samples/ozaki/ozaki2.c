@@ -88,11 +88,13 @@ LIBXS_API_INLINE unsigned int oz2_mod(uint32_t x, int pidx)
 }
 
 
-/** Bounded modular reduction for mixed-radix digits: v mod oz2_moduli[pidx].
+/**
+ *  Bounded modular reduction for mixed-radix digits: v mod oz2_moduli[pidx].
  *  v must be a Garner digit, i.e. v < max(moduli) = 128.
  *  Since min(moduli) = 61, floor(127/61) = 2, so at most two conditional
  *  subtracts suffice — avoiding the Barrett multiply in the O(nprimes^2)
- *  Garner inner loop. */
+ *  Garner inner loop.
+ */
 LIBXS_API_INLINE unsigned int oz2_mod_digit(unsigned int v, int pidx)
 {
   const unsigned int p = oz2_moduli[pidx];
@@ -110,9 +112,11 @@ LIBXS_API_INLINE unsigned int oz2_mod64(uint64_t x, int pidx)
 }
 
 
-/** Reduce an aligned mantissa modulo all active moduli.
+/**
+ *  Reduce an aligned mantissa modulo all active moduli.
  *  delta = max_exp - element_exp (>= 0); mantissa is right-shifted
- *  by delta bits for exponent alignment before reduction. */
+ *  by delta bits for exponent alignment before reduction.
+ */
 LIBXS_API_INLINE void oz2_reduce(uint64_t mantissa, int delta,
   uint8_t residues[OZ2_NPRIMES_MAX], int nprimes)
 {
@@ -137,10 +141,12 @@ LIBXS_API_INLINE double oz2_horner_grouped(const unsigned int v[], int nprimes);
  * Uses libxs_mulhi_epu32 and libxs_mod_u32x16 from libxs_utils.h. */
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == OZ2_BATCH
 
-/** AVX-512 batched CRT reconstruction via Garner's algorithm.
+/**
+ *  AVX-512 batched CRT reconstruction via Garner's algorithm.
  *  Uses transposed internal layout vt[prime][batch] for contiguous
  *  SIMD access, bounded subtracts for digit reduction, and vectorized
- *  Barrett for the Garner product reduction. */
+ *  Barrett for the Garner product reduction.
+ */
 LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
 void oz2_reconstruct_batch_avx512(
   unsigned int batch_res[OZ2_BATCH][OZ2_NPRIMES_MAX],
@@ -225,12 +231,14 @@ void oz2_reconstruct_batch_avx512(
 #endif /* LIBXS_INTRINSICS_AVX512 && OZ2_BATCH == 16 */
 
 
-/** Preprocess rows of A for one (ib, kb) tile.
+/**
+ *  Preprocess rows of A for one (ib, kb) tile.
  *  Decomposes each element, finds per-row max exponent, aligns mantissas
  *  by right-shifting, reduces mod each modulus, and writes directly into
  *  the k-contiguous layout ak[M][P][K] used by dot products.
  *  Signs are folded into int8 residues (-p..+p).
- *  This avoids a separate transpose pass over an intermediate buffer. */
+ *  This avoids a separate transpose pass over an intermediate buffer.
+ */
 LIBXS_API_INLINE void oz2_preprocess_rows(
   const GEMM_REAL_TYPE* a, GEMM_INT_TYPE lda, int ta,
   GEMM_INT_TYPE M, GEMM_INT_TYPE K,
@@ -281,10 +289,12 @@ LIBXS_API_INLINE void oz2_preprocess_rows(
 }
 
 
-/** Preprocess columns of B for one (kb, jb) tile.
+/**
+ *  Preprocess columns of B for one (kb, jb) tile.
  *  Same as rows of A but with per-column max exponent. Writes directly
  *  into bk[N][P][K] (k-contiguous layout).
- *  Signs are folded into int8 residues. */
+ *  Signs are folded into int8 residues.
+ */
 LIBXS_API_INLINE void oz2_preprocess_cols(
   const GEMM_REAL_TYPE* b, GEMM_INT_TYPE ldb, int tb,
   GEMM_INT_TYPE N, GEMM_INT_TYPE K,
@@ -337,10 +347,12 @@ LIBXS_API_INLINE void oz2_preprocess_cols(
 }
 
 
-/** Evaluate mixed-radix digits v[0..nprimes-1] via grouped uint64 Horner.
+/**
+ *  Evaluate mixed-radix digits v[0..nprimes-1] via grouped uint64 Horner.
  *  Partitions digits into groups of OZ2_HORNER_GROUP, evaluates each group
  *  exactly in uint64 (product of OZ2_HORNER_GROUP moduli < 2^63), then combines groups
- *  with Horner in FP64: ceil(nprimes/OZ2_HORNER_GROUP)-1 FP64 mul-adds. */
+ *  with Horner in FP64: ceil(nprimes/OZ2_HORNER_GROUP)-1 FP64 mul-adds.
+ */
 LIBXS_API_INLINE double oz2_horner_grouped(
   const unsigned int v[], int nprimes)
 {
@@ -376,7 +388,8 @@ LIBXS_API_INLINE double oz2_horner_grouped(
 }
 
 
-/** Reconstruct a signed integer from its CRT residues.
+/**
+ *  Reconstruct a signed integer from its CRT residues.
  *
  *  Uses Garner's algorithm to compute mixed-radix digits, detects the
  *  sign from the most significant digit (centered representation), and
@@ -443,9 +456,11 @@ LIBXS_API_INLINE double oz2_reconstruct(
 }
 
 
-/** Reconstruct a single element's unsigned mantissa from its CRT residues.
+/**
+ *  Reconstruct a single element's unsigned mantissa from its CRT residues.
  *  Uses Garner+Horner in uint64 arithmetic (exact for mantissa <= 2^53).
- *  Used for diff tracking of A/B matrices. */
+ *  Used for diff tracking of A/B matrices.
+ */
 LIBXS_API_INLINE uint64_t oz2_reconstruct_mantissa(
   const uint8_t residues[OZ2_NPRIMES_MAX],
   unsigned int garner_inv[OZ2_NPRIMES_MAX][OZ2_NPRIMES_MAX],
@@ -482,9 +497,11 @@ LIBXS_API_INLINE uint64_t oz2_reconstruct_mantissa(
 }
 
 
-/** Batched CRT reconstruction: process OZ2_BATCH elements in parallel
+/**
+ *  Batched CRT reconstruction: process OZ2_BATCH elements in parallel
  *  through Garner's algorithm. The innermost loop over batch elements
- *  is data-parallel, enabling auto-vectorization. */
+ *  is data-parallel, enabling auto-vectorization.
+ */
 LIBXS_API_INLINE void oz2_reconstruct_batch(
   unsigned int batch_res[OZ2_BATCH][OZ2_NPRIMES_MAX],
   unsigned int garner_inv[OZ2_NPRIMES_MAX][OZ2_NPRIMES_MAX],

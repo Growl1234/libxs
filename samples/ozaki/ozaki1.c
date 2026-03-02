@@ -27,9 +27,11 @@ LIBXS_API_INLINE double reconstruct_from_digits(const int8_t digits[MAX_NSLICES]
 }
 
 
-/** Preprocess rows of A: decompose, align, split into digits, and write
+/**
+ *  Preprocess rows of A: decompose, align, split into digits, and write
  *  directly into the k-contiguous layout ak[M][S][K] used by dot products.
- *  This avoids a separate transpose pass over an intermediate buffer. */
+ *  This avoids a separate transpose pass over an intermediate buffer.
+ */
 LIBXS_API_INLINE void preprocess_rows(const GEMM_REAL_TYPE* a, GEMM_INT_TYPE lda, int ta,
   GEMM_INT_TYPE M, GEMM_INT_TYPE K, GEMM_INT_TYPE ib, GEMM_INT_TYPE kb, GEMM_INT_TYPE iblk,
   GEMM_INT_TYPE kblk, int16_t expa_row[BLOCK_M], int8_t ak[BLOCK_M][MAX_NSLICES][BLOCK_K])
@@ -78,9 +80,11 @@ LIBXS_API_INLINE void preprocess_rows(const GEMM_REAL_TYPE* a, GEMM_INT_TYPE lda
 }
 
 
-/** Preprocess columns of B: decompose, align, split into digits, and write
+/**
+ *  Preprocess columns of B: decompose, align, split into digits, and write
  *  directly into the k-contiguous layout bk[N][S][K] used by dot products.
- *  This avoids a separate transpose pass over an intermediate buffer. */
+ *  This avoids a separate transpose pass over an intermediate buffer.
+ */
 LIBXS_API_INLINE void preprocess_cols(const GEMM_REAL_TYPE* b, GEMM_INT_TYPE ldb, int tb,
   GEMM_INT_TYPE N, GEMM_INT_TYPE K, GEMM_INT_TYPE jb, GEMM_INT_TYPE kb, GEMM_INT_TYPE jblk,
   GEMM_INT_TYPE kblk, int16_t expb_col[BLOCK_N], int8_t bk[BLOCK_N][MAX_NSLICES][BLOCK_K])

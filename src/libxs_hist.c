@@ -106,53 +106,55 @@ LIBXS_API void libxs_hist_set(libxs_lock_t* lock, libxs_hist_t* hist, const doub
 LIBXS_API void libxs_hist_get(libxs_lock_t* lock, const libxs_hist_t* hist,
   const int** buckets, int* nbuckets, double range[2], const double** vals, int* nvals)
 {
+  /* C "mutable": lazy commit mutates internal state via cast (safe: always heap-allocated) */
+  libxs_hist_t* const h = (libxs_hist_t*)(uintptr_t)hist;
   int *b = NULL, m = 0, n = 0, i, j, k;
   double *v = NULL, r[] = {0, 0};
   LIBXS_ASSERT(NULL != buckets || NULL != range || NULL != vals);
-  if (NULL != hist) {
+  if (NULL != h) {
     if (NULL != lock) LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
-    if (hist->n <= hist->nqueue) {
-      const double w = hist->max - hist->min;
-      if (hist->n < hist->nbuckets) ((libxs_hist_t*)(uintptr_t)hist)->nbuckets = hist->n;
-      for (i = 1, j = 0; i <= hist->nbuckets; j = hist->nvals * i++) {
-        const double p = hist->min + (i - 1) * w / hist->nbuckets, q = hist->min + i * w / hist->nbuckets;
-        for (n = 0, m = 0; n < hist->n; m = ++n * hist->nvals) {
-          if (0 == hist->buckets[n] && (p < hist->vals[m] || 1 == i) && (hist->vals[m] <= q || hist->nbuckets == i)) {
+    if (h->n <= h->nqueue) {
+      const double w = h->max - h->min;
+      if (h->n < h->nbuckets) h->nbuckets = h->n;
+      for (i = 1, j = 0; i <= h->nbuckets; j = h->nvals * i++) {
+        const double p = h->min + (i - 1) * w / h->nbuckets, q = h->min + i * w / h->nbuckets;
+        for (n = 0, m = 0; n < h->n; m = ++n * h->nvals) {
+          if (0 == h->buckets[n] && (p < h->vals[m] || 1 == i) && (h->vals[m] <= q || h->nbuckets == i)) {
             if (j != m) {
-              if (0 != hist->buckets[i - 1]) { /* accumulate: arithmetic sum */
-                for (k = 0; k < hist->nvals; ++k) {
-                  hist->vals[j + k] += hist->vals[m + k];
+              if (0 != h->buckets[i - 1]) { /* accumulate: arithmetic sum */
+                for (k = 0; k < h->nvals; ++k) {
+                  h->vals[j + k] += h->vals[m + k];
                 }
               }
               else { /* initialize/swap */
-                for (k = 0; k < hist->nvals; ++k) {
-                  LIBXS_VALUE_SWAP(hist->vals[m + k], hist->vals[j + k]);
+                for (k = 0; k < h->nvals; ++k) {
+                  LIBXS_VALUE_SWAP(h->vals[m + k], h->vals[j + k]);
                 }
               }
             }
-            ++hist->buckets[i - 1];
+            ++h->buckets[i - 1];
           }
         }
       }
       /* normalize committed sums: arithmetic mean for avg (or default) */
-      for (i = 0, j = 0; i < hist->nbuckets; j = ++i * hist->nvals) {
-        if (1 < hist->buckets[i]) {
-          for (k = 0; k < hist->nvals; ++k) {
-            if (NULL == hist->update[k] || libxs_hist_avg == hist->update[k]) {
-              hist->vals[j + k] /= hist->buckets[i];
+      for (i = 0, j = 0; i < h->nbuckets; j = ++i * h->nvals) {
+        if (1 < h->buckets[i]) {
+          for (k = 0; k < h->nvals; ++k) {
+            if (NULL == h->update[k] || libxs_hist_avg == h->update[k]) {
+              h->vals[j + k] /= h->buckets[i];
             }
           }
         }
       }
-      ((libxs_hist_t*)(uintptr_t)hist)->nqueue = 0;
+      h->nqueue = 0;
     }
-    if (0 < hist->n) {
-      r[0] = hist->min;
-      r[1] = hist->max;
-      b = hist->buckets;
-      n = hist->nbuckets;
-      v = hist->vals;
-      m = hist->nvals;
+    if (0 < h->n) {
+      r[0] = h->min;
+      r[1] = h->max;
+      b = h->buckets;
+      n = h->nbuckets;
+      v = h->vals;
+      m = h->nvals;
     }
     if (NULL != lock) LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
   }

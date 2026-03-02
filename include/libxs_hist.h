@@ -32,7 +32,12 @@ LIBXS_API void libxs_hist_destroy(libxs_hist_t* hist);
 /** Insert values; vals[0] determines the bucket (lock can be NULL). */
 LIBXS_API void libxs_hist_set(libxs_lock_t* lock, libxs_hist_t* hist, const double vals[]);
 
-/** Query statistics; commits queued items if pending (lock can be NULL). */
+/**
+ * Query statistics; commits queued items if pending (lock can be NULL).
+ * Note: the histogram may be lazily committed (internal mutation) on the
+ * first call; this is the C equivalent of C++ "mutable" and is safe
+ * because the histogram is always heap-allocated.
+ */
 LIBXS_API void libxs_hist_get(libxs_lock_t* lock, const libxs_hist_t* hist,
   const int** buckets, int* nbuckets, double range[2], const double** vals, int* nvals);
 
