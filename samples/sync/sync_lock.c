@@ -74,6 +74,17 @@
 #define MEASURE_THROUGHPUT(LOCK_KIND, LOCKPTR, NREPEAT, NTHREADS, WORK_R, WORK_W, NW, NT) do { \
   libxs_timer_tick_t throughput = 0; \
   double duration; \
+  /* Warmup: spawn threads and exercise lock paths (untimed). */ \
+  MEASURE_THROUGHPUT_PARALLEL(NTHREADS) \
+  { \
+    int w_; \
+    for (w_ = 0; w_ < LIBXS_MIN(NREPEAT, 64); ++w_) { \
+      LIBXS_LOCK_ACQREAD(LOCK_KIND, LOCKPTR); \
+      LIBXS_LOCK_RELREAD(LOCK_KIND, LOCKPTR); \
+      LIBXS_LOCK_ACQUIRE(LOCK_KIND, LOCKPTR); \
+      LIBXS_LOCK_RELEASE(LOCK_KIND, LOCKPTR); \
+    } \
+  } \
   MEASURE_THROUGHPUT_PARALLEL(NTHREADS) \
   { \
     int n, nn; \
@@ -119,6 +130,16 @@
   LIBXS_LOCK_ATTR_INIT(LOCK_KIND, &attr); \
   LIBXS_LOCK_INIT(LOCK_KIND, &lock, &attr); \
   LIBXS_LOCK_ATTR_DESTROY(LOCK_KIND, &attr); \
+  /* Warmup: exercise both lock paths so the first timed measurement \
+   * does not include cold cache, branch predictor, or lazy-init costs. */ \
+  { int w_; \
+    for (w_ = 0; w_ < LIBXS_MIN(NREPEAT_LAT, 1024); ++w_) { \
+      LIBXS_LOCK_ACQREAD(LOCK_KIND, &lock); \
+      LIBXS_LOCK_RELREAD(LOCK_KIND, &lock); \
+      LIBXS_LOCK_ACQUIRE(LOCK_KIND, &lock); \
+      LIBXS_LOCK_RELEASE(LOCK_KIND, &lock); \
+    } \
+  } \
   MEASURE_LATENCY_RO(LOCK_KIND, &lock, NREPEAT_LAT); \
   MEASURE_LATENCY_RW(LOCK_KIND, &lock, NREPEAT_LAT); \
   MEASURE_THROUGHPUT(LOCK_KIND, &lock, NREPEAT_TPT, NTHREADS, WORK_R, WORK_W, nw, nt); \
