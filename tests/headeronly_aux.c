@@ -13,8 +13,7 @@ LIBXS_EXTERN_C int headeronly_aux(void);
 LIBXS_EXTERN_C int headeronly_aux(void)
 {
   int result = EXIT_SUCCESS;
-  /* exercise hash, RNG, and math from this (potentially C++) TU */
-  { const unsigned long long hs = libxs_hash_string("headeronly");
+  { /* exercise hash, RNG, and math from this (potentially C++) TU */ const unsigned long long hs = libxs_hash_string("headeronly");
     if (0 == hs) result = EXIT_FAILURE;
   }
   { libxs_rng_set_seed(42);

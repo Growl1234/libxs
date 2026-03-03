@@ -279,8 +279,7 @@ static int test_print(void)
     libxs_hist_set(NULL, hist, v2);
     libxs_hist_set(NULL, hist, v3);
   }
-  /* print to /dev/null (or stderr under debug): just ensure no crash */
-  {
+  { /* print to /dev/null (or stderr under debug): just ensure no crash */
 #if defined(_DEBUG)
     FILE *const ostream = stderr;
 #elif !defined(_WIN32)
@@ -423,8 +422,7 @@ static int test_underpopulated(void)
     FPRINTF(stderr, "ERROR line #%i: range [%f, %f] unexpected\n", __LINE__, range[0], range[1]);
     result = EXIT_FAILURE;
   }
-  /* further inserts work against the committed (reduced) bucket set */
-  {
+  { /* further inserts work against the committed (reduced) bucket set */
     const double v4[] = { 30.0 }, v5[] = { 70.0 };
     libxs_hist_set(NULL, hist, v4);
     libxs_hist_set(NULL, hist, v5);

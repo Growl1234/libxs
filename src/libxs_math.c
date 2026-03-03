@@ -341,8 +341,7 @@ LIBXS_API double libxs_matdiff_epsilon(const libxs_matdiff_info_t* input)
         if (0 < nchars && (2 * (offset + nchars)) < sizeof(buffer)) {
           const char *p2 = env + envlen; /* scan remaining tokens from end of first token */
           char s2[2] = {'\0'};
-          /* advance p2 past first token's NUL to the rest of the env copy */
-          { const char *t = arg;
+          { /* advance p2 past first token's NUL to the rest of the env copy */ const char *t = arg;
             while ('\0' != *t) ++t;
             p2 = t + 1; /* points past NUL separator into remainder */
           }

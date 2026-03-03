@@ -271,8 +271,7 @@ int main(int argc, char* argv[])
     libxs_registry_create(&registry);
     if (NULL == registry) { result = EXIT_FAILURE; goto cleanup; }
 
-    /* pre-populate half so readers have something to find */
-    { const int half = size_total / 2;
+    { /* pre-populate half so readers have something to find */ const int half = size_total / 2;
       for (i = 0; i < half; ++i) {
         if (NULL == libxs_registry_set(registry, &keys[i], sizeof(bench_key_t),
           &vals[i], sizeof(bench_value_t), NULL))

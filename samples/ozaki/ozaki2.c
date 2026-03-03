@@ -166,8 +166,7 @@ void oz2_reconstruct_batch_avx512(
     const unsigned int rcp_i = oz2_rcp[i];
     const __m512i vpi = _mm512_set1_epi32((int)pi);
 
-    /* Load residues for prime i across batch elements (strided gather) */
-    { unsigned int tmp[OZ2_BATCH];
+    { /* Load residues for prime i across batch elements (strided gather) */ unsigned int tmp[OZ2_BATCH];
       for (bi = 0; bi < bsz; ++bi) tmp[bi] = batch_res[bi][i];
       for (bi = bsz; bi < OZ2_BATCH; ++bi) tmp[bi] = 0;
       u_vec = _mm512_loadu_si512((__m512i*)tmp);
@@ -188,8 +187,7 @@ void oz2_reconstruct_batch_avx512(
         vj_vec = _mm512_mask_sub_epi32(vj_vec, ge, vj_vec, vpi);
       }
 
-      /* diff = (u >= vj) ? (u - vj) : (pi + u - vj) */
-      { const __mmask16 ge = _mm512_cmpge_epu32_mask(u_vec, vj_vec);
+      { /* diff = (u >= vj) ? (u - vj) : (pi + u - vj) */ const __mmask16 ge = _mm512_cmpge_epu32_mask(u_vec, vj_vec);
         const __m512i d_pos = _mm512_sub_epi32(u_vec, vj_vec);
         const __m512i d_neg = _mm512_sub_epi32(
           _mm512_add_epi32(vpi, u_vec), vj_vec);
@@ -205,8 +203,7 @@ void oz2_reconstruct_batch_avx512(
     _mm512_storeu_si512((__m512i*)vt[i], u_vec);
   }
 
-  /* Sign detection, complement, Horner — per element (transpose back) */
-  { unsigned int v_scalar[OZ2_BATCH][OZ2_NPRIMES_MAX];
+  { /* Sign detection, complement, Horner — per element (transpose back) */ unsigned int v_scalar[OZ2_BATCH][OZ2_NPRIMES_MAX];
     unsigned int tmp[OZ2_BATCH];
     for (i = 0; i < nprimes; ++i) {
       _mm512_storeu_si512((__m512i*)tmp,
@@ -278,8 +275,7 @@ LIBXS_API_INLINE void oz2_preprocess_rows(
         ak[mi][pidx][kk] = (int8_t)(local_sign[kk] * (int8_t)tmp[pidx]);
       }
     }
-    /* Zero-pad remaining k-entries */
-    { int pidx;
+    { /* Zero-pad remaining k-entries */ int pidx;
       LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
       for (pidx = 0; pidx < nprimes; ++pidx) {
         for (kk = kblk; kk < BLOCK_K; ++kk) ak[mi][pidx][kk] = 0;
@@ -335,8 +331,7 @@ LIBXS_API_INLINE void oz2_preprocess_cols(
       }
     }
   }
-  /* Zero-pad remaining k-entries */
-  { int pidx;
+  { /* Zero-pad remaining k-entries */ int pidx;
     for (nj = 0; nj < jblk; ++nj) {
       LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
       for (pidx = 0; pidx < nprimes; ++pidx) {
@@ -360,8 +355,7 @@ LIBXS_API_INLINE double oz2_horner_grouped(
   double result;
   int g;
 
-  /* MSB group: indices [(ngroups-1)*OZ2_HORNER_GROUP .. nprimes-1] */
-  { const int lo = (ngroups - 1) * OZ2_HORNER_GROUP;
+  { /* MSB group: indices [(ngroups-1)*OZ2_HORNER_GROUP .. nprimes-1] */ const int lo = (ngroups - 1) * OZ2_HORNER_GROUP;
     uint64_t r = (uint64_t)v[nprimes - 1];
     int i;
     for (i = nprimes - 2; i >= lo; --i) {

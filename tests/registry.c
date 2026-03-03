@@ -308,8 +308,8 @@ static int test_tls_cache(void)
   v = (char*)libxs_registry_set(registry, &key, sizeof(key), val, sizeof(val), NULL);
   TEST_CHECK(NULL != v);
 
-  /* first get populates TLS cache, second get hits it (both must return same pointer) */
-  { const char* v1 = (const char*)libxs_registry_get(registry, &key, sizeof(key), NULL);
+  { /* first get populates TLS cache, second get hits it (both must return same pointer) */
+    const char* v1 = (const char*)libxs_registry_get(registry, &key, sizeof(key), NULL);
     const char* v2 = (const char*)libxs_registry_get(registry, &key, sizeof(key), NULL);
     TEST_CHECK(NULL != v1 && NULL != v2);
     TEST_CHECK(v1 == v2); /* same pointer */

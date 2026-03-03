@@ -510,8 +510,7 @@ int main(int argc, char* argv[])
       if (libxs_mod_inverse_u32(1, p) != 1) exit(EXIT_FAILURE);
       if (libxs_mod_inverse_u32(p - 1, p) != p - 1) exit(EXIT_FAILURE);
     }
-    /* Composite moduli (prime powers): a * a^(-1) == 1 (mod m) */
-    { static const unsigned int composites[] = {
+    { /* Composite moduli (prime powers): a * a^(-1) == 1 (mod m) */ static const unsigned int composites[] = {
         4, 8, 9, 16, 25, 27, 32, 49, 64, 81, 121, 125, 128, 243, 256
       };
       const int ncomp = (int)(sizeof(composites) / sizeof(*composites));
@@ -575,8 +574,7 @@ int main(int argc, char* argv[])
           exit(EXIT_FAILURE);
         }
       }
-      /* 64-bit radix-split: spot-check with mantissa-sized values */
-      { static const uint64_t test64[] = {
+      { /* 64-bit radix-split: spot-check with mantissa-sized values */ static const uint64_t test64[] = {
           0, 1, 262143ULL, 262144ULL, 262145ULL, /* around 2^18 */
           (1ULL << 36) - 1, (1ULL << 36), (1ULL << 36) + 1,
           (1ULL << 52) | 0xFFFFFFFFFFFFFULL, /* all-ones 53-bit */
@@ -598,38 +596,32 @@ int main(int argc, char* argv[])
     }
   }
 
-  /* BF16 round-trip: libxs_round_bf16 and libxs_bf16_to_f64 */
-  {
-    /* Test 1: zero round-trips exactly */
-    { const libxs_bf16_t z = libxs_round_bf16(0.0);
+  { /* BF16 round-trip: libxs_round_bf16 and libxs_bf16_to_f64 */
+    { /* Test 1: zero round-trips exactly */ const libxs_bf16_t z = libxs_round_bf16(0.0);
       if (0.0 != libxs_bf16_to_f64(z)) {
         FPRINTF(stderr, "ERROR line #%i: BF16 zero round-trip\n", __LINE__);
         exit(EXIT_FAILURE);
       }
     }
-    /* Test 2: exact representable value (1.0) */
-    { const libxs_bf16_t one = libxs_round_bf16(1.0);
+    { /* Test 2: exact representable value (1.0) */ const libxs_bf16_t one = libxs_round_bf16(1.0);
       if (1.0 != libxs_bf16_to_f64(one)) {
         FPRINTF(stderr, "ERROR line #%i: BF16 1.0 round-trip\n", __LINE__);
         exit(EXIT_FAILURE);
       }
     }
-    /* Test 3: negative exact representable value (-2.0) */
-    { const libxs_bf16_t m2 = libxs_round_bf16(-2.0);
+    { /* Test 3: negative exact representable value (-2.0) */ const libxs_bf16_t m2 = libxs_round_bf16(-2.0);
       if (-2.0 != libxs_bf16_to_f64(m2)) {
         FPRINTF(stderr, "ERROR line #%i: BF16 -2.0 round-trip\n", __LINE__);
         exit(EXIT_FAILURE);
       }
     }
-    /* Test 4: round-to-nearest-even — 1.5 * 2^0 exactly representable */
-    { const libxs_bf16_t h = libxs_round_bf16(1.5);
+    { /* Test 4: round-to-nearest-even — 1.5 * 2^0 exactly representable */ const libxs_bf16_t h = libxs_round_bf16(1.5);
       if (1.5 != libxs_bf16_to_f64(h)) {
         FPRINTF(stderr, "ERROR line #%i: BF16 1.5 round-trip\n", __LINE__);
         exit(EXIT_FAILURE);
       }
     }
-    /* Test 5: value that requires rounding (pi) — check relative error < 2^-7 */
-    { const double pi = 3.14159265358979323846;
+    { /* Test 5: value that requires rounding (pi) — check relative error < 2^-7 */ const double pi = 3.14159265358979323846;
       const libxs_bf16_t bp = libxs_round_bf16(pi);
       const double back = libxs_bf16_to_f64(bp);
       const double relerr = (back - pi) / pi;
@@ -649,8 +641,7 @@ int main(int argc, char* argv[])
         recon += libxs_bf16_to_f64(s);
         residual -= libxs_bf16_to_f64(s);
       }
-      /* 7 slices capture 56 bits > 52 mantissa bits of double */
-      { const double err = val - recon;
+      { /* 7 slices capture 56 bits > 52 mantissa bits of double */ const double err = val - recon;
         if (err < 0 ? -err > 1e-15 : err > 1e-15) {
           FPRINTF(stderr, "ERROR line #%i: BF16 Dekker split residual=%g\n",
             __LINE__, err);
@@ -658,8 +649,7 @@ int main(int argc, char* argv[])
         }
       }
     }
-    /* Test 7: large and small magnitudes */
-    { const double large = 1.0e30;
+    { /* Test 7: large and small magnitudes */ const double large = 1.0e30;
       const double small_v = 1.0e-30;
       const libxs_bf16_t bl = libxs_round_bf16(large);
       const libxs_bf16_t bs = libxs_round_bf16(small_v);
