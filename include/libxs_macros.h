@@ -225,6 +225,15 @@
 # define LIBXS_EXTENSION
 #endif
 
+/** Native BF16 type.
+ * GCC 13+/Clang 15+ provide __bf16 as a scalar storage+conversion type.
+ * LIBXS_BF16 is defined when the __bf16 type is available. */
+#if !defined(LIBXS_BF16)
+# if defined(__BFLT16_MANT_DIG__)
+#   define LIBXS_BF16
+# endif
+#endif
+
 /** 128-bit unsigned integer type.
  * GCC/Clang provide unsigned __int128 on 64-bit targets.
  * LIBXS_INT128 is defined when libxs_uint128_t is available. */

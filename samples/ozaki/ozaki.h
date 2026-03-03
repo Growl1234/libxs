@@ -413,12 +413,20 @@ LIBXS_API_INLINE float ozaki_dot_bf16_sw(const libxs_bf16_t a[BLOCK_K], const li
 {
   float dot = 0.0f;
   int kk;
+#if defined(LIBXS_BF16)
+  for (kk = 0; kk < BLOCK_K; ++kk) {
+    union { uint16_t u; __bf16 h; } ca, cb;
+    ca.u = a[kk]; cb.u = b[kk];
+    dot += (float)ca.h * (float)cb.h;
+  }
+#else
   for (kk = 0; kk < BLOCK_K; ++kk) {
     union { uint32_t u; float f; } ca, cb;
     ca.u = (uint32_t)a[kk] << 16;
     cb.u = (uint32_t)b[kk] << 16;
     dot += ca.f * cb.f;
   }
+#endif
   return dot;
 }
 
