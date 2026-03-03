@@ -246,7 +246,8 @@ LIBXS_API_INLINE void gemm_oz3_diff(const char* transa, const char* transb,
             { /* Diagonal-trim loop: iterate pairs (sa,sb) with sa+sb <= cutoff.
                * trim=0 means all pairs; larger values drop the least
                * significant diagonals (~8 bits each for BF16 slices). */
-              const int cutoff = LIBXS_MAX(0, 2 * (nslices - 1) - gemm_oztrim);
+              const int trim = LIBXS_MIN(gemm_oztrim, 2 * (nslices - 1));
+              const int cutoff = 2 * (nslices - 1) - trim;
               LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
               for (slice_a = 0; slice_a < nslices && slice_a <= cutoff; ++slice_a) {
                 const int sb_start = (0 != (gemm_ozflags & OZ1_TRIANGULAR))

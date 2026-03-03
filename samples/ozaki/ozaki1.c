@@ -366,7 +366,8 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
             { /* Diagonal-trim loop: iterate pairs (sa,sb) with sa+sb <= cutoff.
                * trim=0 means all pairs (exact); larger values drop the least
                * significant diagonals (~7 bits each). */
-              const int cutoff = LIBXS_MAX(0, 2 * (nslices - 1) - gemm_oztrim);
+              const int trim = LIBXS_MIN(gemm_oztrim, 2 * (nslices - 1));
+              const int cutoff = 2 * (nslices - 1) - trim;
               /* Precompute base_scale: alpha * pow2(expa + expb - 2*BIAS) per (mi,nj).
                * Factors out the per-element exponent contribution that is constant
                * across all slice pairs, reducing libxs_pow2 calls from
