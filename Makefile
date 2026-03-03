@@ -256,22 +256,10 @@ else
   DFLAGS += -DLIBXS_BUILD=1
 endif
 
-# build rules that include target flags
-ifeq (0,$(CRAY))
 $(foreach OBJ,$(OBJFILES),$(eval $(call DEFINE_COMPILE_RULE, \
   $(OBJ),$(patsubst %.o,$(ROOTSRC)/%.c,$(notdir $(OBJ))), \
   $(HEADERS_MAIN) $(INCDIR)/$(PROJECT)_version.h, \
-  $(DFLAGS) $(IFLAGS) $(call applyif,1,$(PROJECT)_main,$(OBJ),-I$(BLDDIR)) $(CTARGET) $(CFLAGS))))
-else
-$(foreach OBJ,$(filter-out $(BLDDIR)/intel64/$(PROJECT)_mhd.o,$(OBJFILES)),$(eval $(call DEFINE_COMPILE_RULE, \
-  $(OBJ),$(patsubst %.o,$(ROOTSRC)/%.c,$(notdir $(OBJ))), \
-  $(HEADERS_MAIN) $(INCDIR)/$(PROJECT)_version.h, \
-  $(DFLAGS) $(IFLAGS) $(call applyif,1,$(PROJECT)_main,$(OBJ),-I$(BLDDIR)) $(CTARGET) $(CFLAGS))))
-$(foreach OBJ,$(BLDDIR)/intel64/$(PROJECT)_mhd.o,$(eval $(call DEFINE_COMPILE_RULE, \
-  $(OBJ),$(patsubst %.o,$(ROOTSRC)/%.c,$(notdir $(OBJ))), \
-  $(HEADERS_MAIN) $(INCDIR)/$(PROJECT)_version.h, \
-  $(DFLAGS) $(IFLAGS) $(CTARGET) $(patsubst $(OPTFLAGS),$(OPTFLAG1),$(CFLAGS)))))
-endif
+  $(DFLAGS) $(IFLAGS) $(CTARGET) $(CFLAGS))))
 
 .PHONY: module
 ifneq (,$(strip $(FC)))
