@@ -78,17 +78,12 @@ libxs_registry_begin
 libxs_registry_create
 libxs_registry_destroy
 libxs_registry_get
-libxs_registry_get_lock
 libxs_registry_has
-libxs_registry_has_lock
 libxs_registry_info
 libxs_registry_next
 libxs_registry_remove
-libxs_registry_remove_lock
 libxs_registry_set
-libxs_registry_set_lock
 libxs_registry_value_size
-libxs_registry_value_size_lock
 libxs_release_kernel
 libxs_remainder
 libxs_rng_f64
