@@ -85,6 +85,7 @@ LIBXS_API_INLINE void preprocess_rows(const GEMM_REAL_TYPE* a, GEMM_INT_TYPE lda
   for (mi = 0; mi < iblk; ++mi) {
     const GEMM_INT_TYPE row = ib + mi;
     int16_t row_max_exp = INT16_MIN;
+    int s;
 
     for (kk = 0; kk < kblk; ++kk) {
       const GEMM_INT_TYPE p = kb + kk;
@@ -101,7 +102,6 @@ LIBXS_API_INLINE void preprocess_rows(const GEMM_REAL_TYPE* a, GEMM_INT_TYPE lda
       const int delta = (int)row_max_exp - (int)elem_exp[mi][kk];
       uint64_t aligned = elem_mant[mi][kk];
       int8_t tmp[MAX_NSLICES];
-      int s;
       if (delta > 0) {
         aligned = (delta < 64) ? (aligned >> delta) : 0;
       }
@@ -109,11 +109,10 @@ LIBXS_API_INLINE void preprocess_rows(const GEMM_REAL_TYPE* a, GEMM_INT_TYPE lda
       LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
       for (s = 0; s < gemm_ozn; ++s) ak[mi][s][kk] = tmp[s];
     }
-    { /* Zero-pad remaining k-entries for fixed-length dot products */ int s;
-      LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
-      for (s = 0; s < gemm_ozn; ++s) {
-        for (kk = kblk; kk < BLOCK_K; ++kk) ak[mi][s][kk] = 0;
-      }
+    /* Zero-pad remaining k-entries for fixed-length dot products */
+    LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
+    for (s = 0; s < gemm_ozn; ++s) {
+      for (kk = kblk; kk < BLOCK_K; ++kk) ak[mi][s][kk] = 0;
     }
   }
 }
@@ -132,6 +131,7 @@ LIBXS_API_INLINE void preprocess_cols(const GEMM_REAL_TYPE* b, GEMM_INT_TYPE ldb
   uint64_t elem_mant[BLOCK_K][BLOCK_N];
   int elem_sign[BLOCK_K][BLOCK_N];
   GEMM_INT_TYPE nj, kk;
+  int s;
 
   for (nj = 0; nj < jblk; ++nj) {
     expb_col[nj] = INT16_MIN;
@@ -155,7 +155,6 @@ LIBXS_API_INLINE void preprocess_cols(const GEMM_REAL_TYPE* b, GEMM_INT_TYPE ldb
       const int delta = (int)expb_col[nj] - (int)elem_exp[kk][nj];
       uint64_t aligned = elem_mant[kk][nj];
       int8_t tmp[MAX_NSLICES];
-      int s;
       if (delta > 0) {
         aligned = (delta < 64) ? (aligned >> delta) : 0;
       }
@@ -164,12 +163,11 @@ LIBXS_API_INLINE void preprocess_cols(const GEMM_REAL_TYPE* b, GEMM_INT_TYPE ldb
       for (s = 0; s < gemm_ozn; ++s) bk[nj][s][kk] = tmp[s];
     }
   }
-  { /* Zero-pad remaining k-entries for fixed-length dot products */ int s;
-    for (nj = 0; nj < jblk; ++nj) {
-      LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
-      for (s = 0; s < gemm_ozn; ++s) {
-        for (kk = kblk; kk < BLOCK_K; ++kk) bk[nj][s][kk] = 0;
-      }
+  /* Zero-pad remaining k-entries for fixed-length dot products */
+  for (nj = 0; nj < jblk; ++nj) {
+    LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
+    for (s = 0; s < gemm_ozn; ++s) {
+      for (kk = kblk; kk < BLOCK_K; ++kk) bk[nj][s][kk] = 0;
     }
   }
 }

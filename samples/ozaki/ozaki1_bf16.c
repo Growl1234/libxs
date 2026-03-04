@@ -21,21 +21,20 @@ LIBXS_API_INLINE void oz3_preprocess_rows(const GEMM_REAL_TYPE* a, GEMM_INT_TYPE
   GEMM_INT_TYPE mi, kk;
   for (mi = 0; mi < iblk; ++mi) {
     const GEMM_INT_TYPE row = ib + mi;
+    int s;
     for (kk = 0; kk < kblk; ++kk) {
       const GEMM_INT_TYPE p = kb + kk;
       const GEMM_REAL_TYPE aval = ((row < M && p < K)
         ? a[LIBXS_INDEX(ta, lda, row, p)] : (GEMM_REAL_TYPE)0);
       libxs_bf16_t tmp[MAX_NSLICES];
-      int s;
       ozaki_split_to_bf16(aval, tmp);
       LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
       for (s = 0; s < gemm_ozn; ++s) ak[mi][s][kk] = tmp[s];
     }
-    { /* Zero-pad remaining k-entries for fixed-length dot products */ int s;
-      LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
-      for (s = 0; s < gemm_ozn; ++s) {
-        for (kk = kblk; kk < BLOCK_K; ++kk) ak[mi][s][kk] = 0;
-      }
+    /* Zero-pad remaining k-entries for fixed-length dot products */
+    LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
+    for (s = 0; s < gemm_ozn; ++s) {
+      for (kk = kblk; kk < BLOCK_K; ++kk) ak[mi][s][kk] = 0;
     }
   }
 }
@@ -51,6 +50,7 @@ LIBXS_API_INLINE void oz3_preprocess_cols(const GEMM_REAL_TYPE* b, GEMM_INT_TYPE
   GEMM_INT_TYPE kblk, libxs_bf16_t bk[BLOCK_N][MAX_NSLICES][BLOCK_K])
 {
   GEMM_INT_TYPE nj, kk;
+  int s;
   for (kk = 0; kk < kblk; ++kk) {
     const GEMM_INT_TYPE p = kb + kk;
     for (nj = 0; nj < jblk; ++nj) {
@@ -58,18 +58,16 @@ LIBXS_API_INLINE void oz3_preprocess_cols(const GEMM_REAL_TYPE* b, GEMM_INT_TYPE
       const GEMM_REAL_TYPE bval = ((p < K && col < N)
         ? b[LIBXS_INDEX(tb, ldb, p, col)] : (GEMM_REAL_TYPE)0);
       libxs_bf16_t tmp[MAX_NSLICES];
-      int s;
       ozaki_split_to_bf16(bval, tmp);
       LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
       for (s = 0; s < gemm_ozn; ++s) bk[nj][s][kk] = tmp[s];
     }
   }
-  { /* Zero-pad remaining k-entries */ int s;
-    for (nj = 0; nj < jblk; ++nj) {
-      LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
-      for (s = 0; s < gemm_ozn; ++s) {
-        for (kk = kblk; kk < BLOCK_K; ++kk) bk[nj][s][kk] = 0;
-      }
+  /* Zero-pad remaining k-entries */
+  for (nj = 0; nj < jblk; ++nj) {
+    LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
+    for (s = 0; s < gemm_ozn; ++s) {
+      for (kk = kblk; kk < BLOCK_K; ++kk) bk[nj][s][kk] = 0;
     }
   }
 }

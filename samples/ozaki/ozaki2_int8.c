@@ -253,6 +253,7 @@ LIBXS_API_INLINE void oz2_preprocess_rows(
     const GEMM_INT_TYPE row = ib + mi;
     int16_t row_max_exp = INT16_MIN;
     int8_t local_sign[BLOCK_K];
+    int pidx;
 
     for (kk = 0; kk < kblk; ++kk) {
       const GEMM_INT_TYPE p = kb + kk;
@@ -268,18 +269,16 @@ LIBXS_API_INLINE void oz2_preprocess_rows(
     for (kk = 0; kk < kblk; ++kk) {
       const int delta = (int)row_max_exp - (int)elem_exp[mi][kk];
       uint8_t tmp[OZ2_NPRIMES_MAX];
-      int pidx;
       oz2_reduce(elem_mant[mi][kk], delta, tmp, nprimes);
       LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
       for (pidx = 0; pidx < nprimes; ++pidx) {
         ak[mi][pidx][kk] = (int8_t)(local_sign[kk] * (int8_t)tmp[pidx]);
       }
     }
-    { /* Zero-pad remaining k-entries */ int pidx;
-      LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
-      for (pidx = 0; pidx < nprimes; ++pidx) {
-        for (kk = kblk; kk < BLOCK_K; ++kk) ak[mi][pidx][kk] = 0;
-      }
+    /* Zero-pad remaining k-entries */
+    LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
+    for (pidx = 0; pidx < nprimes; ++pidx) {
+      for (kk = kblk; kk < BLOCK_K; ++kk) ak[mi][pidx][kk] = 0;
     }
   }
 }
@@ -303,6 +302,7 @@ LIBXS_API_INLINE void oz2_preprocess_cols(
   uint64_t elem_mant[BLOCK_K][BLOCK_N];
   int8_t elem_sign[BLOCK_K][BLOCK_N];
   GEMM_INT_TYPE nj, kk;
+  int pidx;
 
   for (nj = 0; nj < jblk; ++nj) expb_col[nj] = INT16_MIN;
 
@@ -323,7 +323,6 @@ LIBXS_API_INLINE void oz2_preprocess_cols(
     for (nj = 0; nj < jblk; ++nj) {
       const int delta = (int)expb_col[nj] - (int)elem_exp[kk][nj];
       uint8_t tmp[OZ2_NPRIMES_MAX];
-      int pidx;
       oz2_reduce(elem_mant[kk][nj], delta, tmp, nprimes);
       LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
       for (pidx = 0; pidx < nprimes; ++pidx) {
@@ -331,12 +330,11 @@ LIBXS_API_INLINE void oz2_preprocess_cols(
       }
     }
   }
-  { /* Zero-pad remaining k-entries */ int pidx;
-    for (nj = 0; nj < jblk; ++nj) {
-      LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
-      for (pidx = 0; pidx < nprimes; ++pidx) {
-        for (kk = kblk; kk < BLOCK_K; ++kk) bk[nj][pidx][kk] = 0;
-      }
+  /* Zero-pad remaining k-entries */
+  for (nj = 0; nj < jblk; ++nj) {
+    LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
+    for (pidx = 0; pidx < nprimes; ++pidx) {
+      for (kk = kblk; kk < BLOCK_K; ++kk) bk[nj][pidx][kk] = 0;
     }
   }
 }
