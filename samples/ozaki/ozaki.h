@@ -133,6 +133,7 @@
 #define gemm_oz1            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz1)
 #define gemm_oz2            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz2)
 #define gemm_oz3            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz3)
+#define gemm_oz4            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz4)
 #define gemm_dump_inhibit   LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_dump_inhibit)
 #define gemm_dump_matrices  LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_dump_mhd)
 #define zgemm3m             LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm3m)
@@ -156,6 +157,8 @@ LIBXS_API void gemm_oz1(GEMM_ARGDECL);
 LIBXS_API void gemm_oz2(GEMM_ARGDECL);
 /** Function prototype for GEMM using BF16 dot products (Ozaki scheme 3). */
 LIBXS_API void gemm_oz3(GEMM_ARGDECL);
+/** Function prototype for GEMM using CRT + BF16 dot products (Ozaki scheme 4). */
+LIBXS_API void gemm_oz4(GEMM_ARGDECL);
 /** Complex GEMM 3M (Karatsuba) implementation (internal). */
 LIBXS_API_INTERN void zgemm3m(GEMM_ARGDECL);
 

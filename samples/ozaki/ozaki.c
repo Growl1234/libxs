@@ -72,11 +72,11 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
       if (NULL != gemm_stat_env) gemm_stat = atoi(gemm_stat_env);
       if (NULL != gemm_verbose_env) gemm_verbose = atoi(gemm_verbose_env);
       else if (0 != gemm_stat) gemm_verbose = 1;
-      if (2 == gemm_ozaki) { /* Scheme 2: CRT primes */
+      if (2 == gemm_ozaki || 4 == gemm_ozaki) { /* Scheme 2/4: CRT primes */
         gemm_ozn = LIBXS_CLMP(NULL == gemm_ozn_env
           ? OZ2_NPRIMES_DEFAULT : atoi(gemm_ozn_env), 1, OZ2_NPRIMES_MAX);
       }
-      else { /* Scheme 1: mantissa slices */
+      else { /* Scheme 1/3: mantissa slices */
         gemm_ozn = LIBXS_CLMP(NULL == gemm_ozn_env
           ? NSLICES_DEFAULT : atoi(gemm_ozn_env), 1, MAX_NSLICES);
       }
@@ -106,6 +106,9 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
   }
   else if (3 == gemm_ozaki) { /* BF16 slice-based LP-GEMM (Scheme 3) */
     gemm_oz3(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
+  }
+  else if (4 == gemm_ozaki) { /* CRT-based LP-GEMM with BF16 dot products (Scheme 4) */
+    gemm_oz4(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
   }
   else { /* only run original GEMM right away */
     if (NULL != gemm_original) {

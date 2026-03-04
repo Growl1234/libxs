@@ -88,3 +88,21 @@ else
   exit 1
 fi
 echo
+
+# Scheme 4 (CRT + BF16 dot products): exact — residues are small integers
+# representable in BF16, and FP32 accumulation is exact for BLOCK_K <= 64.
+echo "-----------------------------------"
+echo "CHECK: Scheme 4 (CRT+BF16)"
+if [ "$*" ]; then echo "args    $*"; fi
+{ CHECK=-1 GEMM_VERBOSE=1 GEMM_OZAKI=4 "${EXE}" "$@" 2>"${TMPF}"; } >/dev/null || RESULT=$?
+if [ "0" != "${RESULT}" ]; then
+  echo "FAILED[${RESULT}] $(${CAT} "${TMPF}")"
+  exit ${RESULT}
+fi
+if ${GREP} -q "CHECK:" "${TMPF}"; then
+  echo "OK $(${GREP} "CHECK:" "${TMPF}")"
+else
+  echo "FAILED (no CHECK output)"
+  exit 1
+fi
+echo
