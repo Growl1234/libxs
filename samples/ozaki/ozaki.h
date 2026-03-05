@@ -49,12 +49,12 @@
 # endif
 #endif
 
-/* Runtime flag-set controlling the Ozaki scheme 1 (GEMM_OZFLAGS env var).
+/* Runtime flag-set controlling the Ozaki scheme 1 (OZAKI_FLAGS env var).
  * Bit 0 (1): TRIANGULAR  - iterate upper triangle of slice-pair matrix
  * Bit 1 (2): SYMMETRIZE  - compute mirror D(sb,sa) for off-diagonal pairs
  * Default 3 = TRIANGULAR + SYMMETRIZE (correct, fewer loop iterations).
  *
- * The trim parameter (GEMM_OZTRIM env var) drops the T least significant
+ * The trim parameter (OZAKI_TRIM env var) drops the T least significant
  * diagonals: pairs with sa + sb > 2*(S-1) - T are skipped. Default 0
  * means exact (all pairs). Each dropped diagonal loses ~7 bits. */
 #define OZ1_TRIANGULAR   1
@@ -75,7 +75,7 @@
  *  DIFF_FN is the _diff kernel (gemm_oz1_diff or gemm_oz2_diff).
  */
 #define OZAKI_GEMM_WRAPPER(DIFF_FN) \
-  if (0 == gemm_verbose) { \
+  if (0 == ozaki_verbose) { \
     DIFF_FN(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, \
       0, NULL); \
   } \
@@ -84,22 +84,22 @@
     libxs_matdiff_info_t diff; \
     libxs_matdiff_clear(&diff); \
     DIFF_FN(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, \
-      LIBXS_ABS(gemm_stat), &diff); \
+      LIBXS_ABS(ozaki_stat), &diff); \
     LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER); \
     libxs_matdiff_reduce(&gemm_diff, &diff); diff.r = gemm_diff.r; \
     LIBXS_ATOMIC_RELEASE(&gemm_lock, LIBXS_ATOMIC_LOCKORDER); \
     epsilon = libxs_matdiff_epsilon(&diff); \
-    if (1 < gemm_verbose || 0 > gemm_verbose) { \
-      const int nth = (0 < gemm_verbose ? gemm_verbose : 1); \
+    if (1 < ozaki_verbose || 0 > ozaki_verbose) { \
+      const int nth = (0 < ozaki_verbose ? ozaki_verbose : 1); \
       if (0 == (diff.r % nth)) print_diff(stderr, &diff); \
     } \
-    if (gemm_eps < epsilon || diff.rsq < gemm_rsq || -1 > gemm_verbose) { \
+    if (ozaki_eps < epsilon || diff.rsq < ozaki_rsq || -1 > ozaki_verbose) { \
       if (0 != gemm_dump_inhibit) { \
         gemm_dump_inhibit = 2; \
       } \
       else { \
         gemm_dump_matrices(GEMM_ARGPASS, 1); \
-        if (0 != gemm_exit) exit(EXIT_FAILURE); \
+        if (0 != ozaki_exit) exit(EXIT_FAILURE); \
       } \
     } \
   }
@@ -121,14 +121,14 @@
 #define gemm_original       LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_original)
 #define zgemm_original      LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm_original)
 #define gemm_lock           LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_lock)
-#define gemm_ozaki          LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_ozaki)
-#define gemm_ozn            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_ozn)
-#define gemm_ozflags        LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_ozflags)
-#define gemm_oztrim         LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oztrim)
-#define gemm_stat           LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_stat)
-#define gemm_exit           LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_exit)
-#define gemm_eps            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_eps)
-#define gemm_rsq            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_rsq)
+#define ozaki          LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki)
+#define ozaki_n            LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_n)
+#define ozaki_flags        LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_flags)
+#define ozaki_trim         LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_trim)
+#define ozaki_stat           LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_stat)
+#define ozaki_exit           LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_exit)
+#define ozaki_eps            LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_eps)
+#define ozaki_rsq            LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_rsq)
 #define ozaki_target_arch   LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_tarch)
 #define gemm_oz1            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz1)
 #define gemm_oz2            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz2)
@@ -163,19 +163,19 @@ LIBXS_API void gemm_oz4(GEMM_ARGDECL);
 /** Complex GEMM 3M (Karatsuba) implementation (internal). */
 LIBXS_API_INTERN void zgemm3m(GEMM_ARGDECL);
 
-LIBXS_APIVAR_PUBLIC(int gemm_ozaki);
-LIBXS_APIVAR_PUBLIC(int gemm_stat);
+LIBXS_APIVAR_PUBLIC(int ozaki);
+LIBXS_APIVAR_PUBLIC(int ozaki_stat);
 LIBXS_APIVAR_PRIVATE(volatile LIBXS_ATOMIC_LOCKTYPE gemm_lock);
 LIBXS_APIVAR_PRIVATE(gemm_function_t gemm_original);
 LIBXS_APIVAR_PRIVATE(zgemm_function_t zgemm_original);
 LIBXS_APIVAR_PRIVATE(int ozaki_target_arch);
-LIBXS_APIVAR_PRIVATE(int gemm_ozflags);
-LIBXS_APIVAR_PRIVATE(int gemm_oztrim);
-LIBXS_APIVAR_PRIVATE(int gemm_ozn);
-LIBXS_APIVAR_PRIVATE(int gemm_exit);
+LIBXS_APIVAR_PRIVATE(int ozaki_flags);
+LIBXS_APIVAR_PRIVATE(int ozaki_trim);
+LIBXS_APIVAR_PRIVATE(int ozaki_n);
+LIBXS_APIVAR_PRIVATE(int ozaki_exit);
 extern LIBXS_TLS int gemm_dump_inhibit;
-LIBXS_APIVAR_PRIVATE(double gemm_eps);
-LIBXS_APIVAR_PRIVATE(double gemm_rsq);
+LIBXS_APIVAR_PRIVATE(double ozaki_eps);
+LIBXS_APIVAR_PRIVATE(double ozaki_rsq);
 LIBXS_APIVAR_PRIVATE(libxs_malloc_pool_t* gemm_pool);
 
 /* Shared int8 dot-product infrastructure (VNNI + scalar fallback).
@@ -359,7 +359,7 @@ LIBXS_API_INLINE void ozaki_split_to_bf16(GEMM_REAL_TYPE x,
   double residual = (double)x;
   int s;
   LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
-  for (s = 0; s < gemm_ozn; ++s) {
+  for (s = 0; s < ozaki_n; ++s) {
     slices[s] = libxs_round_bf16(residual);
     residual -= libxs_bf16_to_f64(slices[s]);
   }
@@ -552,7 +552,7 @@ LIBXS_API_INLINE void ozaki_accumulate_block_diff(libxs_matdiff_info_t* acc,
 /**
  * Dump A and B matrices as MHD files.
  * Works for both real (ncomponents=1) and complex (ncomponents=2) matrices.
- * Uses gemm_diff.r as the dump ID and updates gemm_eps/gemm_rsq thresholds
+ * Uses gemm_diff.r as the dump ID and updates ozaki_eps/ozaki_rsq thresholds
  * to avoid repeated dumps.
  */
 LIBXS_API_INLINE void gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
@@ -562,13 +562,13 @@ LIBXS_API_INLINE void gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
   int result = EXIT_SUCCESS;
   FILE *file;
 
-  settings.ozaki = gemm_ozaki;
-  settings.ozn = gemm_ozn;
-  settings.ozflags = gemm_ozflags;
-  settings.oztrim = gemm_oztrim;
+  settings.ozaki = ozaki;
+  settings.ozn = ozaki_n;
+  settings.ozflags = ozaki_flags;
+  settings.oztrim = ozaki_trim;
   settings.ldc = *ldc;
-  settings.eps = gemm_eps;
-  settings.rsq = gemm_rsq;
+  settings.eps = ozaki_eps;
+  settings.rsq = ozaki_rsq;
 
   LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
 
@@ -590,10 +590,10 @@ LIBXS_API_INLINE void gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
 
   if (EXIT_SUCCESS == result) {
   /* avoid repeated dumps */
-  gemm_eps = libxs_matdiff_epsilon(&gemm_diff);
-  gemm_rsq = gemm_diff.rsq;
+  ozaki_eps = libxs_matdiff_epsilon(&gemm_diff);
+  ozaki_rsq = gemm_diff.rsq;
   }
-  else if (0 != gemm_verbose) {
+  else if (0 != ozaki_verbose) {
     fprintf(stderr, "ERROR: dumping A and B matrix failed!\n");
   }
 

@@ -11,19 +11,19 @@
 
 
 LIBXS_APIVAR_PUBLIC_DEF(libxs_matdiff_info_t gemm_diff);
-LIBXS_APIVAR_PUBLIC_DEF(int gemm_verbose);
-LIBXS_APIVAR_PUBLIC_DEF(int gemm_ozaki);
-LIBXS_APIVAR_PUBLIC_DEF(int gemm_stat);
+LIBXS_APIVAR_PUBLIC_DEF(int ozaki_verbose);
+LIBXS_APIVAR_PUBLIC_DEF(int ozaki);
+LIBXS_APIVAR_PUBLIC_DEF(int ozaki_stat);
 
 LIBXS_APIVAR_PRIVATE_DEF(volatile LIBXS_ATOMIC_LOCKTYPE gemm_lock);
 LIBXS_APIVAR_PRIVATE_DEF(gemm_function_t gemm_original);
 LIBXS_APIVAR_PRIVATE_DEF(int ozaki_target_arch);
-LIBXS_APIVAR_PRIVATE_DEF(int gemm_ozflags);
-LIBXS_APIVAR_PRIVATE_DEF(int gemm_oztrim);
-LIBXS_APIVAR_PRIVATE_DEF(int gemm_ozn);
-LIBXS_APIVAR_PRIVATE_DEF(int gemm_exit);
-LIBXS_APIVAR_PRIVATE_DEF(double gemm_eps);
-LIBXS_APIVAR_PRIVATE_DEF(double gemm_rsq);
+LIBXS_APIVAR_PRIVATE_DEF(int ozaki_flags);
+LIBXS_APIVAR_PRIVATE_DEF(int ozaki_trim);
+LIBXS_APIVAR_PRIVATE_DEF(int ozaki_n);
+LIBXS_APIVAR_PRIVATE_DEF(int ozaki_exit);
+LIBXS_APIVAR_PRIVATE_DEF(double ozaki_eps);
+LIBXS_APIVAR_PRIVATE_DEF(double ozaki_rsq);
 LIBXS_APIVAR_PRIVATE_DEF(libxs_malloc_pool_t* gemm_pool);
 LIBXS_TLS int gemm_dump_inhibit;
 
@@ -31,7 +31,7 @@ LIBXS_TLS int gemm_dump_inhibit;
 LIBXS_API_INTERN void gemm_atexit(void);
 LIBXS_API_INTERN void gemm_atexit(void)
 {
-  if (0 != gemm_verbose && 0 < gemm_diff.r) {
+  if (0 != ozaki_verbose && 0 < gemm_diff.r) {
     print_diff(stderr, &gemm_diff);
   }
   libxs_free_pool(gemm_pool);
@@ -57,42 +57,42 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
     LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
     if (0 == gemm_initialized) {
       const union { uint32_t raw; float value; } inf = { 0x7F800000U };
-      const char *const gemm_stat_env = getenv("GEMM_STAT");
-      const char *const gemm_exit_env = getenv("GEMM_EXIT");
-      const char *const gemm_verbose_env = getenv("GEMM_VERBOSE");
-      const char *const gemm_ozflags_env = getenv("GEMM_OZFLAGS");
-      const char *const gemm_oztrim_env = getenv("GEMM_OZTRIM");
-      const char *const gemm_ozaki_env = getenv("GEMM_OZAKI");
-      const char *const gemm_ozn_env = getenv("GEMM_OZN");
-      const char *const gemm_eps_env = getenv("GEMM_EPS");
-      const char *const gemm_rsq_env = getenv("GEMM_RSQ");
+      const char *const ozaki_verbose_env = getenv("OZAKI_VERBOSE");
+      const char *const ozaki_flags_env = getenv("OZAKI_FLAGS");
+      const char *const ozaki_trim_env = getenv("OZAKI_TRIM");
+      const char *const ozaki_stat_env = getenv("OZAKI_STAT");
+      const char *const ozaki_exit_env = getenv("OZAKI_EXIT");
+      const char *const ozaki_eps_env = getenv("OZAKI_EPS");
+      const char *const ozaki_rsq_env = getenv("OZAKI_RSQ");
+      const char *const ozaki_n_env = getenv("OZAKI_N");
+      const char *const ozaki_env = getenv("OZAKI");
       libxs_init(); /*libxs_malloc_pool()*/
       gemm_pool = libxs_malloc_pool(NULL, NULL);
       libxs_matdiff_clear(&gemm_diff);
-      gemm_ozflags = (NULL == gemm_ozflags_env ? OZ1_DEFAULT : atoi(gemm_ozflags_env));
-      gemm_oztrim = (NULL == gemm_oztrim_env ? 0/*exact*/ : atoi(gemm_oztrim_env));
-      gemm_ozaki = (NULL == gemm_ozaki_env ? 1/*default*/ : atoi(gemm_ozaki_env));
-      gemm_exit = (NULL == gemm_exit_env ? 1/*default*/ : atoi(gemm_exit_env));
-      if (NULL != gemm_stat_env) gemm_stat = atoi(gemm_stat_env);
-      if (NULL != gemm_verbose_env) gemm_verbose = atoi(gemm_verbose_env);
-      else if (0 != gemm_stat) gemm_verbose = 1;
-      if (2 == gemm_ozaki || 4 == gemm_ozaki) { /* Scheme 2/4: CRT primes */
-        gemm_ozn = LIBXS_CLMP(NULL == gemm_ozn_env
-          ? OZ2_NPRIMES_DEFAULT : atoi(gemm_ozn_env), 1, OZ2_NPRIMES_MAX);
+      ozaki_flags = (NULL == ozaki_flags_env ? OZ1_DEFAULT : atoi(ozaki_flags_env));
+      ozaki_trim = (NULL == ozaki_trim_env ? 0/*exact*/ : atoi(ozaki_trim_env));
+      ozaki = (NULL == ozaki_env ? 1/*default*/ : atoi(ozaki_env));
+      ozaki_exit = (NULL == ozaki_exit_env ? 1/*default*/ : atoi(ozaki_exit_env));
+      if (NULL != ozaki_stat_env) ozaki_stat = atoi(ozaki_stat_env);
+      if (NULL != ozaki_verbose_env) ozaki_verbose = atoi(ozaki_verbose_env);
+      else if (0 != ozaki_stat) ozaki_verbose = 1;
+      if (2 == ozaki || 4 == ozaki) { /* Scheme 2/4: CRT primes */
+        ozaki_n = LIBXS_CLMP(NULL == ozaki_n_env
+          ? OZ2_NPRIMES_DEFAULT : atoi(ozaki_n_env), 1, OZ2_NPRIMES_MAX);
       }
       else { /* Scheme 1/3: mantissa slices */
-        gemm_ozn = LIBXS_CLMP(NULL == gemm_ozn_env
-          ? NSLICES_DEFAULT : atoi(gemm_ozn_env), 1, MAX_NSLICES);
+        ozaki_n = LIBXS_CLMP(NULL == ozaki_n_env
+          ? NSLICES_DEFAULT : atoi(ozaki_n_env), 1, MAX_NSLICES);
       }
-      if (NULL == gemm_eps_env) gemm_eps = inf.value;
+      if (NULL == ozaki_eps_env) ozaki_eps = inf.value;
       else {
-        if (0 == gemm_verbose) gemm_verbose = 1;
-        gemm_eps = atof(gemm_eps_env);
+        if (0 == ozaki_verbose) ozaki_verbose = 1;
+        ozaki_eps = atof(ozaki_eps_env);
       }
-      if (NULL == gemm_rsq_env) gemm_rsq = 0;
+      if (NULL == ozaki_rsq_env) ozaki_rsq = 0;
       else {
-        if (0 == gemm_verbose) gemm_verbose = 1;
-        gemm_rsq = atof(gemm_rsq_env);
+        if (0 == ozaki_verbose) ozaki_verbose = 1;
+        ozaki_rsq = atof(ozaki_rsq_env);
       }
       ozaki_target_arch = libxs_cpuid(NULL);
       LIBXS_EXPECT(EXIT_SUCCESS == atexit(gemm_atexit));
@@ -102,16 +102,16 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
   }
   LIBXS_ASSERT(0 != gemm_initialized);
 
-  if (1 == gemm_ozaki) { /* slice-based LP-GEMM (Scheme 1, default) */
+  if (1 == ozaki) { /* slice-based LP-GEMM (Scheme 1, default) */
     gemm_oz1(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
   }
-  else if (2 == gemm_ozaki) { /* CRT-based LP-GEMM (Scheme 2) */
+  else if (2 == ozaki) { /* CRT-based LP-GEMM (Scheme 2) */
     gemm_oz2(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
   }
-  else if (3 == gemm_ozaki) { /* BF16 slice-based LP-GEMM (Scheme 3) */
+  else if (3 == ozaki) { /* BF16 slice-based LP-GEMM (Scheme 3) */
     gemm_oz3(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
   }
-  else if (4 == gemm_ozaki) { /* CRT-based LP-GEMM with BF16 dot products (Scheme 4) */
+  else if (4 == ozaki) { /* CRT-based LP-GEMM with BF16 dot products (Scheme 4) */
     gemm_oz4(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
   }
   else { /* only run original GEMM right away */
@@ -121,7 +121,7 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
     else {
       GEMM_REAL(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
     }
-    if (0 != gemm_verbose) {
+    if (0 != ozaki_verbose) {
       LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
       ++gemm_diff.r;
       LIBXS_ATOMIC_RELEASE(&gemm_lock, LIBXS_ATOMIC_LOCKORDER);

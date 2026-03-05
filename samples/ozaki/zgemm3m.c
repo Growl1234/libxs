@@ -233,19 +233,19 @@ LIBXS_API_INTERN void zgemm3m(GEMM_ARGDECL)
 
 /**
  * Complex GEMM wrapper: dispatches to zgemm3m (3M method) or falls back
- * to the original complex BLAS. Controlled by env var GEMM_OZAKI
+ * to the original complex BLAS. Controlled by env var OZAKI
  * (shared with the real GEMM Ozaki wrapper):
  *   0 = pass through to original complex BLAS (avoids 3M overhead),
  *   1 = use 3M method (default).
  */
 LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void ZGEMM_WRAP(GEMM_ARGDECL)
 {
-  if (0 != gemm_ozaki) {
+  if (0 != ozaki) {
     gemm_dump_inhibit = 1; /* suppress decomposed sub-GEMM dumps */
     zgemm3m(GEMM_ARGPASS);
     if (2 == gemm_dump_inhibit) {
       gemm_dump_matrices(GEMM_ARGPASS, 2);
-      if (0 != gemm_exit) exit(EXIT_FAILURE);
+      if (0 != ozaki_exit) exit(EXIT_FAILURE);
     }
     gemm_dump_inhibit = 0;
   }

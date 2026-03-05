@@ -42,9 +42,9 @@
 
 /* Precision-specific name redirects for public/driver-visible symbols */
 #define gemm_diff      LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_diff)
-#define gemm_ozaki     LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_ozaki)
-#define gemm_stat      LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_stat)
-#define gemm_verbose   LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_verbose)
+#define ozaki     LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki)
+#define ozaki_stat      LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_stat)
+#define ozaki_verbose   LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_verbose)
 #define print_gemm     LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_print)
 #define print_diff     LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_print_diff)
 #define gemm_mhd_read  LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_mhd_read)
@@ -189,6 +189,6 @@ LIBXS_API_INLINE int gemm_mhd_write(const char* filename,
 }
 
 LIBXS_APIVAR_PUBLIC(libxs_matdiff_info_t gemm_diff);
-LIBXS_APIVAR_PUBLIC(int gemm_ozaki);
-LIBXS_APIVAR_PUBLIC(int gemm_verbose);
-LIBXS_APIVAR_PUBLIC(int gemm_stat);
+LIBXS_APIVAR_PUBLIC(int ozaki);
+LIBXS_APIVAR_PUBLIC(int ozaki_verbose);
+LIBXS_APIVAR_PUBLIC(int ozaki_stat);

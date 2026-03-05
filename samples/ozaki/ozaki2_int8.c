@@ -561,7 +561,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb,
   const int tb = (*transb != 'N' && *transb != 'n');
   const GEMM_INT_TYPE M = *m, N = *n, K = *k;
   const GEMM_INT_TYPE ldcv = *ldc;
-  const int nprimes = LIBXS_CLMP(gemm_ozn, 1, OZ2_NPRIMES_MAX);
+  const int nprimes = LIBXS_CLMP(ozaki_n, 1, OZ2_NPRIMES_MAX);
   const GEMM_INT_TYPE nblk_m = (M + BLOCK_M - 1) / BLOCK_M;
   const GEMM_INT_TYPE nblk_n = (N + BLOCK_N - 1) / BLOCK_N;
   /* Panel buffers: preprocessed A and B for one K-batch (shared).

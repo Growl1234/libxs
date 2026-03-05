@@ -13,7 +13,7 @@
 /* Weak references: gemm-blas.x links without the Ozaki library,
  * so these symbols may be undefined. CHECK should not be used
  * with gemm-blas.x (the variables resolve to zero-address). */
-LIBXS_PRAGMA_WEAK(gemm_verbose)
+LIBXS_PRAGMA_WEAK(ozaki_verbose)
 LIBXS_PRAGMA_WEAK(gemm_diff)
 
 

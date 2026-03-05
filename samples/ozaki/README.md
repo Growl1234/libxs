@@ -36,7 +36,7 @@ If targeting GPUs, this code is likely unsuitable since the low-precision conver
 
 ## Scheme 1 — Mantissa Slicing
 
-Scheme 1 (`GEMM_OZAKI=1`, the default) decomposes each IEEE-754 mantissa into 7-bit int8 slices and accumulates all pairwise slice products via low-precision GEMM. The number of slices aka "splits" determines achievable accuracy and can be set at runtime via `GEMM_OZN`. The default and maximum vary by precision (double: default 8, max 16; float: default 4, max 8). The size of the matrices employed by potential "matrix cores" is set at compile-time with `BLOCK_M`, `BLOCK_N`, and `BLOCK_K`; grouping of consecutive K-panels is controlled by `BATCH_K`. The term "slices" is preferred over "splits" since the latter suggests *N* splits would yield *N+1* slices.
+Scheme 1 (`OZAKI=1`, the default) decomposes each IEEE-754 mantissa into 7-bit int8 slices and accumulates all pairwise slice products via low-precision GEMM. The number of slices aka "splits" determines achievable accuracy and can be set at runtime via `OZAKI_N`. The default and maximum vary by precision (double: default 8, max 16; float: default 4, max 8). The size of the matrices employed by potential "matrix cores" is set at compile-time with `BLOCK_M`, `BLOCK_N`, and `BLOCK_K`; grouping of consecutive K-panels is controlled by `BATCH_K`. The term "slices" is preferred over "splits" since the latter suggests *N* splits would yield *N+1* slices.
 
 ## Complex GEMM (3M Method)
 
@@ -48,30 +48,30 @@ Intercepted ZGEMM (double-complex) and CGEMM (single-complex) calls are implemen
 
 The real and imaginary parts of the product are recovered as Re(A·B) = P1 − P2 and Im(A·B) = P3 − P1 − P2. Complex alpha/beta scaling is applied in a final pass. The three real GEMM calls flow through the same wrapper, so they are optionally accelerated by the Ozaki scheme as well.
 
-## Scheme 1 Flags (`GEMM_OZFLAGS`) and Diagonal Trim (`GEMM_OZTRIM`)
+## Scheme 1 Flags (`OZAKI_FLAGS`) and Diagonal Trim (`OZAKI_TRIM`)
 
 The Scheme&#160;1 loop is controlled by two runtime knobs:
 
 ### Flags
 
-The environment variable `GEMM_OZFLAGS` is an integer bitmask:
+The environment variable `OZAKI_FLAGS` is an integer bitmask:
 
 | Bit | Value | Flag | Description |
 |:---:|:-----:|------|-------------|
 | 0 | 1 | Triangular | Only iterate slice pairs (sa,&#160;sb) with sb&#160;>=&#160;sa (upper triangle). |
 | 1 | 2 | Symmetrize | For each off-diagonal pair (sa,&#160;sb) in the upper triangle, also compute the mirror dot product D(sb,&#160;sa) at negligible extra cost (one additional int8 dot product per pair). |
 
-The default value is **3** (both flags). Setting `GEMM_OZFLAGS=0` runs the full S^2 square of slice pairs.
+The default value is **3** (both flags). Setting `OZAKI_FLAGS=0` runs the full S^2 square of slice pairs.
 
 ### Diagonal Trim
 
-The environment variable `GEMM_OZTRIM` drops the T least significant diagonals from the slice-pair iteration. Pairs with sa&#160;+&#160;sb&#160;>&#160;2*(S-1)&#160;-&#160;T are skipped. Pair significance scales as 2^(low_bit[sa]&#160;+&#160;low_bit[sb]), so sa&#160;+&#160;sb directly determines significance — smaller sums are more significant. Each dropped diagonal loses approximately 7&#160;bits of relative precision.
+The environment variable `OZAKI_TRIM` drops the T least significant diagonals from the slice-pair iteration. Pairs with sa&#160;+&#160;sb&#160;>&#160;2*(S-1)&#160;-&#160;T are skipped. Pair significance scales as 2^(low_bit[sa]&#160;+&#160;low_bit[sb]), so sa&#160;+&#160;sb directly determines significance — smaller sums are more significant. Each dropped diagonal loses approximately 7&#160;bits of relative precision.
 
 The default value is **0** (exact: all pairs). The value is clamped so that at least diagonal&#160;0 is always computed.
 
 **Cost overview** for *S*&#160;slices with TRIANGULAR&#160;+&#160;SYMMETRIZE (default flags):
 
-| `GEMM_OZTRIM` | Dot products | Pairs covered | Relative bits lost |
+| `OZAKI_TRIM` | Dot products | Pairs covered | Relative bits lost |
 |:---:|:---:|:---:|:---:|
 | 0 (default) | S*(S+1)/2 | all S^2 | 0 (exact) |
 | S-1 | ~S^2/4 | (S+1)*S/2 | ~7*(S-1) least significant |
@@ -84,36 +84,36 @@ Examples:
 
 ```bash
 ./gemm-wrap.x 256                      # exact (default: flags=3, trim=0)
-GEMM_OZTRIM=4 ./gemm-wrap.x 256        # drop 4 least significant diagonals
-GEMM_OZFLAGS=0 ./gemm-wrap.x 256       # full S^2 square, no symmetrize
+OZAKI_TRIM=4 ./gemm-wrap.x 256        # drop 4 least significant diagonals
+OZAKI_FLAGS=0 ./gemm-wrap.x 256       # full S^2 square, no symmetrize
 ```
 
 ## Scheme 2 — Chinese Remainder Theorem
 
-Scheme 2 (`GEMM_OZAKI=2`) uses modular arithmetic instead of mantissa slicing. Each matrix element is reduced modulo a set of small pairwise coprime moduli (primes and prime powers ≤ 128) so that residues fit in int8 and dot products use VNNI int8 instructions when available. GEMM is performed independently modulo each modulus, and the exact integer result is recovered via the Chinese Remainder Theorem (Garner's algorithm with grouped uint64 Horner evaluation). The Horner reconstruction partitions mixed-radix digits into groups of up to 9, evaluates each group exactly in uint64 arithmetic, and combines groups with a minimal number of FP64 operations — avoiding double-precision throughput bottlenecks on hardware where integer arithmetic is faster. Because the work is linear in the number of moduli — versus quadratic in the number of slices for Scheme 1 — Scheme 2 can be more efficient when many moduli/slices are needed.
+Scheme 2 (`OZAKI=2`) uses modular arithmetic instead of mantissa slicing. Each matrix element is reduced modulo a set of small pairwise coprime moduli (primes and prime powers ≤ 128) so that residues fit in int8 and dot products use VNNI int8 instructions when available. GEMM is performed independently modulo each modulus, and the exact integer result is recovered via the Chinese Remainder Theorem (Garner's algorithm with grouped uint64 Horner evaluation). The Horner reconstruction partitions mixed-radix digits into groups of up to 9, evaluates each group exactly in uint64 arithmetic, and combines groups with a minimal number of FP64 operations — avoiding double-precision throughput bottlenecks on hardware where integer arithmetic is faster. Because the work is linear in the number of moduli — versus quadratic in the number of slices for Scheme 1 — Scheme 2 can be more efficient when many moduli/slices are needed.
 
 Residues are signed int8 (−127..+127) with the element sign folded directly into the residue. This maps naturally to VNNI's VPDPBUSD encoding (unsigned × signed with bias correction). An unsigned variant (uint8 residues, moduli ≤ 256) is theoretically possible but would require a separate sign array and scalar dot-product accumulation, negating the VNNI advantage.
 
-The number of moduli can be set at runtime via `GEMM_OZN`. The default and maximum are: double: 17 / 18; float: 8 / 10.
+The number of moduli can be set at runtime via `OZAKI_N`. The default and maximum are: double: 17 / 18; float: 8 / 10.
 
 Example:
 
 ```bash
-GEMM_OZAKI=2 ./gemm-wrap.x 256                        # use CRT scheme
+OZAKI=2 ./gemm-wrap.x 256                        # use CRT scheme
 ```
 
 ## Scheme 3 — BF16 Dekker Split
 
-Scheme 3 (`GEMM_OZAKI=3`) decomposes each matrix element into a sequence of BF16 slices using a Dekker-style error-free split: `slice[0] = round_bf16(x); residual = x - slice[0]; slice[1] = round_bf16(residual); …` Each BF16 value carries its own 8-bit exponent, so no shared per-row or per-column exponent is needed — unlike Schemes&#160;1 and&#160;2, there is no exponent alignment, mantissa extraction, or `pow2` reconstruction. Preprocessing simply splits and scatters; accumulation is `C[i,j] += alpha * dot_bf16(A_sa, B_sb)` with no scale factors.
+Scheme 3 (`OZAKI=3`) decomposes each matrix element into a sequence of BF16 slices using a Dekker-style error-free split: `slice[0] = round_bf16(x); residual = x - slice[0]; slice[1] = round_bf16(residual); …` Each BF16 value carries its own 8-bit exponent, so no shared per-row or per-column exponent is needed — unlike Schemes&#160;1 and&#160;2, there is no exponent alignment, mantissa extraction, or `pow2` reconstruction. Preprocessing simply splits and scatters; accumulation is `C[i,j] += alpha * dot_bf16(A_sa, B_sb)` with no scale factors.
 
 Each BF16 slice captures roughly 8&#160;significant bits. For double precision (52&#160;mantissa bits), ~7 slices suffice (8&#215;7&#160;=&#160;56&#160;>&#160;52); for single precision (23&#160;bits), ~3 slices suffice. The dot products are computed via `VDPBF16PS` (AVX-512-BF16) when available, otherwise a scalar fallback. FP32 accumulation of BF16&#215;BF16 products is **not** exact in general (unlike the integer-exact Scheme&#160;1), so Scheme&#160;3 is inherently approximate — the error depends on the number of slices and the FP32 rounding during accumulation. In practice the relative error is very small (typically &lt;&#160;1e-9 for double precision with default settings).
 
-Scheme&#160;3 shares the same runtime knobs as Scheme&#160;1: `GEMM_OZN` (number of slices), `GEMM_OZFLAGS` (triangular + symmetrize), and `GEMM_OZTRIM` (diagonal trim). Because no per-row/per-column exponent panels are needed, the metadata overhead is halved relative to Scheme&#160;1.
+Scheme&#160;3 shares the same runtime knobs as Scheme&#160;1: `OZAKI_N` (number of slices), `OZAKI_FLAGS` (triangular + symmetrize), and `OZAKI_TRIM` (diagonal trim). Because no per-row/per-column exponent panels are needed, the metadata overhead is halved relative to Scheme&#160;1.
 
 Example:
 
 ```bash
-GEMM_OZAKI=3 ./gemm-wrap.x 256                        # use BF16 scheme
+OZAKI=3 ./gemm-wrap.x 256                        # use BF16 scheme
 ```
 
 ## Compile-Time Parameters
@@ -137,15 +137,15 @@ make ECFLAGS="-DBLOCK_K=32 -DBATCH_K=2" gemm-wrap.x
 
 | Variable | Default | Description |
 |----------|:-------:|-------------|
-| `GEMM_OZAKI` | 1 | Scheme selector: 0 = bypass (call original BLAS directly), 1 = Scheme 1 (mantissa slicing, int8), 2 = Scheme 2 (CRT), 3 = Scheme 3 (BF16 Dekker split). |
-| `GEMM_OZN` | *per scheme* | Number of decomposition units: slices for Scheme 1 (double: 1..16, default 8; float: 1..8, default 4) or moduli for Scheme 2 (see Scheme 2 section for per-precision defaults). |
-| `GEMM_OZFLAGS` | 3 | Scheme 1 bitmask: Triangular (1), Symmetrize (2); see above. |
-| `GEMM_OZTRIM` | 0 | Scheme 1 diagonal trim: 0 = exact, T = drop T least significant diagonals (~7 bits each). |
-| `GEMM_EPS` | inf | Dump A/B matrices as MHD-files when the epsilon error exceeds the given threshold (implies `GEMM_VERBOSE=1` if unset). |
-| `GEMM_VERBOSE` | 0 | 0&#160;=&#160;silent; 1&#160;=&#160;print accumulated statistic at exit; *N*&#160;=&#160;print every *N*th GEMM call. |
-| `GEMM_STAT` | 0 | Track C-matrix (0), A-matrix representation (1), or B-matrix representation (2). |
-| `GEMM_EXIT` | 1 | Exit with failure after dumping matrices on accuracy violation (eps/rsq threshold exceeded). Set to 0 to continue execution. |
-| `GEMM_RSQ` | 0 | Dump A/B matrices as MHD-files when RSQ drops below the given threshold; the threshold is updated after each dump (implies `GEMM_VERBOSE=1` if unset). |
+| `OZAKI` | 1 | Scheme selector: 0 = bypass (call original BLAS directly), 1 = Scheme 1 (mantissa slicing, int8), 2 = Scheme 2 (CRT), 3 = Scheme 3 (BF16 Dekker split). |
+| `OZAKI_N` | *per scheme* | Number of decomposition units: slices for Scheme 1 (double: 1..16, default 8; float: 1..8, default 4) or moduli for Scheme 2 (see Scheme 2 section for per-precision defaults). |
+| `OZAKI_FLAGS` | 3 | Scheme 1 bitmask: Triangular (1), Symmetrize (2); see above. |
+| `OZAKI_TRIM` | 0 | Scheme 1 diagonal trim: 0 = exact, T = drop T least significant diagonals (~7 bits each). |
+| `OZAKI_EPS` | inf | Dump A/B matrices as MHD-files when the epsilon error exceeds the given threshold (implies `OZAKI_VERBOSE=1` if unset). |
+| `OZAKI_VERBOSE` | 0 | 0&#160;=&#160;silent; 1&#160;=&#160;print accumulated statistic at exit; *N*&#160;=&#160;print every *N*th GEMM call. |
+| `OZAKI_STAT` | 0 | Track C-matrix (0), A-matrix representation (1), or B-matrix representation (2). |
+| `OZAKI_EXIT` | 1 | Exit with failure after dumping matrices on accuracy violation (eps/rsq threshold exceeded). Set to 0 to continue execution. |
+| `OZAKI_RSQ` | 0 | Dump A/B matrices as MHD-files when RSQ drops below the given threshold; the threshold is updated after each dump (implies `OZAKI_VERBOSE=1` if unset). |
 | `NREPEAT` | 1 | Number of GEMM calls; when >&#160;1 the first call is warmup and excluded from timing. |
 
 ## Test Driver
@@ -169,7 +169,7 @@ TA and TB select transposition: 0&#160;means&#160;'N' (no transpose), non-zero m
 | `ozaki1_int8.c` | Ozaki Scheme-1 computational kernel (`gemm_oz1`): decomposes IEEE-754 mantissa into 7-bit int8 slices for low-precision dot products. Uses function-pointer dispatch for VNNI vs scalar int8 dot product. Compiled twice (double + float). |
 | `ozaki2_int8.c` | Ozaki Scheme-2 computational kernel (`gemm_oz2`): CRT-based modular arithmetic using small pairwise coprime moduli. Barrett reduction for fast modular arithmetic, Garner's algorithm with batched reconstruction. Residues fit in int8 (sign folded in) and dot products use VNNI. Compiled twice (double + float). |
 | `ozaki1_bf16.c` | Ozaki Scheme-3 computational kernel (`gemm_oz3`): Dekker-style error-free split into BF16 slices — each carries its own exponent, so no shared-exponent alignment is needed. Dot products via `VDPBF16PS` (scalar fallback). Inherently approximate (FP32 accumulation rounding). Compiled twice (double + float). |
-| `ozaki2_bf16.c` | Ozaki Scheme-4 computational kernel (`gemm_oz4`): CRT-based modular arithmetic (same decomposition as Scheme 2) with BF16 dot products via `VDPBF16PS` instead of VNNI int8. Residues (0–127) are exactly representable in BF16; FP32 accumulation is exact for BLOCK_K ≤ 64. Select with `GEMM_OZAKI=4`. Compiled twice (double + float). |
+| `ozaki2_bf16.c` | Ozaki Scheme-4 computational kernel (`gemm_oz4`): CRT-based modular arithmetic (same decomposition as Scheme 2) with BF16 dot products via `VDPBF16PS` instead of VNNI int8. Residues (0–127) are exactly representable in BF16; FP32 accumulation is exact for BLOCK_K ≤ 64. Select with `OZAKI=4`. Compiled twice (double + float). |
 | `zgemm3m.c` | Complex GEMM 3M wrapper (`ZGEMM_WRAP`): deinterleaves complex matrices, issues 3 real GEMM calls (Karatsuba), recombines. Uses `libxs_malloc` for workspace. Compiled twice (double + float). |
 | `wrap.c` | Entry points (`GEMM`, `ZGEMM`) and dlsym fallbacks (`GEMM_REAL`, `ZGEMM_REAL`) via `GEMM_DEFINE_DLSYM` macro. Used only in the LD_PRELOAD path; excluded from the static archive to keep `__real_` resolution correct. |
 | `gemm.c` | Test driver. |

@@ -20,11 +20,11 @@ static void split_digits(uint64_t mantissa, int sign,
 {
   int s;
   if (0 == mantissa) {
-    memset(digits, 0, sizeof(int8_t) * gemm_ozn);
+    memset(digits, 0, sizeof(int8_t) * ozaki_n);
     return;
   }
   LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
-  for (s = 0; s < gemm_ozn; ++s) {
+  for (s = 0; s < ozaki_n; ++s) {
     const int high = OZ_MANT_BITS - (7 * s);
     if (high < 0) {
       digits[s] = 0;
@@ -55,7 +55,7 @@ static double reconstruct_from_digits(const int8_t digits[MAX_NSLICES],
   double recon = 0.0;
   int slice = 0;
 
-  for (; slice < gemm_ozn; ++slice) {
+  for (; slice < ozaki_n; ++slice) {
     const int16_t digit = (int16_t)digits[slice];
     if (0 != digit) {
       const int sh = exp_base + slice_low_bit[slice];
@@ -107,11 +107,11 @@ LIBXS_API_INLINE void preprocess_rows(const GEMM_REAL_TYPE* a, GEMM_INT_TYPE lda
       }
       split_digits(aligned, elem_sign[mi][kk], tmp);
       LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
-      for (s = 0; s < gemm_ozn; ++s) ak[mi][s][kk] = tmp[s];
+      for (s = 0; s < ozaki_n; ++s) ak[mi][s][kk] = tmp[s];
     }
     /* Zero-pad remaining k-entries for fixed-length dot products */
     LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
-    for (s = 0; s < gemm_ozn; ++s) {
+    for (s = 0; s < ozaki_n; ++s) {
       for (kk = kblk; kk < BLOCK_K; ++kk) ak[mi][s][kk] = 0;
     }
   }
@@ -160,13 +160,13 @@ LIBXS_API_INLINE void preprocess_cols(const GEMM_REAL_TYPE* b, GEMM_INT_TYPE ldb
       }
       split_digits(aligned, elem_sign[kk][nj], tmp);
       LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
-      for (s = 0; s < gemm_ozn; ++s) bk[nj][s][kk] = tmp[s];
+      for (s = 0; s < ozaki_n; ++s) bk[nj][s][kk] = tmp[s];
     }
   }
   /* Zero-pad remaining k-entries for fixed-length dot products */
   for (nj = 0; nj < jblk; ++nj) {
     LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
-    for (s = 0; s < gemm_ozn; ++s) {
+    for (s = 0; s < ozaki_n; ++s) {
       for (kk = kblk; kk < BLOCK_K; ++kk) bk[nj][s][kk] = 0;
     }
   }
@@ -193,7 +193,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
   const int tb = (*transb != 'N' && *transb != 'n');
   const GEMM_INT_TYPE M = *m, N = *n, K = *k;
   const GEMM_INT_TYPE ldcv = *ldc;
-  const int nslices = LIBXS_CLMP(gemm_ozn, 1, MAX_NSLICES);
+  const int nslices = LIBXS_CLMP(ozaki_n, 1, MAX_NSLICES);
   const GEMM_INT_TYPE nblk_m = (M + BLOCK_M - 1) / BLOCK_M;
   const GEMM_INT_TYPE nblk_n = (N + BLOCK_N - 1) / BLOCK_N;
   /* Panel buffers: preprocessed A and B for one K-batch (shared).
@@ -327,7 +327,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
                   const int exp_base = (int)expa_panel[a_idx][mi] - OZ_BIAS_PLUS_MANT;
                   int8_t tmp[MAX_NSLICES];
                   int si;
-                  for (si = 0; si < gemm_ozn; ++si) tmp[si] = ak_panel[a_idx][mi][si][kk];
+                  for (si = 0; si < ozaki_n; ++si) tmp[si] = ak_panel[a_idx][mi][si][kk];
                   { const double arecon = reconstruct_from_digits(tmp,
                       exp_base, slice_low_bit);
                     ozaki_store_block_pair(ref_blk, recon_blk, BLOCK_M, mi, kk,
@@ -350,7 +350,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
                   const int exp_base = (int)expb_panel[b_idx][nj] - OZ_BIAS_PLUS_MANT;
                   int8_t tmp[MAX_NSLICES];
                   int si;
-                  for (si = 0; si < gemm_ozn; ++si) tmp[si] = bk_panel[b_idx][nj][si][kk];
+                  for (si = 0; si < ozaki_n; ++si) tmp[si] = bk_panel[b_idx][nj][si][kk];
                   { const double brecon = reconstruct_from_digits(tmp,
                       exp_base, slice_low_bit);
                     ozaki_store_block_pair(ref_blk, recon_blk, BLOCK_K, kk, nj,
@@ -364,7 +364,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
             { /* Diagonal-trim loop: iterate pairs (sa,sb) with sa+sb <= cutoff.
                * trim=0 means all pairs (exact); larger values drop the least
                * significant diagonals (~7 bits each). */
-              const int trim = LIBXS_MIN(gemm_oztrim, 2 * (nslices - 1));
+              const int trim = LIBXS_MIN(ozaki_trim, 2 * (nslices - 1));
               const int cutoff = 2 * (nslices - 1) - trim;
               /* Precompute base_scale: alpha * pow2(expa + expb - 2*BIAS) per (mi,nj).
                * Factors out the per-element exponent contribution that is constant
@@ -385,7 +385,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
               }
               LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
               for (slice_a = 0; slice_a < nslices && slice_a <= cutoff; ++slice_a) {
-                const int sb_start = (0 != (gemm_ozflags & OZ1_TRIANGULAR))
+                const int sb_start = (0 != (ozaki_flags & OZ1_TRIANGULAR))
                   ? slice_a : 0;
                 const int sb_end = LIBXS_MIN(nslices, cutoff + 1 - slice_a);
                 for (slice_b = sb_start; slice_b < sb_end; ++slice_b) {
@@ -396,7 +396,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
                    * pair (sb,sa), compute both D(sa,sb) and D(sb,sa) in the
                    * same iteration. Both share the same power-of-two shift
                    * (low_bit_sum is commutative). */
-                  const int do_mirror = (0 != (gemm_ozflags & OZ1_SYMMETRIZE))
+                  const int do_mirror = (0 != (ozaki_flags & OZ1_SYMMETRIZE))
                     && (slice_a != slice_b);
                   for (mi = 0; mi < iblk; ++mi) {
                     for (nj = 0; nj < jblk; ++nj) {

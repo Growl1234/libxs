@@ -41,7 +41,7 @@ RESULT=0
 echo "-----------------------------------"
 echo "CHECK: Scheme 1 (default)"
 if [ "$*" ]; then echo "args    $*"; fi
-{ CHECK=-1 GEMM_VERBOSE=1 GEMM_OZAKI=1 "${EXE}" "$@" 2>"${TMPF}"; } >/dev/null || RESULT=$?
+{ CHECK=-1 OZAKI_VERBOSE=1 OZAKI=1 "${EXE}" "$@" 2>"${TMPF}"; } >/dev/null || RESULT=$?
 if [ "0" != "${RESULT}" ]; then
   echo "FAILED[${RESULT}] $(${CAT} "${TMPF}")"
   exit ${RESULT}
@@ -58,7 +58,7 @@ echo
 echo "-----------------------------------"
 echo "CHECK: Scheme 2 (CRT)"
 if [ "$*" ]; then echo "args    $*"; fi
-{ CHECK=-1 GEMM_VERBOSE=1 GEMM_OZAKI=2 "${EXE}" "$@" 2>"${TMPF}"; } >/dev/null || RESULT=$?
+{ CHECK=-1 OZAKI_VERBOSE=1 OZAKI=2 "${EXE}" "$@" 2>"${TMPF}"; } >/dev/null || RESULT=$?
 if [ "0" != "${RESULT}" ]; then
   echo "FAILED[${RESULT}] $(${CAT} "${TMPF}")"
   exit ${RESULT}
@@ -76,7 +76,7 @@ echo
 echo "-----------------------------------"
 echo "CHECK: Scheme 3 (BF16)"
 if [ "$*" ]; then echo "args    $*"; fi
-{ CHECK=1e-8 GEMM_VERBOSE=1 GEMM_OZAKI=3 "${EXE}" "$@" 2>"${TMPF}"; } >/dev/null || RESULT=$?
+{ CHECK=1e-8 OZAKI_VERBOSE=1 OZAKI=3 "${EXE}" "$@" 2>"${TMPF}"; } >/dev/null || RESULT=$?
 if [ "0" != "${RESULT}" ]; then
   echo "FAILED[${RESULT}] $(${CAT} "${TMPF}")"
   exit ${RESULT}
@@ -94,7 +94,7 @@ echo
 echo "-----------------------------------"
 echo "CHECK: Scheme 4 (CRT+BF16)"
 if [ "$*" ]; then echo "args    $*"; fi
-{ CHECK=-1 GEMM_VERBOSE=1 GEMM_OZAKI=4 "${EXE}" "$@" 2>"${TMPF}"; } >/dev/null || RESULT=$?
+{ CHECK=-1 OZAKI_VERBOSE=1 OZAKI=4 "${EXE}" "$@" 2>"${TMPF}"; } >/dev/null || RESULT=$?
 if [ "0" != "${RESULT}" ]; then
   echo "FAILED[${RESULT}] $(${CAT} "${TMPF}")"
   exit ${RESULT}

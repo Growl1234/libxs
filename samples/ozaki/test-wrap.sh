@@ -32,7 +32,7 @@ TMPF=$(mktemp)
 trap 'rm ${TMPF}' EXIT
 
 # set verbosity to check for generated kernels
-export GEMM_VERBOSE=${GEMM_VERBOSE:-1}
+export OZAKI_VERBOSE=${OZAKI_VERBOSE:-1}
 
 for TEST in ${TESTS}; do
   NAME=$(echo "${TEST}" | ${TR} [[:lower:]] [[:upper:]])
