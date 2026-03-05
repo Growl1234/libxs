@@ -110,7 +110,7 @@ ifneq (,$(MAXTARGET))
   DFLAGS += -DLIBXS_MAXTARGET=$(MAXTARGET)
 endif
 
-# necessary include directories
+# include directories
 IFLAGS += -I$(call quote,$(INCDIR))
 
 # Version numbers according to interface (version.txt)

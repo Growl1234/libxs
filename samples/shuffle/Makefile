@@ -16,7 +16,7 @@ SYM = 1
 # include common Makefile artifacts
 include $(DEPDIR)/Makefile.inc
 
-# necessary include directories
+# include directories
 IFLAGS += -I$(call quote,$(INCDIR))
 IFLAGS += -I$(call quote,$(DEPDIR)/include)
 
@@ -36,7 +36,7 @@ all: $(XFILES)
 .PHONY: compile
 compile: $(OBJECTS) $(FTNOBJS)
 
-$(OUTDIR)/$(OUTNAME).x: $(OUTDIR)/.make $(OBJECTS) $(XDEP)
+$(OUTDIR)/$(OUTNAME).x: $(OUTDIR)/.make $(OBJECTS) $(XLIB)
 	$(LD) -o $@ $(OBJECTS) $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
 $(BLDDIR)/%-cpp.o: $(SRCDIR)/%.cpp .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc

@@ -16,7 +16,7 @@ SYM = 1
 # include common Makefile artifacts
 include $(DEPDIR)/Makefile.inc
 
-# necessary include directories
+# include directories
 IFLAGS += -I$(call quote,$(INCDIR))
 IFLAGS += -I$(call quote,$(DEPDIR)/include)
 
@@ -42,7 +42,7 @@ else
   QKMALLOC ?= 0
 endif
 
-$(OUTDIR)/$(OUTNAME).x: $(OUTDIR)/.make $(OBJECTS) $(XDEP)
+$(OUTDIR)/$(OUTNAME).x: $(OUTDIR)/.make $(OBJECTS) $(XLIB)
 ifneq (0,$(QKMALLOC))
 	$(LD) -o $@ $(OBJECTS) $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS) -lqkmalloc
 else

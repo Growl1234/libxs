@@ -16,7 +16,7 @@ OMP = 1
 # include common Makefile artifacts
 include $(DEPDIR)/Makefile.inc
 
-# necessary include directories
+# include directories
 IFLAGS += -I$(call quote,$(INCDIR))
 IFLAGS += -I$(call quote,$(DEPDIR)/include)
 
@@ -55,14 +55,14 @@ all: $(XFILES)
 compile: $(OBJECTS) $(FTNOBJS)
 
 ifneq (,$(strip $(FC)))
-$(OUTDIR)/$(OUTNAME)f.x: $(OUTDIR)/.make $(BLDDIR)/$(OUTNAME)-f.o $(XDEP)
+$(OUTDIR)/$(OUTNAME)f.x: $(OUTDIR)/.make $(BLDDIR)/$(OUTNAME)-f.o $(XLIB)
 	$(FLD) -o $@ $(BLDDIR)/$(OUTNAME)-f.o $(XLIB) \
 		$(FCMTFLAGS) $(SLDFLAGS) $(LDFLAGS) $(FLDFLAGS) $(ELDFLAGS)
 else
 .PHONY: $(OUTDIR)/$(OUTNAME)f.x
 endif
 
-$(OUTDIR)/$(OUTNAME).x: $(OUTDIR)/.make $(OBJECTS) $(XDEP)
+$(OUTDIR)/$(OUTNAME).x: $(OUTDIR)/.make $(OBJECTS) $(XLIB)
 	$(LD) -o $@ $(OBJECTS) $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
 $(BLDDIR)/%-cpp.o: $(SRCDIR)/%.cpp .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc

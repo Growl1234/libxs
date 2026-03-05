@@ -16,7 +16,7 @@ SYM = 1
 # include common Makefile artifacts
 include $(DEPDIR)/Makefile.inc
 
-# necessary include directories
+# include directories
 IFLAGS += -I$(call quote,$(INCDIR))
 IFLAGS += -I$(call quote,$(DEPDIR)/include)
 
@@ -56,7 +56,7 @@ compile: $(OBJECTS) $(FTNOBJS)
 
 ifneq (,$(strip $(FC)))
 ifneq (0,$(shell echo "$$((3>$(XSMM_GCC) || 40600<=$(FC_VERSION_NUM)))"))
-$(OUTDIR)/$(OUTNAME)f.x: $(OUTDIR)/.make $(FTNOBJS) $(XDEP)
+$(OUTDIR)/$(OUTNAME)f.x: $(OUTDIR)/.make $(FTNOBJS) $(XLIB)
 	$(FLD) -o $@ $(FTNOBJS) $(XLIB) $(FCMTFLAGS) $(SLDFLAGS) $(LDFLAGS) $(FLDFLAGS) $(ELDFLAGS)
 else
 .PHONY: $(OUTDIR)/$(OUTNAME)f.x
@@ -65,7 +65,7 @@ else
 .PHONY: $(OUTDIR)/$(OUTNAME)f.x
 endif
 
-$(OUTDIR)/$(OUTNAME).x: $(OUTDIR)/.make $(OBJECTS) $(XDEP)
+$(OUTDIR)/$(OUTNAME).x: $(OUTDIR)/.make $(OBJECTS) $(XLIB)
 	$(LD) -o $@ $(OBJECTS) $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
 $(BLDDIR)/%-cpp.o: $(SRCDIR)/%.cpp .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc
