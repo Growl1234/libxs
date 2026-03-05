@@ -12,14 +12,14 @@
 #include "libxs.h"
 
 
-typedef enum libxs_mhd_element_conversion_hint {
+typedef enum libxs_mhd_element_conversion_hint_t {
   LIBXS_MHD_ELEMENT_CONVERSION_DEFAULT,
   LIBXS_MHD_ELEMENT_CONVERSION_MODULUS
-} libxs_mhd_element_conversion_hint;
+} libxs_mhd_element_conversion_hint_t;
 
 LIBXS_EXTERN_C typedef struct libxs_mhd_element_handler_info_t {
-  libxs_datatype type;
-  libxs_mhd_element_conversion_hint hint;
+  libxs_data_t type;
+  libxs_mhd_element_conversion_hint_t hint;
 } libxs_mhd_element_handler_info_t;
 
 /**
@@ -28,7 +28,7 @@ LIBXS_EXTERN_C typedef struct libxs_mhd_element_handler_info_t {
  * in case of a type-conversion.
  */
 LIBXS_EXTERN_C typedef int (*libxs_mhd_element_handler_t)(void* dst,
-  const libxs_mhd_element_handler_info_t* dst_info, libxs_datatype src_type,
+  const libxs_mhd_element_handler_info_t* dst_info, libxs_data_t src_type,
   const void* src, const void* src_min, const void* src_max);
 
 /**
@@ -41,7 +41,7 @@ LIBXS_EXTERN_C typedef struct libxs_mhd_info_t {
   /** Number of interleaved image channels. */
   size_t ncomponents;
   /** Element type (pixel type). */
-  libxs_datatype type;
+  libxs_data_t type;
   /** Size of the header in bytes (for LOCAL data files). */
   size_t header_size;
 } libxs_mhd_info_t;
@@ -70,7 +70,7 @@ LIBXS_EXTERN_C typedef struct libxs_mhd_write_info_t {
  * or otherwise clamps to the destination-type.
  */
 LIBXS_API int libxs_mhd_element_conversion(void* dst,
-  const libxs_mhd_element_handler_info_t* dst_info, libxs_datatype src_type,
+  const libxs_mhd_element_handler_info_t* dst_info, libxs_data_t src_type,
   const void* src, const void* src_min, const void* src_max);
 
 /**
@@ -79,15 +79,15 @@ LIBXS_API int libxs_mhd_element_conversion(void* dst,
  * is performed to compare values using the source-type.
  */
 LIBXS_API int libxs_mhd_element_comparison(void* dst,
-  const libxs_mhd_element_handler_info_t* dst_info, libxs_datatype src_type,
+  const libxs_mhd_element_handler_info_t* dst_info, libxs_data_t src_type,
   const void* src, const void* src_min, const void* src_max);
 
 
 /** Returns the name of the element type; result may be NULL/0 in case of an unknown type. */
-LIBXS_API const char* libxs_mhd_typename(libxs_datatype type, const char** ctypename);
+LIBXS_API const char* libxs_mhd_typename(libxs_data_t type, const char** ctypename);
 
 /** Returns the type of the element for a given type-name, e.g., "MET_FLOAT". */
-LIBXS_API libxs_datatype libxs_mhd_typeinfo(const char elemname[]);
+LIBXS_API libxs_data_t libxs_mhd_typeinfo(const char elemname[]);
 
 
 /**

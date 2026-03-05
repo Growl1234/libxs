@@ -78,7 +78,7 @@ int main(int argc, char* argv[])
     size_t g1 = 0, g2 = 0, g3 = 0, h1 = 0, h2 = 0, h3 = 0;
     size_t n0 = 0, n1 = 0, n2 = 0, n3 = 0, j;
     double d0, d1 = 0, d2 = 0, d3 = 0;
-    const libxs_datatype elemtypes[] = {
+    const libxs_data_t elemtypes[] = {
       LIBXS_DATATYPE_U64,
       LIBXS_DATATYPE_U32,
       LIBXS_DATATYPE_U16,

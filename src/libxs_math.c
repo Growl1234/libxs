@@ -43,7 +43,7 @@
 
 
 LIBXS_API int libxs_matdiff(libxs_matdiff_info_t* info,
-  libxs_datatype datatype, int m, int n, const void* ref, const void* tst,
+  libxs_data_t datatype, int m, int n, const void* ref, const void* tst,
   const int* ldref, const int* ldtst)
 {
   int result = EXIT_SUCCESS, result_swap = 0, result_nan = 0;

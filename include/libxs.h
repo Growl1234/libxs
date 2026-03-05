@@ -11,7 +11,7 @@
 
 #include "libxs_macros.h"
 
-/* Construct an enumerator (libxs_datatype) from a built-in type (float, double, etc.). */
+/* Construct an enumerator (libxs_data_t) from a built-in type (float, double, etc.). */
 #define LIBXS_DATATYPE(TYPE) LIBXS_CONCATENATE(LIBXS_DATATYPE_, LIBXS_TYPESYMBOL(TYPE))
 /** Helper macro for type postfixes. */
 #define LIBXS_TYPESYMBOL(TYPE) LIBXS_CONCATENATE(LIBXS_TYPESYMBOL_, TYPE)
@@ -21,11 +21,11 @@
 #define LIBXS_TYPESYMBOL_short I16
 #define LIBXS_TYPESYMBOL_char I8
 
-/** Determine the type-size of the type (libxs_datatype). */
+/** Determine the type-size of the type (libxs_data_t). */
 #define LIBXS_TYPESIZE(ENUM) ((ENUM) >> 4)
 
 /** Enumerate primitive element/data types. */
-typedef enum libxs_datatype {
+typedef enum libxs_data_t {
   LIBXS_DATATYPE_F64 = 0 | (8 << 4),
   LIBXS_DATATYPE_F32 = 1 | (4 << 4),
   LIBXS_DATATYPE_I64 = 2 | (8 << 4),
@@ -37,9 +37,9 @@ typedef enum libxs_datatype {
   LIBXS_DATATYPE_I8  = 8 | (1 << 4),
   LIBXS_DATATYPE_U8  = 9 | (1 << 4),
   LIBXS_DATATYPE_UNKNOWN = 10
-} libxs_datatype;
+} libxs_data_t;
 
-/** Removes type-size info from type (libxs_datatype). */
+/** Removes type-size info from type (libxs_data_t). */
 #define LIBXS_TYPEORDER(ENUM) (0xF & (ENUM))
 
 /** Initialize the library; pay for setup cost at a specific point. */
@@ -56,10 +56,10 @@ LIBXS_API int libxs_get_verbosity(void);
  */
 LIBXS_API void libxs_set_verbosity(int level);
 
-/** Return the name of the type (libxs_datatype). */
-LIBXS_API const char* libxs_typename(libxs_datatype datatype);
+/** Return the name of the type (libxs_data_t). */
+LIBXS_API const char* libxs_typename(libxs_data_t datatype);
 
 /** Determine the given value in double-precision. */
-LIBXS_API int libxs_dvalue(libxs_datatype datatype, const void* value, double* dvalue);
+LIBXS_API int libxs_dvalue(libxs_data_t datatype, const void* value, double* dvalue);
 
 #endif /*LIBXS_H*/

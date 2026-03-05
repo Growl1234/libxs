@@ -551,7 +551,7 @@ LIBXS_API void libxs_set_verbosity(int level)
 }
 
 
-LIBXS_API const char* libxs_typename(libxs_datatype datatype)
+LIBXS_API const char* libxs_typename(libxs_data_t datatype)
 {
   switch (datatype) {
     case LIBXS_DATATYPE_F64:  return "f64";
@@ -569,7 +569,7 @@ LIBXS_API const char* libxs_typename(libxs_datatype datatype)
 }
 
 
-LIBXS_API int libxs_dvalue(libxs_datatype datatype, const void* value, double* dvalue)
+LIBXS_API int libxs_dvalue(libxs_data_t datatype, const void* value, double* dvalue)
 {
   int result = EXIT_SUCCESS;
   if (NULL != value) {

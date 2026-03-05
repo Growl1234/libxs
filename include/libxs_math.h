@@ -49,7 +49,7 @@ typedef uint16_t libxs_bf16_t;
  * missing support for the requested data-type or otherwise invalid input.
  */
 LIBXS_API int libxs_matdiff(libxs_matdiff_info_t* info,
-  libxs_datatype datatype, int m, int n, const void* ref, const void* tst,
+  libxs_data_t datatype, int m, int n, const void* ref, const void* tst,
   const int* ldref, const int* ldtst);
 
 /**

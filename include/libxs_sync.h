@@ -73,7 +73,7 @@
 # endif
 #endif
 
-typedef enum libxs_atomic_kind {
+typedef enum libxs_atomic_kind_t {
 #if defined(__ATOMIC_SEQ_CST)
   LIBXS_ATOMIC_SEQ_CST = __ATOMIC_SEQ_CST,
 #else
@@ -84,7 +84,7 @@ typedef enum libxs_atomic_kind {
 #else
   LIBXS_ATOMIC_RELAXED = LIBXS_ATOMIC_SEQ_CST
 #endif
-} libxs_atomic_kind;
+} libxs_atomic_kind_t;
 
 /** Lock ordering: x86 (TSO) needs no extra fence; weak-memory platforms need SEQ_CST. */
 #if defined(LIBXS_PLATFORM_X86)
