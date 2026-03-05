@@ -18,8 +18,21 @@ BLAS = $(if $(filter-out 0,$(OMP)),2,1)
 # include common Makefile artifacts
 include $(DEPDIR)/Makefile.inc
 
-# necessary include directories
-IFLAGS += -I$(call quote,$(INCDIR)) -I$(call quote,$(DEPDIR)/include)
+# root directory of LIBXSTREAM
+LIBXSTREAMROOT := $(wildcard $(DEPDIR)/../libxstream)
+LIBXSTREAM_SL := $(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(SLIBEXT))
+LIBXSTREAM_DL := $(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(DLIBEXT))
+LIBXSTREAM := $(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(LIBEXT))
+LIBXSTREAM := $(if $(LIBXSTREAM),$(LIBXSTREAM), \
+  $(if $(LIBXSTREAM_SL),$(LIBXSTREAM_SL),$(LIBXSTREAM_DL)))
+ifneq (,$(LIBXSTREAM))
+  IFLAGS += -I$(call quote,$(LIBXSTREAMROOT)/samples/ozaki)
+  DFLAGS += -D__LIBXSTREAM
+endif
+
+# include directories
+IFLAGS += -I$(call quote,$(DEPDIR)/include)
+IFLAGS += -I$(call quote,$(INCDIR))
 
 # Wrap all four BLAS GEMM symbols (dgemm, sgemm, zgemm, cgemm)
 ifneq (Darwin,$(UNAME))
@@ -33,7 +46,7 @@ else # macOS
 endif
 
 OUTNAME := $(shell basename "$(ROOTDIR)")
-HEADERS := $(wildcard $(INCDIR)/*.h) $(wildcard $(SRCDIR)/*.h) $(DEPDIR)/include/libxs_source.h
+HEADERS := $(wildcard $(INCDIR)/*.h) $(wildcard $(SRCDIR)/*.h)
 # Driver source (compiled once with default double precision)
 CSOURCS := $(SRCDIR)/gemm.c
 # Implementation sources: _WRAP + support (compiled for each precision)
@@ -60,28 +73,28 @@ ifneq (,$(WRAP_GEMM))
 $(OUTDIR)/libwrap.$(SLIBEXT): $(OUTDIR)/.make $(IMPLOBJS)
 	$(MAKE_AR) $@ $(call tailwords,$^)
 
-$(OUTDIR)/gemm-wrap.x: $(BLDDIR)/gemm-c.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XDEP) $(OUTDIR)/.make
+$(OUTDIR)/gemm-wrap.x: $(BLDDIR)/gemm-c.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) $(LIBXSTREAM) $(OUTDIR)/.make
 ifneq (0,$(OMP))
-	$(LD) -o $@ $< $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB)\
+	$(LD) -o $@ $< $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) $(LIBXSTREAM) \
 		$(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS) $(WRAP_GEMM)
 else ifneq (,$(strip $(OMPLIB)))
-	$(LD) -o $@ $< $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) \
+	$(LD) -o $@ $< $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) $(LIBXSTREAM) \
 		$(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS) $(WRAP_GEMM) \
 		$(XLIB_BEGIN) $(OMPLIB) $(XLIB_END)
 else # should not happen
-	$(LD) -o $@ $< $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) \
+	$(LD) -o $@ $< $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) $(LIBXSTREAM) \
 		$(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS) $(WRAP_GEMM)
 endif
 
 .PHONY: $(OUTDIR)/libwrap.$(DLIBEXT)
 .PHONY: $(OUTDIR)/gemm-blas.x
 else
-$(OUTDIR)/libwrap.$(DLIBEXT): $(IMPLOBJS) $(ENTRYOBJS) $(XDEP) $(OUTDIR)/.make
+$(OUTDIR)/libwrap.$(DLIBEXT): $(IMPLOBJS) $(ENTRYOBJS) $(XLIB) $(LIBXSTREAM) $(OUTDIR)/.make
 	$(LIB_SOLD) $(call solink,$@) $(IMPLOBJS) $(ENTRYOBJS) \
-		$(XLIB) $(call cleanld,$(LDFLAGS) $(CLDFLAGS))
+		$(XLIB) $(LIBXSTREAM) $(call cleanld,$(LDFLAGS) $(CLDFLAGS))
 
-$(OUTDIR)/gemm-blas.x: $(COBJCTS) $(BLDDIR)/gemm-print-d.o $(XDEP) $(OUTDIR)/.make $(OUTDIR)/libwrap.$(DLIBEXT)
-	$(LD) -o $@ $(COBJCTS) $(BLDDIR)/gemm-print-d.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+$(OUTDIR)/gemm-blas.x: $(COBJCTS) $(BLDDIR)/gemm-print-d.o $(OUTDIR)/libwrap.$(DLIBEXT) $(XLIB) $(LIBXSTREAM) $(OUTDIR)/.make
+	$(LD) -o $@ $(COBJCTS) $(BLDDIR)/gemm-print-d.o $(XLIB) $(LIBXSTREAM) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
 .PHONY: $(OUTDIR)/libwrap.$(SLIBEXT)
 .PHONY: $(OUTDIR)/gemm-wrap.x

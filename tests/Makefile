@@ -18,7 +18,7 @@ SYM ?= 1
 # include common Makefile artifacts
 include $(DEPDIR)/Makefile.inc
 
-# necessary include directories
+# include directories
 IFLAGS += -I$(call quote,$(INCDIR))
 IFLAGS += -I$(call quote,$(DEPDIR)/include)
 #IFLAGS += -I$(call quote,$(DEPDIR)/src)
@@ -87,7 +87,7 @@ HEADER_ONLY = $(basename $(notdir $(shell grep -H libxs_source *.c | cut -d: -f1
 
 define DEFINE_LINK_LD_RULE
 ifneq ($(words $(XLIB)),$(words $(wildcard $(XLIB))))
-$(1).x: $(2) $(OBJECTX) $(dir $(1))/.make $(if $(filter $(1),$(HEADER_ONLY)),$(NULL),$(XDEP))
+$(1).x: $(2) $(OBJECTX) $(dir $(1))/.make $(if $(filter $(1),$(HEADER_ONLY)),$(NULL),$(XLIB))
 	$(LD) $(SLDFLAGS) -o $(1).x $(2) \
 		$(if $(filter $(1),$(HEADER_ONLY)),$(NULL),$(XLIB)) \
 		$(call cleanld,$(LDFLAGS) $(CLDFLAGS))
@@ -99,7 +99,7 @@ endef
 define DEFINE_LINK_FC_RULE
 ifneq (,$(strip $(FC)))
 ifneq ($(words $(XLIB)),$(words $(wildcard $(XLIB))))
-$(1).x: $(2) $(FTNOBJS) $(XDEP) $(dir $(1))/.make
+$(1).x: $(2) $(FTNOBJS) $(XLIB) $(dir $(1))/.make
 	$(FC) $(SLDFLAGS) -o $(1).x $(2) $(XLIB) $(FCMTFLAGS) \
 		$(call cleanld,$(LDFLAGS) $(FLDFLAGS) $(ELDFLAGS))
 else
