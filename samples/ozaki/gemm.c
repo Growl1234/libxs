@@ -153,8 +153,8 @@ int main(int argc, char* argv[])
       if (0 != complex_input) ZGEMM(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c, &ldc);
       else GEMM(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c, &ldc);
     }
-    printf("Called %i times (%f s/call).\n", nrepeat,
-      libxs_timer_duration(start, libxs_timer_tick()) / ncalls);
+    printf("Called %i times (%.1f ms/call).\n", nrepeat,
+      1E3 * libxs_timer_duration(start, libxs_timer_tick()) / ncalls);
   }
 
   if (EXIT_SUCCESS == result) { /* Calculate final checksum */
