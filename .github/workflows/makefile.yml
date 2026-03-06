@@ -19,7 +19,18 @@ jobs:
     - name: Install OpenBLAS
       run: sudo apt install -y libopenblas-openmp-dev
 
-    - name: Build
+    - name: Install OpenCL
+      run: sudo apt install -y opencl-c-headers ocl-icd-libopencl1
+
+    - name: Setup LIBXSTREAM
+      run: |
+        git clone --depth 1 https://github.com/hfp/libxstream.git ${{ github.workspace }}/../libxstream
+        echo "LIBXSTREAMROOT=${{ github.workspace }}/../libxstream" >> ${GITHUB_ENV}
+
+    - name: Build LIBXSTREAM
+      run: cd ${LIBXSTREAMROOT} && make -j $(nproc) ${{ matrix.flags }}
+
+    - name: Build LIBXS
       run: make -j $(nproc) ${{ matrix.flags }}
 
     - name: Test
