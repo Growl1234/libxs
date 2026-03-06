@@ -32,7 +32,7 @@ OpenMP parallelizes all three phases of each K-batch: Phase&#160;1 preprocesses 
 
 Practically all CPUs provide higher instruction throughput using floating point instructions even when relying on double-precision. The algorithmic complexity and inner-most code is in fact unsuitable to reach high performance levels. OpenMP based parallelization or VNNI instructions are only meant to improve emulating high-precision.
 
-If targeting GPUs, this code is likely unsuitable since the low-precision conversion is performed on-the-fly. A discrete GPU is likely better with input data converted upfront and a block size suitable to hide compute time behind data transfer time. The block size to be transferred asynchronously is typically larger than targeting a single low-precision matrix core. On the other hand, the on-the-fly conversion in this code only requires some reasonable stack size to buffer small matrix blocks.
+When built with LIBXSTREAM support (sibling `libxstream` repository detected at build time), an optional OpenCL/GPU path is available for Schemes&#160;1 and&#160;3. The GPU bridge (`ozaki_gpu.c`) wraps LIBXSTREAM behind an opaque handle so that the CPU code has no OpenCL dependency. At runtime, the GPU path is enabled by default (`OZAKI_OCL=1`) and can be disabled with `OZAKI_OCL=0` to fall back to the CPU implementation. The CPU-only code performs the low-precision conversion on-the-fly and only requires a reasonable stack size to buffer small matrix blocks.
 
 ## Scheme 1 — Mantissa Slicing
 
@@ -137,8 +137,9 @@ make ECFLAGS="-DBLOCK_K=32 -DBATCH_K=2" gemm-wrap.x
 
 | Variable | Default | Description |
 |----------|:-------:|-------------|
-| `OZAKI` | 1 | Scheme selector: 0 = bypass (call original BLAS directly), 1 = Scheme 1 (mantissa slicing, int8), 2 = Scheme 2 (CRT), 3 = Scheme 3 (BF16 Dekker split). |
+| `OZAKI` | 1 | Scheme selector: 0 = bypass (call original BLAS directly), 1 = Scheme 1 (mantissa slicing, int8), 2 = Scheme 2 (CRT), 3 = Scheme 3 (BF16 Dekker split), 4 = Scheme 4 (CRT + BF16). |
 | `OZAKI_N` | *per scheme* | Number of decomposition units: slices for Scheme 1 (double: 1..16, default 8; float: 1..8, default 4) or moduli for Scheme 2 (see Scheme 2 section for per-precision defaults). |
+| `OZAKI_OCL` | 1 | Enable (1) or disable (0) the OpenCL/GPU path at runtime. Only effective when built with LIBXSTREAM support (`__LIBXSTREAM`). When disabled, falls back to the CPU Ozaki scheme. |
 | `OZAKI_FLAGS` | 3 | Scheme 1 bitmask: Triangular (1), Symmetrize (2); see above. |
 | `OZAKI_TRIM` | 0 | Scheme 1 diagonal trim: 0 = exact, T = drop T least significant diagonals (~7 bits each). |
 | `OZAKI_EPS` | inf | Dump A/B matrices as MHD-files when the epsilon error exceeds the given threshold (implies `OZAKI_VERBOSE=1` if unset). |
@@ -171,6 +172,7 @@ TA and TB select transposition: 0&#160;means&#160;'N' (no transpose), non-zero m
 | `ozaki1_bf16.c` | Ozaki Scheme-3 computational kernel (`gemm_oz3`): Dekker-style error-free split into BF16 slices — each carries its own exponent, so no shared-exponent alignment is needed. Dot products via `VDPBF16PS` (scalar fallback). Inherently approximate (FP32 accumulation rounding). Compiled twice (double + float). |
 | `ozaki2_bf16.c` | Ozaki Scheme-4 computational kernel (`gemm_oz4`): CRT-based modular arithmetic (same decomposition as Scheme 2) with BF16 dot products via `VDPBF16PS` instead of VNNI int8. Residues (0–127) are exactly representable in BF16; FP32 accumulation is exact for BLOCK_K ≤ 64. Select with `OZAKI=4`. Compiled twice (double + float). |
 | `zgemm3m.c` | Complex GEMM 3M wrapper (`ZGEMM_WRAP`): deinterleaves complex matrices, issues 3 real GEMM calls (Karatsuba), recombines. Uses `libxs_malloc` for workspace. Compiled twice (double + float). |
+| `ozaki_gpu.c` | GPU bridge: wraps LIBXSTREAM behind an opaque handle (`ozaki_gpu_create`/`release`/`dgemm`/`finalize`). Compiled only when LIBXSTREAM is detected; isolates all OpenCL includes from the rest of the code. |
 | `wrap.c` | Entry points (`GEMM`, `ZGEMM`) and dlsym fallbacks (`GEMM_REAL`, `ZGEMM_REAL`) via `GEMM_DEFINE_DLSYM` macro. Used only in the LD_PRELOAD path; excluded from the static archive to keep `__real_` resolution correct. |
 | `gemm.c` | Test driver. |
 | `gemm-print.c` | `print_gemm` and `print_diff` utilities. |
