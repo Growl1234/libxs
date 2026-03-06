@@ -117,6 +117,10 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
       const char *const ozaki_n_env = getenv("OZAKI_N");
       const char *const ozaki_eps_env = getenv("OZAKI_EPS");
       const char *const ozaki_rsq_env = getenv("OZAKI_RSQ");
+#if defined(__LIBXSTREAM)
+      const char *const ozaki_ocl_env = getenv("OZAKI_OCL");
+      const int ozaki_ocl = (NULL == ozaki_ocl_env ? 1/*default*/ : atoi(ozaki_ocl_env));
+#endif
       libxs_init(); /*libxs_malloc_pool()*/
       gemm_pool = libxs_malloc_pool(NULL, NULL);
       libxs_matdiff_clear(&gemm_diff);
@@ -148,7 +152,7 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
       ozaki_target_arch = libxs_cpuid(NULL);
 #if defined(__LIBXSTREAM)
       /* Initialize GPU Ozaki context (schemes 1 and 3 only) */
-      if (1 == ozaki || 3 == ozaki) {
+      if (0 != ozaki_ocl && (1 == ozaki || 3 == ozaki)) {
         ozaki_gpu_handle = ozaki_gpu_create(
           GEMM_IS_DOUBLE, ozaki,
           (0 < ozaki_verbose ? 1 : 0),
