@@ -113,10 +113,10 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
       const char *const ozaki_verbose_env = getenv("OZAKI_VERBOSE");
       const char *const ozaki_flags_env = getenv("OZAKI_FLAGS");
       const char *const ozaki_trim_env = getenv("OZAKI_TRIM");
-      const char *const ozaki_env = getenv("OZAKI");
-      const char *const ozaki_n_env = getenv("OZAKI_N");
       const char *const ozaki_eps_env = getenv("OZAKI_EPS");
       const char *const ozaki_rsq_env = getenv("OZAKI_RSQ");
+      const char *const ozaki_n_env = getenv("OZAKI_N");
+      const char *const ozaki_env = getenv("OZAKI");
 #if defined(__LIBXSTREAM)
       const char *const ozaki_ocl_env = getenv("OZAKI_OCL");
       const int ozaki_ocl = (NULL == ozaki_ocl_env ? 1/*default*/ : atoi(ozaki_ocl_env));

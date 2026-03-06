@@ -15,9 +15,6 @@
  */
 #include "ozaki_opencl.h"
 
-#include <stdlib.h>
-#include <string.h>
-
 
 typedef struct ozaki_gpu_handle_t {
   ozaki_context_t ctx;
