@@ -167,9 +167,8 @@ LIBXS_API_INTERN void zgemm3m(GEMM_ARGDECL)
   if (NULL == workspace) {
     fprintf(stderr, "zgemm3m: allocation failed (m=%i, n=%i, k=%i)\n",
       (int)M, (int)N, (int)K);
-    return;
   }
-
+  else
   { GEMM_REAL_TYPE *const ar_buf = workspace;
     GEMM_REAL_TYPE *const ai_buf = ar_buf + sz_a;
     GEMM_REAL_TYPE *const br_buf = ai_buf + sz_a;

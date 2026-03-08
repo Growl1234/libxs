@@ -25,39 +25,36 @@ typedef struct ozaki_gpu_handle_t {
 void* ozaki_gpu_create(int use_double, int kind, int verbosity,
   int nslices, int batch_k, int ozflags, int oztrim)
 {
-  ozaki_gpu_handle_t* h;
+  ozaki_gpu_handle_t* h = NULL;
   int ndevices = 0;
-  if (EXIT_SUCCESS != libxstream_init()
-      || EXIT_SUCCESS != libxstream_get_ndevices(&ndevices)
-      || 0 >= ndevices
-      || EXIT_SUCCESS != libxstream_set_active_device(0))
+  if (EXIT_SUCCESS == libxstream_init()
+      && EXIT_SUCCESS == libxstream_get_ndevices(&ndevices)
+      && 0 < ndevices
+      && EXIT_SUCCESS == libxstream_set_active_device(0))
   {
-    return NULL;
+    h = (ozaki_gpu_handle_t*)calloc(1, sizeof(*h));
   }
-  h = (ozaki_gpu_handle_t*)calloc(1, sizeof(*h));
-  if (NULL == h) return NULL;
-  if (EXIT_SUCCESS != ozaki_init(&h->ctx, 0, 0, 0,
-        use_double, kind, verbosity, nslices, batch_k,
-        ozflags, oztrim))
-  {
-    free(h);
-    return NULL;
-  }
-  /* Refuse the handle if fp64 was requested but the device only supports fp32.
-   * Silently downgrading would cause a type mismatch: the host passes double
-   * arrays while the GPU kernels operate on float, leading to wrong results
-   * and potential memory corruption. */
-  if (use_double && !h->ctx.use_double) {
-    ozaki_destroy(&h->ctx);
-    free(h);
-    return NULL;
-  }
-  if (EXIT_SUCCESS != libxstream_stream_create(
-        &h->stream, "ozaki_wrap", -1))
-  {
-    ozaki_destroy(&h->ctx);
-    free(h);
-    return NULL;
+  if (NULL != h) {
+    if (EXIT_SUCCESS != ozaki_init(&h->ctx, 0, 0, 0,
+          use_double, kind, verbosity, nslices, batch_k,
+          ozflags, oztrim))
+    {
+      free(h); h = NULL;
+    }
+    /* Refuse the handle if fp64 was requested but the device only supports fp32.
+     * Silently downgrading would cause a type mismatch: the host passes double
+     * arrays while the GPU kernels operate on float, leading to wrong results
+     * and potential memory corruption. */
+    else if (use_double && !h->ctx.use_double) {
+      ozaki_destroy(&h->ctx);
+      free(h); h = NULL;
+    }
+    else if (EXIT_SUCCESS != libxstream_stream_create(
+               &h->stream, "ozaki_wrap", -1))
+    {
+      ozaki_destroy(&h->ctx);
+      free(h); h = NULL;
+    }
   }
   return h;
 }
@@ -78,11 +75,14 @@ int ozaki_gpu_dgemm(void* handle, char transa, char transb,
   int M, int N, int K, double alpha, const void* a, int lda,
   const void* b, int ldb, double beta, void* c, int ldc)
 {
+  int result = EXIT_FAILURE;
   ozaki_gpu_handle_t* h = (ozaki_gpu_handle_t*)handle;
-  if (NULL == h) return EXIT_FAILURE;
-  return ozaki_gemm(&h->ctx, h->stream,
-    transa, transb, M, N, K,
-    alpha, a, lda, b, ldb, beta, c, ldc);
+  if (NULL != h) {
+    result = ozaki_gemm(&h->ctx, h->stream,
+      transa, transb, M, N, K,
+      alpha, a, lda, b, ldb, beta, c, ldc);
+  }
+  return result;
 }
 
 

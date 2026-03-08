@@ -98,46 +98,50 @@ LIBXS_API_INLINE int gemm_mhd_read(const char* filename,
   data_filename[sizeof(data_filename) - 1] = '\0';
   result = libxs_mhd_read_header(filename, sizeof(data_filename) - 1,
     data_filename, &info, size, ext, &ext_size);
-  if (EXIT_SUCCESS != result || 2 != info.ndims
+  if (EXIT_SUCCESS == result && (2 != info.ndims
     || LIBXS_DATATYPE(GEMM_REAL_TYPE) != info.type
-    || (1 != info.ncomponents && 2 != info.ncomponents))
+    || (1 != info.ncomponents && 2 != info.ncomponents)))
   {
-    return EXIT_FAILURE;
+    result = EXIT_FAILURE;
   }
-  base_size = (1 == info.ncomponents) ? ext1 : ext2;
-  has_settings = (ext_size == base_size + GEMM_MHD_SETTINGS_SIZE);
-  if (ext_size != base_size && 0 == has_settings) {
-    return EXIT_FAILURE;
-  }
-  memcpy(&file_ld, ext + sizeof(char), sizeof(GEMM_INT_TYPE));
-  if (NULL != rows) *rows = (GEMM_INT_TYPE)size[0];
-  if (NULL != cols) *cols = (GEMM_INT_TYPE)size[1];
-  if (NULL != trans) *trans = *(const char*)ext;
-  if (NULL != ld) *ld = file_ld;
-  if (NULL != scalar) {
-    memcpy(scalar, ext + sizeof(char) + sizeof(GEMM_INT_TYPE),
-      info.ncomponents * sizeof(GEMM_REAL_TYPE));
-    if (1 == info.ncomponents) scalar[1] = 0;
-  }
-  if (NULL != ncomp) *ncomp = info.ncomponents;
-  if (NULL != settings) {
-    if (0 != has_settings) {
-      const char* p = ext + base_size;
-      memcpy(&settings->ozaki, p, sizeof(int)); p += sizeof(int);
-      memcpy(&settings->ozn, p, sizeof(int)); p += sizeof(int);
-      memcpy(&settings->ozflags, p, sizeof(int)); p += sizeof(int);
-      memcpy(&settings->oztrim, p, sizeof(int)); p += sizeof(int);
-      memcpy(&settings->ldc, p, sizeof(int)); p += sizeof(int);
-      memcpy(&settings->eps, p, sizeof(double)); p += sizeof(double);
-      memcpy(&settings->rsq, p, sizeof(double));
+  if (EXIT_SUCCESS == result) {
+    base_size = (1 == info.ncomponents) ? ext1 : ext2;
+    has_settings = (ext_size == base_size + GEMM_MHD_SETTINGS_SIZE);
+    if (ext_size != base_size && 0 == has_settings) {
+      result = EXIT_FAILURE;
     }
-    else memset(settings, 0, sizeof(*settings));
   }
-  if (NULL != data) {
-    size_t pitch[2];
-    pitch[0] = file_ld; pitch[1] = size[1];
-    result = libxs_mhd_read(data_filename, NULL/*offset*/, size, pitch,
-      &info, data, NULL/*handler_info*/, NULL/*handler*/);
+  if (EXIT_SUCCESS == result) {
+    memcpy(&file_ld, ext + sizeof(char), sizeof(GEMM_INT_TYPE));
+    if (NULL != rows) *rows = (GEMM_INT_TYPE)size[0];
+    if (NULL != cols) *cols = (GEMM_INT_TYPE)size[1];
+    if (NULL != trans) *trans = *(const char*)ext;
+    if (NULL != ld) *ld = file_ld;
+    if (NULL != scalar) {
+      memcpy(scalar, ext + sizeof(char) + sizeof(GEMM_INT_TYPE),
+        info.ncomponents * sizeof(GEMM_REAL_TYPE));
+      if (1 == info.ncomponents) scalar[1] = 0;
+    }
+    if (NULL != ncomp) *ncomp = info.ncomponents;
+    if (NULL != settings) {
+      if (0 != has_settings) {
+        const char* p = ext + base_size;
+        memcpy(&settings->ozaki, p, sizeof(int)); p += sizeof(int);
+        memcpy(&settings->ozn, p, sizeof(int)); p += sizeof(int);
+        memcpy(&settings->ozflags, p, sizeof(int)); p += sizeof(int);
+        memcpy(&settings->oztrim, p, sizeof(int)); p += sizeof(int);
+        memcpy(&settings->ldc, p, sizeof(int)); p += sizeof(int);
+        memcpy(&settings->eps, p, sizeof(double)); p += sizeof(double);
+        memcpy(&settings->rsq, p, sizeof(double));
+      }
+      else memset(settings, 0, sizeof(*settings));
+    }
+    if (NULL != data) {
+      size_t pitch[2];
+      pitch[0] = file_ld; pitch[1] = size[1];
+      result = libxs_mhd_read(data_filename, NULL/*offset*/, size, pitch,
+        &info, data, NULL/*handler_info*/, NULL/*handler*/);
+    }
   }
   return result;
 }

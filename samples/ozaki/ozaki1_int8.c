@@ -21,25 +21,26 @@ static void split_digits(uint64_t mantissa, int sign,
   int s;
   if (0 == mantissa) {
     memset(digits, 0, sizeof(int8_t) * ozaki_n);
-    return;
   }
-  LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
-  for (s = 0; s < ozaki_n; ++s) {
-    const int high = OZ_MANT_BITS - (7 * s);
-    if (high < 0) {
-      digits[s] = 0;
-      continue;
-    }
-    { const int low = high - 6;
-      uint64_t chunk;
-      if (low >= 0) {
-        chunk = (mantissa >> low) & 0x7FULL;
+  else {
+    LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
+    for (s = 0; s < ozaki_n; ++s) {
+      const int high = OZ_MANT_BITS - (7 * s);
+      if (high < 0) {
+        digits[s] = 0;
+        continue;
       }
-      else {
-        const int width = high + 1;
-        chunk = mantissa & ((1ULL << width) - 1ULL);
+      { const int low = high - 6;
+        uint64_t chunk;
+        if (low >= 0) {
+          chunk = (mantissa >> low) & 0x7FULL;
+        }
+        else {
+          const int width = high + 1;
+          chunk = mantissa & ((1ULL << width) - 1ULL);
+        }
+        digits[s] = (int8_t)(sign * (int64_t)chunk);
       }
-      digits[s] = (int8_t)(sign * (int64_t)chunk);
     }
   }
 }

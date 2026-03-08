@@ -61,10 +61,10 @@ LIBXS_API_INLINE void gemm_oz_gpu_diff(const char* transa, const char* transb,
   const GEMM_REAL_TYPE*  beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc,
   unsigned int diff_abc, libxs_matdiff_info_t* diff)
 {
-  const size_t c_size = (size_t)*ldc * (size_t)*n * sizeof(GEMM_REAL_TYPE);
   GEMM_REAL_TYPE* c_ref = NULL;
   /* Save C for reference comparison (before GPU modifies it) */
   if (NULL != diff && 0 == (diff_abc % 3)) {
+    const size_t c_size = (size_t)*ldc * (size_t)*n * sizeof(GEMM_REAL_TYPE);
     c_ref = (GEMM_REAL_TYPE*)libxs_malloc(gemm_pool, c_size, 0);
     if (NULL != c_ref) memcpy(c_ref, c, c_size);
   }

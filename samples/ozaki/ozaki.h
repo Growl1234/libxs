@@ -487,34 +487,35 @@ LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value,
   uint64_t bits;
   uint64_t frac;
   uint16_t exp_raw;
-  int sign;
+  int sign = 1;
 
   /* Fast zero check avoids bit extraction for the common sparse case */
   if (value == (GEMM_REAL_TYPE)0) {
     *exp_biased = 0; *mantissa = 0;
-    return 1;
   }
-
-  sign = (value < (GEMM_REAL_TYPE)0) ? -1 : 1;
-  if (value < (GEMM_REAL_TYPE)0) value = -value;
+  else {
+    sign = (value < (GEMM_REAL_TYPE)0) ? -1 : 1;
+    if (value < (GEMM_REAL_TYPE)0) value = -value;
 
 #if GEMM_IS_DOUBLE
-  { union { double d; uint64_t u; } cvt; cvt.d = value; bits = cvt.u; }
+    { union { double d; uint64_t u; } cvt; cvt.d = value; bits = cvt.u; }
 #else
-  { union { float f; uint32_t u; } cvt; cvt.f = value; bits = cvt.u; }
+    { union { float f; uint32_t u; } cvt; cvt.f = value; bits = cvt.u; }
 #endif
-  exp_raw = (uint16_t)((bits >> OZ_MANT_BITS) & OZ_EXP_MASK);
-  frac = bits & ((1ULL << OZ_MANT_BITS) - 1ULL);
+    exp_raw = (uint16_t)((bits >> OZ_MANT_BITS) & OZ_EXP_MASK);
+    frac = bits & ((1ULL << OZ_MANT_BITS) - 1ULL);
 
-  /* exp_raw == 0: subnormal (treated as zero).
-   * exp_raw == OZ_EXP_MASK: Inf (frac==0) or NaN (frac!=0). */
-  if (0 == exp_raw || exp_raw == (uint16_t)OZ_EXP_MASK) {
-    *exp_biased = 0; *mantissa = 0;
-    return (0 == exp_raw) ? sign : 1;
+    /* exp_raw == 0: subnormal (treated as zero).
+     * exp_raw == OZ_EXP_MASK: Inf (frac==0) or NaN (frac!=0). */
+    if (0 == exp_raw || exp_raw == (uint16_t)OZ_EXP_MASK) {
+      *exp_biased = 0; *mantissa = 0;
+      if (0 != exp_raw) sign = 1; /* NaN/Inf: return 1 */
+    }
+    else {
+      *exp_biased = (int16_t)exp_raw;
+      *mantissa = (1ULL << OZ_MANT_BITS) | frac;
+    }
   }
-
-  *exp_biased = (int16_t)exp_raw;
-  *mantissa = (1ULL << OZ_MANT_BITS) | frac;
   return sign;
 }
 
