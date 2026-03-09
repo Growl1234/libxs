@@ -49,7 +49,7 @@ int main(int argc, char* argv[])
   const int max_nactive = LIBXS_CLMP(2 < argc ? atoi(argv[2]) : 4, 1, MAX_MALLOC_N);
   const int nthreads = LIBXS_CLMP(3 < argc ? atoi(argv[3]) : 1, 1, max_nthreads);
   const char *const env_check = getenv("CHECK");
-  const double check = LIBXS_ABS(NULL == env_check ? 0 : atof(env_check));
+  const int check = (NULL == env_check || 0 == *env_check) ? 0 : atoi(env_check);
   unsigned int nallocs = 0, nerrors0 = 0, nerrors1 = 0;
   libxs_timer_tick_t d0 = 0, d1 = 0;
   libxs_malloc_pool_info_t info;
@@ -81,6 +81,58 @@ int main(int argc, char* argv[])
 
   pool = libxs_malloc_pool(NULL, NULL);
 
+  /* warm-up: one untimed cycle to fault pages and ramp CPU frequency */
+  { const int count = r[0] % max_nactive + 1;
+    void* p[MAX_MALLOC_N];
+    int j;
+    for (j = 0; j < count; ++j) {
+      const int k = j % (MAX_MALLOC_N);
+      const size_t nbytes = ((size_t)r[k] % (MAX_MALLOC_MB) + 1) << 20;
+      p[j] = libxs_malloc(pool, nbytes, 0/*auto*/);
+    }
+    for (j = 0; j < count; ++j) libxs_free(p[j]);
+#if (defined(MALLOC) && defined(FREE))
+    for (j = 0; j < count; ++j) {
+      const int k = j % (MAX_MALLOC_N);
+      const size_t nbytes = ((size_t)r[k] % (MAX_MALLOC_MB) + 1) << 20;
+      p[j] = MALLOC(nbytes);
+    }
+    for (j = 0; j < count; ++j) FREE(p[j]);
+#endif
+  }
+
+#if (defined(MALLOC) && defined(FREE))
+  /* benchmark stdlib's malloc+free (run first to avoid warm-page bias) */
+#if defined(_OPENMP)
+# pragma omp parallel for num_threads(nthreads) private(i) reduction(+:d0,nerrors0)
+#endif
+  for (i = 0; i < ncycles; ++i) {
+    const int count = r[i % (MAX_MALLOC_N)] % max_nactive + 1;
+    void* p[MAX_MALLOC_N];
+    int j;
+    assert(count <= MAX_MALLOC_N);
+    for (j = 0; j < count; ++j) {
+      const int k = (i * count + j) % (MAX_MALLOC_N);
+      const size_t nbytes = ((size_t)r[k] % (MAX_MALLOC_MB) + 1) << 20;
+      const libxs_timer_tick_t t1 = libxs_timer_tick();
+      p[j] = MALLOC(nbytes);
+      d0 += libxs_timer_ncycles(t1, libxs_timer_tick());
+      if (NULL == p[j]) {
+        ++nerrors0;
+      }
+      else if (0 != check) {
+        memset(p[j], j, nbytes);
+      }
+    }
+    for (j = 0; j < count; ++j) {
+      const libxs_timer_tick_t t1 = libxs_timer_tick();
+      FREE(p[j]);
+      d0 += libxs_timer_ncycles(t1, libxs_timer_tick());
+    }
+  }
+#endif /*(defined(MALLOC) && defined(FREE))*/
+
+  /* benchmark libxs scratch pool malloc+free */
 #if defined(_OPENMP)
 # pragma omp parallel for num_threads(nthreads) private(i) reduction(+:d1,nerrors1)
 #endif
@@ -103,42 +155,19 @@ int main(int argc, char* argv[])
       }
     }
     for (j = 0; j < count; ++j) {
+      const libxs_timer_tick_t t1 = libxs_timer_tick();
       libxs_free(p[j]);
+      d1 += libxs_timer_ncycles(t1, libxs_timer_tick());
     }
   }
+
   if (EXIT_SUCCESS == libxs_malloc_pool_info(pool, &info) && 0 < info.size) {
     scratch = (int)LIBXS_UPDIV(info.size, (size_t)1 << 20);
     fprintf(stdout, "\nScratch: %i MB (mallocs=%lu)\n",
       scratch, (unsigned long int)info.nmallocs);
-    libxs_free_pool(pool);
-    pool = NULL;
   }
-
-#if (defined(MALLOC) && defined(FREE))
-#if defined(_OPENMP)
-# pragma omp parallel for num_threads(nthreads) private(i) reduction(+:d0,nerrors0)
-#endif
-  for (i = 0; i < ncycles; ++i) {
-    const int count = r[i % (MAX_MALLOC_N)] % max_nactive + 1;
-    void* p[MAX_MALLOC_N];
-    int j;
-    assert(count <= MAX_MALLOC_N);
-    for (j = 0; j < count; ++j) {
-      const int k = (i * count + j) % (MAX_MALLOC_N);
-      const size_t nbytes = ((size_t)r[k] % (MAX_MALLOC_MB) + 1) << 20;
-      const libxs_timer_tick_t t1 = libxs_timer_tick();
-      p[j] = MALLOC(nbytes);
-      d0 += libxs_timer_ncycles(t1, libxs_timer_tick());
-      if (NULL == p[j]) {
-        ++nerrors0;
-      }
-      else if (0 != check) {
-        memset(p[j], j, nbytes);
-      }
-    }
-    for (j = 0; j < count; ++j) FREE(p[j]);
-  }
-#endif /*(defined(MALLOC) && defined(FREE))*/
+  libxs_free_pool(pool);
+  pool = NULL;
 
   if (0 != d0 && 0 != d1 && 0 < nallocs) {
     const double dcalls = libxs_timer_duration(0, d0);
