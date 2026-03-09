@@ -130,7 +130,7 @@ int main(int argc, char* argv[])
   /*=========================================================================
    * (1) Registration: insert all keys (single-threaded)
    *=========================================================================*/
-  libxs_registry_create(&registry);
+  registry = libxs_registry_create();
   if (NULL == registry) { result = EXIT_FAILURE; goto cleanup; }
 
   start = libxs_timer_tick();
@@ -231,7 +231,7 @@ int main(int argc, char* argv[])
 #if defined(_OPENMP)
   if (1 < nthreads) {
     libxs_timer_tick_t total_cycles = 0;
-    libxs_registry_create(&registry);
+    registry = libxs_registry_create();
     if (NULL == registry) { result = EXIT_FAILURE; goto cleanup; }
     start = libxs_timer_tick();
 #   pragma omp parallel num_threads(nthreads) private(i)
@@ -269,7 +269,7 @@ int main(int argc, char* argv[])
 #if defined(_OPENMP)
   if (2 < nthreads) {
     libxs_timer_tick_t total_cycles = 0;
-    libxs_registry_create(&registry);
+    registry = libxs_registry_create();
     if (NULL == registry) { result = EXIT_FAILURE; goto cleanup; }
 
     { /* pre-populate half so readers have something to find */ const int half = size_total / 2;

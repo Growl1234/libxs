@@ -32,10 +32,10 @@ typedef struct test_struct_key_t {
 
 static int test_null_args(void)
 { /* NULL and invalid arguments must not crash and must return NULL / failure */
-  libxs_registry_t* registry = NULL;
+  libxs_registry_t* registry;
   libxs_registry_info_t info;
   const int key = 42;
-  libxs_registry_create(&registry);
+  registry = libxs_registry_create();
   TEST_CHECK(NULL != registry);
 
   /* set: NULL key */
@@ -80,13 +80,12 @@ static int test_null_args(void)
 
 static int test_set_get_basic(void)
 { /* register with deferred init, retrieve, re-register same size, auto-realloc larger */
-  libxs_registry_t* registry = NULL;
   const int key = 1;
   const char hello[] = "hello";
   const char world[] = "world";
   const char toolarge[] = "this is a much larger payload";
   char* v;
-  libxs_registry_create(&registry);
+  libxs_registry_t* registry = libxs_registry_create();
   TEST_CHECK(NULL != registry);
 
   /* deferred init: register without value, then fill in */
@@ -121,12 +120,11 @@ static int test_set_get_basic(void)
 
 static int test_free_and_reregister(void)
 { /* free removes entry, get returns NULL, re-register with larger value succeeds */
-  libxs_registry_t* registry = NULL;
   const int key = 7;
   const char small[] = "ab";
   const char large[] = "abcdef";
   char* v;
-  libxs_registry_create(&registry);
+  libxs_registry_t* registry = libxs_registry_create();
   TEST_CHECK(NULL != registry);
 
   v = (char*)libxs_registry_set(registry, &key, sizeof(key), small, sizeof(small), NULL);
@@ -157,13 +155,12 @@ static int test_free_and_reregister(void)
 
 static int test_iteration(void)
 { /* iterate over populated registry and empty registry */
-  libxs_registry_t* registry = NULL;
   typedef int key_type;
   const key_type keys[] = { 10, 20, 30, 40, 50 };
   const int n = (int)(sizeof(keys) / sizeof(keys[0]));
   int visited[5];
   int i, count;
-  libxs_registry_create(&registry);
+  libxs_registry_t* registry = libxs_registry_create();
   TEST_CHECK(NULL != registry);
 
   /* empty registry: begin returns NULL */
@@ -205,11 +202,10 @@ static int test_iteration(void)
 
 static int test_info(void)
 { /* check info before and after inserts, and after free */
-  libxs_registry_t* registry = NULL;
   libxs_registry_info_t info;
   const int key1 = 1, key2 = 2;
   const char val[] = "data";
-  libxs_registry_create(&registry);
+  libxs_registry_t* registry = libxs_registry_create();
   TEST_CHECK(NULL != registry);
 
   TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(registry, &info));
@@ -234,11 +230,10 @@ static int test_info(void)
 
 static int test_growth(void)
 { /* insert enough entries to trigger at least one table growth */
-  libxs_registry_t* registry = NULL;
   libxs_registry_info_t info;
   const int count = LIBXS_REGISTRY_NBUCKETS * 2; /* well beyond 75% load */
   int i;
-  libxs_registry_create(&registry);
+  libxs_registry_t* registry = libxs_registry_create();
   TEST_CHECK(NULL != registry);
 
   TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(registry, &info));
@@ -265,11 +260,10 @@ static int test_growth(void)
 
 static int test_struct_key(void)
 { /* padded struct key: must memset then element-wise init (documented requirement) */
-  libxs_registry_t* registry = NULL;
   test_struct_key_t k1, k2;
   double val = 3.14;
   double* v;
-  libxs_registry_create(&registry);
+  libxs_registry_t* registry = libxs_registry_create();
   TEST_CHECK(NULL != registry);
 
   /* correct initialization: memset + element-wise */
@@ -298,12 +292,11 @@ static int test_struct_key(void)
 
 static int test_tls_cache(void)
 { /* repeated get should be served from TLS cache; free invalidates cache */
-  libxs_registry_t* registry = NULL;
   const int key = 99;
   const char val[] = "cached";
   char* v;
   int i;
-  libxs_registry_create(&registry);
+  libxs_registry_t* registry = libxs_registry_create();
   TEST_CHECK(NULL != registry);
 
   v = (char*)libxs_registry_set(registry, &key, sizeof(key), val, sizeof(val), NULL);
@@ -333,12 +326,11 @@ static int test_tls_cache(void)
 
 static int test_multiple_registries(void)
 { /* two independent registries with same keys must not interfere */
-  libxs_registry_t *r1 = NULL, *r2 = NULL;
   const int key = 1;
   const int v1 = 100, v2 = 200;
   int* p;
-  libxs_registry_create(&r1);
-  libxs_registry_create(&r2);
+  libxs_registry_t *r1 = libxs_registry_create();
+  libxs_registry_t *r2 = libxs_registry_create();
   TEST_CHECK(NULL != r1 && NULL != r2);
 
   p = (int*)libxs_registry_set(r1, &key, sizeof(key), &v1, sizeof(int), NULL);
@@ -364,10 +356,9 @@ static int test_multiple_registries(void)
 
 static int test_has(void)
 { /* _has returns non-zero for existing keys, zero for missing */
-  libxs_registry_t* registry = NULL;
   const int key = 42, missing = 99;
   const double val = 3.14;
-  libxs_registry_create(&registry);
+  libxs_registry_t* registry = libxs_registry_create();
   TEST_CHECK(NULL != registry);
 
   TEST_CHECK(0 == libxs_registry_has(registry, &key, sizeof(key), NULL));
@@ -391,11 +382,10 @@ static int test_has(void)
 
 static int test_value_size(void)
 { /* _value_size returns stored size, 0 for missing keys */
-  libxs_registry_t* registry = NULL;
   const int key = 7;
   const char small[] = "ab";
   const char large[] = "abcdef";
-  libxs_registry_create(&registry);
+  libxs_registry_t* registry = libxs_registry_create();
   TEST_CHECK(NULL != registry);
 
   TEST_CHECK(0 == libxs_registry_value_size(registry, &key, sizeof(key), NULL));
