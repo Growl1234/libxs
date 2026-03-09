@@ -225,12 +225,10 @@ LIBXS_API_INLINE void internal_registry_remove_impl(
 }
 
 
-LIBXS_API int libxs_registry_create(libxs_registry_t** registry)
+LIBXS_API libxs_registry_t* libxs_registry_create(void)
 {
   libxs_registry_t* r;
   const unsigned int nbuckets = (unsigned int)LIBXS_UP2POT(LIBXS_REGISTRY_NBUCKETS);
-  LIBXS_ASSERT(NULL != registry);
-  if (NULL == registry) return EXIT_FAILURE;
   r = (libxs_registry_t*)calloc(1, sizeof(libxs_registry_t));
   if (NULL != r) {
     r->entries = (internal_regentry_t*)calloc(
@@ -245,18 +243,11 @@ LIBXS_API int libxs_registry_create(libxs_registry_t** registry)
         LIBXS_LOCK_ATTR_DESTROY(LIBXS_LOCK, &attr);
       }
 #endif
-      *registry = r;
-      return EXIT_SUCCESS;
+      return r;
     }
-    else {
-      free(r);
-      *registry = NULL;
-    }
+    free(r);
   }
-  else {
-    *registry = NULL;
-  }
-  return EXIT_FAILURE;
+  return NULL;
 }
 
 

@@ -246,12 +246,11 @@
             REAL(C_DOUBLE) :: libxs_matdiff_epsilon
           END FUNCTION
           !> Create a registry (key-value store).
-          !> Returns 0 on success.
-          FUNCTION libxs_registry_create(registry)                      &
+          !> Returns C_NULL_PTR in case of an error.
+          FUNCTION libxs_registry_create()                              &
      &    BIND(C)
-            IMPORT :: C_PTR, C_INT
-            TYPE(C_PTR), INTENT(OUT) :: registry
-            INTEGER(C_INT) :: libxs_registry_create
+            IMPORT :: C_PTR
+            TYPE(C_PTR) :: libxs_registry_create
           END FUNCTION
           !> Destroy registry and release all entries.
           SUBROUTINE libxs_registry_destroy(registry)                   &

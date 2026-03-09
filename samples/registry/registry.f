@@ -60,7 +60,8 @@
         CALL libxs_init()
 
       ! (1) Registration: insert all keys
-        IF (libxs_registry_create(reg) .NE. 0) THEN
+        reg = libxs_registry_create()
+        IF (.NOT.C_ASSOCIATED(reg)) THEN
           WRITE(*, "(A)") "FAILED to create registry"
           STOP 1
         END IF

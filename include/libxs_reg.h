@@ -38,8 +38,8 @@ LIBXS_EXTERN_C typedef struct libxs_registry_info_t {
 } libxs_registry_info_t;
 
 
-/** Create registry object. Returns EXIT_SUCCESS or EXIT_FAILURE. */
-LIBXS_API int libxs_registry_create(libxs_registry_t** registry);
+/** Create registry object. Returns NULL in case of an error. */
+LIBXS_API libxs_registry_t* libxs_registry_create(void);
 
 /** Destroy registry object (release all entries). */
 LIBXS_API void libxs_registry_destroy(libxs_registry_t* registry);
