@@ -24,8 +24,8 @@ LIBXSTREAMROOT := $(wildcard $(DEPDIR)/../libxstream)
 LIBXSTREAM_SL := $(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(SLIBEXT))
 LIBXSTREAM_DL := $(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(DLIBEXT))
 LIBXSTREAM := $(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(LIBEXT))
-LIBXSTREAM := $(if $(LIBXSTREAM),$(LIBXSTREAM), \
-  $(if $(LIBXSTREAM_SL),$(LIBXSTREAM_SL),$(LIBXSTREAM_DL)))
+LIBXSTREAM := $(strip $(if $(LIBXSTREAM),$(LIBXSTREAM), \
+  $(if $(LIBXSTREAM_SL),$(LIBXSTREAM_SL),$(LIBXSTREAM_DL))))
 ifneq (,$(LIBXSTREAM))
   IFLAGS += -I$(call quote,$(LIBXSTREAMROOT)/include)
   IFLAGS += -I$(call quote,$(LIBXSTREAMROOT)/samples/ozaki)
