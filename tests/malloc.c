@@ -209,29 +209,29 @@ int main(void)
 
   /* Test: LIBXS_MALLOC_NATIVE (registry-based, pointer preserved) */
   if (0 == nerrors) {
-    libxs_malloc_pool_t *npool = libxs_malloc_pool(malloc, free);
+    libxs_malloc_pool_t *natpool = libxs_malloc_pool(malloc, free);
     void *p;
     libxs_malloc_info_t mi;
     libxs_malloc_pool_info_t pi;
 
-    nerrors += (NULL == npool);
-    p = libxs_malloc(npool, 4096, LIBXS_MALLOC_NATIVE);
+    nerrors += (NULL == natpool);
+    p = libxs_malloc(natpool, 4096, LIBXS_MALLOC_NATIVE);
     nerrors += (NULL == p);
     if (NULL != p) {
       memset(p, 0xAA, 4096);
       nerrors += (EXIT_SUCCESS != libxs_malloc_info(p, &mi) || mi.size < 4096);
-      nerrors += (EXIT_SUCCESS != libxs_malloc_pool_info(npool, &pi) || 1 != pi.nactive);
+      nerrors += (EXIT_SUCCESS != libxs_malloc_pool_info(natpool, &pi) || 1 != pi.nactive);
       libxs_free(p);
-      nerrors += (EXIT_SUCCESS != libxs_malloc_pool_info(npool, &pi) || 0 != pi.nactive);
+      nerrors += (EXIT_SUCCESS != libxs_malloc_pool_info(natpool, &pi) || 0 != pi.nactive);
     }
     /* allocate, free, re-allocate (reuse path) */
-    p = libxs_malloc(npool, 2048, LIBXS_MALLOC_NATIVE);
+    p = libxs_malloc(natpool, 2048, LIBXS_MALLOC_NATIVE);
     nerrors += (NULL == p);
     if (NULL != p) {
       memset(p, 0xBB, 2048);
       libxs_free(p);
     }
-    p = libxs_malloc(npool, 1024, LIBXS_MALLOC_NATIVE);
+    p = libxs_malloc(natpool, 1024, LIBXS_MALLOC_NATIVE);
     nerrors += (NULL == p);
     if (NULL != p) {
       memset(p, 0xCC, 1024);
@@ -239,7 +239,7 @@ int main(void)
       libxs_free(p);
     }
     /* grow: allocate larger than previous chunk */
-    p = libxs_malloc(npool, 8192, LIBXS_MALLOC_NATIVE);
+    p = libxs_malloc(natpool, 8192, LIBXS_MALLOC_NATIVE);
     nerrors += (NULL == p);
     if (NULL != p) {
       memset(p, 0xDD, 8192);
@@ -248,19 +248,19 @@ int main(void)
     }
     /* multiple concurrent native allocations */
     { void *a, *b, *c;
-      a = libxs_malloc(npool, 512, LIBXS_MALLOC_NATIVE);
-      b = libxs_malloc(npool, 1024, LIBXS_MALLOC_NATIVE);
-      c = libxs_malloc(npool, 2048, LIBXS_MALLOC_NATIVE);
+      a = libxs_malloc(natpool, 512, LIBXS_MALLOC_NATIVE);
+      b = libxs_malloc(natpool, 1024, LIBXS_MALLOC_NATIVE);
+      c = libxs_malloc(natpool, 2048, LIBXS_MALLOC_NATIVE);
       nerrors += (NULL == a || NULL == b || NULL == c);
       nerrors += (a == b || b == c || a == c); /* must be distinct */
       if (NULL != a) memset(a, 0x11, 512);
       if (NULL != b) memset(b, 0x22, 1024);
       if (NULL != c) memset(c, 0x33, 2048);
-      nerrors += (EXIT_SUCCESS != libxs_malloc_pool_info(npool, &pi) || 3 != pi.nactive);
+      nerrors += (EXIT_SUCCESS != libxs_malloc_pool_info(natpool, &pi) || 3 != pi.nactive);
       libxs_free(a); libxs_free(b); libxs_free(c);
-      nerrors += (EXIT_SUCCESS != libxs_malloc_pool_info(npool, &pi) || 0 != pi.nactive);
+      nerrors += (EXIT_SUCCESS != libxs_malloc_pool_info(natpool, &pi) || 0 != pi.nactive);
     }
-    libxs_free_pool(npool);
+    libxs_free_pool(natpool);
   }
 
   /* Test: extended pool (libxs_malloc_xpool) with per-thread extra arg */
