@@ -36,7 +36,7 @@
   } \
   else { /* shuffle based initialization */ \
     const INT_TYPE libxs_matrng_maxval_ = libxs_matrng_ncols_ * libxs_matrng_ld_; \
-    const REAL_TYPE libxs_matrng_maxval2_ = (REAL_TYPE)((INT_TYPE)LIBXS_UPDIV(libxs_matrng_maxval_, 2)); /* non-zero */ \
+    const REAL_TYPE libxs_matrng_maxval2_ = (REAL_TYPE)((INT_TYPE)LIBXS_UPDIV(libxs_matrng_maxval_, 2) | 1); /* odd, non-zero */ \
     const REAL_TYPE libxs_matrng_inv_ = ((REAL_TYPE)(SCALE)) / libxs_matrng_maxval2_; \
     const size_t libxs_matrng_shuffle_ = libxs_coprime2((size_t)libxs_matrng_maxval_); \
     OMP(parallel for private(libxs_matrng_i_, libxs_matrng_j_)) \
