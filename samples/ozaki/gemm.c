@@ -157,8 +157,7 @@ int main(int argc, char* argv[])
       else GEMM(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c, &ldc);
     }
     duration = libxs_timer_duration(start, libxs_timer_tick()) / nrepeat;
-    printf("Wrapped GEMM: %.1f ms (%.1f GFLOPS/s), %i call(s).\n",
-      1E3 * duration, gflops / duration, nrepeat);
+    printf("OZAKI GEMM: %.1f ms (%.1f GFLOPS/s)\n", 1E3 * duration, gflops / duration);
   }
 
   if (EXIT_SUCCESS == result) { /* Reference BLAS GEMM + diff */
@@ -180,14 +179,14 @@ int main(int argc, char* argv[])
         else ref_gemm(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c_ref, &ldc);
       }
       duration = libxs_timer_duration(start, libxs_timer_tick()) / nrepeat;
-      printf("BLAS GEMM:    %.1f ms (%.1f GFLOPS/s), %i call(s).\n",
-        1E3 * duration, gflops / duration, nrepeat);
+      printf("BLAS GEMM:  %.1f ms (%.1f GFLOPS/s)\n", 1E3 * duration, gflops / duration);
       { const size_t nc = (0 != complex_input ? 2 : 1);
         const int ldref = (int)(nc * ldc), ldtst = ldref;
         result = libxs_matdiff(&diff, LIBXS_DATATYPE(GEMM_REAL_TYPE),
           (int)(nc * m), n, c_ref, c, &ldref, &ldtst);
       }
       if (EXIT_SUCCESS == result) {
+        diff.r = nrepeat;
         print_diff(stdout, &diff);
       }
     }
@@ -197,7 +196,7 @@ int main(int argc, char* argv[])
       result = libxs_matdiff(&diff, LIBXS_DATATYPE(GEMM_REAL_TYPE), (int)(nc * m), n,
           NULL/*ref*/, c/*tst*/, NULL/*ldref*/, &ldtst);
       if (EXIT_SUCCESS == result) {
-        printf("\n%f (check)\n", diff.l1_tst);
+        printf("l1_tst=%f ncalls=%i\n", diff.l1_tst, nrepeat);
       }
     }
   }
