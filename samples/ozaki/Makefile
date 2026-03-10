@@ -164,25 +164,17 @@ test: test-wrap test-check
 
 .PHONY: test-wrap
 test-wrap: $(ROOTDIR)/test-wrap.sh $(XFILES)
-	@NREPEAT=$(TESTSIZE) $< dgemm                               
-	@NREPEAT=$(TESTSIZE) $< dgemm  16  20 350 1 0  1 0.0 350 350 1000
-	@NREPEAT=$(TESTSIZE) $< dgemm  23  21  32 0 1 -1 0.5  32  32 1000
-	@NREPEAT=$(TESTSIZE) $< dgemm 200 200 256 1 1  1 0.0 256 256 1000
-	@NREPEAT=$(TESTSIZE) $< sgemm                               
-	@NREPEAT=$(TESTSIZE) $< sgemm  16  20 350 1 0  1 0.0 350 350 1000
-	@NREPEAT=$(TESTSIZE) $< sgemm  23  21  32 0 1 -1 0.5  32  32 1000
-	@NREPEAT=$(TESTSIZE) $< sgemm 200 200 256 1 1  1 0.0 256 256 1000
+	@NREPEAT=$(TESTSIZE) $<
+	@NREPEAT=$(TESTSIZE) $< ""  16  20 350 1 0  1 0.0 350 350 1000
+	@NREPEAT=$(TESTSIZE) $< ""  23  21  32 0 1 -1 0.5  32  32 1000
+	@NREPEAT=$(TESTSIZE) $< "" 200 200 256 1 1  1 0.0 256 256 1000
 
 .PHONY: test-check
 test-check: $(ROOTDIR)/test-check.sh $(XFILES)
-	@$< dgemm                               
-	@$< dgemm  16  20 350 1 0  1 0.0 350 350 1000
-	@$< dgemm  23  21  32 0 1 -1 0.5  32  32 1000
-	@$< dgemm 200 200 256 1 1  1 0.0 256 256 1000
-	@$< sgemm                               
-	@$< sgemm  16  20 350 1 0  1 0.0 350 350 1000
-	@$< sgemm  23  21  32 0 1 -1 0.5  32  32 1000
-	@$< sgemm 200 200 256 1 1  1 0.0 256 256 1000
+	@$<
+	@$< ""  16  20 350 1 0  1 0.0 350 350 1000
+	@$< ""  23  21  32 0 1 -1 0.5  32  32 1000
+	@$< "" 200 200 256 1 1  1 0.0 256 256 1000
 
 .PHONY: clean
 clean:
