@@ -4,7 +4,7 @@
 
 This code sample intercepts all four standard BLAS GEMM routines — DGEMM, SGEMM, ZGEMM, and CGEMM — and only relies on the LAPACK/BLAS interface. Real GEMM calls (DGEMM/SGEMM) are executed via one of three Ozaki low-precision schemes (mantissa slicing, CRT, or BF16 Dekker split); complex GEMM calls (ZGEMM/CGEMM) are implemented via the 3M (Karatsuba) method using three real GEMM calls each. The wrapper sources are compiled twice (once for `double`, once for `float`), so all four symbols coexist in a single binary.
 
-Two link-time variants are built: (1)&#160;code which is dynamically linked against LAPACK/BLAS (`gemm-blas.x`), (2)&#160;code which is linked using `--wrap=`*symbol* supported by GNU&#160;GCC compatible tool chains (`gemm-wrap.x`). Running `wrap-test.sh` exercises three flavors: the two build variants and additionally the first variant using the LD_PRELOAD mechanism (available under Linux).
+Two link-time variants are built: (1)&#160;code which is dynamically linked against LAPACK/BLAS (`gemm-blas.x`), (2)&#160;code which is linked using `--wrap=`*symbol* supported by GNU&#160;GCC compatible tool chains (`gemm-wrap.x`). In addition, precision-specific drivers are available: `dgemm-wrap.x`/`dgemm-blas.x` (double only) and `sgemm-wrap.x`/`sgemm-blas.x` (float only). Running `test-wrap.sh` exercises three flavors: the two build variants and additionally the first variant using the LD_PRELOAD mechanism (available under Linux). The `test-check.sh` script validates all four Ozaki schemes for correctness, and `test-mhd.sh` tests MHD file-based GEMM input pairs.
 
 The static wrapper library is built by default (`make`), and suitable for applications with static linkage against a LAPACK/BLAS library (`-Wl,--wrap=dgemm_ -Wl,--wrap=sgemm_ -Wl,--wrap=zgemm_ -Wl,--wrap=cgemm_`). To build and use the shared wrapper library:
 
@@ -147,6 +147,7 @@ make ECFLAGS="-DBLOCK_K=32 -DBATCH_K=2" gemm-wrap.x
 | `OZAKI_STAT` | 0 | Track C-matrix (0), A-matrix representation (1), or B-matrix representation (2). |
 | `OZAKI_EXIT` | 1 | Exit with failure after dumping matrices on accuracy violation (eps/rsq threshold exceeded). Set to 0 to continue execution. |
 | `OZAKI_RSQ` | 0 | Dump A/B matrices as MHD-files when RSQ drops below the given threshold; the threshold is updated after each dump (implies `OZAKI_VERBOSE=1` if unset). |
+| `CHECK` | 0 | Accuracy validation against BLAS reference: 0&#160;=&#160;disabled, negative&#160;=&#160;auto-threshold (1e-10 for double, 1e-3 for float), positive&#160;=&#160;use value as threshold. Prints `CHECK: eps=…` to stderr and exits with failure if exceeded. |
 | `NREPEAT` | 1 | Number of GEMM calls; when >&#160;1 the first call is warmup and excluded from timing. |
 
 ## Test Driver
@@ -154,11 +155,13 @@ make ECFLAGS="-DBLOCK_K=32 -DBATCH_K=2" gemm-wrap.x
 The test driver (`gemm.c`) accepts positional arguments:
 
 ```text
-gemm-wrap.x [A.mhd|M [B.mhd|N] [K [TA [TB [ALPHA [BETA [LDA [LDB [LDC]]]]]]]]]
-gemm-blas.x [A.mhd|M [B.mhd|N] [K [TA [TB [ALPHA [BETA [LDA [LDB [LDC]]]]]]]]]
+gemm-wrap.x  [A.mhd|M [B.mhd|N] [K [TA [TB [ALPHA [BETA [LDA [LDB [LDC]]]]]]]]]
+gemm-blas.x  [A.mhd|M [B.mhd|N] [K [TA [TB [ALPHA [BETA [LDA [LDB [LDC]]]]]]]]]
+dgemm-wrap.x [A.mhd|M [B.mhd|N] [K [TA [TB [ALPHA [BETA [LDA [LDB [LDC]]]]]]]]]
+sgemm-wrap.x [A.mhd|M [B.mhd|N] [K [TA [TB [ALPHA [BETA [LDA [LDB [LDC]]]]]]]]]
 ```
 
-TA and TB select transposition: 0&#160;means&#160;'N' (no transpose), non-zero means&#160;'T' (transpose). The driver calls DGEMM by default; precision and integer width can be selected at build time via `GEMM_REAL_TYPE` (default `double`) and `GEMM_INT_TYPE` (default `int`).
+TA and TB select transposition: 0&#160;means&#160;'N' (no transpose), non-zero means&#160;'T' (transpose). The `gemm-*` drivers wrap all four GEMM symbols (DGEMM + SGEMM + ZGEMM + CGEMM) in one binary. The `dgemm-*` and `sgemm-*` precision-specific drivers call only DGEMM or SGEMM respectively, and are built with the matching `GEMM_REAL_TYPE` (`double` or `float`). The `GEMM_INT_TYPE` (default `int`) can also be overridden at build time.
 
 ## Source Layout
 
@@ -174,7 +177,10 @@ TA and TB select transposition: 0&#160;means&#160;'N' (no transpose), non-zero m
 | `zgemm3m.c` | Complex GEMM 3M wrapper (`ZGEMM_WRAP`): deinterleaves complex matrices, issues 3 real GEMM calls (Karatsuba), recombines. Uses `libxs_malloc` for workspace. Compiled twice (double + float). |
 | `ozaki_gpu.c` | GPU bridge: wraps LIBXSTREAM behind an opaque handle (`ozaki_gpu_create`/`release`/`dgemm`/`finalize`). Compiled only when LIBXSTREAM is detected; isolates all OpenCL includes from the rest of the code. |
 | `wrap.c` | Entry points (`GEMM`, `ZGEMM`) and dlsym fallbacks (`GEMM_REAL`, `ZGEMM_REAL`) via `GEMM_DEFINE_DLSYM` macro. Used only in the LD_PRELOAD path; excluded from the static archive to keep `__real_` resolution correct. |
-| `gemm.c` | Test driver. |
+| `gemm.c` | Test driver. Compiled as `gemm-{wrap,blas}.x` (all precisions), `dgemm-{wrap,blas}.x` (double), `sgemm-{wrap,blas}.x` (float). |
 | `gemm-print.c` | `print_gemm` and `print_diff` utilities. |
+| `test-wrap.sh` | Integration test: exercises STATIC WRAP, ORIGINAL BLAS, and LD_PRELOAD paths. Auto-discovers built `*-wrap.x` / `*-blas.x` executables; accepts optional test-name prefix as first argument. |
+| `test-check.sh` | Correctness test: runs all four Ozaki schemes with `CHECK` validation. Auto-discovers built `*gemm-wrap.x` executables; accepts optional test-name prefix. |
+| `test-mhd.sh` | MHD file test: runs GEMM on all A/B MHD-file pairs in a directory. Accepts optional test-name prefix and directory arguments. |
 
 If the driver is called with MHD-files, accuracy issues can be analyzed outside of an application.
