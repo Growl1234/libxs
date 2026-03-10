@@ -23,10 +23,12 @@ else
 fi
 if [ "$1" ]; then
   TESTS=$1
-  shift
 else
-  TESTS="$(ls -1 "${HERE}"/*.c | xargs -I{} basename {} .c)"
+  # Discover tests from built executables (*-wrap.x and *-blas.x)
+  TESTS="$({ ls -1 "${HERE}"/*-wrap.x "${HERE}"/*-blas.x 2>/dev/null || true; } \
+    | xargs -I{} basename {} .x | sed 's/-wrap$//;s/-blas$//' | sort -u)"
 fi
+if [ $# -gt 0 ]; then shift; fi
 
 TMPF=$(mktemp)
 trap 'rm ${TMPF}' EXIT

@@ -8,8 +8,21 @@
 set -eo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd -P)
-DIR=${1:-.}
-WRAP=${HERE}/gemm-wrap.x
+
+# Optional first argument: test name prefix (default: auto-detect from built executables)
+if [ "$1" ] && [ -d "$1" ]; then
+  # First arg is a directory (legacy usage)
+  NAME=gemm
+  DIR=$1; shift
+elif [ "$1" ] && [ ! -d "$1" ]; then
+  NAME=$1; shift
+  DIR=${1:-.}
+  if [ -d "${DIR}" ]; then shift 2>/dev/null || true; fi
+else
+  NAME=dgemm
+  DIR=.
+fi
+WRAP=${HERE}/${NAME}-wrap.x
 
 if [ ! -x "${WRAP}" ]; then
   >&2 echo "ERROR: ${WRAP} not found"
