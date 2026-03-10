@@ -28,9 +28,9 @@ void* ozaki_gpu_create(int use_double, int kind, int verbosity,
   ozaki_gpu_handle_t* h = NULL;
   int ndevices = 0;
   if (EXIT_SUCCESS == libxstream_init()
-      && EXIT_SUCCESS == libxstream_get_ndevices(&ndevices)
+      && EXIT_SUCCESS == libxstream_device_count(&ndevices)
       && 0 < ndevices
-      && EXIT_SUCCESS == libxstream_set_active_device(0))
+      && EXIT_SUCCESS == libxstream_device_set_active(0))
   {
     h = (ozaki_gpu_handle_t*)calloc(1, sizeof(*h));
   }
