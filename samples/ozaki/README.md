@@ -140,7 +140,6 @@ make ECFLAGS="-DBLOCK_K=32 -DBATCH_K=2" dgemm-wrap.x
 | `OZAKI` | 1 | Scheme selector: 0 = bypass (call original BLAS directly), 1 = Scheme 1 (mantissa slicing, int8), 2 = Scheme 2 (CRT), 3 = Scheme 3 (BF16 Dekker split), 4 = Scheme 4 (CRT + BF16, no OpenCL). |
 | `OZAKI_N` | *per scheme* | Number of decomposition units: slices for Scheme 1 (double: 1..16, default 8; float: 1..8, default 4) or moduli for Scheme 2 (see Scheme 2 section for per-precision defaults). |
 | `OZAKI_OCL` | 1 | Enable (1) or disable (0) the OpenCL/GPU path at runtime. Only effective when built with LIBXSTREAM support (`__LIBXSTREAM`). When disabled, falls back to the CPU Ozaki scheme. |
-| `OZAKI_SYNC` | 1 | Synchronize after each OpenCL GEMM (1, default) so that the BLAS call is blocking. Set to 0 to skip synchronization for asynchronous benchmarking — the result in C is invalid but the measured time reflects only enqueue overhead. |
 | `OZAKI_FLAGS` | 3 | Scheme 1 bitmask: Triangular (1), Symmetrize (2); see above. |
 | `OZAKI_TRIM` | 0 | Scheme 1 diagonal trim: 0 = exact, T = drop T least significant diagonals (~7 bits each). |
 | `OZAKI_EPS` | inf | Dump A/B matrices as MHD-files when the epsilon error exceeds the given threshold (implies `OZAKI_VERBOSE=1` if unset). |

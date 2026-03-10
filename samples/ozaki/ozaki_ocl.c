@@ -20,7 +20,6 @@
 typedef struct ozaki_ocl_handle_t {
   ozaki_context_t ctx;
   libxstream_stream_t* stream;
-  int sync;
 } ozaki_ocl_handle_t;
 
 
@@ -57,10 +56,6 @@ void* ozaki_ocl_create(int use_double, int kind, int verbosity,
       ozaki_destroy(&h->ctx);
       free(h); h = NULL;
     }
-    else {
-      const char *const env = getenv("OZAKI_SYNC");
-      h->sync = (NULL == env || '\0' == *env) ? 1 : atoi(env);
-    }
   }
   return h;
 }
@@ -87,9 +82,8 @@ int ozaki_ocl_gemm(void* handle, char transa, char transb,
     result = ozaki_gemm(&h->ctx, h->stream,
       transa, transb, M, N, K,
       alpha, a, lda, b, ldb, beta, c, ldc);
-    /* BLAS API is synchronous: caller expects result in c upon return.
-     * OZAKI_SYNC=0 skips sync for async benchmarking (result invalid). */
-    if (0 != h->sync) libxstream_stream_sync(h->stream);
+    /* BLAS API is synchronous: caller expects result in c upon return. */
+    libxstream_stream_sync(h->stream);
   }
   return result;
 }
