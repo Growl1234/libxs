@@ -17,15 +17,16 @@ LIBXS_EXTERN_C struct libxs_hist_t {
 };
 
 
-LIBXS_API int libxs_hist_create(libxs_hist_t** hist, int nbuckets, int nqueue, int nvals,
+LIBXS_API libxs_hist_t* libxs_hist_create(int nbuckets, int nvals,
   const libxs_hist_update_t update[])
 {
   libxs_hist_t* h = (libxs_hist_t*)malloc(sizeof(libxs_hist_t));
-  LIBXS_ASSERT(NULL != hist && 0 < nbuckets && 0 < nqueue && 0 < nvals && NULL != update);
+  LIBXS_ASSERT(0 < nbuckets && 0 < nvals && NULL != update);
   if (NULL != h) {
+    const int nqueue = 16 * nbuckets;
     h->vals = (double*)malloc(sizeof(double) * LIBXS_MAX(nbuckets, nqueue) * nvals);
     h->update = (libxs_hist_update_t*)malloc(sizeof(libxs_hist_update_t) * nvals);
-    h->buckets = (int*)calloc(nbuckets, sizeof(int));
+    h->buckets = (int*)calloc(LIBXS_MAX(nbuckets, nqueue), sizeof(int));
     if (NULL != h->vals && NULL != h->buckets && NULL != h->update) {
       const union { uint32_t raw; float value; } inf = { 0x7F800000U };
       h->min = +inf.value;
@@ -33,7 +34,6 @@ LIBXS_API int libxs_hist_create(libxs_hist_t** hist, int nbuckets, int nqueue, i
       h->nbuckets = nbuckets;
       h->nqueue = nqueue;
       h->nvals = nvals;
-      /* if update[] is NULL, libxs_hist_avg is assumed */
       for (h->n = 0; h->n < nvals; ++h->n) h->update[h->n] = update[h->n];
       h->n = 0;
     }
@@ -45,8 +45,7 @@ LIBXS_API int libxs_hist_create(libxs_hist_t** hist, int nbuckets, int nqueue, i
       h = NULL;
     }
   }
-  *hist = h;
-  return (NULL != h ? EXIT_SUCCESS : EXIT_FAILURE);
+  return h;
 }
 
 
@@ -61,7 +60,7 @@ LIBXS_API void libxs_hist_destroy(libxs_hist_t* hist)
 }
 
 
-LIBXS_API void libxs_hist_set(libxs_lock_t* lock, libxs_hist_t* hist, const double vals[])
+LIBXS_API void libxs_hist_push(libxs_lock_t* lock, libxs_hist_t* hist, const double vals[])
 {
   if (NULL != hist) {
     int i, j, k;
@@ -81,7 +80,7 @@ LIBXS_API void libxs_hist_set(libxs_lock_t* lock, libxs_hist_t* hist, const doub
                 const libxs_hist_update_t update = hist->update[k];
                 update(hist->vals + (j + k), vals + k);
               }
-              else libxs_hist_avg(hist->vals + (j + k), vals + k);
+              else libxs_hist_update_avg(hist->vals + (j + k), vals + k);
             }
             else hist->vals[j + k] = vals[k]; /* initialize */
           }
@@ -140,7 +139,7 @@ LIBXS_API void libxs_hist_get(libxs_lock_t* lock, const libxs_hist_t* hist,
       for (i = 0, j = 0; i < h->nbuckets; j = ++i * h->nvals) {
         if (1 < h->buckets[i]) {
           for (k = 0; k < h->nvals; ++k) {
-            if (NULL == h->update[k] || libxs_hist_avg == h->update[k]) {
+            if (NULL == h->update[k] || libxs_hist_update_avg == h->update[k]) {
               h->vals[j + k] /= h->buckets[i];
             }
           }
@@ -170,7 +169,7 @@ LIBXS_API void libxs_hist_get(libxs_lock_t* lock, const libxs_hist_t* hist,
 
 
 LIBXS_API void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist, const char title[],
-  const int prec[], const libxs_hist_adjust_t adjust[])
+  const int prec[])
 {
   int nbuckets = 0, nvals = 0, i = 1, j = 0, k;
   const int* buckets = NULL;
@@ -188,9 +187,7 @@ LIBXS_API void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist, const c
       if (0 != c) {
         fprintf(ostream, " ->");
         for (k = 0; k < nvals; ++k) {
-          double value;
-          if (NULL == adjust || NULL == adjust[k]) value = vals[j + k];
-          else value = adjust[k](vals[j + k], c);
+          const double value = vals[j + k];
           if (NULL != prec) fprintf(ostream, " %.*f", prec[k], value);
           else fprintf(ostream, " %f", value);
         }
@@ -201,14 +198,14 @@ LIBXS_API void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist, const c
 }
 
 
-LIBXS_API void libxs_hist_avg(double* dst, const double* src)
+LIBXS_API void libxs_hist_update_avg(double* dst, const double* src)
 {
   LIBXS_ASSERT(NULL != dst && NULL != src);
   *dst = 0.5 * (*dst + *src);
 }
 
 
-LIBXS_API void libxs_hist_add(double* dst, const double* src)
+LIBXS_API void libxs_hist_update_add(double* dst, const double* src)
 {
   LIBXS_ASSERT(NULL != dst && NULL != src);
   *dst += *src;
