@@ -181,10 +181,10 @@ LIBXS_API void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist, const c
     const double w = range[1] - range[0];
     if (NULL != title) fprintf(ostream, "%s pid=%u\n", title, libxs_pid());
     for (; i <= nbuckets; j = nvals * i++) {
-      const double q = range[0] + i * w / nbuckets, r = (i != nbuckets ? q : LIBXS_MAX(q, vals[j]));
+      const double q = range[0] + i * w / nbuckets;
       const int c = buckets[i - 1];
-      if (NULL != prec) fprintf(ostream, "\t#%i <= %.*f: %i", i, prec[0], r, c);
-      else fprintf(ostream, "\t#%i <= %f: %i", i, r, c);
+      if (NULL != prec) fprintf(ostream, "\t#%i <= %.*f: %i", i, prec[0], q, c);
+      else fprintf(ostream, "\t#%i <= %f: %i", i, q, c);
       if (0 != c) {
         fprintf(ostream, " ->");
         for (k = 0; k < nvals; ++k) {
