@@ -33,13 +33,13 @@ libxs_hash_i32
 libxs_hash_i64
 libxs_hash_i8
 libxs_hash_string
-libxs_hist_add
-libxs_hist_avg
 libxs_hist_create
 libxs_hist_destroy
 libxs_hist_get
 libxs_hist_print
-libxs_hist_set
+libxs_hist_push
+libxs_hist_update_add
+libxs_hist_update_avg
 libxs_init
 libxs_isqrt2_u32
 libxs_isqrt_u32
