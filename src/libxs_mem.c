@@ -8,6 +8,7 @@
 ******************************************************************************/
 #include <libxs_mem.h>
 #include "libxs_main.h"
+#include <libxs_malloc.h>
 #include <libxs_math.h>
 #include "libxs_hash.h"
 #include "libxs_diff.h"
@@ -40,10 +41,212 @@
   } \
 } while(0)
 
+/* xcopy kernel: consecutive loads and stores (matcopy) */
+#define LIBXS_MCOPY_KERNEL(TYPE, TS, OUT, IN, LDI, LDO, I, J, SRC, DST) \
+  const TYPE *const SRC = (const TYPE*)(((const char*)(IN)) \
+    + (size_t)(TS) * ((size_t)(I) * (LDI) + (J))); \
+  TYPE *const DST = (TYPE*)(((char*)(OUT)) \
+    + (size_t)(TS) * ((size_t)(I) * (LDO) + (J)))
+/* xcopy kernel: zero stores (matzero) */
+#define LIBXS_MZERO_KERNEL(TYPE, TS, OUT, IN, LDI, LDO, I, J, SRC, DST) \
+  static const double libxs_mzero_zero_[32]; \
+  const TYPE *const SRC = (const TYPE*)libxs_mzero_zero_; \
+  TYPE *const DST = (TYPE*)(((char*)(OUT)) \
+    + (size_t)(TS) * ((size_t)(I) * (LDO) + (J)))
+/* xcopy kernel: strided loads, consecutive stores (transpose) */
+#define LIBXS_TCOPY_KERNEL(TYPE, TS, OUT, IN, LDI, LDO, I, J, SRC, DST) \
+  const TYPE *const SRC = (const TYPE*)(((const char*)(IN)) \
+    + (size_t)(TS) * ((size_t)(J) * (LDI) + (I))); \
+  TYPE *const DST = (TYPE*)(((char*)(OUT)) \
+    + (size_t)(TS) * ((size_t)(I) * (LDO) + (J)))
+
+/* typed double loop: outer [M0,M1), inner [N0,N1) */
+#define LIBXS_XCOPY_LOOP(TYPE, TS, XKERNEL, OUT, IN, LDI, LDO, M0, M1, N0, N1) do { \
+  unsigned int libxs_xcopy_loop_i_, libxs_xcopy_loop_j_; \
+  for (libxs_xcopy_loop_i_ = (M0); libxs_xcopy_loop_i_ < (unsigned int)(M1); \
+    ++libxs_xcopy_loop_i_) \
+  { \
+    LIBXS_PRAGMA_NONTEMPORAL(OUT) \
+    for (libxs_xcopy_loop_j_ = (N0); libxs_xcopy_loop_j_ < (unsigned int)(N1); \
+      ++libxs_xcopy_loop_j_) \
+    { \
+      XKERNEL(TYPE, TS, OUT, IN, LDI, LDO, libxs_xcopy_loop_i_, libxs_xcopy_loop_j_, \
+        libxs_xcopy_loop_src_, libxs_xcopy_loop_dst_); \
+      *libxs_xcopy_loop_dst_ = *libxs_xcopy_loop_src_; \
+    } \
+  } \
+} while(0)
+
+/* typesize-specialized tile: switches on TS, falls back to byte loop */
+#define LIBXS_XCOPY_TILE(XKERNEL, TS, OUT, IN, LDI, LDO, M0, M1, N0, N1) do { \
+  switch(TS) { \
+    case 1: { \
+      LIBXS_XCOPY_LOOP(char, 1, XKERNEL, OUT, IN, LDI, LDO, M0, M1, N0, N1); \
+    } break; \
+    case 2: { \
+      LIBXS_XCOPY_LOOP(short, 2, XKERNEL, OUT, IN, LDI, LDO, M0, M1, N0, N1); \
+    } break; \
+    case 4: { \
+      LIBXS_XCOPY_LOOP(float, 4, XKERNEL, OUT, IN, LDI, LDO, M0, M1, N0, N1); \
+    } break; \
+    case 8: { \
+      LIBXS_XCOPY_LOOP(double, 8, XKERNEL, OUT, IN, LDI, LDO, M0, M1, N0, N1); \
+    } break; \
+    default: { \
+      unsigned int libxs_xcopy_tile_i_, libxs_xcopy_tile_j_, libxs_xcopy_tile_k_; \
+      for (libxs_xcopy_tile_i_ = (M0); libxs_xcopy_tile_i_ < (unsigned int)(M1); \
+        ++libxs_xcopy_tile_i_) \
+      { \
+        for (libxs_xcopy_tile_j_ = (N0); libxs_xcopy_tile_j_ < (unsigned int)(N1); \
+          ++libxs_xcopy_tile_j_) \
+        { \
+          XKERNEL(char, TS, OUT, IN, LDI, LDO, libxs_xcopy_tile_i_, libxs_xcopy_tile_j_, \
+            libxs_xcopy_tile_src_, libxs_xcopy_tile_dst_); \
+          LIBXS_PRAGMA_UNROLL \
+          for (libxs_xcopy_tile_k_ = 0; libxs_xcopy_tile_k_ < (unsigned int)(TS); \
+            ++libxs_xcopy_tile_k_) \
+          { \
+            libxs_xcopy_tile_dst_[libxs_xcopy_tile_k_] = \
+              libxs_xcopy_tile_src_[libxs_xcopy_tile_k_]; \
+          } \
+        } \
+      } \
+    } break; \
+  } \
+} while(0)
+
+/* matcopy tile: outer=N, inner=M for consecutive stores */
+#define LIBXS_MCOPY_TILE(TS, OUT, IN, LDI, LDO, M0, M1, N0, N1) \
+  LIBXS_XCOPY_TILE(LIBXS_MCOPY_KERNEL, TS, OUT, IN, LDI, LDO, N0, N1, M0, M1)
+/* matzero tile: outer=N, inner=M for consecutive stores */
+#define LIBXS_MZERO_TILE(TS, OUT, LDO, M0, M1, N0, N1) \
+  LIBXS_XCOPY_TILE(LIBXS_MZERO_KERNEL, TS, OUT, NULL, 0, LDO, N0, N1, M0, M1)
+/* transpose tile: outer=M, inner=N for consecutive stores */
+#define LIBXS_TCOPY_TILE(TS, OUT, IN, LDI, LDO, M0, M1, N0, N1) \
+  LIBXS_XCOPY_TILE(LIBXS_TCOPY_KERNEL, TS, OUT, IN, LDI, LDO, M0, M1, N0, N1)
+
+/* in-place transpose of square region (typed swap) */
+#define LIBXS_ITRANS_LOOP(TYPE, INOUT, LD, M) do { \
+  unsigned int libxs_itrans_loop_i_, libxs_itrans_loop_j_; \
+  for (libxs_itrans_loop_i_ = 0; libxs_itrans_loop_i_ < (unsigned int)(M); \
+    ++libxs_itrans_loop_i_) \
+  { \
+    for (libxs_itrans_loop_j_ = 0; libxs_itrans_loop_j_ < libxs_itrans_loop_i_; \
+      ++libxs_itrans_loop_j_) \
+    { \
+      TYPE *const libxs_itrans_loop_a_ = ((TYPE*)(INOUT)) \
+        + (size_t)(LD) * libxs_itrans_loop_i_ + libxs_itrans_loop_j_; \
+      TYPE *const libxs_itrans_loop_b_ = ((TYPE*)(INOUT)) \
+        + (size_t)(LD) * libxs_itrans_loop_j_ + libxs_itrans_loop_i_; \
+      LIBXS_ISWAP(*libxs_itrans_loop_a_, *libxs_itrans_loop_b_); \
+    } \
+  } \
+} while(0)
+
+#define LIBXS_ITRANS_TILE(TS, INOUT, LD, M) do { \
+  switch(TS) { \
+    case 1: { LIBXS_ITRANS_LOOP(char, INOUT, LD, M); } break; \
+    case 2: { LIBXS_ITRANS_LOOP(short, INOUT, LD, M); } break; \
+    case 4: { LIBXS_ITRANS_LOOP(int, INOUT, LD, M); } break; \
+    case 8: { LIBXS_ITRANS_LOOP(int64_t, INOUT, LD, M); } break; \
+    default: { \
+      unsigned int libxs_itrans_tile_i_, libxs_itrans_tile_j_, libxs_itrans_tile_k_; \
+      for (libxs_itrans_tile_i_ = 0; libxs_itrans_tile_i_ < (unsigned int)(M); \
+        ++libxs_itrans_tile_i_) \
+      { \
+        for (libxs_itrans_tile_j_ = 0; libxs_itrans_tile_j_ < libxs_itrans_tile_i_; \
+          ++libxs_itrans_tile_j_) \
+        { \
+          char *const libxs_itrans_tile_a_ = ((char*)(INOUT)) \
+            + (size_t)(TS) * ((size_t)(LD) * libxs_itrans_tile_i_ + libxs_itrans_tile_j_); \
+          char *const libxs_itrans_tile_b_ = ((char*)(INOUT)) \
+            + (size_t)(TS) * ((size_t)(LD) * libxs_itrans_tile_j_ + libxs_itrans_tile_i_); \
+          LIBXS_PRAGMA_UNROLL \
+          for (libxs_itrans_tile_k_ = 0; libxs_itrans_tile_k_ < (unsigned int)(TS); \
+            ++libxs_itrans_tile_k_) \
+          { \
+            LIBXS_ISWAP(libxs_itrans_tile_a_[libxs_itrans_tile_k_], \
+              libxs_itrans_tile_b_[libxs_itrans_tile_k_]); \
+          } \
+        } \
+      } \
+    } break; \
+  } \
+} while(0)
+
+/* typed swap of triangle range [BEGIN,END) for in-place square transpose */
+#define LIBXS_ITRANS_RANGE_LOOP(TYPE, INOUT, LD, BEGIN, END, ROW, COL) do { \
+  unsigned int libxs_itrans_range_idx_; \
+  for (libxs_itrans_range_idx_ = (BEGIN); libxs_itrans_range_idx_ < (END); \
+    ++libxs_itrans_range_idx_) \
+  { \
+    TYPE *const libxs_itrans_range_a_ = ((TYPE*)(INOUT)) \
+      + (size_t)(LD) * (ROW) + (COL); \
+    TYPE *const libxs_itrans_range_b_ = ((TYPE*)(INOUT)) \
+      + (size_t)(LD) * (COL) + (ROW); \
+    LIBXS_ISWAP(*libxs_itrans_range_a_, *libxs_itrans_range_b_); \
+    if (++(COL) >= (ROW)) { ++(ROW); (COL) = 0; } \
+  } \
+} while(0)
+
+#define LIBXS_ITRANS_RANGE(TS, INOUT, LD, BEGIN, END, ROW, COL) do { \
+  switch(TS) { \
+    case 1: { LIBXS_ITRANS_RANGE_LOOP(char, INOUT, LD, BEGIN, END, ROW, COL); } break; \
+    case 2: { LIBXS_ITRANS_RANGE_LOOP(short, INOUT, LD, BEGIN, END, ROW, COL); } break; \
+    case 4: { LIBXS_ITRANS_RANGE_LOOP(int, INOUT, LD, BEGIN, END, ROW, COL); } break; \
+    case 8: { LIBXS_ITRANS_RANGE_LOOP(int64_t, INOUT, LD, BEGIN, END, ROW, COL); } break; \
+    default: { \
+      unsigned int libxs_itrans_range_idx_, libxs_itrans_range_k_; \
+      for (libxs_itrans_range_idx_ = (BEGIN); libxs_itrans_range_idx_ < (END); \
+        ++libxs_itrans_range_idx_) \
+      { \
+        char *const libxs_itrans_range_a_ = ((char*)(INOUT)) \
+          + (size_t)(TS) * ((size_t)(LD) * (ROW) + (COL)); \
+        char *const libxs_itrans_range_b_ = ((char*)(INOUT)) \
+          + (size_t)(TS) * ((size_t)(LD) * (COL) + (ROW)); \
+        LIBXS_PRAGMA_UNROLL \
+        for (libxs_itrans_range_k_ = 0; libxs_itrans_range_k_ < (unsigned int)(TS); \
+          ++libxs_itrans_range_k_) \
+        { \
+          LIBXS_ISWAP(libxs_itrans_range_a_[libxs_itrans_range_k_], \
+            libxs_itrans_range_b_[libxs_itrans_range_k_]); \
+        } \
+        if (++(COL) >= (ROW)) { ++(ROW); (COL) = 0; } \
+      } \
+    } break; \
+  } \
+} while(0)
+
+/* 2D task partitioning over M and N */
+#define LIBXS_XCOPY_TASKS(UM, UN, TID, NTASKS, M0, M1, N0, N1) do { \
+  const int libxs_xcopy_tasks_nm_ = (int)(UM); \
+  if ((NTASKS) <= libxs_xcopy_tasks_nm_) { \
+    const unsigned int libxs_xcopy_tasks_mt_ = LIBXS_UPDIV(UM, (unsigned int)(NTASKS)); \
+    (M0) = LIBXS_MIN((unsigned int)(TID) * libxs_xcopy_tasks_mt_, (UM)); \
+    (M1) = LIBXS_MIN((M0) + libxs_xcopy_tasks_mt_, (UM)); \
+    (N0) = 0; (N1) = (UN); \
+  } \
+  else { \
+    const int libxs_xcopy_tasks_nn_ = (NTASKS) / libxs_xcopy_tasks_nm_; \
+    const int libxs_xcopy_tasks_mt_ = (TID) / libxs_xcopy_tasks_nn_; \
+    const int libxs_xcopy_tasks_nt_ = (TID) - libxs_xcopy_tasks_mt_ * libxs_xcopy_tasks_nn_; \
+    const unsigned int libxs_xcopy_tasks_ns_ = \
+      LIBXS_UPDIV(UN, (unsigned int)libxs_xcopy_tasks_nn_); \
+    (M0) = LIBXS_MIN((unsigned int)libxs_xcopy_tasks_mt_, (UM)); \
+    (M1) = LIBXS_MIN((M0) + 1, (UM)); \
+    (N0) = LIBXS_MIN((unsigned int)libxs_xcopy_tasks_nt_ * libxs_xcopy_tasks_ns_, (UN)); \
+    (N1) = LIBXS_MIN((N0) + libxs_xcopy_tasks_ns_, (UN)); \
+  } \
+} while(0)
+
 
 #if !defined(LIBXS_MEM_SW)
 LIBXS_APIVAR_DEFINE(unsigned char (*internal_diff_function)(const void*, const void*, unsigned char));
 LIBXS_APIVAR_DEFINE(int (*internal_memcmp_function)(const void*, const void*, size_t));
+LIBXS_APIVAR_DEFINE(void (*internal_mcopy_tile_function)(void*, const void*, unsigned int,
+  unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int));
+LIBXS_APIVAR_DEFINE(void (*internal_tcopy_tile_function)(void*, const void*, unsigned int,
+  unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int));
 #endif
 
 
@@ -246,6 +449,62 @@ int internal_memcmp_avx512(const void* a, const void* b, size_t size)
 #endif
 
 
+LIBXS_API_INLINE void internal_mcopy_tile_sw(
+  void* out, const void* in, unsigned int typesize,
+  unsigned int ldi, unsigned int ldo,
+  unsigned int m0, unsigned int m1, unsigned int n0, unsigned int n1)
+{
+  if (NULL != in) {
+    LIBXS_MCOPY_TILE(typesize, out, in, ldi, ldo, m0, m1, n0, n1);
+  }
+  else {
+    LIBXS_MZERO_TILE(typesize, out, ldo, m0, m1, n0, n1);
+  }
+}
+
+
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX2)
+void internal_mcopy_tile_avx2(
+  void* out, const void* in, unsigned int typesize,
+  unsigned int ldi, unsigned int ldo,
+  unsigned int m0, unsigned int m1, unsigned int n0, unsigned int n1)
+{
+#if defined(LIBXS_INTRINSICS_AVX2)
+  if (NULL != in) {
+    LIBXS_MCOPY_TILE(typesize, out, in, ldi, ldo, m0, m1, n0, n1);
+  }
+  else {
+    LIBXS_MZERO_TILE(typesize, out, ldo, m0, m1, n0, n1);
+  }
+#else
+  internal_mcopy_tile_sw(out, in, typesize, ldi, ldo, m0, m1, n0, n1);
+#endif
+}
+
+
+LIBXS_API_INLINE void internal_tcopy_tile_sw(
+  void* out, const void* in, unsigned int typesize,
+  unsigned int ldi, unsigned int ldo,
+  unsigned int m0, unsigned int m1, unsigned int n0, unsigned int n1)
+{
+  LIBXS_TCOPY_TILE(typesize, out, in, ldi, ldo, m0, m1, n0, n1);
+}
+
+
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX2)
+void internal_tcopy_tile_avx2(
+  void* out, const void* in, unsigned int typesize,
+  unsigned int ldi, unsigned int ldo,
+  unsigned int m0, unsigned int m1, unsigned int n0, unsigned int n1)
+{
+#if defined(LIBXS_INTRINSICS_AVX2)
+  LIBXS_TCOPY_TILE(typesize, out, in, ldi, ldo, m0, m1, n0, n1);
+#else
+  internal_tcopy_tile_sw(out, in, typesize, ldi, ldo, m0, m1, n0, n1);
+#endif
+}
+
+
 LIBXS_API_INTERN void libxs_memory_init(int target_arch)
 {
   libxs_hash_init(target_arch);
@@ -276,6 +535,16 @@ LIBXS_API_INTERN void libxs_memory_init(int target_arch)
   }
   LIBXS_ASSERT(NULL != internal_diff_function);
   LIBXS_ASSERT(NULL != internal_memcmp_function);
+  if (LIBXS_X86_AVX2 <= target_arch) {
+    internal_mcopy_tile_function = internal_mcopy_tile_avx2;
+    internal_tcopy_tile_function = internal_tcopy_tile_avx2;
+  }
+  else {
+    internal_mcopy_tile_function = internal_mcopy_tile_sw;
+    internal_tcopy_tile_function = internal_tcopy_tile_sw;
+  }
+  LIBXS_ASSERT(NULL != internal_mcopy_tile_function);
+  LIBXS_ASSERT(NULL != internal_tcopy_tile_function);
 #endif
 }
 
@@ -717,4 +986,213 @@ LIBXS_API size_t libxs_unshuffle(size_t count, const size_t* shuffle)
   }
   LIBXS_ASSERT(result <= count);
   return result;
+}
+
+
+LIBXS_API_INLINE void internal_itrans_scratch(
+  void* inout, void* scratch, unsigned int typesize,
+  unsigned int m, unsigned int n, unsigned int ldi, unsigned int ldo)
+{
+#if !defined(LIBXS_MEM_SW)
+  internal_mcopy_tile_function(scratch, inout, typesize, ldi, m, 0, m, 0, n);
+  internal_tcopy_tile_function(inout, scratch, typesize, m, ldo, 0, m, 0, n);
+#else
+  LIBXS_MCOPY_TILE(typesize, scratch, inout, ldi, m, 0, m, 0, n);
+  LIBXS_TCOPY_TILE(typesize, inout, scratch, m, ldo, 0, m, 0, n);
+#endif
+}
+
+
+LIBXS_API void libxs_matcopy_task(void* out, const void* in, unsigned int typesize,
+  int m, int n, int ldi, int ldo,
+  int tid, int ntasks)
+{
+  if (0 < typesize && typesize < 256 && m <= ldi && m <= ldo
+    && ((NULL != out && 0 < m && 0 < n) || (0 == m && 0 == n))
+    && 0 <= tid && tid < ntasks)
+  {
+    if (0 < m && 0 < n) {
+      unsigned int m0, m1, n0, n1;
+      LIBXS_XCOPY_TASKS((unsigned int)m, (unsigned int)n, tid, ntasks, m0, m1, n0, n1);
+#if !defined(LIBXS_MEM_SW)
+      internal_mcopy_tile_function(out, in, typesize,
+        (unsigned int)ldi, (unsigned int)ldo, m0, m1, n0, n1);
+#else
+      if (NULL != in) {
+        LIBXS_MCOPY_TILE(typesize, out, in,
+          (unsigned int)ldi, (unsigned int)ldo, m0, m1, n0, n1);
+      }
+      else {
+        LIBXS_MZERO_TILE(typesize, out, (unsigned int)ldo, m0, m1, n0, n1);
+      }
+#endif
+    }
+  }
+}
+
+
+LIBXS_API void libxs_matcopy(void* out, const void* in, unsigned int typesize,
+  int m, int n, int ldi, int ldo)
+{
+  libxs_matcopy_task(out, in, typesize, m, n, ldi, ldo, 0, 1);
+}
+
+
+LIBXS_API void libxs_otrans_task(void* out, const void* in, unsigned int typesize,
+  int m, int n, int ldi, int ldo,
+  int tid, int ntasks)
+{
+  if (0 < typesize && typesize < 256 && m <= ldi && n <= ldo
+    && ((NULL != out && NULL != in && 0 < m && 0 < n) || (0 == m && 0 == n))
+    && 0 <= tid && tid < ntasks)
+  {
+    if (0 < m && 0 < n) {
+      unsigned int m0, m1, n0, n1;
+      LIBXS_ASSERT(out != in);
+      LIBXS_XCOPY_TASKS((unsigned int)m, (unsigned int)n, tid, ntasks, m0, m1, n0, n1);
+#if !defined(LIBXS_MEM_SW)
+      internal_tcopy_tile_function(out, in, typesize,
+        (unsigned int)ldi, (unsigned int)ldo, m0, m1, n0, n1);
+#else
+      LIBXS_TCOPY_TILE(typesize, out, in,
+        (unsigned int)ldi, (unsigned int)ldo, m0, m1, n0, n1);
+#endif
+    }
+  }
+}
+
+
+LIBXS_API void libxs_otrans(void* out, const void* in, unsigned int typesize,
+  int m, int n, int ldi, int ldo)
+{
+  libxs_otrans_task(out, in, typesize, m, n, ldi, ldo, 0, 1);
+}
+
+
+LIBXS_API void libxs_itrans_task(void* inout, unsigned int typesize,
+  int m, int n, int ldi, int ldo, void* scratch,
+  int tid, int ntasks)
+{
+  if (NULL != inout && 0 < typesize && m <= ldi && n <= ldo
+    && 0 <= tid && tid < ntasks)
+  {
+    if (m == n && ldi == ldo && 1 < m) {
+      const unsigned int um = (unsigned int)m;
+      const unsigned int ntriangles = um * (um - 1) / 2;
+      const unsigned int tasksize = LIBXS_UPDIV(ntriangles, (unsigned int)ntasks);
+      const unsigned int begin = LIBXS_MIN((unsigned int)tid * tasksize, ntriangles);
+      const unsigned int end = LIBXS_MIN(begin + tasksize, ntriangles);
+      unsigned int row, col;
+      /* map linear index to triangular (i,j) pair where j < i */
+      row = (unsigned int)((1 + libxs_isqrt_u64(1 + 8 * (unsigned long long)begin)) / 2);
+      if (row * (row - 1) / 2 > begin && 0 < row) --row;
+      col = begin - row * (row - 1) / 2;
+      LIBXS_ITRANS_RANGE(typesize, inout, (unsigned int)ldi, begin, end, row, col);
+    }
+    else if (0 == tid) {
+      if (NULL != scratch) {
+        internal_itrans_scratch(inout, scratch, typesize,
+          (unsigned int)m, (unsigned int)n, (unsigned int)ldi, (unsigned int)ldo);
+      }
+      else {
+        const size_t scratchsize = (size_t)m * n * typesize;
+        void* scratch_alloc = libxs_malloc(NULL/*pool*/, scratchsize, LIBXS_MALLOC_AUTO);
+        if (NULL != scratch_alloc) {
+          internal_itrans_scratch(inout, scratch_alloc, typesize,
+            (unsigned int)m, (unsigned int)n, (unsigned int)ldi, (unsigned int)ldo);
+          libxs_free(scratch_alloc);
+        }
+      }
+    }
+  }
+}
+
+
+LIBXS_API void libxs_itrans(void* inout, unsigned int typesize,
+  int m, int n, int ldi, int ldo, void* scratch)
+{
+  libxs_itrans_task(inout, typesize, m, n, ldi, ldo, scratch, 0, 1);
+}
+
+
+LIBXS_API void libxs_itrans_batch(void* inout, unsigned int typesize,
+  int m, int n, int ldi, int ldo,
+  int index_base, int index_stride,
+  const int stride[], int batchsize,
+  int tid, int ntasks)
+{
+  if (NULL != inout && 0 < typesize && m <= ldi && n <= ldo
+    && 0 <= tid && tid < ntasks)
+  {
+    const int size = (batchsize < 0 ? -batchsize : batchsize);
+    const int tasksize = LIBXS_UPDIV(size, ntasks);
+    const int begin = tid * tasksize;
+    const int end = LIBXS_MIN(begin + tasksize, size);
+    char *const mat0 = (char*)inout;
+    void* scratch = NULL;
+    int need_scratch = (m != n || ldi != ldo);
+    if (need_scratch) {
+      scratch = libxs_malloc(NULL/*pool*/, (size_t)m * n * typesize, LIBXS_MALLOC_AUTO);
+    }
+    if (NULL != stride) {
+      if (0 != index_stride) {
+        int i;
+        if (NULL == scratch) {
+          for (i = begin; i < end; ++i) {
+            const int idx = i * index_stride;
+            char *const mat = mat0 + (size_t)(stride[idx] - index_base) * typesize;
+            LIBXS_ITRANS_TILE(typesize, mat, (unsigned int)ldi, (unsigned int)m);
+          }
+        }
+        else {
+          for (i = begin; i < end; ++i) {
+            const int idx = i * index_stride;
+            char *const mat = mat0 + (size_t)(stride[idx] - index_base) * typesize;
+            internal_itrans_scratch(mat, scratch, typesize,
+              (unsigned int)m, (unsigned int)n, (unsigned int)ldi, (unsigned int)ldo);
+          }
+        }
+      }
+      else {
+        const size_t d = (size_t)(*stride - index_base * (int)sizeof(void*));
+        size_t i;
+        if (NULL == scratch) {
+          for (i = (size_t)begin; i < (size_t)end; ++i) {
+            void *const mat = *(void**)(mat0 + d * i);
+            if (NULL != mat) {
+              LIBXS_ITRANS_TILE(typesize, mat, (unsigned int)ldi, (unsigned int)m);
+            }
+          }
+        }
+        else {
+          for (i = (size_t)begin; i < (size_t)end; ++i) {
+            void *const mat = *(void**)(mat0 + d * i);
+            if (NULL != mat) {
+              internal_itrans_scratch(mat, scratch, typesize,
+                (unsigned int)m, (unsigned int)n, (unsigned int)ldi, (unsigned int)ldo);
+            }
+          }
+        }
+      }
+    }
+    else {
+      int i;
+      if (NULL == scratch) {
+        for (i = begin; i < end; ++i) {
+          LIBXS_ITRANS_TILE(typesize,
+            mat0 + (size_t)i * m * n * typesize,
+            (unsigned int)ldi, (unsigned int)m);
+        }
+      }
+      else {
+        for (i = begin; i < end; ++i) {
+          internal_itrans_scratch(
+            mat0 + (size_t)i * m * n * typesize,
+            scratch, typesize,
+            (unsigned int)m, (unsigned int)n, (unsigned int)ldi, (unsigned int)ldo);
+        }
+      }
+    }
+    libxs_free(scratch);
+  }
 }

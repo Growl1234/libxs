@@ -113,6 +113,40 @@ LIBXS_API int libxs_strimatch(const char a[], const char b[], const char delims[
 LIBXS_API size_t libxs_format_value(char buffer[],
   int buffer_size, size_t nbytes, const char scale[], const char* unit, int base);
 
+/** Matrix copy or zeroing; "in" can be NULL to zero the destination. */
+LIBXS_API void libxs_matcopy(void* out, const void* in, unsigned int typesize,
+  int m, int n, int ldi, int ldo);
+
+/** Matrix copy or zeroing (per-thread form); "in" can be NULL to zero. */
+LIBXS_API void libxs_matcopy_task(void* out, const void* in, unsigned int typesize,
+  int m, int n, int ldi, int ldo,
+  int tid, int ntasks);
+
+/** Matrix transposition; out-of-place. */
+LIBXS_API void libxs_otrans(void* out, const void* in, unsigned int typesize,
+  int m, int n, int ldi, int ldo);
+
+/** Matrix transposition (per-thread form); out-of-place (assert: out != in). */
+LIBXS_API void libxs_otrans_task(void* out, const void* in, unsigned int typesize,
+  int m, int n, int ldi, int ldo,
+  int tid, int ntasks);
+
+/** Matrix transposition; in-place (square or via scratch). "scratch" can be NULL (auto-allocate). */
+LIBXS_API void libxs_itrans(void* inout, unsigned int typesize,
+  int m, int n, int ldi, int ldo, void* scratch);
+
+/** Matrix transposition; in-place (per-thread form, square or via scratch). */
+LIBXS_API void libxs_itrans_task(void* inout, unsigned int typesize,
+  int m, int n, int ldi, int ldo, void* scratch,
+  int tid, int ntasks);
+
+/** Batch of in-place matrix transpositions (per-thread form). */
+LIBXS_API void libxs_itrans_batch(void* inout, unsigned int typesize,
+  int m, int n, int ldi, int ldo,
+  int index_base, int index_stride,
+  const int stride[], int batchsize,
+  int tid, int ntasks);
+
 /** Out-of-place shuffling of data given by elemsize and count. */
 LIBXS_API int libxs_shuffle(void* inout, size_t elemsize, size_t count,
   /** Shall be co-prime to count-argument; uses libxs_coprime2(count) if shuffle=NULL. */
