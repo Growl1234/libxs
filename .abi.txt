@@ -44,6 +44,9 @@ libxs_init
 libxs_isqrt2_u32
 libxs_isqrt_u32
 libxs_isqrt_u64
+libxs_itrans
+libxs_itrans_batch
+libxs_itrans_task
 libxs_kahan_sum
 libxs_lcm
 libxs_malloc
@@ -53,6 +56,8 @@ libxs_malloc_info
 libxs_malloc_pool
 libxs_malloc_pool_info
 libxs_malloc_xpool
+libxs_matcopy
+libxs_matcopy_task
 libxs_matdiff
 libxs_matdiff_clear
 libxs_matdiff_epsilon
@@ -67,6 +72,8 @@ libxs_mhd_typename
 libxs_mhd_write
 libxs_mod_inverse_u32
 libxs_offset
+libxs_otrans
+libxs_otrans_task
 libxs_pfree
 libxs_pfree_lock
 libxs_pid

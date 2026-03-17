@@ -46,7 +46,10 @@ OBJECTS := $(CPPOBJS) $(CXXOBJS) $(CCXOBJS) $(COBJCTS)
 FTNSRCS := $(FXXSRCS) $(F77SRCS) $(F90SRCS)
 MODULES := $(addsuffix .mod,$(basename $(FTNSRCS)))
 FTNOBJS := $(FXXOBJS) $(F77OBJS) $(F90OBJS)
-XFILES := $(OUTDIR)/$(OUTNAME).x $(OUTDIR)/$(OUTNAME)f.x
+MCMOBJS := $(filter-out $(BLDDIR)/memcmp%,$(FTNOBJS))
+MCPOBJS := $(filter-out $(BLDDIR)/matcpy%,$(FTNOBJS))
+MCPOBJS := $(filter-out $(BLDDIR)/memory%,$(MCPOBJS))
+XFILES := $(OUTDIR)/memcmp.x $(OUTDIR)/memcmpf.x $(OUTDIR)/matcpyf.x
 
 .PHONY: all
 all: $(XFILES)
@@ -56,16 +59,21 @@ compile: $(OBJECTS) $(FTNOBJS)
 
 ifneq (,$(strip $(FC)))
 ifneq (0,$(shell echo "$$((3>$(XSMM_GCC) || 40600<=$(FC_VERSION_NUM)))"))
-$(OUTDIR)/$(OUTNAME)f.x: $(OUTDIR)/.make $(FTNOBJS) $(XLIB)
-	$(FLD) -o $@ $(FTNOBJS) $(XLIB) $(FCMTFLAGS) $(SLDFLAGS) $(LDFLAGS) $(FLDFLAGS) $(ELDFLAGS)
+$(OUTDIR)/memcmpf.x: $(OUTDIR)/.make $(MCPOBJS) $(XLIB)
+	$(FLD) -o $@ $(MCPOBJS) $(XLIB) $(FCMTFLAGS) $(SLDFLAGS) $(LDFLAGS) $(FLDFLAGS) $(ELDFLAGS)
+
+$(OUTDIR)/matcpyf.x: $(OUTDIR)/.make $(MCMOBJS) $(XLIB)
+	$(FLD) -o $@ $(MCMOBJS) $(XLIB) $(FCMTFLAGS) $(SLDFLAGS) $(LDFLAGS) $(FLDFLAGS) $(ELDFLAGS)
 else
-.PHONY: $(OUTDIR)/$(OUTNAME)f.x
+.PHONY: $(OUTDIR)/memcmpf.x
+.PHONY: $(OUTDIR)/matcpyf.x
 endif
 else
-.PHONY: $(OUTDIR)/$(OUTNAME)f.x
+.PHONY: $(OUTDIR)/memcmpf.x
+.PHONY: $(OUTDIR)/matcpyf.x
 endif
 
-$(OUTDIR)/$(OUTNAME).x: $(OUTDIR)/.make $(OBJECTS) $(XLIB)
+$(OUTDIR)/memcmp.x: $(OUTDIR)/.make $(OBJECTS) $(XLIB)
 	$(LD) -o $@ $(OBJECTS) $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
 $(BLDDIR)/%-cpp.o: $(SRCDIR)/%.cpp .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc
