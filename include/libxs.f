@@ -53,6 +53,9 @@
         PUBLIC :: libxs_registry_has
         PUBLIC :: libxs_registry_remove
         PUBLIC :: libxs_registry_info
+        PUBLIC :: libxs_memcmp
+        PUBLIC :: libxs_matcopy, libxs_matcopy_task
+        PUBLIC :: libxs_otrans, libxs_otrans_task
         PUBLIC :: libxs_typesize
 
         !> Re-exported from ISO_C_BINDING for convenience.
@@ -314,6 +317,46 @@
             TYPE(LIBXS_REGINFO), INTENT(OUT) :: info
             INTEGER(C_INT) :: libxs_registry_info
           END FUNCTION
+
+          !> Copy a matrix (or zero if source is NULL).
+          SUBROUTINE libxs_matcopy(outm, inm, typesize,                 &
+     &    m, n, ldi, ldo) BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
+            INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &      m, n, ldi, ldo
+          END SUBROUTINE
+
+          !> Copy a matrix: task variant for external threading.
+          SUBROUTINE libxs_matcopy_task(outm, inm,                      &
+     &    typesize, m, n, ldi, ldo, tid, ntasks) BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
+            INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &      m, n, ldi, ldo, tid, ntasks
+          END SUBROUTINE
+
+          !> Out-of-place matrix transpose.
+          SUBROUTINE libxs_otrans(outm, inm, typesize,                  &
+     &    m, n, ldi, ldo) BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
+            INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &      m, n, ldi, ldo
+          END SUBROUTINE
+
+          !> Out-of-place transpose: task variant.
+          SUBROUTINE libxs_otrans_task(outm, inm,                       &
+     &    typesize, m, n, ldi, ldo, tid, ntasks) BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
+            INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &      m, n, ldi, ldo, tid, ntasks
+          END SUBROUTINE
         END INTERFACE
 
         !> Allocate memory (flags=0: automatic).
