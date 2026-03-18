@@ -69,6 +69,7 @@ USE :: libxs, ONLY: libxs_memcmp
 
 | Sample | Description |
 |--------|-------------|
+| [gemm](documentation/../samples/gemm/) | Batched DGEMM (strided, pointer-array, grouped) with OpenMP and optional MKL JIT. |
 | [memory](documentation/../samples/memory/) | Benchmarks for `libxs_diff`, `libxs_memcmp`, matrix copy, and transpose. |
 | [ozaki](documentation/../samples/ozaki/) | Ozaki-scheme low-precision GEMM with intercepted BLAS dispatch. |
 | [registry](documentation/../samples/registry/) | Registry dispatch microbenchmark under various access patterns. |

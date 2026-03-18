@@ -27,13 +27,13 @@ export LIBXS_GEMM_WRAP=${LIBXS_GEMM_WRAP:-0}
 #TESTS_DISABLED="headeronly"
 
 # list of tests that produce "application shall be linked against LAPACK/BLAS" in case of BLAS=0
-TESTS_NEEDBLAS="wrap.sh"
+TESTS_NEEDBLAS="gemm.sh wrap.sh"
 # grep pattern based on TESTS_NEEDBLAS
 TESTS_NEEDBLAS_GREP=$(${SED} <<<"${TESTS_NEEDBLAS}" "s/[[:space:]][[:space:]]*/\\\\|/g" | ${SED} "s/\./\\\\./g")
 # good-enough pattern to match main functions, and to include translation unit in test set
 if [ ! "$*" ]; then
   TESTS="$(cd "${HERE}" && ${GREP} -l "main[[:space:]]*(.*)" ./*.c 2>/dev/null) \
-    memcmp.sh ozaki.sh scratch.sh wrap.sh"
+    gemm.sh memcmp.sh ozaki.sh scratch.sh wrap.sh"
   if [ "${SORT}" ]; then
     TESTS=$(${TR} <<<"${TESTS}" -s " " "\n" | ${SORT})
   fi
