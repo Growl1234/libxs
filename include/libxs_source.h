@@ -29,6 +29,7 @@
 #include "../src/libxs_cpuid_arm.c"
 #include "../src/libxs_cpuid_rv64.c"
 #include "../src/libxs_cpuid_x86.c"
+#include "../src/libxs_gemm.c"
 #include "../src/libxs_hash.c"
 #include "../src/libxs_hist.c"
 #include "../src/libxs_main.c"

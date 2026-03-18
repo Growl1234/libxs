@@ -23,6 +23,11 @@ libxs_format_value
 libxs_free
 libxs_free_pool
 libxs_gcd
+libxs_gemm_batch
+libxs_gemm_batch_task
+libxs_gemm_groups
+libxs_gemm_strided
+libxs_gemm_strided_task
 libxs_get_verbosity
 libxs_hash
 libxs_hash16
