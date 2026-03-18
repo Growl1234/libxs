@@ -38,6 +38,9 @@ nav:
   - "CPUID: CPU Identification": libxs_cpuid.md
   - "MALLOC: Memory Allocation": libxs_malloc.md
   - "UTILS: Utility Functions": libxs_utils.md
-- Fortran: libxs_fortran.md
+- Fortran:
+  - Reference: libxs_fortran.md
+- Example Code:
+  - Collection: libxsmm_samples.md
 - About:
   - License: LICENSE.md

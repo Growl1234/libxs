@@ -359,8 +359,7 @@ $(DOCDIR)/$(PROJECT)_samples.md: $(DOCDIR)/.make $(ROOTDIR)/Makefile $(ROOTDIR)/
 		>$@
 
 $(DOCDIR)/$(PROJECT).$(DOCEXT): $(DOCDIR)/.make $(ROOTDIR)/$(DOCDIR)/index.md \
-$(ROOTDIR)/$(DOCDIR)/$(PROJECT)_mm.md $(ROOTDIR)/$(DOCDIR)/$(PROJECT)_tune.md \
-$(ROOTDIR)/$(DOCDIR)/$(PROJECT)_scripts.md
+$(ROOTDIR)/$(DOCDIR)/$(PROJECT)_gemm.md $(ROOTDIR)/$(DOCDIR)/$(PROJECT)_scripts.md
 	$(eval TMPFILE = $(shell $(MKTEMP) $(ROOTDIR)/$(DOCDIR)/.$(PROJECT)_XXXXXX.tex))
 	@pandoc -D latex \
 	| $(SED) \
@@ -371,8 +370,7 @@ $(ROOTDIR)/$(DOCDIR)/$(PROJECT)_scripts.md
 	@cd $(ROOTDIR)/$(DOCDIR) && ( \
 		iconv -t utf-8 index.md && echo && \
 		echo "# $(PROJUPP) Domains" && \
-		iconv -t utf-8 $(PROJECT)_mm.md && echo && \
-		iconv -t utf-8 $(PROJECT)_tune.md && echo && \
+		iconv -t utf-8 $(PROJECT)_gemm.md && echo && \
 		echo "# Appendix" && \
 		$(SED) "s/^\(##*\) /#\1 /" $(PROJECT)_scripts.md | iconv -t utf-8; ) \
 	| $(SED) \
@@ -401,6 +399,19 @@ $(DOCDIR)/$(PROJECT)_samples.$(DOCEXT): $(ROOTDIR)/$(DOCDIR)/$(PROJECT)_samples.
 		-e 's/\(\\usepackage.*{hyperref}\)/\\usepackage[hyphens]{url}\n\1/' \
 		>$(TMPFILE)
 	@iconv -t utf-8 $(ROOTDIR)/$(DOCDIR)/$(PROJECT)_samples.md \
+	| $(SED) \
+		-e 's/\xe2\x88\x92/-/g' \
+		-e 's/\xe2\x89\xa4/<=/g' \
+		-e 's/\xc2\xb7/*/g' \
+		-e 's/\xc3\x97/x/g' \
+		-e 's/\xe2\x80\x93/--/g' \
+		-e 's/\xe2\x80\x94/---/g' \
+		-e 's/\xe2\x80\xa6/.../g' \
+		-e 's/\xe2\x86\x92/->/g' \
+		-e 's/\xc2\xb2/2/g' \
+		-e 's/\xc2\xa0/ /g' \
+		-e 's/\xe2\x80\xaf/ /g' \
+		-e 's/----*//g' \
 	| pandoc \
 		--template=$(TMPFILE) --listings \
 		-f gfm+subscript+superscript \

@@ -1,18 +1,81 @@
 # LIBXS
 
-LIBXS is a small utility library with common (or not so common) functionality which has shown to be useful for a variety of applications.
+LIBXS is a portable C library with common (and not so common) functionality that has proven useful across a variety of applications. It provides building blocks for memory operations, numerics, synchronization, and more — with a focus on performance and minimal dependencies. LIBXS targets x86-64, AArch64, and RISC-V, and requires only a C89 compiler.
 
-* Histogram: can accumulate values and finally provide insight like running statistics.
-* MHD: load and store multidimensional arrays (external viewers available).
-* Math: data validation and accurate statistics, and related utilities.
-* Malloc: preallocated pools for fast memory allocation (fly weight).
-* Random: data initialization and random numbers.
-* Utilities: macros, intrinsic layer, and more.
-* Synchronization: portable locks and atomics.
-* Memory: string utilities and data handling.
-* CPUID: classification by ISA extensions.
-* Timer: clock ticks and duration.
+LIBXS was originally developed as part of [LIBXSMM](https://github.com/libxsmm/libxsmm) (its existence started even before LIBXSMM).
 
-LIBXS was originally developed as part of LIBXSMM (existence started even prior to LIBXSMM).
+## Functionality
 
-NOTE: stay tuned for a first release, documentation, and samples.
+| Domain | Header | Description |
+|--------|--------|-------------|
+| [Memory](documentation/libxs_mem.md) | `libxs_mem.h` | Comparison (`memcmp`/`diff`), hashing (CRC32), matrix copy, transpose, and data shuffling. |
+| [GEMM Batch](documentation/libxs_gemm.md) | `libxs_gemm.h` | Batched dense matrix multiplication (strided, pointer-array, grouped) with pluggable BLAS/JIT kernels. |
+| [Math](documentation/libxs_math.md) | `libxs_math.h` | Matrix comparison, GCD/LCM, coprime calculation, and BF16 conversion. |
+| [MHD](documentation/libxs_mhd.md) | `libxs_mhd.h` | Read and write MetaImage (MHD/MHA) format files for multidimensional arrays. |
+| [Histogram](documentation/libxs_hist.md) | `libxs_hist.h` | Thread-safe histogram with running statistics and per-entry callbacks. |
+| [Malloc](documentation/libxs_malloc.md) | `libxs_malloc.h` | Pool-based allocator for steady-state performance without system calls. |
+| [RNG](documentation/libxs_rng.md) | `libxs_rng.h` | Thread-safe pseudo-random number generation (SplitMix64). |
+| [Sync](documentation/libxs_sync.md) | `libxs_sync.h` | Portable atomics, locks, thread-local storage, and file locking. |
+| [Timer](documentation/libxs_timer.md) | `libxs_timer.h` | High-resolution timing via calibrated TSC with OS clock fallback. |
+| [CPUID](documentation/libxs_cpuid.md) | `libxs_cpuid.h` | CPU feature detection for x86-64 (SSE–AVX-512), AArch64, and RISC-V. |
+| [Registry](documentation/libxs_reg.md) | `libxs_reg.h` | Thread-safe key-value store backed by hash table with per-thread caching. |
+| [Utils](documentation/libxs_utils.md) | `libxs_utils.h` | Target-attribute machinery, ISA feature gates, bit-scan, and SIMD helpers. |
+
+See also: [Fortran Interface](documentation/libxs_fortran.md), [Scripts](documentation/libxs_scripts.md).
+
+## Build
+
+The primary build system is GNU Make:
+
+```
+make
+```
+
+Strict C89 pedantic build (recommended for development):
+
+```
+make GNU=1 DBG=1 PEDANTIC=2
+```
+
+CMake is also supported (header-only or library):
+
+```
+cmake -S . -B build -DLIBXS_HEADER_ONLY=ON
+cmake --build build
+```
+
+## Usage
+
+**Library** — link against `libxs.a` (or `.so`) and include the desired headers:
+
+```c
+#include <libxs_mem.h>
+#include <libxs_timer.h>
+```
+
+**Header-only** — include `libxs_source.h` in exactly one translation unit (no separate library needed):
+
+```c
+#include <libxs_source.h>
+```
+
+**Fortran** — use the provided module ([documentation](documentation/libxs_fortran.md)):
+
+```fortran
+USE :: libxs, ONLY: libxs_memcmp
+```
+
+## Samples
+
+| Sample | Description |
+|--------|-------------|
+| [memory](documentation/../samples/memory/) | Benchmarks for `libxs_diff`, `libxs_memcmp`, matrix copy, and transpose. |
+| [ozaki](documentation/../samples/ozaki/) | Ozaki-scheme low-precision GEMM with intercepted BLAS dispatch. |
+| [registry](documentation/../samples/registry/) | Registry dispatch microbenchmark under various access patterns. |
+| [scratch](documentation/../samples/scratch/) | Pool allocator (`libxs_malloc`/`libxs_free`) vs. system `malloc`. |
+| [shuffle](documentation/../samples/shuffle/) | Comparison of shuffling strategies and throughput. |
+| [sync](documentation/../samples/sync/) | Lock implementation microbenchmarks. |
+
+## License
+
+LIBXS is licensed under the [BSD 3-Clause License](documentation/../LICENSE.md).
