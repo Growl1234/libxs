@@ -4,47 +4,31 @@
    :caption: Overview
    :hidden:
 
-   Compatibility <libxs_compat.md>
-   Validation <libxs_valid.md>
    Scripts <libxs_scripts.md>
-   Q&A <libxs_qna.md>
 
 .. toctree::
    :caption: LIBXS Domains
 
-   MM: Matrix Multiplication <libxs_mm.md>
-   TPP: Tensor Processing Primitives <libxs_tpp.md>
-   DNN: Deep Neural Networks <https://libxs.readthedocs.io/#deep-learning>
-   AUX: Service Functions <libxs_aux.md>
-   PROF: Performance Profiling <libxs_prof.md>
-   TUNE: Customization <libxs_tune.md>
-   BE: Backend <libxs_be.md>
+   GEMM: Matrix Multiplication <libxs_gemm.md>
+   MEM: Memory Operations <libxs_mem.md>
+   MHD: Meta Header Data <libxs_mhd.md>
+   MATH: Math Functions <libxs_math.md>
+   SYNC: Synchronization <libxs_sync.md>
+   TIMER: Timer Utilities <libxs_timer.md>
+   HIST: Histogram <libxs_hist.md>
+   RNG: Random Number Generator <libxs_rng.md>
+   REG: Registry <libxs_reg.md>
+   CPUID: CPU Identification <libxs_cpuid.md>
+   MALLOC: Memory Allocation <libxs_malloc.md>
+   UTILS: Utility Functions <libxs_utils.md>
 
 .. toctree::
-   :caption: Example Code
+   :caption: Fortran
    :hidden:
 
-   Collection <libxs_samples.md>
-
-.. toctree::
-   :caption: Machine Learning (ML)
-
-   PlaidML tensor compiler <https://github.com/plaidml/plaidml>
-   Extension for PyTorch <https://github.com/hfp/libxs/tree/main/samples/deeplearning/conv1dopti_layer>
-
-.. toctree::
-   :caption: Scientific (HPC)
-
-   CP2K <cp2k.md>
-   SeisSol <https://seissol.readthedocs.io/en/latest/compilation.html#installing-libxs>
-   SpECTRE <https://sxs-collaboration.github.io/spectre/installation.html>
-   libCEED <https://ceed.exascaleproject.org/ceed-code/>
-   Fastor <https://github.com/romeric/Fastor/wiki/9.-Using-the-LIBXS-MKL-JIT-backend>
-   EDGE <https://usr.dial3343.org/en/master/chapters/install/edge.html#edge>
-   PyFR <https://pyfr.readthedocs.io/en/latest/performance_tuning.html#libxs>
+   Fortran Interface <libxs_fortran.md>
 
 .. toctree::
    :caption: About
 
-   Contributing <CONTRIBUTING.md>
    License <LICENSE.md>
