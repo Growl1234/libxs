@@ -302,9 +302,8 @@ flib:
 endif
 
 # use dir not qdir to avoid quotes
-SAMPLES := $(dir $(if $(GIT), \
-  $(shell $(GIT) ls-files $(SPLDIR)/*/Makefile 2>/dev/null), \
-  $(shell ls -1 $(ROOTDIR)/$(SPLDIR)/*/Makefile 2>/dev/null)))
+SAMPLES := $(dir $(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
+  $(ROOTDIR)/$(SPLDIR)/*/Makefile 2>/dev/null))
 SPLMDS := $(if $(GIT), \
   $(shell $(GIT) ls-files $(SPLDIR)/*/README.md 2>/dev/null), \
   $(shell ls -1 $(ROOTDIR)/$(SPLDIR)/*/README.md 2>/dev/null))
