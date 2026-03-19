@@ -40,11 +40,12 @@ int main(int argc, char* argv[])
   const int dup_mode = (6 < argc ? atoi(argv[6]) : 0);
   const char *const env_check = getenv("CHECK");
   const double check = (NULL == env_check || 0 == *env_check) ? 0 : atof(env_check);
-  const int lda = m, ldb = k, ldc = m;
+  const double alpha = 1.0, beta = (7 < argc ? atof(argv[7]) : 1.0);
+  const int pad = (8 < argc ? atoi(argv[8]) : 0);
+  const int lda = m + pad, ldb = k + pad, ldc = m + pad;
   const size_t asize = (size_t)lda * k;
   const size_t bsize = (size_t)ldb * n;
   const size_t csize = (size_t)ldc * n;
-  const double alpha = 1.0, beta = 1.0;
   const double gflops_per_op = 2.0 * m * n * k * 1E-9;
   int nunique = batchsize, r;
   double *a_data = NULL, *b_data = NULL, *c_data = NULL;
@@ -86,9 +87,12 @@ int main(int argc, char* argv[])
     return EXIT_FAILURE;
   }
 
-  LIBXS_MATRNG(int, double, 1.0, a_data, lda, (size_t)k * nunique, lda, 1.0);
-  LIBXS_MATRNG(int, double, 2.0, b_data, ldb, (size_t)n * nunique, ldb, 1.0);
-  LIBXS_MATRNG(int, double, 0.5, c_data, ldc, (size_t)n * nunique, ldc, 1.0);
+  /* A: m rows filled per column, ld-padding rows set to SEED (sentinel) */
+  LIBXS_MATRNG(int, double, 1.0, a_data, m, (size_t)k * nunique, lda, 1.0);
+  /* B: k rows filled per column, ld-padding rows set to SEED (sentinel) */
+  LIBXS_MATRNG(int, double, 2.0, b_data, k, (size_t)n * nunique, ldb, 1.0);
+  /* C: m rows filled per column, ld-padding rows set to SEED (sentinel) */
+  LIBXS_MATRNG(int, double, 0.5, c_data, m, (size_t)n * nunique, ldc, 1.0);
 
   { int i;
     for (i = 0; i < batchsize; ++i) {
@@ -155,9 +159,29 @@ int main(int argc, char* argv[])
   }
 
   if (0 != check) {
+    /* verify ld-padding in first C-matrix is untouched */
+    if (ldc > m) {
+      int ci, cj;
+      for (ci = 0; ci < n && EXIT_SUCCESS == result; ++ci) {
+        for (cj = m; cj < ldc; ++cj) {
+          if (0.5 != c_data[(size_t)ci * ldc + cj]) {
+            fprintf(stderr, "FAILED: C ld-padding overwritten"
+              " (col=%d row=%d)\n", ci, cj);
+            result = EXIT_FAILURE;
+          }
+        }
+      }
+    }
     libxs_matdiff(&check_diff, LIBXS_DATATYPE(double),
       m, n, NULL/*ref*/, c_data, NULL/*ldref*/, &ldc);
-    printf("CHECK: l1_tst=%f\n", check_diff.l1_tst);
+    if (1 < nunique) {
+      libxs_matdiff_t d;
+      libxs_matdiff(&d, LIBXS_DATATYPE(double),
+        m, n, NULL/*ref*/, c_data + (nunique - 1) * csize,
+        NULL/*ldref*/, &ldc);
+      libxs_matdiff_combine(&check_diff, &d);
+    }
+    printf("checksum=%f\n", check_diff.l1_ref + check_diff.l1_tst);
   }
 
 #if defined(mkl_jit_create_dgemm)

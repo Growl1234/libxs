@@ -28,9 +28,10 @@ int main(int argc, char* argv[])
   const int nrepeat = (5 < argc ? atoi(argv[5]) : 3);
   const char *const env_check = getenv("CHECK");
   const double check = (NULL == env_check || 0 == *env_check) ? 0 : atof(env_check);
-  const int lda = m, ldb = k, ldc = m;
+  const double alpha = 1.0, beta = (6 < argc ? atof(argv[6]) : 1.0);
+  const int pad = (7 < argc ? atoi(argv[7]) : 0);
+  const int lda = m + pad, ldb = k + pad, ldc = m + pad;
   const int stride_a = lda * k, stride_b = ldb * n, stride_c = ldc * n;
-  const double alpha = 1.0, beta = 1.0;
   const double gflops_per_op = 2.0 * m * n * k * 1E-9;
   double *a = NULL, *b = NULL, *c = NULL;
   libxs_gemm_config_t config;
@@ -56,9 +57,12 @@ int main(int argc, char* argv[])
     return EXIT_FAILURE;
   }
 
-  LIBXS_MATRNG(int, double, 1.0, a, lda, (size_t)k * batchsize, lda, 1.0);
-  LIBXS_MATRNG(int, double, 2.0, b, ldb, (size_t)n * batchsize, ldb, 1.0);
-  LIBXS_MATRNG(int, double, 0.5, c, ldc, (size_t)n * batchsize, ldc, 1.0);
+  /* A: m rows filled per column, ld-padding rows set to SEED (sentinel) */
+  LIBXS_MATRNG(int, double, 1.0, a, m, (size_t)k * batchsize, lda, 1.0);
+  /* B: k rows filled per column, ld-padding rows set to SEED (sentinel) */
+  LIBXS_MATRNG(int, double, 2.0, b, k, (size_t)n * batchsize, ldb, 1.0);
+  /* C: m rows filled per column, ld-padding rows set to SEED (sentinel) */
+  LIBXS_MATRNG(int, double, 0.5, c, m, (size_t)n * batchsize, ldc, 1.0);
 
   memset(&config, 0, sizeof(config));
   config.flags = LIBXS_GEMM_FLAG_NOLOCK;
@@ -105,9 +109,29 @@ int main(int argc, char* argv[])
   }
 
   if (0 != check) {
+    /* verify ld-padding in first C-matrix is untouched */
+    if (ldc > m) {
+      int ci, cj;
+      for (ci = 0; ci < n && EXIT_SUCCESS == result; ++ci) {
+        for (cj = m; cj < ldc; ++cj) {
+          if (0.5 != c[(size_t)ci * ldc + cj]) {
+            fprintf(stderr, "FAILED: C ld-padding overwritten"
+              " (col=%d row=%d)\n", ci, cj);
+            result = EXIT_FAILURE;
+          }
+        }
+      }
+    }
     libxs_matdiff(&check_diff, LIBXS_DATATYPE(double),
       m, n, NULL/*ref*/, c, NULL/*ldref*/, &ldc);
-    printf("CHECK: l1_tst=%f\n", check_diff.l1_tst);
+    if (1 < batchsize) {
+      libxs_matdiff_t d;
+      libxs_matdiff(&d, LIBXS_DATATYPE(double),
+        m, n, NULL/*ref*/, c + (size_t)(batchsize - 1) * stride_c,
+        NULL/*ldref*/, &ldc);
+      libxs_matdiff_combine(&check_diff, &d);
+    }
+    printf("checksum=%f\n", check_diff.l1_ref + check_diff.l1_tst);
   }
 
 #if defined(mkl_jit_create_dgemm)

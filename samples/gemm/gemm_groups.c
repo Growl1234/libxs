@@ -23,6 +23,8 @@ int main(int argc, char* argv[])
   const double check = (NULL == env_check || 0 == *env_check) ? 0 : atof(env_check);
   /* per-group shapes: grow by 4 per group for illustration */
   const int base_m = (4 < argc ? atoi(argv[4]) : 8);
+  const double beta = (5 < argc ? atof(argv[5]) : 1.0);
+  const int pad = (6 < argc ? atoi(argv[6]) : 0);
   int m_array[MAX_GROUPS], n_array[MAX_GROUPS], k_array[MAX_GROUPS];
   int lda_array[MAX_GROUPS], ldb_array[MAX_GROUPS], ldc_array[MAX_GROUPS];
   int batchsize[MAX_GROUPS];
@@ -43,13 +45,14 @@ int main(int argc, char* argv[])
   for (g = 0; g < ng; ++g) {
     const int dim = base_m + g * 4;
     m_array[g] = dim; n_array[g] = dim; k_array[g] = dim;
-    lda_array[g] = dim; ldb_array[g] = dim; ldc_array[g] = dim;
+    lda_array[g] = dim + pad; ldb_array[g] = dim + pad; ldc_array[g] = dim + pad;
     batchsize[g] = batch_per_group;
     transa_array[g] = 'N'; transb_array[g] = 'N';
-    alpha_array[g] = 1.0; beta_array[g] = 1.0;
+    alpha_array[g] = 1.0; beta_array[g] = beta;
     total_ptrs += (size_t)batch_per_group;
     total_elems += (size_t)batch_per_group * (
-      (size_t)dim * dim + (size_t)dim * dim + (size_t)dim * dim);
+      (size_t)lda_array[g] * dim + (size_t)ldb_array[g] * dim
+      + (size_t)ldc_array[g] * dim);
     total_gflops += 2.0 * dim * dim * dim * batch_per_group * 1E-9;
   }
 
@@ -81,14 +84,17 @@ int main(int argc, char* argv[])
       for (i = 0; i < batchsize[g]; ++i) {
         double *pa = storage + offset;
         double *pb, *pc;
+        /* A: m rows filled per column, ld-padding rows set to SEED */
         LIBXS_MATRNG(int, double, 1.0,
           pa, m_array[g], k_array[g], lda_array[g], 1.0);
         a_ptrs[pidx] = pa; offset += asize;
         pb = storage + offset;
+        /* B: k rows filled per column, ld-padding rows set to SEED */
         LIBXS_MATRNG(int, double, 2.0,
           pb, k_array[g], n_array[g], ldb_array[g], 1.0);
         b_ptrs[pidx] = pb; offset += bsize;
         pc = storage + offset;
+        /* C: m rows filled per column, ld-padding rows set to SEED */
         LIBXS_MATRNG(int, double, 0.5,
           pc, m_array[g], n_array[g], ldc_array[g], 1.0);
         c_ptrs[pidx] = pc; offset += csize;
@@ -120,18 +126,38 @@ int main(int argc, char* argv[])
   }
 
   if (0 != check) {
-    libxs_matdiff_clear(&check_diff);
+    /* verify ld-padding in first C-matrix per group */
     { size_t pidx = 0;
-      for (g = 0; g < ng; ++g) {
-        libxs_matdiff_t diff;
-        libxs_matdiff(&diff, LIBXS_DATATYPE(double),
-          m_array[g], n_array[g], NULL/*ref*/,
-          c_ptrs[pidx], NULL/*ldref*/, ldc_array + g);
-        libxs_matdiff_reduce(&check_diff, &diff);
+      for (g = 0; g < ng && EXIT_SUCCESS == result; ++g) {
+        if (ldc_array[g] > m_array[g]) {
+          const double *cm = (const double*)c_ptrs[pidx];
+          int ci, cj;
+          for (ci = 0; ci < n_array[g] && EXIT_SUCCESS == result; ++ci) {
+            for (cj = m_array[g]; cj < ldc_array[g]; ++cj) {
+              if (0.5 != cm[(size_t)ci * ldc_array[g] + cj]) {
+                fprintf(stderr, "FAILED: C ld-padding overwritten"
+                  " (group=%d col=%d row=%d)\n", g, ci, cj);
+                result = EXIT_FAILURE;
+              }
+            }
+          }
+        }
         pidx += (size_t)batchsize[g];
       }
     }
-    printf("CHECK: l1_tst=%f\n", check_diff.l1_tst);
+    libxs_matdiff(&check_diff, LIBXS_DATATYPE(double),
+      m_array[0], n_array[0], NULL/*ref*/,
+      c_ptrs[0], NULL/*ldref*/, ldc_array);
+    if (1 < ng) {
+      libxs_matdiff_t d;
+      size_t pidx = 0;
+      for (g = 0; g < ng - 1; ++g) pidx += (size_t)batchsize[g];
+      libxs_matdiff(&d, LIBXS_DATATYPE(double),
+        m_array[ng - 1], n_array[ng - 1], NULL/*ref*/,
+        c_ptrs[pidx], NULL/*ldref*/, ldc_array + ng - 1);
+      libxs_matdiff_combine(&check_diff, &d);
+    }
+    printf("checksum=%f\n", check_diff.l1_ref + check_diff.l1_tst);
   }
 
   free(a_ptrs); free(b_ptrs); free(c_ptrs); free(storage);

@@ -15,39 +15,51 @@ export CHECK=1
 run_check() {
   PROG=$1; shift
   GOLDEN=$1; shift
-  L1=$(${PROG} "$@" 2>&1 | sed -n 's/.*l1_tst=//p')
+  L1=$(${PROG} "$@" 2>&1 | sed -n 's/.*checksum=//p')
   if [ "${L1}" != "${GOLDEN}" ]; then
-    >&2 echo "FAILED: ${PROG} $* => l1_tst=${L1} (expected ${GOLDEN})"
+    >&2 echo "FAILED: ${PROG} $* => checksum=${L1} (expected ${GOLDEN})"
     exit 1
   fi
 }
 
 # gemm_strided: default shape
-run_check ./gemm_strided.x 20801984173.500000
+run_check ./gemm_strided.x 73541782869087043584.000000
 # gemm_strided: small shapes
-run_check ./gemm_strided.x 13.500000             1 1 1 100 1
-run_check ./gemm_strided.x 59532.000000           4 4 4 1000 1
-run_check ./gemm_strided.x 6750768.000000         8 8 8 100 1
+run_check ./gemm_strided.x 120163.500000             1 1 1 100 1
+run_check ./gemm_strided.x 196424170392.000000        4 4 4 1000 1
+run_check ./gemm_strided.x 249194695776.000000        8 8 8 100 1
 # gemm_strided: non-square
-run_check ./gemm_strided.x 3325959.000000         7 13 5 500 1
+run_check ./gemm_strided.x 3099313327246.500000       7 13 5 500 1
 # gemm_strided: medium/large
-run_check ./gemm_strided.x 828371136.000000       16 16 16 200 1
-run_check ./gemm_strided.x 10401097225.500000     23 23 23 100 1
-run_check ./gemm_strided.x 104354120448.000000    32 32 32 100 1
+run_check ./gemm_strided.x 128208954089856.000000     16 16 16 200 1
+run_check ./gemm_strided.x 404521753229923.500000     23 23 23 100 1
+run_check ./gemm_strided.x 4082185644738048.000000    32 32 32 100 1
+# gemm_strided: ld-padding (pad=1)
+run_check ./gemm_strided.x 221816414566.000000        8 8 8 100 1 1.0 1
+# gemm_strided: ld-padding + beta=0 (pad=2, non-square)
+run_check ./gemm_strided.x 1208802289760.000000       7 13 5 500 1 0.0 2
 
 # gemm_batch: same shapes (dup=0, no duplicates)
-run_check ./gemm_batch.x 13.500000               1 1 1 100 1 0
-run_check ./gemm_batch.x 6750768.000000           8 8 8 100 1 0
-run_check ./gemm_batch.x 3325959.000000           7 13 5 500 1 0
-run_check ./gemm_batch.x 10401097225.500000       23 23 23 100 1 0
-run_check ./gemm_batch.x 104354120448.000000      32 32 32 100 1 0
+run_check ./gemm_batch.x 120163.500000               1 1 1 100 1 0
+run_check ./gemm_batch.x 249194695776.000000          8 8 8 100 1 0
+run_check ./gemm_batch.x 3099313327246.500000         7 13 5 500 1 0
+run_check ./gemm_batch.x 404521753229923.500000       23 23 23 100 1 0
+run_check ./gemm_batch.x 4082185644738048.000000      32 32 32 100 1 0
 # gemm_batch: sorted duplicates (dup=1)
-run_check ./gemm_batch.x 13498416.000000          8 8 8 100 1 1
+run_check ./gemm_batch.x 123378370656.000000          8 8 8 100 1 1
 # gemm_batch: shuffled duplicates (dup=2)
-run_check ./gemm_batch.x 43872811056.000000       8 8 8 100 1 2
+run_check ./gemm_batch.x 127267276896.000000          8 8 8 100 1 2
+# gemm_batch: ld-padding (pad=1)
+run_check ./gemm_batch.x 221816414566.000000           8 8 8 100 1 0 1.0 1
+# gemm_batch: ld-padding + beta=0 (pad=1)
+run_check ./gemm_batch.x 110907933943.000000          8 8 8 100 1 0 0.0 1
 
 # gemm_groups
 run_check ./gemm_groups.x 6750768.000000          1 100 1 8
 run_check ./gemm_groups.x 118725276.000000        2 50 1
-run_check ./gemm_groups.x 118784808.000000        3 100 1 4
-run_check ./gemm_groups.x 59813658216.000000      4 50 1 16
+run_check ./gemm_groups.x 112034040.000000        3 100 1 4
+run_check ./gemm_groups.x 41892221964.000000      4 50 1 16
+# gemm_groups: ld-padding (pad=1)
+run_check ./gemm_groups.x 101110935.000000        2 50 1 8 1.0 1
+# gemm_groups: ld-padding + beta=0 (pad=1)
+run_check ./gemm_groups.x 50547549.000000         2 50 1 8 0.0 1

@@ -11,7 +11,11 @@
 
 #include "libxs_math.h"
 
-/** Helper macro to setup a matrix with some initial values. */
+/**
+ * Initialize a column-major matrix with deterministic values.
+ * SEED!=0: rows [0,NROWS) get scaled values, rows [NROWS,LD) get SEED (sentinel).
+ * SEED==0: shuffle-based init covering the full LD*NCOLS range, values in [-SCALE,+SCALE].
+ */
 #define LIBXS_MATRNG_AUX(OMP, INT_TYPE, REAL_TYPE, SEED, DST, NROWS, NCOLS, LD, SCALE) do { \
   /*const*/ double libxs_matrng_seed_ = SEED; /* avoid constant conditional */ \
   const double libxs_matrng_scale_ = libxs_matrng_seed_ * (SCALE) + (SCALE); \
@@ -50,10 +54,13 @@
   } \
 } while(0)
 
+/** Sequential matrix initialization (see LIBXS_MATRNG_AUX). */
 #define LIBXS_MATRNG(INT_TYPE, REAL_TYPE, SEED, DST, NROWS, NCOLS, LD, SCALE) \
   LIBXS_MATRNG_AUX(LIBXS_ELIDE, INT_TYPE, REAL_TYPE, SEED, DST, NROWS, NCOLS, LD, SCALE)
+/** Alias for LIBXS_MATRNG (sequential). */
 #define LIBXS_MATRNG_SEQ(INT_TYPE, REAL_TYPE, SEED, DST, NROWS, NCOLS, LD, SCALE) \
   LIBXS_MATRNG(INT_TYPE, REAL_TYPE, SEED, DST, NROWS, NCOLS, LD, SCALE)
+/** OpenMP-parallel matrix initialization (see LIBXS_MATRNG_AUX). */
 #define LIBXS_MATRNG_OMP(INT_TYPE, REAL_TYPE, SEED, DST, NROWS, NCOLS, LD, SCALE) \
   LIBXS_MATRNG_AUX(LIBXS_PRAGMA_OMP, INT_TYPE, REAL_TYPE, SEED, DST, NROWS, NCOLS, LD, SCALE)
 
