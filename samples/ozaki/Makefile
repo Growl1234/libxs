@@ -132,8 +132,8 @@ $(BLDDIR)/%-sc.o: $(SRCDIR)/%.c .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEP
 # OpenCL sources need __OPENCL for LIBXSTREAM OpenCL headers
 ifneq (,$(OCLOBJS))
 # Generate embedded kernel header from .cl sources
-$(OCLGENHDR): $(OCLKERNELS) $(SCRDIR)/acc_opencl.sh
-	$(SCRDIR)/acc_opencl.sh -p "" $(OCLKERNELS) $@
+$(OCLGENHDR): $(OCLKERNELS) $(SCRDIR)/tool_opencl.sh
+	$(SCRDIR)/tool_opencl.sh -p "" $(OCLKERNELS) $@
 
 $(BLDDIR)/ozaki_ocl-c.o: $(SRCDIR)/ozaki_ocl.c .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc
 	$(CC) -D__OPENCL $(DFLAGS) $(IFLAGS) $(CFLAGS) $(CTARGET) -c $< -o $@
