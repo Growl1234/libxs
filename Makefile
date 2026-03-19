@@ -302,11 +302,14 @@ flib:
 endif
 
 # use dir not qdir to avoid quotes
-SAMPLES := $(dir $(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
-  $(ROOTDIR)/$(SPLDIR)/*/Makefile 2>/dev/null))
-SPLMDS := $(if $(GIT), \
-  $(shell $(GIT) ls-files $(SPLDIR)/*/README.md 2>/dev/null), \
-  $(shell ls -1 $(ROOTDIR)/$(SPLDIR)/*/README.md 2>/dev/null))
+SAMPLES := $(dir $(shell $(if $(GIT),$(GIT) ls-files,ls -1) $(SPLDIR)/*/Makefile 2>/dev/null))
+SPLMDS := $(addprefix $(ABSDIR)/,$(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
+  $(SPLDIR)/*/README.md 2>/dev/null))
+DOCMDS := $(addprefix $(ABSDIR)/,$(filter-out \
+    $(DOCDIR)/$(PROJECT)_samples.md \
+    $(DOCDIR)/$(PROJECT)_scripts.md, \
+  $(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
+    $(DOCDIR)/$(PROJECT)_*.md 2>/dev/null)))
 
 .PHONY: samples $(SAMPLES)
 samples: $(SAMPLES)
@@ -339,7 +342,7 @@ $(DOCDIR)/index.md: $(DOCDIR)/.make $(ROOTDIR)/Makefile $(ROOTDIR)/README.md
 		>$@
 	@$(CP) $(ROOTDIR)/LICENSE.md $(DOCDIR)/LICENSE.md
 
-$(DOCDIR)/libxs_scripts.md: $(DOCDIR)/.make $(ROOTDIR)/Makefile $(ROOTSCR)/README.md
+$(DOCDIR)/$(PROJECT)_scripts.md: $(DOCDIR)/.make $(ROOTDIR)/Makefile $(ROOTSCR)/README.md
 	@$(SED) $(ROOTSCR)/README.md \
 		-e 's/\[!\[..*\](..*)\](..*)//g' \
 		-e 's/\[\[..*\](..*)\]//g' \
@@ -354,7 +357,7 @@ $(DOCDIR)/$(PROJECT)_samples.md: $(DOCDIR)/.make $(DOCDIR)/$(SPLDIR)/.make $(ROO
 			-e 's/\[\[..*\](..*)\]//g' \
 			-e "s/](${DOCDIR}\//](/g" \
 			-e 'N;/^\n$$/d;P;D' \
-			>$(DOCDIR)/$(SPLDIR)/libxs_$$(basename $$(dirname $${MD})).md; \
+			>$(DOCDIR)/$(SPLDIR)/$(PROJECT)_$$(basename $$(dirname $${MD})).md; \
 	done
 	@$(SED) $(SPLMDS) \
 		-e 's/^#/##/' \
@@ -364,8 +367,7 @@ $(DOCDIR)/$(PROJECT)_samples.md: $(DOCDIR)/.make $(DOCDIR)/$(SPLDIR)/.make $(ROO
 		-e '1s/^/# [$(PROJUPP) Samples](https:\/\/github.com\/hfp\/$(PROJECT)\/raw\/main\/$(DOCDIR)\/$(PROJECT)_samples.pdf)\n\n/' \
 		>$@
 
-$(DOCDIR)/$(PROJECT).$(DOCEXT): $(DOCDIR)/.make $(ROOTDIR)/$(DOCDIR)/index.md \
-$(ROOTDIR)/$(DOCDIR)/$(PROJECT)_gemm.md $(ROOTDIR)/$(DOCDIR)/$(PROJECT)_scripts.md
+$(DOCDIR)/$(PROJECT).$(DOCEXT): $(DOCDIR)/.make $(ABSDIR)/$(DOCDIR)/index.md $(ABSDIR)/$(DOCDIR)/$(PROJECT)_scripts.md $(DOCMDS)
 	$(eval TMPFILE = $(shell $(MKTEMP) $(ROOTDIR)/$(DOCDIR)/.$(PROJECT)_XXXXXX.tex))
 	@pandoc -D latex \
 	| $(SED) \
@@ -374,11 +376,13 @@ $(ROOTDIR)/$(DOCDIR)/$(PROJECT)_gemm.md $(ROOTDIR)/$(DOCDIR)/$(PROJECT)_scripts.
 		-e 's/\(\\usepackage.*{hyperref}\)/\\usepackage[hyphens]{url}\n\1/' \
 		>$(TMPFILE)
 	@cd $(ROOTDIR)/$(DOCDIR) && ( \
-		iconv -t utf-8 index.md && echo && \
+		iconv -t utf-8 $(ABSDIR)/$(DOCDIR)/index.md && echo && \
 		echo "# $(PROJUPP) Domains" && \
-		iconv -t utf-8 $(PROJECT)_gemm.md && echo && \
+		for DOC in $(DOCMDS); do \
+			$(SED) "s/^\(##*\) /#\1 /" $${DOC} | iconv -t utf-8 && echo; \
+		done && \
 		echo "# Appendix" && \
-		$(SED) "s/^\(##*\) /#\1 /" $(PROJECT)_scripts.md | iconv -t utf-8; ) \
+		$(SED) "s/^\(##*\) /#\1 /" $(ABSDIR)/$(DOCDIR)/$(PROJECT)_scripts.md | iconv -t utf-8; ) \
 	| $(SED) \
 		-e 's/<sub>/~/g' -e 's/<\/sub>/~/g' \
 		-e 's/<sup>/^/g' -e 's/<\/sup>/^/g' \

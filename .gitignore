@@ -1,5 +1,3 @@
-include/libxs_version.h
-.theme/__pycache__
 .libxs_*.tex
 lib/libxs*
 .abi.log
