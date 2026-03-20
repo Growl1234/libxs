@@ -4,3 +4,4 @@ mistune==0.8.4
 mkdocs>=1.6.1
 FORD>=7.0.6
 m2r2
+pymdown-extensions>=10.0
