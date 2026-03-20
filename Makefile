@@ -310,6 +310,10 @@ DOCMDS := $(addprefix $(ABSDIR)/,$(filter-out \
     $(DOCDIR)/$(PROJECT)_scripts.md, \
   $(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
     $(DOCDIR)/$(PROJECT)_*.md 2>/dev/null)))
+TSTSRC := $(filter-out $(TSTDIR)/headeronly_aux.c, \
+  $(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
+    $(TSTDIR)/*.c 2>/dev/null))
+TSTMDS := $(patsubst $(TSTDIR)/%.c,$(DOCDIR)/tests/%.md,$(TSTSRC))
 
 .PHONY: samples $(SAMPLES)
 samples: $(SAMPLES)
@@ -438,9 +442,19 @@ $(DOCDIR)/$(PROJECT)_samples.$(DOCEXT): $(ROOTDIR)/$(DOCDIR)/$(PROJECT)_samples.
 documentation: $(DOCDIR)/$(PROJECT).$(DOCEXT) $(DOCDIR)/$(PROJECT)_samples.$(DOCEXT)
 
 .PHONY: mkdocs
-mkdocs: $(ROOTDIR)/$(DOCDIR)/index.md
+mkdocs: mkdocs-tests $(ROOTDIR)/$(DOCDIR)/index.md
 	@mkdocs build --clean
 	@mkdocs serve
+
+.PHONY: mkdocs-tests
+mkdocs-tests: $(TSTMDS)
+
+$(DOCDIR)/tests/%.md: $(TSTDIR)/%.c $(DOCDIR)/tests/.make
+	@echo "# $*" >$@
+	@echo "" >>$@
+	@echo '```c'  >>$@
+	@echo '--8<-- "tests/$*.c"' >>$@
+	@echo '```'   >>$@
 
 .PHONY: clean
 clean:

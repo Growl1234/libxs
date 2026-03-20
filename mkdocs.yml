@@ -12,6 +12,8 @@ markdown_extensions:
     permalink: True
     toc_depth: 3
     title: None
+- pymdownx.snippets:
+    base_path: ["."]
 extra_css:
 - style.css
 
@@ -48,5 +50,19 @@ nav:
   - Scratch: samples/libxs_scratch.md
   - Shuffle: samples/libxs_shuffle.md
   - Sync: samples/libxs_sync.md
+- Tests:
+  - Atomics: tests/atomics.md
+  - Hash: tests/hash.md
+  - Header-Only: tests/headeronly.md
+  - Histogram: tests/hist.md
+  - Intrinsics: tests/intrinsics.md
+  - Malloc: tests/malloc.md
+  - Matdiff: tests/matdiff.md
+  - Math: tests/math.md
+  - Memory: tests/memory.md
+  - MHD: tests/mhd.md
+  - Registry: tests/registry.md
+  - Thread Safety: tests/threadsafety.md
+  - Timer: tests/timer.md
 - About:
   - License: LICENSE.md
