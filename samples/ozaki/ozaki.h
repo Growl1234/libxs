@@ -389,15 +389,15 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32(
   LIBXS_ASSERT('N' == transa || 'n' == transa);
   LIBXS_ASSERT('T' == transb || 't' == transb);
   LIBXS_ASSERT(0 == (K % BLOCK_K));
-  (void)transa; (void)transb;
+  LIBXS_UNUSED(transa); LIBXS_UNUSED(transb);
   for (mi = 0; mi < M; ++mi) {
     for (nj = 0; nj < N; ++nj) {
       int32_t acc = 0;
       for (kb = 0; kb < K; kb += BLOCK_K) {
         acc += dot(a + mi * lda + kb, b + nj * ldb + kb);
       }
-      if (0 != beta) c[mi * ldc + nj] += acc;
-      else c[mi * ldc + nj] = acc;
+      if (0 != beta) c[LIBXS_INDEX(1, ldc, mi, nj)] += acc;
+      else c[LIBXS_INDEX(1, ldc, mi, nj)] = acc;
     }
   }
 #endif
@@ -570,9 +570,9 @@ LIBXS_API_INLINE void ozaki_scale_block_beta(GEMM_REAL_TYPE* mb, GEMM_INT_TYPE l
   GEMM_INT_TYPE mi, nj;
   for (mi = 0; mi < iblk; ++mi) {
     for (nj = 0; nj < jblk; ++nj) {
-      if (0 != capture_ref) ref_blk[mi + nj * BLOCK_M] = mb[mi + nj * ldc];
-      mb[mi + nj * ldc] = ((GEMM_REAL_TYPE)0 != b)
-        ? mb[mi + nj * ldc] * b : (GEMM_REAL_TYPE)0;
+      if (0 != capture_ref) ref_blk[LIBXS_INDEX(0, BLOCK_M, mi, nj)] = mb[LIBXS_INDEX(0, ldc, mi, nj)];
+      mb[LIBXS_INDEX(0, ldc, mi, nj)] = ((GEMM_REAL_TYPE)0 != b)
+        ? mb[LIBXS_INDEX(0, ldc, mi, nj)] * b : (GEMM_REAL_TYPE)0;
     }
   }
 }
@@ -583,8 +583,8 @@ LIBXS_API_INLINE void ozaki_store_block_pair(GEMM_REAL_TYPE* ref_blk,
   GEMM_REAL_TYPE* recon_blk, GEMM_INT_TYPE ld, GEMM_INT_TYPE row,
   GEMM_INT_TYPE col, GEMM_REAL_TYPE ref_val, GEMM_REAL_TYPE recon_val)
 {
-  recon_blk[row + col * ld] = recon_val;
-  ref_blk[row + col * ld] = ref_val;
+  recon_blk[LIBXS_INDEX(0, ld, row, col)] = recon_val;
+  ref_blk[LIBXS_INDEX(0, ld, row, col)] = ref_val;
 }
 
 
