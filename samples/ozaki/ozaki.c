@@ -134,11 +134,11 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
       if (NULL != ozaki_stat_env) ozaki_stat = atoi(ozaki_stat_env);
       if (NULL != ozaki_verbose_env) ozaki_verbose = atoi(ozaki_verbose_env);
       else if (0 != ozaki_stat) ozaki_verbose = 1;
-      if (2 == ozaki || 4 == ozaki) { /* Scheme 2/4: CRT primes */
+      if (2 == ozaki) { /* Scheme 2: CRT primes */
         ozaki_n = LIBXS_CLMP(NULL == ozaki_n_env
           ? OZ2_NPRIMES_DEFAULT : atoi(ozaki_n_env), 1, OZ2_NPRIMES_MAX);
       }
-      else { /* Scheme 1/3: mantissa slices */
+      else { /* Scheme 1: mantissa slices */
         ozaki_n = LIBXS_CLMP(NULL == ozaki_n_env
           ? NSLICES_DEFAULT : atoi(ozaki_n_env), 1, MAX_NSLICES);
       }
@@ -155,7 +155,7 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
       ozaki_target_arch = libxs_cpuid(NULL);
 #if defined(__LIBXSTREAM)
       /* Initialize OpenCL Ozaki context (schemes 1, 2, and 3). */
-      if (0 != ozaki_ocl && (0 < ozaki && 3 >= ozaki)) {
+      if (0 != ozaki_ocl && (0 < ozaki && 2 >= ozaki)) {
         const int ocl_tm = (NULL != ozaki_tm_env ? atoi(ozaki_tm_env) : 0);
         const int ocl_tn = (NULL != ozaki_tn_env ? atoi(ozaki_tn_env) : 0);
         const int ocl_groups = (NULL != ozaki_groups_env
@@ -184,12 +184,6 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
   }
   else if (2 == ozaki) { /* CRT-based LP-GEMM (Scheme 2) */
     gemm_oz2(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
-  }
-  else if (3 == ozaki) { /* BF16 slice-based LP-GEMM (Scheme 3) */
-    gemm_oz3(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
-  }
-  else if (4 == ozaki) { /* CRT-based LP-GEMM with BF16 dot products (Scheme 4) */
-    gemm_oz4(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
   }
   else { /* only run original GEMM right away */
     if (NULL != gemm_original) {

@@ -63,10 +63,10 @@
 
 #if GEMM_IS_DOUBLE
 # define OZ2_NPRIMES_MAX 18
-# define OZ2_NPRIMES_DEFAULT 17
+# define OZ2_NPRIMES_DEFAULT 18
 #else /* single-precision */
 # define OZ2_NPRIMES_MAX 10
-# define OZ2_NPRIMES_DEFAULT 8
+# define OZ2_NPRIMES_DEFAULT 10
 #endif
 
 /**
@@ -133,8 +133,6 @@
 #define ozaki_target_arch   LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_tarch)
 #define gemm_oz1            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz1)
 #define gemm_oz2            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz2)
-#define gemm_oz3            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz3)
-#define gemm_oz4            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz4)
 #define gemm_dump_inhibit   LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_dump_inhibit)
 #define gemm_dump_matrices  LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_dump_mhd)
 #define zgemm3m             LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm3m)
@@ -147,8 +145,6 @@
 # define oz1_host_preprocess_b LIBXS_TPREFIX(GEMM_REAL_TYPE, oz1_host_prep_b)
 # define oz2_host_preprocess_a LIBXS_TPREFIX(GEMM_REAL_TYPE, oz2_host_prep_a)
 # define oz2_host_preprocess_b LIBXS_TPREFIX(GEMM_REAL_TYPE, oz2_host_prep_b)
-# define oz3_host_preprocess_a LIBXS_TPREFIX(GEMM_REAL_TYPE, oz3_host_prep_a)
-# define oz3_host_preprocess_b LIBXS_TPREFIX(GEMM_REAL_TYPE, oz3_host_prep_b)
 #endif
 
 /** Function type for complex GEMM (precision-specific). */
@@ -165,10 +161,6 @@ LIBXS_API void ZGEMM(GEMM_ARGDECL);
 LIBXS_API void gemm_oz1(GEMM_ARGDECL);
 /** Function prototype for GEMM using CRT modular arithmetic (Ozaki scheme 2). */
 LIBXS_API void gemm_oz2(GEMM_ARGDECL);
-/** Function prototype for GEMM using BF16 dot products (Ozaki scheme 3). */
-LIBXS_API void gemm_oz3(GEMM_ARGDECL);
-/** Function prototype for GEMM using CRT + BF16 dot products (Ozaki scheme 4). */
-LIBXS_API void gemm_oz4(GEMM_ARGDECL);
 /** Complex GEMM 3M (Karatsuba) implementation (internal). */
 LIBXS_API_INTERN void zgemm3m(GEMM_ARGDECL);
 
