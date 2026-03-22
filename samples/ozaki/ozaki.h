@@ -390,14 +390,21 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32(
   LIBXS_ASSERT('T' == transb || 't' == transb);
   LIBXS_ASSERT(0 == (K % BLOCK_K));
   LIBXS_UNUSED(transa); LIBXS_UNUSED(transb);
+  /* M x K x N loop order: reuse each A chunk across all N columns. */
+  LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
   for (mi = 0; mi < M; ++mi) {
-    for (nj = 0; nj < N; ++nj) {
-      int32_t acc = 0;
-      for (kb = 0; kb < K; kb += BLOCK_K) {
-        acc += dot(a + mi * lda + kb, b + nj * ldb + kb);
+    int32_t *const crow = c + mi * ldc;
+    const int8_t *const arow = a + mi * lda;
+    if (0 == beta) {
+      LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N)
+      for (nj = 0; nj < N; ++nj) crow[nj] = 0;
+    }
+    for (kb = 0; kb < K; kb += BLOCK_K) {
+      const int8_t *const ak = arow + kb;
+      LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N)
+      for (nj = 0; nj < N; ++nj) {
+        crow[nj] += dot(ak, b + nj * ldb + kb);
       }
-      if (0 != beta) c[LIBXS_INDEX(1, ldc, mi, nj)] += acc;
-      else c[LIBXS_INDEX(1, ldc, mi, nj)] = acc;
     }
   }
 #endif
