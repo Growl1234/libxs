@@ -139,6 +139,18 @@ LIBXS_API void libxs_gemm_strided_task(
             (const double*)((const char*)b + i * db), ci);
         }
       }
+      else if (NULL != config && NULL != config->xgemm) {
+        libxs_xgemm_param_t xparam;
+        memset(&xparam, 0, sizeof(xparam));
+        for (i = begin; i < end; ++i) {
+          char* ci = (char*)c + i * dc;
+          if (need_lock) INTERNAL_GEMM_LOCKFWD(ci, lockidx);
+          xparam.a[0] = (void*)((uintptr_t)a + i * da);
+          xparam.b[0] = (void*)((uintptr_t)b + i * db);
+          xparam.c[0] = ci;
+          config->xgemm(&xparam);
+        }
+      }
       else {
         const libxs_dgemm_blas_t dgemm_blas = (NULL != config && NULL != config->dgemm_blas)
           ? config->dgemm_blas : internal_dgemm_default;
@@ -160,6 +172,18 @@ LIBXS_API void libxs_gemm_strided_task(
           config->sgemm_jit(config->jitter,
             (const float*)((const char*)a + i * da),
             (const float*)((const char*)b + i * db), ci);
+        }
+      }
+      else if (NULL != config && NULL != config->xgemm) {
+        libxs_xgemm_param_t xparam;
+        memset(&xparam, 0, sizeof(xparam));
+        for (i = begin; i < end; ++i) {
+          char* ci = (char*)c + i * dc;
+          if (need_lock) INTERNAL_GEMM_LOCKFWD(ci, lockidx);
+          xparam.a[0] = (void*)((uintptr_t)a + i * da);
+          xparam.b[0] = (void*)((uintptr_t)b + i * db);
+          xparam.c[0] = ci;
+          config->xgemm(&xparam);
         }
       }
       else {
@@ -223,6 +247,17 @@ LIBXS_API void libxs_gemm_batch_task(
             (double*)c_array[i]);
         }
       }
+      else if (NULL != config && NULL != config->xgemm) {
+        libxs_xgemm_param_t xparam;
+        memset(&xparam, 0, sizeof(xparam));
+        for (i = begin; i < end; ++i) {
+          if (need_lock) INTERNAL_GEMM_LOCKFWD(c_array[i], lockidx);
+          xparam.a[0] = (void*)(uintptr_t)a_array[i];
+          xparam.b[0] = (void*)(uintptr_t)b_array[i];
+          xparam.c[0] = (void*)c_array[i];
+          config->xgemm(&xparam);
+        }
+      }
       else {
         const libxs_dgemm_blas_t dgemm_blas = (NULL != config && NULL != config->dgemm_blas)
           ? config->dgemm_blas : internal_dgemm_default;
@@ -243,6 +278,17 @@ LIBXS_API void libxs_gemm_batch_task(
             (const float*)a_array[i],
             (const float*)b_array[i],
             (float*)c_array[i]);
+        }
+      }
+      else if (NULL != config && NULL != config->xgemm) {
+        libxs_xgemm_param_t xparam;
+        memset(&xparam, 0, sizeof(xparam));
+        for (i = begin; i < end; ++i) {
+          if (need_lock) INTERNAL_GEMM_LOCKFWD(c_array[i], lockidx);
+          xparam.a[0] = (void*)(uintptr_t)a_array[i];
+          xparam.b[0] = (void*)(uintptr_t)b_array[i];
+          xparam.c[0] = (void*)c_array[i];
+          config->xgemm(&xparam);
         }
       }
       else {
