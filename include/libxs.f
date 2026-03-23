@@ -11,7 +11,7 @@
         USE, INTRINSIC :: ISO_C_BINDING, ONLY:                          &
      &    C_DOUBLE, C_FLOAT, C_LONG_LONG, C_INT,                        &
      &    C_CHAR, C_INT8_T, C_SIZE_T, C_PTR, C_NULL_PTR,                &
-     &    C_FUNPTR, C_NULL_FUNPTR,                                       &
+     &    C_FUNPTR, C_NULL_FUNPTR,                                      &
      &    C_F_POINTER, C_ASSOCIATED, C_LOC, C_SIZEOF
         IMPLICIT NONE
         PRIVATE
@@ -57,6 +57,9 @@
         PUBLIC :: libxs_matcopy, libxs_matcopy_task
         PUBLIC :: libxs_otrans, libxs_otrans_task
         PUBLIC :: libxs_typesize
+        PUBLIC :: libxs_cpuid_t
+        PUBLIC :: libxs_cpuid, libxs_cpuid_name
+        PUBLIC :: libxs_cpuid_id, libxs_cpuid_vlen
 
         !> Re-exported from ISO_C_BINDING for convenience.
         PUBLIC :: C_DOUBLE, C_FLOAT, C_INT, C_LONG_LONG
@@ -124,7 +127,46 @@
           INTEGER(C_SIZE_T) :: capacity, size, nbytes
         END TYPE
 
+        !> CPU identification result.
+        TYPE, BIND(C) :: libxs_cpuid_t
+          CHARACTER(C_CHAR) :: model(256)
+          INTEGER(C_INT) :: constant_tsc
+        END TYPE
+
         INTERFACE
+          !> Returns the detected ISA level for the current
+          !> platform. Pass C_NULL_PTR instead of info to skip
+          !> filling the CPU properties structure.
+          FUNCTION libxs_cpuid(info) BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: info
+            INTEGER(C_INT) :: libxs_cpuid
+          END FUNCTION
+
+          !> Returns a human-readable name for the given ISA
+          !> level id. The returned pointer is to static storage.
+          FUNCTION libxs_cpuid_name(id) BIND(C)
+            IMPORT :: C_PTR, C_INT
+            INTEGER(C_INT), INTENT(IN), VALUE :: id
+            TYPE(C_PTR) :: libxs_cpuid_name
+          END FUNCTION
+
+          !> Translates a CPU architecture name (e.g., "avx2")
+          !> to the corresponding LIBXS id constant.
+          FUNCTION libxs_cpuid_id(name) BIND(C)
+            IMPORT :: C_CHAR, C_INT
+            CHARACTER(C_CHAR), INTENT(IN) :: name(*)
+            INTEGER(C_INT) :: libxs_cpuid_id
+          END FUNCTION
+
+          !> Returns the SIMD vector length (VLEN) in bytes
+          !> for the given ISA level; zero if scalar.
+          FUNCTION libxs_cpuid_vlen(id) BIND(C)
+            IMPORT :: C_INT
+            INTEGER(C_INT), INTENT(IN), VALUE :: id
+            INTEGER(C_INT) :: libxs_cpuid_vlen
+          END FUNCTION
+
           !> Initialize the library.
           SUBROUTINE libxs_init() BIND(C)
           END SUBROUTINE
