@@ -9,7 +9,7 @@ LIBXS was originally developed as part of [LIBXSMM](https://github.com/libxsmm/l
 | Domain | Header | Description |
 |--------|--------|-------------|
 | [Memory](libxs_mem.md) | `libxs_mem.h` | Comparison (`memcmp`/`diff`), hashing (CRC32), matrix copy, transpose, and data shuffling. |
-| [GEMM Batch](libxs_gemm.md) | `libxs_gemm.h` | Batched dense matrix multiplication (strided, pointer-array, grouped) with pluggable BLAS/JIT kernels. |
+| [GEMM](libxs_gemm.md) | `libxs_gemm.h` | Batched dense matrix multiplication (strided, pointer-array, grouped) with pluggable BLAS/JIT kernels. |
 | [Math](libxs_math.md) | `libxs_math.h` | Matrix comparison, GCD/LCM, coprime calculation, and BF16 conversion. |
 | [MHD](libxs_mhd.md) | `libxs_mhd.h` | Read and write MetaImage (MHD/MHA) format files for multidimensional arrays. |
 | [Histogram](libxs_hist.md) | `libxs_hist.h` | Thread-safe histogram with running statistics and per-entry callbacks. |
