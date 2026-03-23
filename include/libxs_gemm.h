@@ -12,7 +12,7 @@
 #include "libxs.h"
 
 /** Standard Fortran BLAS dgemm signature (e.g., dgemm_). */
-typedef void (*libxs_dgemm_blas_t)(
+typedef void (*libxs_gemm_dblas_t)(
   const char* transa, const char* transb,
   const int* m, const int* n, const int* k,
   const double* alpha, const double* a, const int* lda,
@@ -20,7 +20,7 @@ typedef void (*libxs_dgemm_blas_t)(
   const double* beta,        double* c, const int* ldc);
 
 /** Standard Fortran BLAS sgemm signature (e.g., sgemm_). */
-typedef void (*libxs_sgemm_blas_t)(
+typedef void (*libxs_gemm_sblas_t)(
   const char* transa, const char* transb,
   const int* m, const int* n, const int* k,
   const float* alpha, const float* a, const int* lda,
@@ -31,14 +31,14 @@ typedef void (*libxs_sgemm_blas_t)(
  * MKL JIT dgemm kernel signature (mkl_jit_get_dgemm_ptr).
  * Shape, alpha, beta, and transpose info are baked into the jitter handle.
  */
-typedef void (*libxs_dgemm_jit_t)(void* jitter,
+typedef void (*libxs_gemm_djit_t)(void* jitter,
   const double* a, const double* b, double* c);
 
 /**
  * MKL JIT sgemm kernel signature (mkl_jit_get_sgemm_ptr).
  * Shape, alpha, beta, and transpose info are baked into the jitter handle.
  */
-typedef void (*libxs_sgemm_jit_t)(void* jitter,
+typedef void (*libxs_gemm_sjit_t)(void* jitter,
   const float* a, const float* b, float* c);
 
 /**
@@ -46,12 +46,12 @@ typedef void (*libxs_sgemm_jit_t)(void* jitter,
  * op: 4 void pointers (op state), a/b/c: 6 void pointers each (matrix arg).
  * Only a.primary, b.primary, c.primary are used for plain GEMM.
  */
-typedef struct libxs_xgemm_param_t {
-  void* op[4]; void* a[6]; void* b[6]; void* c[6];
-} libxs_xgemm_param_t;
+typedef struct libxs_gemm_param_t {
+  void* op[4]; const void* a[6]; const void* b[6]; void* c[6];
+} libxs_gemm_param_t;
 
-/** Opaque XGEMM kernel: void(const libxs_xgemm_param_t*). */
-typedef void (*libxs_xgemm_t)(const void*);
+/** Opaque XGEMM kernel: void(const libxs_gemm_param_t*). */
+typedef void (*libxs_gemm_xfn_t)(const void*);
 
 /** Flags controlling GEMM batch synchronization (bitfield). */
 typedef enum libxs_gemm_flags_t {
@@ -72,11 +72,11 @@ typedef enum libxs_gemm_flags_t {
  * Set LIBXS_GEMM_FLAG_NOLOCK if no duplicate C pointers exist.
  */
 typedef struct libxs_gemm_config_t {
-  libxs_dgemm_blas_t dgemm_blas;
-  libxs_sgemm_blas_t sgemm_blas;
-  libxs_dgemm_jit_t dgemm_jit;
-  libxs_sgemm_jit_t sgemm_jit;
-  libxs_xgemm_t xgemm;
+  libxs_gemm_dblas_t dgemm_blas;
+  libxs_gemm_sblas_t sgemm_blas;
+  libxs_gemm_djit_t dgemm_jit;
+  libxs_gemm_sjit_t sgemm_jit;
+  libxs_gemm_xfn_t xgemm;
   void* jitter;
   libxs_gemm_flags_t flags;
 } libxs_gemm_config_t;
@@ -152,88 +152,145 @@ LIBXS_API void libxs_gemm_groups(
  * The caller should memset config to zero before the first call.
  * Returns EXIT_SUCCESS on success, EXIT_FAILURE when no JIT backend is available.
  */
-LIBXS_API_INLINE int libxs_dispatch_gemm(
+LIBXS_API_INLINE int libxs_gemm_dispatch(
   libxs_gemm_config_t* config,
   libxs_data_t datatype, char transa, char transb,
   int m, int n, int k, int lda, int ldb, int ldc,
   const void* alpha, const void* beta)
 {
+  int result = EXIT_FAILURE;
+  const int ta = ('N' != transa && 'n' != transa);
+  const int tb = ('N' != transb && 'n' != transb);
 #if defined(mkl_jit_create_dgemm)
-  { const int ta = ('N' == transa || 'n' == transa) ? 111 : 112;
-    const int tb = ('N' == transb || 'n' == transb) ? 111 : 112;
+  { const int cblas_ta = (ta ? 112 : 111);
+    const int cblas_tb = (tb ? 112 : 111);
     if (LIBXS_DATATYPE_F64 == datatype) {
       void* jitter = NULL;
       const int status = mkl_cblas_jit_create_dgemm(&jitter,
-        MKL_COL_MAJOR, (CBLAS_TRANSPOSE)ta, (CBLAS_TRANSPOSE)tb,
+        MKL_COL_MAJOR, (CBLAS_TRANSPOSE)cblas_ta, (CBLAS_TRANSPOSE)cblas_tb,
         m, n, k,
-        NULL != alpha ? *(const double*)alpha : 1.0, lda, ldb,
-        NULL != beta ? *(const double*)beta : 0.0, ldc);
+        (NULL != alpha ? *(const double*)alpha : 1.0), lda, ldb,
+        (NULL != beta ? *(const double*)beta : 0.0), ldc);
       if (MKL_JIT_SUCCESS == status) {
-        config->dgemm_jit = (libxs_dgemm_jit_t)mkl_jit_get_dgemm_ptr(jitter);
+        config->dgemm_jit = (libxs_gemm_djit_t)mkl_jit_get_dgemm_ptr(jitter);
         config->jitter = jitter;
-        return EXIT_SUCCESS;
+        result = EXIT_SUCCESS;
       }
     }
     else if (LIBXS_DATATYPE_F32 == datatype) {
       void* jitter = NULL;
       const int status = mkl_cblas_jit_create_sgemm(&jitter,
-        MKL_COL_MAJOR, (CBLAS_TRANSPOSE)ta, (CBLAS_TRANSPOSE)tb,
+        MKL_COL_MAJOR, (CBLAS_TRANSPOSE)cblas_ta, (CBLAS_TRANSPOSE)cblas_tb,
         m, n, k,
-        NULL != alpha ? *(const float*)alpha : 1.0f, lda, ldb,
-        NULL != beta ? *(const float*)beta : 0.0f, ldc);
+        (NULL != alpha ? *(const float*)alpha : 1.0f), lda, ldb,
+        (NULL != beta ? *(const float*)beta : 0.0f), ldc);
       if (MKL_JIT_SUCCESS == status) {
-        config->sgemm_jit = (libxs_sgemm_jit_t)mkl_jit_get_sgemm_ptr(jitter);
+        config->sgemm_jit = (libxs_gemm_sjit_t)mkl_jit_get_sgemm_ptr(jitter);
         config->jitter = jitter;
-        return EXIT_SUCCESS;
+        result = EXIT_SUCCESS;
       }
     }
   }
 #endif
 #if defined(LIBXSMM_H)
-  { libxsmm_gemm_shape gemm_shape;
-    libxsmm_gemmfunction result;
-    LIBXS_UNUSED(transa); LIBXS_UNUSED(transb);
-    LIBXS_UNUSED(alpha); LIBXS_UNUSED(beta);
-    gemm_shape.m = m; gemm_shape.n = n; gemm_shape.k = k;
-    gemm_shape.lda = lda; gemm_shape.ldb = ldb; gemm_shape.ldc = ldc;
-    switch (datatype) {
-      case LIBXS_DATATYPE_F64:
-        gemm_shape.a_in_type = LIBXSMM_DATATYPE_F64;
-        gemm_shape.b_in_type = LIBXSMM_DATATYPE_F64;
-        gemm_shape.comp_type = LIBXSMM_DATATYPE_F64;
-        gemm_shape.out_type = LIBXSMM_DATATYPE_F64;
-        break;
-      case LIBXS_DATATYPE_F32:
-        gemm_shape.a_in_type = LIBXSMM_DATATYPE_F32;
-        gemm_shape.b_in_type = LIBXSMM_DATATYPE_F32;
-        gemm_shape.comp_type = LIBXSMM_DATATYPE_F32;
-        gemm_shape.out_type = LIBXSMM_DATATYPE_F32;
-        break;
-      default: return EXIT_FAILURE;
+  if (EXIT_SUCCESS != result) {
+    int xsmm_ok = 0;
+    libxsmm_bitfield xflags = LIBXSMM_GEMM_FLAG_NONE;
+    libxsmm_datatype xtype = (libxsmm_datatype)0;
+    if (0 != ta) xflags |= LIBXSMM_GEMM_FLAG_TRANS_A;
+    if (0 != tb) xflags |= LIBXSMM_GEMM_FLAG_TRANS_B;
+    if (LIBXS_DATATYPE_F64 == datatype) {
+      const double a1 = (NULL != alpha ? *(const double*)alpha : 1.0);
+      const double b1 = (NULL != beta ? *(const double*)beta : 0.0);
+      xtype = LIBXSMM_DATATYPE_F64;
+      if (1.0 == a1) {
+        if (0.0 == b1) { xflags |= LIBXSMM_GEMM_FLAG_BETA_0; xsmm_ok = 1; }
+        else if (1.0 == b1) xsmm_ok = 1;
+      }
     }
-    result = libxsmm_dispatch_gemm(gemm_shape, 0/*flags*/,
-      LIBXSMM_GEMM_PREFETCH_NONE);
-    if (NULL != result) {
-      config->xgemm = (libxs_xgemm_t)result;
-      return EXIT_SUCCESS;
+    else if (LIBXS_DATATYPE_F32 == datatype) {
+      const float a1 = (NULL != alpha ? *(const float*)alpha : 1.0f);
+      const float b1 = (NULL != beta ? *(const float*)beta : 0.0f);
+      xtype = LIBXSMM_DATATYPE_F32;
+      if (1.0f == a1) {
+        if (0.0f == b1) { xflags |= LIBXSMM_GEMM_FLAG_BETA_0; xsmm_ok = 1; }
+        else if (1.0f == b1) xsmm_ok = 1;
+      }
+    }
+    if (0 != xsmm_ok) {
+      libxsmm_gemm_shape gemm_shape;
+      libxsmm_gemmfunction xresult;
+      gemm_shape.m = m; gemm_shape.n = n; gemm_shape.k = k;
+      gemm_shape.lda = lda; gemm_shape.ldb = ldb; gemm_shape.ldc = ldc;
+      gemm_shape.a_in_type = xtype; gemm_shape.b_in_type = xtype;
+      gemm_shape.comp_type = xtype; gemm_shape.out_type = xtype;
+      xresult = libxsmm_dispatch_gemm(gemm_shape, xflags,
+        LIBXSMM_GEMM_PREFETCH_NONE);
+      if (NULL != xresult) {
+        config->xgemm = (libxs_gemm_xfn_t)xresult;
+        result = EXIT_SUCCESS;
+      }
     }
   }
 #endif
 #if !defined(mkl_jit_create_dgemm) && !defined(LIBXSMM_H)
-  LIBXS_UNUSED(config);
+  LIBXS_UNUSED(config); LIBXS_UNUSED(ta); LIBXS_UNUSED(tb);
   LIBXS_UNUSED(datatype); LIBXS_UNUSED(transa); LIBXS_UNUSED(transb);
   LIBXS_UNUSED(m); LIBXS_UNUSED(n); LIBXS_UNUSED(k);
   LIBXS_UNUSED(lda); LIBXS_UNUSED(ldb); LIBXS_UNUSED(ldc);
   LIBXS_UNUSED(alpha); LIBXS_UNUSED(beta);
 #endif
-  return EXIT_FAILURE;
+  return result;
 }
 
 /**
- * Release resources acquired by libxs_dispatch_gemm (e.g., MKL jitter).
+ * Check whether a dispatched config holds a usable kernel.
+ * Returns nonzero if libxs_gemm_call would succeed, zero otherwise.
+ */
+LIBXS_API_INLINE int libxs_gemm_ready(
+  const libxs_gemm_config_t* config)
+{
+  return NULL != config
+    && (  (NULL != config->dgemm_jit && NULL != config->jitter)
+       || (NULL != config->sgemm_jit && NULL != config->jitter)
+       ||  NULL != config->xgemm);
+}
+
+/**
+ * Call the GEMM kernel previously dispatched into config.
+ * Follows the documented priority (JIT > XGEMM > BLAS fallback).
+ * Returns EXIT_SUCCESS if a kernel was called, EXIT_FAILURE otherwise.
+ */
+LIBXS_API_INLINE int libxs_gemm_call(
+  const libxs_gemm_config_t* config,
+  const void* a, const void* b, void* c)
+{
+  int result = EXIT_FAILURE;
+  if (0 != libxs_gemm_ready(config)) {
+    if (NULL != config->dgemm_jit) {
+      config->dgemm_jit(config->jitter, a, b, c);
+    }
+    else if (NULL != config->sgemm_jit) {
+      config->sgemm_jit(config->jitter, a, b, c);
+    }
+    else {
+      libxs_gemm_param_t xparam;
+      LIBXS_EXPECT(NULL != memset(&xparam, 0, sizeof(xparam)));
+      xparam.a[0] = a;
+      xparam.b[0] = b;
+      xparam.c[0] = c;
+      config->xgemm(&xparam);
+    }
+    result = EXIT_SUCCESS;
+  }
+  return result;
+}
+
+/**
+ * Release resources acquired by libxs_gemm_dispatch (e.g., MKL jitter).
  * Safe to call even if dispatch was not used or returned zero.
  */
-LIBXS_API_INLINE void libxs_release_gemm(libxs_gemm_config_t* config)
+LIBXS_API_INLINE void libxs_gemm_release(libxs_gemm_config_t* config)
 {
   if (NULL != config) {
 #if defined(mkl_jit_create_dgemm)

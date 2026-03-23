@@ -140,19 +140,19 @@ LIBXS_API void libxs_gemm_strided_task(
         }
       }
       else if (NULL != config && NULL != config->xgemm) {
-        libxs_xgemm_param_t xparam;
+        libxs_gemm_param_t xparam;
         memset(&xparam, 0, sizeof(xparam));
         for (i = begin; i < end; ++i) {
           char* ci = (char*)c + i * dc;
           if (need_lock) INTERNAL_GEMM_LOCKFWD(ci, lockidx);
-          xparam.a[0] = (void*)((uintptr_t)a + i * da);
-          xparam.b[0] = (void*)((uintptr_t)b + i * db);
+          xparam.a[0] = (const void*)((uintptr_t)a + i * da);
+          xparam.b[0] = (const void*)((uintptr_t)b + i * db);
           xparam.c[0] = ci;
           config->xgemm(&xparam);
         }
       }
       else {
-        const libxs_dgemm_blas_t dgemm_blas = (NULL != config && NULL != config->dgemm_blas)
+        const libxs_gemm_dblas_t dgemm_blas = (NULL != config && NULL != config->dgemm_blas)
           ? config->dgemm_blas : internal_libxs_dgemm_default;
         for (i = begin; i < end; ++i) {
           double* ci = (double*)((char*)c + i * dc);
@@ -175,19 +175,19 @@ LIBXS_API void libxs_gemm_strided_task(
         }
       }
       else if (NULL != config && NULL != config->xgemm) {
-        libxs_xgemm_param_t xparam;
+        libxs_gemm_param_t xparam;
         memset(&xparam, 0, sizeof(xparam));
         for (i = begin; i < end; ++i) {
           char* ci = (char*)c + i * dc;
           if (need_lock) INTERNAL_GEMM_LOCKFWD(ci, lockidx);
-          xparam.a[0] = (void*)((uintptr_t)a + i * da);
-          xparam.b[0] = (void*)((uintptr_t)b + i * db);
+          xparam.a[0] = (const void*)((uintptr_t)a + i * da);
+          xparam.b[0] = (const void*)((uintptr_t)b + i * db);
           xparam.c[0] = ci;
           config->xgemm(&xparam);
         }
       }
       else {
-        const libxs_sgemm_blas_t sgemm_blas = (NULL != config && NULL != config->sgemm_blas)
+        const libxs_gemm_sblas_t sgemm_blas = (NULL != config && NULL != config->sgemm_blas)
           ? config->sgemm_blas : internal_libxs_sgemm_default;
         for (i = begin; i < end; ++i) {
           float* ci = (float*)((char*)c + i * dc);
@@ -248,18 +248,18 @@ LIBXS_API void libxs_gemm_batch_task(
         }
       }
       else if (NULL != config && NULL != config->xgemm) {
-        libxs_xgemm_param_t xparam;
+        libxs_gemm_param_t xparam;
         memset(&xparam, 0, sizeof(xparam));
         for (i = begin; i < end; ++i) {
           if (need_lock) INTERNAL_GEMM_LOCKFWD(c_array[i], lockidx);
-          xparam.a[0] = (void*)(uintptr_t)a_array[i];
-          xparam.b[0] = (void*)(uintptr_t)b_array[i];
-          xparam.c[0] = (void*)c_array[i];
+          xparam.a[0] = a_array[i];
+          xparam.b[0] = b_array[i];
+          xparam.c[0] = c_array[i];
           config->xgemm(&xparam);
         }
       }
       else {
-        const libxs_dgemm_blas_t dgemm_blas = (NULL != config && NULL != config->dgemm_blas)
+        const libxs_gemm_dblas_t dgemm_blas = (NULL != config && NULL != config->dgemm_blas)
           ? config->dgemm_blas : internal_libxs_dgemm_default;
         for (i = begin; i < end; ++i) {
           if (need_lock) INTERNAL_GEMM_LOCKFWD(c_array[i], lockidx);
@@ -281,18 +281,18 @@ LIBXS_API void libxs_gemm_batch_task(
         }
       }
       else if (NULL != config && NULL != config->xgemm) {
-        libxs_xgemm_param_t xparam;
+        libxs_gemm_param_t xparam;
         memset(&xparam, 0, sizeof(xparam));
         for (i = begin; i < end; ++i) {
           if (need_lock) INTERNAL_GEMM_LOCKFWD(c_array[i], lockidx);
-          xparam.a[0] = (void*)(uintptr_t)a_array[i];
-          xparam.b[0] = (void*)(uintptr_t)b_array[i];
-          xparam.c[0] = (void*)c_array[i];
+          xparam.a[0] = a_array[i];
+          xparam.b[0] = b_array[i];
+          xparam.c[0] = c_array[i];
           config->xgemm(&xparam);
         }
       }
       else {
-        const libxs_sgemm_blas_t sgemm_blas = (NULL != config && NULL != config->sgemm_blas)
+        const libxs_gemm_sblas_t sgemm_blas = (NULL != config && NULL != config->sgemm_blas)
           ? config->sgemm_blas : internal_libxs_sgemm_default;
         for (i = begin; i < end; ++i) {
           if (need_lock) INTERNAL_GEMM_LOCKFWD(c_array[i], lockidx);
@@ -337,7 +337,7 @@ LIBXS_API void libxs_gemm_groups(
     const int size = LIBXS_ABS(batchsize[i]);
     int s;
     if (LIBXS_DATATYPE_F64 == datatype) {
-      const libxs_dgemm_blas_t dgemm_blas = (NULL != config && NULL != config->dgemm_blas)
+      const libxs_gemm_dblas_t dgemm_blas = (NULL != config && NULL != config->dgemm_blas)
         ? config->dgemm_blas : internal_libxs_dgemm_default;
       const double *const palpha = (const double*)alpha_array + i;
       const double *const pbeta = (const double*)beta_array + i;
@@ -350,7 +350,7 @@ LIBXS_API void libxs_gemm_groups(
       }
     }
     else if (LIBXS_DATATYPE_F32 == datatype) {
-      const libxs_sgemm_blas_t sgemm_blas = (NULL != config && NULL != config->sgemm_blas)
+      const libxs_gemm_sblas_t sgemm_blas = (NULL != config && NULL != config->sgemm_blas)
         ? config->sgemm_blas : internal_libxs_sgemm_default;
       const float *const palpha = (const float*)alpha_array + i;
       const float *const pbeta = (const float*)beta_array + i;
@@ -365,3 +365,42 @@ LIBXS_API void libxs_gemm_groups(
     j += size;
   }
 }
+
+
+#if defined(LIBXS_BUILD) && !defined(LIBXS_NOFORTRAN)
+
+LIBXS_API int libxs_gemm_dispatch_f(libxs_gemm_config_t* config,
+  libxs_data_t, char, char, int, int, int, int, int, int,
+  const void*, const void*);
+LIBXS_API int libxs_gemm_dispatch_f(libxs_gemm_config_t* config,
+  libxs_data_t datatype, char transa, char transb,
+  int m, int n, int k, int lda, int ldb, int ldc,
+  const void* alpha, const void* beta)
+{
+  return libxs_gemm_dispatch(config, datatype, transa, transb,
+    m, n, k, lda, ldb, ldc, alpha, beta);
+}
+
+
+LIBXS_API int libxs_gemm_ready_f(const libxs_gemm_config_t*);
+LIBXS_API int libxs_gemm_ready_f(const libxs_gemm_config_t* config)
+{
+  return libxs_gemm_ready(config);
+}
+
+
+LIBXS_API int libxs_gemm_call_f(const libxs_gemm_config_t*,
+  const void*, const void*, void*);
+LIBXS_API int libxs_gemm_call_f(const libxs_gemm_config_t* config,
+  const void* a, const void* b, void* c)
+{
+  return libxs_gemm_call(config, a, b, c);
+}
+
+
+LIBXS_API void libxs_gemm_release_f(libxs_gemm_config_t* config)
+{
+  libxs_gemm_release(config);
+}
+
+#endif /*defined(LIBXS_BUILD) && !defined(LIBXS_NOFORTRAN)*/

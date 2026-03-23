@@ -122,7 +122,7 @@ int main(int argc, char* argv[])
     m, n, k, alpha, lda, ldb, beta, ldc))
   {
     jit_kernel = mkl_jit_get_dgemm_ptr(jitter);
-    config.dgemm_jit = (libxs_dgemm_jit_t)jit_kernel;
+    config.dgemm_jit = (libxs_gemm_djit_t)jit_kernel;
     config.jitter = jitter;
     printf("  MKL JIT kernel enabled\n");
   }
