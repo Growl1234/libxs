@@ -343,16 +343,13 @@ LIBXS_API void* libxs_malloc(libxs_malloc_pool_t* pool, size_t size, int alignme
 LIBXS_API void libxs_free(void* pointer)
 {
   if (NULL != pointer) {
-    internal_libxs_malloc_chunk_t *chunk;
+    internal_libxs_malloc_chunk_t *chunk = NULL;
     libxs_malloc_pool_t *pool;
-    const void *const regval = (NULL != internal_libxs_malloc_registry)
-      ? libxs_registry_get(internal_libxs_malloc_registry, &pointer, sizeof(void*), NULL)
-      : NULL;
-    if (NULL != regval) {
-      chunk = *(internal_libxs_malloc_chunk_t* const*)regval;
-      libxs_registry_remove(internal_libxs_malloc_registry, &pointer, sizeof(void*), NULL);
-    }
-    else {
+    const int found = (NULL != internal_libxs_malloc_registry)
+      ? libxs_registry_extract(internal_libxs_malloc_registry,
+          &pointer, sizeof(void*), &chunk, sizeof(chunk), NULL)
+      : 0;
+    if (0 == found) {
       chunk = *(void**)((uintptr_t)pointer - sizeof(void*));
     }
     LIBXS_ASSERT(NULL != chunk);
@@ -385,12 +382,14 @@ LIBXS_API int libxs_malloc_info(const void* pointer, libxs_malloc_info_t* info)
   if (NULL != info) {
     LIBXS_MEMZERO(info);
     if (NULL != pointer) {
-      const void *const regval = (NULL != internal_libxs_malloc_registry)
-        ? libxs_registry_get(internal_libxs_malloc_registry, &pointer, sizeof(void*), NULL)
-        : NULL;
-      const internal_libxs_malloc_chunk_t *const chunk = (NULL != regval)
-        ? *(internal_libxs_malloc_chunk_t* const*)regval
-        : *(void**)((uintptr_t)pointer - sizeof(void*));
+      internal_libxs_malloc_chunk_t *chunk = NULL;
+      const int found = (NULL != internal_libxs_malloc_registry)
+        ? libxs_registry_get_copy(internal_libxs_malloc_registry,
+            &pointer, sizeof(void*), &chunk, sizeof(chunk), NULL)
+        : 0;
+      if (0 == found) {
+        chunk = *(void**)((uintptr_t)pointer - sizeof(void*));
+      }
       info->size = chunk->size;
     }
   }

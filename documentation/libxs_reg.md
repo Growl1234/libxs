@@ -69,6 +69,15 @@ void* libxs_registry_get(const libxs_registry_t* registry,
 Look up a value by key. Returns NULL if not found.
 
 ```C
+int libxs_registry_get_copy(const libxs_registry_t* registry,
+  const void* key, size_t key_size,
+  void* value_out, size_t value_size,
+  libxs_lock_t* lock /* = NULL */);
+```
+
+Thread-safe query: copies up to `value_size` bytes of the stored value into `value_out` under the lock. Unlike `libxs_registry_get`, the caller never receives a raw pointer into the registry's internal storage, making this safe under concurrent modifications. Returns non-zero if the key was found, zero otherwise.
+
+```C
 int libxs_registry_has(libxs_registry_t* registry,
   const void* key, size_t key_size,
   libxs_lock_t* lock /* = NULL */);
@@ -91,6 +100,15 @@ void libxs_registry_remove(libxs_registry_t* registry,
 ```
 
 Remove a key-value pair and release its memory.
+
+```C
+int libxs_registry_extract(libxs_registry_t* registry,
+  const void* key, size_t key_size,
+  void* value_out, size_t value_size,
+  libxs_lock_t* lock /* = NULL */);
+```
+
+Atomically retrieve and remove a key-value pair. Copies up to `value_size` bytes of the stored value into `value_out` (may be NULL to discard the value), then removes the entry and releases its memory. The lookup, copy, and removal are performed under a single lock hold, eliminating the race that exists when calling `libxs_registry_get` followed by `libxs_registry_remove` separately. Returns non-zero if the key was found, zero otherwise.
 
 ## Status
 

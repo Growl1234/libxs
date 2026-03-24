@@ -50,8 +50,10 @@
         PUBLIC :: libxs_registry_destroy
         PUBLIC :: libxs_registry_set
         PUBLIC :: libxs_registry_get
+        PUBLIC :: libxs_registry_get_copy
         PUBLIC :: libxs_registry_has
         PUBLIC :: libxs_registry_remove
+        PUBLIC :: libxs_registry_extract
         PUBLIC :: libxs_registry_info
         PUBLIC :: libxs_memcmp
         PUBLIC :: libxs_matcopy, libxs_matcopy_task
@@ -357,6 +359,20 @@
             TYPE(C_PTR), INTENT(IN), VALUE :: lock
             TYPE(C_PTR) :: internal_registry_get_c
           END FUNCTION
+          FUNCTION internal_registry_get_copy_c(registry,               &
+     &    key, key_size, value_out, value_size,                         &
+     &    lock) BIND(C, NAME="libxs_registry_get_copy")
+            IMPORT :: C_PTR, C_SIZE_T, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: registry
+            TYPE(C_PTR), INTENT(IN), VALUE :: key
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE ::                     &
+     &      key_size
+            TYPE(C_PTR), INTENT(IN), VALUE :: value_out
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE ::                     &
+     &      value_size
+            TYPE(C_PTR), INTENT(IN), VALUE :: lock
+            INTEGER(C_INT) :: internal_registry_get_copy_c
+          END FUNCTION
           FUNCTION internal_registry_has_c(registry,                    &
      &    key, key_size, lock)                                          &
      &    BIND(C, NAME="libxs_registry_has")
@@ -378,6 +394,20 @@
      &      key_size
             TYPE(C_PTR), INTENT(IN), VALUE :: lock
           END SUBROUTINE
+          FUNCTION internal_registry_extract_c(registry,                &
+     &    key, key_size, value_out, value_size,                         &
+     &    lock) BIND(C, NAME="libxs_registry_extract")
+            IMPORT :: C_PTR, C_SIZE_T, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: registry
+            TYPE(C_PTR), INTENT(IN), VALUE :: key
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE ::                     &
+     &      key_size
+            TYPE(C_PTR), INTENT(IN), VALUE :: value_out
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE ::                     &
+     &      value_size
+            TYPE(C_PTR), INTENT(IN), VALUE :: lock
+            INTEGER(C_INT) :: internal_registry_extract_c
+          END FUNCTION
           !> Get registry information.
           !> Returns 0 on success.
           FUNCTION libxs_registry_info(registry,                        &
@@ -724,6 +754,22 @@
      &      registry, key, key_size, C_NULL_PTR)
         END FUNCTION
 
+        !> Thread-safe query: copies up to value_size bytes
+        !> into value_out under the lock. Returns non-zero
+        !> if the key was found.
+        FUNCTION libxs_registry_get_copy(registry,                      &
+     &  key, key_size, value_out, value_size)
+          TYPE(C_PTR), INTENT(IN) :: registry
+          TYPE(C_PTR), INTENT(IN) :: key
+          INTEGER(C_SIZE_T), INTENT(IN) :: key_size
+          TYPE(C_PTR), INTENT(IN) :: value_out
+          INTEGER(C_SIZE_T), INTENT(IN) :: value_size
+          INTEGER(C_INT) :: libxs_registry_get_copy
+          libxs_registry_get_copy = internal_registry_get_copy_c(       &
+     &      registry, key, key_size,                                    &
+     &      value_out, value_size, C_NULL_PTR)
+        END FUNCTION
+
         !> Check if a key exists (non-zero if found).
         FUNCTION libxs_registry_has(registry, key, key_size)
           TYPE(C_PTR), INTENT(IN) :: registry
@@ -742,6 +788,22 @@
           CALL internal_registry_remove_c(                              &
      &      registry, key, key_size, C_NULL_PTR)
         END SUBROUTINE
+
+        !> Atomically retrieve and remove a key-value pair.
+        !> Copies up to value_size bytes into value_out,
+        !> then removes the entry. Returns non-zero if found.
+        FUNCTION libxs_registry_extract(registry,                       &
+     &  key, key_size, value_out, value_size)
+          TYPE(C_PTR), INTENT(IN) :: registry
+          TYPE(C_PTR), INTENT(IN) :: key
+          INTEGER(C_SIZE_T), INTENT(IN) :: key_size
+          TYPE(C_PTR), INTENT(IN) :: value_out
+          INTEGER(C_SIZE_T), INTENT(IN) :: value_size
+          INTEGER(C_INT) :: libxs_registry_extract
+          libxs_registry_extract = internal_registry_extract_c(         &
+     &      registry, key, key_size,                                    &
+     &      value_out, value_size, C_NULL_PTR)
+        END FUNCTION
 
         !> Check if a dispatched GEMM config holds a usable
         !> kernel. Returns nonzero if libxs_gemm_call would

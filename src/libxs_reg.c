@@ -225,6 +225,35 @@ LIBXS_API_INLINE void internal_libxs_registry_remove_impl(
 }
 
 
+/** Probe, optionally copy value, optionally remove. Caller must hold the lock. */
+LIBXS_API_INLINE int internal_libxs_registry_fetch_impl(
+  libxs_registry_t* registry,
+  const void* key, size_t key_size,
+  void* value_out, size_t value_size, int remove)
+{
+  int found = 0;
+  const unsigned int idx = internal_libxs_registry_probe(
+    registry->entries, registry->capacity, key, key_size, &found);
+  if (0 != found) {
+    internal_libxs_regentry_t* e = registry->entries + idx;
+    if (NULL != value_out && 0 < value_size) {
+      const size_t n = value_size < e->value_size ? value_size : e->value_size;
+      memcpy(value_out, e->value, n);
+    }
+    if (0 != remove) {
+      free(e->value);
+      e->value = NULL;
+      e->key_size = 0;
+      e->value_size = 0;
+      e->state = INTERNAL_REG_TOMB;
+      LIBXS_ASSERT(0 < registry->size);
+      --registry->size;
+    }
+  }
+  return found;
+}
+
+
 LIBXS_API libxs_registry_t* libxs_registry_create(void)
 {
   libxs_registry_t* r;
@@ -416,6 +445,50 @@ LIBXS_API void libxs_registry_remove(libxs_registry_t* registry,
 }
 
 
+LIBXS_API int libxs_registry_extract(libxs_registry_t* registry,
+  const void* key, size_t key_size,
+  void* value_out, size_t value_size, libxs_lock_t* lock)
+{
+  int result = 0;
+  if (NULL == registry || NULL == key || 0 == key_size
+    || key_size > LIBXS_REGKEY_MAXSIZE)
+  {
+    return 0;
+  }
+  if (NULL != lock) {
+    LIBXS_ATOMIC_ACQUIRE(lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
+  }
+#if (0 != LIBXS_SYNC)
+  else {
+    LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &registry->lock);
+  }
+#endif
+  result = internal_libxs_registry_fetch_impl(
+    registry, key, key_size, value_out, value_size, 1/*remove*/);
+  if (NULL != lock) {
+    LIBXS_ATOMIC_RELEASE(lock, LIBXS_ATOMIC_LOCKORDER);
+  }
+#if (0 != LIBXS_SYNC)
+  else {
+    LIBXS_LOCK_RELEASE(LIBXS_LOCK, &registry->lock);
+  }
+#endif
+#if defined(INTERNAL_REG_CACHE)
+  if (0 != result) {
+    const unsigned int hash = internal_libxs_regkey_hash(key, key_size);
+    internal_libxs_regcache_entry_t* ce = internal_libxs_regcache + (hash & INTERNAL_REG_CACHE_MASK);
+    if (ce->registry == registry && ce->hash == hash
+      && ce->key_size == key_size
+      && 0 == memcmp(ce->key, key, key_size))
+    {
+      ce->registry = NULL;
+    }
+  }
+#endif
+  return result;
+}
+
+
 LIBXS_API void* libxs_registry_begin(libxs_registry_t* registry,
   const void** key, size_t* cursor)
 {
@@ -524,6 +597,44 @@ LIBXS_API size_t libxs_registry_value_size(libxs_registry_t* registry,
   return result;
 }
 
+LIBXS_API int libxs_registry_get_copy(const libxs_registry_t* registry,
+  const void* key, size_t key_size,
+  void* value_out, size_t value_size, libxs_lock_t* lock)
+{
+  int result = 0;
+  if (NULL == registry || NULL == key || 0 == key_size
+    || key_size > LIBXS_REGKEY_MAXSIZE
+    || NULL == value_out || 0 == value_size)
+  {
+    return 0;
+  }
+  if (NULL != lock) {
+    LIBXS_ATOMIC_ACQUIRE(lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
+  }
+#if (0 != LIBXS_SYNC)
+  else {
+    libxs_registry_t *mutable_reg;
+    memcpy(&mutable_reg, &registry, sizeof(registry));
+    LIBXS_LOCK_ACQREAD(LIBXS_LOCK, &mutable_reg->lock);
+  }
+#endif
+  { libxs_registry_t *mutable_reg;
+    memcpy(&mutable_reg, &registry, sizeof(registry));
+    result = internal_libxs_registry_fetch_impl(
+      mutable_reg, key, key_size, value_out, value_size, 0/*keep*/);
+  }
+  if (NULL != lock) {
+    LIBXS_ATOMIC_RELEASE(lock, LIBXS_ATOMIC_LOCKORDER);
+  }
+#if (0 != LIBXS_SYNC)
+  else {
+    libxs_registry_t *mutable_reg;
+    memcpy(&mutable_reg, &registry, sizeof(registry));
+    LIBXS_LOCK_RELREAD(LIBXS_LOCK, &mutable_reg->lock);
+  }
+#endif
+  return result;
+}
 
 LIBXS_API int libxs_registry_info(libxs_registry_t* registry,
   libxs_registry_info_t* info)

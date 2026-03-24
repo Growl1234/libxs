@@ -79,6 +79,15 @@ LIBXS_API void* libxs_registry_set(libxs_registry_t* registry, const void* key, 
 LIBXS_API void* libxs_registry_get(const libxs_registry_t* registry, const void* key, size_t key_size,
   libxs_lock_t* LIBXS_ARGDEF(lock, NULL));
 
+/**
+ * Thread-safe query: copies up to value_size bytes of the stored value into
+ * value_out under the lock. Returns non-zero if the key was found, zero
+ * otherwise. Unlike libxs_registry_get, the caller never sees a raw pointer
+ * into the registry's internal storage.
+ */
+LIBXS_API int libxs_registry_get_copy(const libxs_registry_t* registry, const void* key, size_t key_size,
+  void* value_out, size_t value_size, libxs_lock_t* LIBXS_ARGDEF(lock, NULL));
+
 /** Check whether a key exists. Returns non-zero if found, zero otherwise. */
 LIBXS_API int libxs_registry_has(libxs_registry_t* registry, const void* key, size_t key_size,
   libxs_lock_t* LIBXS_ARGDEF(lock, NULL));
@@ -90,6 +99,14 @@ LIBXS_API size_t libxs_registry_value_size(libxs_registry_t* registry,
 /** Remove key-value pair from registry and release associated memory. */
 LIBXS_API void libxs_registry_remove(libxs_registry_t* registry, const void* key, size_t key_size,
   libxs_lock_t* LIBXS_ARGDEF(lock, NULL));
+
+/**
+ * Atomically retrieve and remove a key-value pair. Copies up to value_size
+ * bytes of the stored value into value_out (if non-NULL), then removes the
+ * entry. Returns non-zero if the key was found, zero otherwise.
+ */
+LIBXS_API int libxs_registry_extract(libxs_registry_t* registry, const void* key, size_t key_size,
+  void* value_out, size_t value_size, libxs_lock_t* LIBXS_ARGDEF(lock, NULL));
 
 /** Get information about the registry. */
 LIBXS_API int libxs_registry_info(libxs_registry_t* registry, libxs_registry_info_t* info);
