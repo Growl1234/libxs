@@ -1142,25 +1142,25 @@ LIBXS_EXTERN double erf(double) LIBXS_NOTHROW;
 #   define LIBXS_INCBIN_SECTION ".rodata"
 # endif
 # if defined(__ELF__)
-#   define LIBXS_INCBIN(NAME, FILENAME, ALIGN)                                \
-      __asm__(".section " LIBXS_INCBIN_SECTION "\n"                            \
-              "  .global " #NAME "\n"                                          \
-              "  .type " #NAME ", @object\n"                                   \
-              "  .balign " #ALIGN "\n"                                         \
-              "" #NAME ":\n"                                                   \
-              "  .incbin \"" FILENAME "\"\n"                                   \
-              "" #NAME "_end:\n"                                               \
-              ".previous");                                                    \
+#   define LIBXS_INCBIN(NAME, FILENAME, ALIGN) \
+      __asm__(".section " LIBXS_INCBIN_SECTION "\n" \
+              "  .global " #NAME "\n" \
+              "  .type " #NAME ", @object\n" \
+              "  .balign " #ALIGN "\n" \
+              "" #NAME ":\n" \
+              "  .incbin \"" FILENAME "\"\n" \
+              "" #NAME "_end:\n" \
+              ".previous"); \
       extern const char NAME[], NAME##_end[]
 # else /* Mach-O, PE/COFF: no .type directive */
-#   define LIBXS_INCBIN(NAME, FILENAME, ALIGN)                                \
-      __asm__(".section " LIBXS_INCBIN_SECTION "\n"                            \
-              "  .global " LIBXS_STRINGIFY(_##NAME) "\n"                       \
-              "  .balign " #ALIGN "\n"                                         \
-              LIBXS_STRINGIFY(_##NAME) ":\n"                                   \
-              "  .incbin \"" FILENAME "\"\n"                                   \
-              LIBXS_STRINGIFY(_##NAME) "_end:\n"                               \
-              ".previous");                                                    \
+#   define LIBXS_INCBIN(NAME, FILENAME, ALIGN) \
+      __asm__(".section " LIBXS_INCBIN_SECTION "\n" \
+              "  .global " LIBXS_STRINGIFY(_##NAME) "\n" \
+              "  .balign " #ALIGN "\n" \
+              LIBXS_STRINGIFY(_##NAME) ":\n" \
+              "  .incbin \"" FILENAME "\"\n" \
+              LIBXS_STRINGIFY(_##NAME) "_end:\n" \
+              ".previous"); \
       extern const char NAME[], NAME##_end[]
 # endif
 #endif
