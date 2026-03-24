@@ -11,6 +11,15 @@
 
 #include "libxs.h"
 
+#if (defined(__MKL) || defined(MKL_DIRECT_CALL_SEQ) || defined(MKL_DIRECT_CALL)) \
+  && defined(LIBXS_PLATFORM_X86)
+# include <mkl.h>
+#endif
+
+#if defined(__LIBXSMM)
+# include <libxsmm.h>
+#endif
+
 /** Standard Fortran BLAS dgemm signature (e.g., dgemm_). */
 typedef void (*libxs_gemm_dblas_t)(
   const char* transa, const char* transb,
@@ -162,15 +171,14 @@ LIBXS_API_INLINE int libxs_gemm_dispatch(
   const int ta = ('N' != transa && 'n' != transa);
   const int tb = ('N' != transb && 'n' != transb);
 #if defined(mkl_jit_create_dgemm)
-  { const int cblas_ta = (ta ? 112 : 111);
-    const int cblas_tb = (tb ? 112 : 111);
+  { const MKL_TRANSPOSE cblas_ta = (ta ? 112 : 111);
+    const MKL_TRANSPOSE cblas_tb = (tb ? 112 : 111);
     if (LIBXS_DATATYPE_F64 == datatype) {
       void* jitter = NULL;
       const int status = mkl_cblas_jit_create_dgemm(&jitter,
-        MKL_COL_MAJOR, (CBLAS_TRANSPOSE)cblas_ta, (CBLAS_TRANSPOSE)cblas_tb,
-        m, n, k,
-        (NULL != alpha ? *(const double*)alpha : 1.0), lda, ldb,
-        (NULL != beta ? *(const double*)beta : 0.0), ldc);
+        MKL_COL_MAJOR, cblas_ta, cblas_tb, m, n, k,
+        NULL != alpha ? *(const double*)alpha : 1.0, lda, ldb,
+        NULL != beta ? *(const double*)beta : 0.0, ldc);
       if (MKL_JIT_SUCCESS == status) {
         config->dgemm_jit = (libxs_gemm_djit_t)mkl_jit_get_dgemm_ptr(jitter);
         config->jitter = jitter;
@@ -180,10 +188,9 @@ LIBXS_API_INLINE int libxs_gemm_dispatch(
     else if (LIBXS_DATATYPE_F32 == datatype) {
       void* jitter = NULL;
       const int status = mkl_cblas_jit_create_sgemm(&jitter,
-        MKL_COL_MAJOR, (CBLAS_TRANSPOSE)cblas_ta, (CBLAS_TRANSPOSE)cblas_tb,
-        m, n, k,
-        (NULL != alpha ? *(const float*)alpha : 1.0f), lda, ldb,
-        (NULL != beta ? *(const float*)beta : 0.0f), ldc);
+        MKL_COL_MAJOR, cblas_ta, cblas_tb, m, n, k,
+        NULL != alpha ? *(const float*)alpha : 1.0f, lda, ldb,
+        NULL != beta ? *(const float*)beta : 0.0f, ldc);
       if (MKL_JIT_SUCCESS == status) {
         config->sgemm_jit = (libxs_gemm_sjit_t)mkl_jit_get_sgemm_ptr(jitter);
         config->jitter = jitter;
@@ -232,8 +239,7 @@ LIBXS_API_INLINE int libxs_gemm_dispatch(
       }
     }
   }
-#endif
-#if !defined(mkl_jit_create_dgemm) && !defined(LIBXSMM_H)
+#elif !defined(mkl_jit_create_dgemm)
   LIBXS_UNUSED(config); LIBXS_UNUSED(ta); LIBXS_UNUSED(tb);
   LIBXS_UNUSED(datatype); LIBXS_UNUSED(transa); LIBXS_UNUSED(transb);
   LIBXS_UNUSED(m); LIBXS_UNUSED(n); LIBXS_UNUSED(k);

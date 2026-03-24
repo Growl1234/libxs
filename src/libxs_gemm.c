@@ -398,6 +398,7 @@ LIBXS_API int libxs_gemm_call_f(const libxs_gemm_config_t* config,
 }
 
 
+LIBXS_API void libxs_gemm_release_f(libxs_gemm_config_t*);
 LIBXS_API void libxs_gemm_release_f(libxs_gemm_config_t* config)
 {
   libxs_gemm_release(config);
