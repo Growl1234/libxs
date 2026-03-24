@@ -173,30 +173,28 @@ LIBXS_API_INLINE int libxs_gemm_dispatch(
 #if defined(mkl_jit_create_dgemm)
   { const MKL_TRANSPOSE mkl_ta = (0 == ta ? MKL_NOTRANS : MKL_TRANS);
     const MKL_TRANSPOSE mkl_tb = (0 == tb ? MKL_NOTRANS : MKL_TRANS);
+    void* jitter = NULL;
     if (LIBXS_DATATYPE_F64 == datatype) {
-      void* jitter = NULL;
-      const int status = mkl_jit_create_dgemm(&jitter,
+      if (MKL_JIT_SUCCESS == mkl_jit_create_dgemm(&jitter,
         MKL_COL_MAJOR, mkl_ta, mkl_tb, m, n, k,
         NULL != alpha ? *(const double*)alpha : 1.0, lda, ldb,
-        NULL != beta ? *(const double*)beta : 0.0, ldc);
-      if (MKL_JIT_SUCCESS == status) {
+        NULL != beta ? *(const double*)beta : 0.0, ldc))
+      {
         config->dgemm_jit = (libxs_gemm_djit_t)mkl_jit_get_dgemm_ptr(jitter);
-        config->jitter = jitter;
         result = EXIT_SUCCESS;
       }
     }
     else if (LIBXS_DATATYPE_F32 == datatype) {
-      void* jitter = NULL;
-      const int status = mkl_jit_create_sgemm(&jitter,
+      if (MKL_JIT_SUCCESS == mkl_jit_create_sgemm(&jitter,
         MKL_COL_MAJOR, mkl_ta, mkl_tb, m, n, k,
         NULL != alpha ? *(const float*)alpha : 1.0f, lda, ldb,
-        NULL != beta ? *(const float*)beta : 0.0f, ldc);
-      if (MKL_JIT_SUCCESS == status) {
+        NULL != beta ? *(const float*)beta : 0.0f, ldc))
+      {
         config->sgemm_jit = (libxs_gemm_sjit_t)mkl_jit_get_sgemm_ptr(jitter);
-        config->jitter = jitter;
         result = EXIT_SUCCESS;
       }
     }
+    config->jitter = jitter;
   }
 #endif
 #if defined(LIBXSMM_H)
