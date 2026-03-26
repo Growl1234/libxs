@@ -179,7 +179,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
   const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda,
                                const GEMM_REAL_TYPE* b, const GEMM_INT_TYPE* ldb,
   const GEMM_REAL_TYPE*  beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc,
-  unsigned int diff_abc, libxs_matdiff_t* diff)
+  unsigned int diff_stat, libxs_matdiff_t* diff)
 {
   int8_t slice_low_bit[MAX_NSLICES];
   double pow2_low[MAX_NSLICES];
@@ -230,7 +230,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
     (size_t)N * sizeof(double), 0);
   memset(a_slices, 0, (size_t)nslices * M * K_pad);
   memset(b_slices, 0, (size_t)nslices * N * K_pad);
-  if (NULL != diff && 0 == (diff_abc % 3)) {
+  if (NULL != diff && 0 == (diff_stat % 3)) {
     ref_panel = (GEMM_REAL_TYPE*)libxs_malloc(gemm_pool,
       (size_t)nblk_m * nblk_n * BLOCK_M * BLOCK_N * sizeof(*ref_panel), 0);
   }
@@ -326,7 +326,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
     }
 
     /* Phase 2c: diff tracking for A/B decomposition (modes 1 and 2) */
-    if (NULL != diff && 1 == (diff_abc % 3)) {
+    if (NULL != diff && 1 == (diff_stat % 3)) {
 #if defined(_OPENMP)
 #     pragma omp for schedule(static)
 #endif
@@ -359,7 +359,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
         }
       }
     }
-    if (NULL != diff && 2 == (diff_abc % 3)) {
+    if (NULL != diff && 2 == (diff_stat % 3)) {
 #if defined(_OPENMP)
 #     pragma omp for schedule(static)
 #endif
@@ -465,7 +465,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
     }
 
     /* Phase 5 (diff mode 0): reference GEMM comparison */
-    if (NULL != diff && 0 == (diff_abc % 3)) {
+    if (NULL != diff && 0 == (diff_stat % 3)) {
 #if defined(_OPENMP)
 #     pragma omp for LIBXS_OPENMP_COLLAPSE(2) schedule(static)
 #endif

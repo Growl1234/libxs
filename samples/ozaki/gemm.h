@@ -64,7 +64,7 @@ LIBXS_API void ZGEMM(GEMM_ARGDECL);
 LIBXS_API_INTERN void GEMM_REAL(GEMM_ARGDECL);
 
 /** Print GEMM arguments. */
-LIBXS_API void print_gemm(FILE* ostream, GEMM_ARGDECL);
+LIBXS_API void print_gemm(FILE* ostream, int compact, GEMM_ARGDECL);
 /** Print statistics. */
 LIBXS_API void print_diff(FILE* ostream, const libxs_matdiff_t* diff);
 

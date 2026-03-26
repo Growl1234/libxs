@@ -121,7 +121,7 @@ int main(int argc, char* argv[])
   }
 
   /* Print requested GEMM arguments (regardless of result code) */
-  print_gemm(stdout, &transa, &transb, &m, &n, &k,
+  print_gemm(stdout, 0, &transa, &transb, &m, &n, &k,
     &alpha, a, &lda, b, &ldb, &beta, c, &ldc);
 
   if (EXIT_SUCCESS == result) { /* Initialize A-matrix */
