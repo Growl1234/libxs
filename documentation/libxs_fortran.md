@@ -10,4 +10,4 @@ output_dir: fortran
 src_dir: ../include
 search: true
 
-<a href="../fortran/module/libxs.html" target="_blank">Reference Documentation</a>
+<a href="https://libxs.readthedocs.io/fortran/module/libxs.html" target="_blank">Reference Documentation</a>
