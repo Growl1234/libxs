@@ -89,15 +89,25 @@ IMPLSRCS := $(SRCDIR)/$(OUTNAME).c \
 ENTRYSRCS := $(SRCDIR)/wrap.c
 COBJCTS_D := $(patsubst $(SRCDIR)/%.c,$(BLDDIR)/%-dc.o,$(CSOURCS))
 COBJCTS_S := $(patsubst $(SRCDIR)/%.c,$(BLDDIR)/%-sc.o,$(CSOURCS))
+COBJCTS_Z := $(patsubst $(SRCDIR)/%.c,$(BLDDIR)/%-zc.o,$(CSOURCS))
+COBJCTS_C := $(patsubst $(SRCDIR)/%.c,$(BLDDIR)/%-cc.o,$(CSOURCS))
 IMPLOBJ_D := $(patsubst $(SRCDIR)/%.c,$(BLDDIR)/%-d.o,$(IMPLSRCS))
 IMPLOBJ_S := $(patsubst $(SRCDIR)/%.c,$(BLDDIR)/%-s.o,$(IMPLSRCS))
 IMPLOBJS := $(IMPLOBJ_D) $(IMPLOBJ_S)
 ENTRYOBJ_D := $(patsubst $(SRCDIR)/%.c,$(BLDDIR)/%-d.o,$(ENTRYSRCS))
 ENTRYOBJ_S := $(patsubst $(SRCDIR)/%.c,$(BLDDIR)/%-s.o,$(ENTRYSRCS))
 ENTRYOBJS := $(ENTRYOBJ_D) $(ENTRYOBJ_S)
-OBJECTS := $(COBJCTS_D) $(COBJCTS_S) $(IMPLOBJS) $(ENTRYOBJS) $(OCLOBJS)
+OBJECTS := $(COBJCTS_D) \
+           $(COBJCTS_S) \
+           $(COBJCTS_Z) \
+           $(COBJCTS_C) \
+           $(IMPLOBJS) \
+           $(ENTRYOBJS) \
+           $(OCLOBJS) \
+           $(NULL)
 XFILES := $(OUTDIR)/dgemm-blas.x $(OUTDIR)/dgemm-wrap.x \
-          $(OUTDIR)/sgemm-blas.x $(OUTDIR)/sgemm-wrap.x
+          $(OUTDIR)/sgemm-blas.x $(OUTDIR)/sgemm-wrap.x \
+          $(OUTDIR)/zgemm-wrap.x $(OUTDIR)/cgemm-wrap.x
 
 .PHONY: all
 all: $(XFILES)
@@ -134,8 +144,15 @@ $(OUTDIR)/dgemm-wrap.x: $(BLDDIR)/gemm-dc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB)
 $(OUTDIR)/sgemm-wrap.x: $(BLDDIR)/gemm-sc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
 	$(LINK_WRAP)
 
+$(OUTDIR)/zgemm-wrap.x: $(BLDDIR)/gemm-zc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
+	$(LINK_WRAP)
+
+$(OUTDIR)/cgemm-wrap.x: $(BLDDIR)/gemm-cc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
+	$(LINK_WRAP)
+
 .PHONY: $(OUTDIR)/libwrap.$(DLIBEXT)
 .PHONY: $(OUTDIR)/dgemm-blas.x $(OUTDIR)/sgemm-blas.x
+.PHONY: $(OUTDIR)/zgemm-blas.x $(OUTDIR)/cgemm-blas.x
 else
 $(OUTDIR)/libwrap.$(DLIBEXT): $(IMPLOBJS) $(ENTRYOBJS) $(OCLOBJS) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
 	$(LIB_SOLD) $(call solink,$@) $(IMPLOBJS) $(ENTRYOBJS) $(OCLOBJS) \
@@ -147,8 +164,15 @@ $(OUTDIR)/dgemm-blas.x: $(BLDDIR)/gemm-dc.o $(BLDDIR)/gemm-print-d.o $(OUTDIR)/l
 $(OUTDIR)/sgemm-blas.x: $(BLDDIR)/gemm-sc.o $(BLDDIR)/gemm-print-s.o $(OUTDIR)/libwrap.$(DLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
 	$(LD) -o $@ $(BLDDIR)/gemm-sc.o $(BLDDIR)/gemm-print-s.o $(XLIB) $(XSTREAM_LIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
+$(OUTDIR)/zgemm-blas.x: $(BLDDIR)/gemm-zc.o $(BLDDIR)/gemm-print-d.o $(OUTDIR)/libwrap.$(DLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
+	$(LD) -o $@ $(BLDDIR)/gemm-zc.o $(BLDDIR)/gemm-print-d.o $(XLIB) $(XSTREAM_LIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+
+$(OUTDIR)/cgemm-blas.x: $(BLDDIR)/gemm-cc.o $(BLDDIR)/gemm-print-s.o $(OUTDIR)/libwrap.$(DLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
+	$(LD) -o $@ $(BLDDIR)/gemm-cc.o $(BLDDIR)/gemm-print-s.o $(XLIB) $(XSTREAM_LIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+
 .PHONY: $(OUTDIR)/libwrap.$(SLIBEXT)
 .PHONY: $(OUTDIR)/dgemm-wrap.x $(OUTDIR)/sgemm-wrap.x
+.PHONY: $(OUTDIR)/zgemm-wrap.x $(OUTDIR)/cgemm-wrap.x
 endif
 
 $(BLDDIR)/%-dc.o: $(SRCDIR)/%.c .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc
@@ -156,6 +180,12 @@ $(BLDDIR)/%-dc.o: $(SRCDIR)/%.c .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEP
 
 $(BLDDIR)/%-sc.o: $(SRCDIR)/%.c .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc
 	$(CC) -DGEMM_REAL_TYPE=float $(DFLAGS) $(IFLAGS) $(CFLAGS) $(CTARGET) -c $< -o $@
+
+$(BLDDIR)/%-zc.o: $(SRCDIR)/%.c .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc
+	$(CC) -DGEMM_COMPLEX $(DFLAGS) $(IFLAGS) $(CFLAGS) $(CTARGET) -c $< -o $@
+
+$(BLDDIR)/%-cc.o: $(SRCDIR)/%.c .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc
+	$(CC) -DGEMM_COMPLEX -DGEMM_REAL_TYPE=float $(DFLAGS) $(IFLAGS) $(CFLAGS) $(CTARGET) -c $< -o $@
 
 # OpenCL sources need __OPENCL for XSTREAM_LIB OpenCL headers
 ifneq (,$(OCLOBJS))

@@ -38,13 +38,26 @@ int main(int argc, char* argv[])
   GEMM_INT_TYPE ldc = (10 < argc ? atoi(argv[10]) : m);
   char transa = (0 == ta ? 'N' : 'T'), transb = (0 == tb ? 'N' : 'T');
   const GEMM_REAL_TYPE scale = (1 < nrepeat ? (1.0 / nrepeat) : 1);
-  int result = EXIT_SUCCESS, file_input = 0, complex_input = 0, i;
+  int result = EXIT_SUCCESS, file_input = 0, i;
+#if defined(GEMM_COMPLEX)
+  int complex_input = 1;
+#else
+  int complex_input = 0;
+#endif
   GEMM_REAL_TYPE complex_alpha[2] = { 0 }, complex_beta[2] = { 0 };
   GEMM_REAL_TYPE *a = NULL, *b = NULL, *c = NULL, *c_ref = NULL;
   GEMM_INT_TYPE a_rows, a_cols, b_rows, b_cols;
   libxs_matdiff_t diff;
 
   libxs_init();
+
+#if defined(GEMM_COMPLEX)
+  /* Complex mode: alpha and beta are [real, imag] pairs */
+  complex_alpha[0] = alpha;
+  complex_alpha[1] = 0.0;
+  complex_beta[0] = beta;
+  complex_beta[1] = 0.0;
+#endif
 
   if (2 < argc && 0 == m) { /* Indicate filename(s) */
     GEMM_REAL_TYPE scalar[2] = { 0 };
