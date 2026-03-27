@@ -62,7 +62,6 @@ nav:
   - Memory: tests/memory.md
   - MHD: tests/mhd.md
   - Registry: tests/registry.md
-  - Thread Safety: tests/threadsafety.md
   - Timer: tests/timer.md
 - About:
   - License: LICENSE.md
