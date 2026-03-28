@@ -227,5 +227,11 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
       ++gemm_diff.r;
       LIBXS_ATOMIC_RELEASE(&gemm_lock, LIBXS_ATOMIC_LOCKORDER);
     }
+#if defined(__LIBXSTREAM)
+    /* Invalidate OpenCL cache when CPU path modifies matrices */
+    if (NULL != ozaki_ocl_handle) {
+      ozaki_ocl_invalidate_cache(ozaki_ocl_handle, a, b);
+    }
+#endif
   }
 }

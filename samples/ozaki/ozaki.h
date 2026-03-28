@@ -241,6 +241,7 @@ int ozaki_ocl_zgemm3m(void* handle, char transa, char transb,
   const void* b, int ldb,
   const double* beta, void* c, int ldc);
 int ozaki_ocl_supports_zgemm3m(void* handle);
+void ozaki_ocl_invalidate_cache(void* handle, const void* a, const void* b);
 void ozaki_ocl_finalize(void);
 #endif
 

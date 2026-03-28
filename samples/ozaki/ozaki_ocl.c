@@ -85,8 +85,12 @@ int ozaki_ocl_gemm(void* handle, char transa, char transb,
     result = ozaki_gemm(&h->ctx, h->stream,
       transa, transb, M, N, K,
       alpha, a, lda, b, ldb, beta, c, ldc);
-    /* BLAS API is synchronous: caller expects result in c upon return. */
+    /* BLAS API is synchronous: caller expects result in c upon return.
+     * Must sync all streams including persistent helper streams used
+     * for preprocessing (stream_a, stream_b) to prevent race conditions. */
     libxstream_stream_sync(h->stream);
+    if (NULL != h->ctx.stream_a) libxstream_stream_sync(h->ctx.stream_a);
+    if (NULL != h->ctx.stream_b) libxstream_stream_sync(h->ctx.stream_b);
     LIBXS_ATOMIC_RELEASE(&h->lock, LIBXS_ATOMIC_LOCKORDER);
   }
   return result;
@@ -106,8 +110,12 @@ int ozaki_ocl_zgemm3m(void* handle, char transa, char transb,
     result = ozaki_zgemm3m(&h->ctx, h->stream,
       transa, transb, M, N, K,
       alpha, a, lda, b, ldb, beta, c, ldc);
-    /* BLAS API is synchronous: caller expects result in c upon return. */
+    /* BLAS API is synchronous: caller expects result in c upon return.
+     * Must sync all streams including persistent helper streams used
+     * for preprocessing (stream_a, stream_b) to prevent race conditions. */
     libxstream_stream_sync(h->stream);
+    if (NULL != h->ctx.stream_a) libxstream_stream_sync(h->ctx.stream_a);
+    if (NULL != h->ctx.stream_b) libxstream_stream_sync(h->ctx.stream_b);
     LIBXS_ATOMIC_RELEASE(&h->lock, LIBXS_ATOMIC_LOCKORDER);
   }
   return result;
@@ -123,6 +131,15 @@ int ozaki_ocl_supports_zgemm3m(void* handle)
     return 1;
   }
   return 0;
+}
+
+
+void ozaki_ocl_invalidate_cache(void* handle, const void* a, const void* b)
+{
+  ozaki_ocl_handle_t* h = (ozaki_ocl_handle_t*)handle;
+  if (NULL != h) {
+    ozaki_invalidate_cache(&h->ctx, a, b);
+  }
 }
 
 
