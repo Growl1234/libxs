@@ -10,10 +10,10 @@
 
 
 /**
- *  Split a (pre-aligned) mantissa into signed 7-bit digits.
- *  The mantissa is expected to be in the same format as produced
- *  by ozaki_extract_ieee (implicit bit at position OZ_MANT_BITS),
- *  but may have been right-shifted for exponent alignment.
+ * Split a (pre-aligned) mantissa into signed 7-bit digits.
+ * The mantissa is expected to be in the same format as produced
+ * by ozaki_extract_ieee (implicit bit at position OZ_MANT_BITS),
+ * but may have been right-shifted for exponent alignment.
  */
 static void split_digits(uint64_t mantissa, int sign,
   int8_t digits[MAX_NSLICES])
@@ -47,8 +47,8 @@ static void split_digits(uint64_t mantissa, int sign,
 
 
 /**
- *  Reconstruct a floating-point value from its signed 7-bit digit
- *  representation.  Used by diff tracking modes 1 and 2.
+ * Reconstruct a floating-point value from its signed 7-bit digit
+ * representation.  Used by diff tracking modes 1 and 2.
  */
 static double reconstruct_from_digits(const int8_t digits[MAX_NSLICES],
   int exp_base, const int8_t slice_low_bit[MAX_NSLICES])
@@ -69,9 +69,9 @@ static double reconstruct_from_digits(const int8_t digits[MAX_NSLICES],
 
 
 /**
- *  Preprocess rows of A: decompose, align, split into digits, and write
- *  directly into the k-contiguous layout ak[M][S][K] used by dot products.
- *  This avoids a separate transpose pass over an intermediate buffer.
+ * Preprocess rows of A: decompose, align, split into digits, and write
+ * directly into the k-contiguous layout ak[M][S][K] used by dot products.
+ * This avoids a separate transpose pass over an intermediate buffer.
  */
 LIBXS_API_INLINE void preprocess_rows(const GEMM_REAL_TYPE* a, GEMM_INT_TYPE lda, int ta,
   GEMM_INT_TYPE M, GEMM_INT_TYPE K, GEMM_INT_TYPE ib, GEMM_INT_TYPE kb, GEMM_INT_TYPE iblk,
@@ -120,9 +120,9 @@ LIBXS_API_INLINE void preprocess_rows(const GEMM_REAL_TYPE* a, GEMM_INT_TYPE lda
 
 
 /**
- *  Preprocess columns of B: decompose, align, split into digits, and write
- *  directly into the k-contiguous layout bk[N][S][K] used by dot products.
- *  This avoids a separate transpose pass over an intermediate buffer.
+ * Preprocess columns of B: decompose, align, split into digits, and write
+ * directly into the k-contiguous layout bk[N][S][K] used by dot products.
+ * This avoids a separate transpose pass over an intermediate buffer.
  */
 LIBXS_API_INLINE void preprocess_cols(const GEMM_REAL_TYPE* b, GEMM_INT_TYPE ldb, int tb,
   GEMM_INT_TYPE N, GEMM_INT_TYPE K, GEMM_INT_TYPE jb, GEMM_INT_TYPE kb, GEMM_INT_TYPE jblk,

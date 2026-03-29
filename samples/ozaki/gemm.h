@@ -75,12 +75,12 @@ typedef struct gemm_mhd_settings_t {
 } gemm_mhd_settings_t;
 
 /**
- *  Read a GEMM matrix from an MHD file.
- *  Extension: [trans:char][ld:int][scalar:ncomp*real][settings(opt)].
- *  If data is NULL, reads header/extension only (info pass).
- *  If data is non-NULL, also reads the matrix data.
- *  If settings is non-NULL, fills it from extension (zeros if absent).
- *  All output pointers may be NULL.  Returns EXIT_SUCCESS on success.
+ * Read a GEMM matrix from an MHD file.
+ * Extension: [trans:char][ld:int][scalar:ncomp*real][settings(opt)].
+ * If data is NULL, reads header/extension only (info pass).
+ * If data is non-NULL, also reads the matrix data.
+ * If settings is non-NULL, fills it from extension (zeros if absent).
+ * All output pointers may be NULL.  Returns EXIT_SUCCESS on success.
  */
 LIBXS_API_INLINE int gemm_mhd_read(const char* filename,
   GEMM_INT_TYPE* rows, GEMM_INT_TYPE* cols,
@@ -152,9 +152,9 @@ LIBXS_API_INLINE int gemm_mhd_read(const char* filename,
 }
 
 /**
- *  Write a GEMM matrix to an MHD file (with extension data).
- *  Extension: [trans:char][ld:int][scalar:ncomp*real][settings(opt)].
- *  If settings is non-NULL, the Ozaki settings are appended.
+ * Write a GEMM matrix to an MHD file (with extension data).
+ * Extension: [trans:char][ld:int][scalar:ncomp*real][settings(opt)].
+ * If settings is non-NULL, the Ozaki settings are appended.
  */
 LIBXS_API_INLINE int gemm_mhd_write(const char* filename,
   const GEMM_REAL_TYPE* data, GEMM_INT_TYPE rows, GEMM_INT_TYPE cols,

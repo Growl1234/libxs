@@ -73,9 +73,9 @@
 #endif
 
 /**
- *  Implement the public gemm_ozN function: call the _diff kernel,
- *  then handle verbose output, diff accumulation, and matrix dumps.
- *  DIFF_FN is the _diff kernel (gemm_oz1_diff or gemm_oz2_diff).
+ * Implement the public gemm_ozN function: call the _diff kernel,
+ * then handle verbose output, diff accumulation, and matrix dumps.
+ * DIFF_FN is the _diff kernel (gemm_oz1_diff or gemm_oz2_diff).
  */
 #define OZAKI_GEMM_WRAPPER(DIFF_FN) \
   if (0 == ozaki_verbose) { \
@@ -172,26 +172,10 @@
 # define ozaki_dot_i8_init() ozaki_dot_i8_sw
 #endif
 
-/* BF16 dot product dispatch macro.
- * Priority: VDPBF16PS (hardware) > scalar. */
-#if defined(LIBXS_INTRINSICS_AVX512) && defined(__AVX512BF16__) && \
-    (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
-# if (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH)
-#   define ozaki_dot_bf16_init() ozaki_dot_bf16_hw
-# else
-#   define ozaki_dot_bf16_init() \
-      ((LIBXS_X86_AVX512 <= ozaki_target_arch) ? ozaki_dot_bf16_hw : ozaki_dot_bf16_sw)
-# endif
-#else
-# define ozaki_dot_bf16_init() ozaki_dot_bf16_sw
-#endif
-
 /** Function type for complex GEMM (precision-specific). */
 LIBXS_EXTERN_C typedef void (*zgemm_function_t)(GEMM_ARGDECL);
 /** Function pointer type for int8 dot product dispatch. */
 typedef int32_t (*ozaki_dot_i8_fn)(const int8_t[BLOCK_K], const int8_t[BLOCK_K]);
-/** Function pointer type for BF16 dot product dispatch. */
-typedef float (*ozaki_dot_bf16_fn)(const libxs_bf16_t[BLOCK_K], const libxs_bf16_t[BLOCK_K]);
 
 /** Function prototypes for wrapped / real / public GEMM and complex GEMM. */
 LIBXS_API_INTERN void GEMM_WRAP(GEMM_ARGDECL);
@@ -424,119 +408,15 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32(
 }
 
 
-/* Shared bfloat16 dot-product infrastructure (AVX-512-BF16 + scalar fallback).
- * VDPBF16PS: BF16 pair dot product accumulated into FP32.
- *
- * Scheme 3 uses a BF16-native Dekker-style error-free split: each element
- * is decomposed into a sequence of BF16 values by iteratively rounding the
- * residual.  Every BF16 slice carries its own exponent, so there is no
- * shared per-row/per-column exponent, no mantissa alignment, and the dot
- * product result is already a properly scaled FP32 value.
- *
- * Guard: __AVX512BF16__ is defined by GCC >= 11 / Clang >= 13 when
- * -mavx512bf16 (or implied by -march=sapphirerapids, etc.) is active. */
-
 /**
- *  Dekker-style error-free split: decompose a floating-point value into
- *  a sequence of BF16 slices such that value = sum(slices) + residual.
- *  Each slice captures the next 8 significant bits of the residual;
- *  after S slices, roughly 8*S mantissa bits have been captured.
+ * Extract IEEE-754 biased exponent and full mantissa (with implicit bit)
+ * into uint64_t.  Returns sign (+1 or -1); for zero/subnormal/NaN/Inf
+ * sets exp_biased=0 and mantissa=0, returns +1.
  *
- *  Because every BF16 slice carries its own exponent, this avoids the
- *  shared-exponent alignment that int8-based schemes require.
- */
-LIBXS_API_INLINE void ozaki_split_to_bf16(GEMM_REAL_TYPE x,
-  libxs_bf16_t slices[MAX_NSLICES])
-{
-  double residual = (double)x;
-  int s;
-  LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
-  for (s = 0; s < ozaki_n; ++s) {
-    slices[s] = libxs_round_bf16(residual);
-    residual -= libxs_bf16_to_f64(slices[s]);
-  }
-}
-
-
-#if defined(LIBXS_INTRINSICS_AVX512) && defined(__AVX512BF16__)
-
-# if 16 == BLOCK_K /* 256-bit: 16 BF16 values = 8 pairs */
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
-float ozaki_dot_bf16_hw(const libxs_bf16_t a[BLOCK_K], const libxs_bf16_t b[BLOCK_K])
-{
-  const __m256bh va = (__m256bh)_mm256_loadu_si256((const __m256i*)a);
-  const __m256bh vb = (__m256bh)_mm256_loadu_si256((const __m256i*)b);
-  __m256 dp = _mm256_dpbf16_ps(_mm256_setzero_ps(), va, vb);
-  { const __m128 hi = _mm256_extractf128_ps(dp, 1);
-    __m128 lo = _mm256_castps256_ps128(dp);
-    lo = _mm_add_ps(lo, hi);
-    lo = _mm_hadd_ps(lo, lo);
-    lo = _mm_hadd_ps(lo, lo);
-    return _mm_cvtss_f32(lo);
-  }
-}
-
-# elif 32 == BLOCK_K /* 512-bit: 32 BF16 values = 16 pairs */
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
-float ozaki_dot_bf16_hw(const libxs_bf16_t a[BLOCK_K], const libxs_bf16_t b[BLOCK_K])
-{
-  const __m512bh va = (__m512bh)_mm512_loadu_si512((const __m512i*)a);
-  const __m512bh vb = (__m512bh)_mm512_loadu_si512((const __m512i*)b);
-  __m512 dp = _mm512_dpbf16_ps(_mm512_setzero_ps(), va, vb);
-  return _mm512_reduce_add_ps(dp);
-}
-
-# elif 64 == BLOCK_K /* 2 x 512-bit: 64 BF16 values = 32 pairs */
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
-float ozaki_dot_bf16_hw(const libxs_bf16_t a[BLOCK_K], const libxs_bf16_t b[BLOCK_K])
-{
-  const __m512bh va0 = (__m512bh)_mm512_loadu_si512((const __m512i*)a);
-  const __m512bh vb0 = (__m512bh)_mm512_loadu_si512((const __m512i*)b);
-  const __m512bh va1 = (__m512bh)_mm512_loadu_si512((const __m512i*)(a + 32));
-  const __m512bh vb1 = (__m512bh)_mm512_loadu_si512((const __m512i*)(b + 32));
-  __m512 dp = _mm512_dpbf16_ps(_mm512_setzero_ps(), va0, vb0);
-  dp = _mm512_dpbf16_ps(dp, va1, vb1);
-  return _mm512_reduce_add_ps(dp);
-}
-
-# endif /* BLOCK_K width selection */
-#endif /* LIBXS_INTRINSICS_AVX512 && __AVX512BF16__ */
-
-
-LIBXS_API_INLINE float ozaki_dot_bf16_sw(const libxs_bf16_t a[BLOCK_K], const libxs_bf16_t b[BLOCK_K])
-{
-  float dot = 0.0f;
-  int kk;
-#if defined(LIBXS_BF16)
-  for (kk = 0; kk < BLOCK_K; ++kk) {
-    union { uint16_t u; __bf16 h; } ca, cb;
-    ca.u = a[kk]; cb.u = b[kk];
-    dot += (float)ca.h * (float)cb.h;
-  }
-#else
-  for (kk = 0; kk < BLOCK_K; ++kk) {
-    union { uint32_t u; float f; } ca, cb;
-    ca.u = (uint32_t)a[kk] << 16;
-    cb.u = (uint32_t)b[kk] << 16;
-    dot += ca.f * cb.f;
-  }
-#endif
-  return dot;
-}
-
-
-/**
- *  Extract IEEE-754 biased exponent and full mantissa (with implicit bit)
- *  into uint64_t.  Returns sign (+1 or -1); for zero/subnormal/NaN/Inf
- *  sets exp_biased=0 and mantissa=0, returns +1.
- *
- *  Special-value detection is done entirely via the raw exponent field
- *  after bit-extraction, avoiding the previous float cast which was
- *  incorrect for double precision (finite doubles > ~3.4e38 overflow
- *  to float-Inf, producing a false positive).
+ * Special-value detection is done entirely via the raw exponent field
+ * after bit-extraction, avoiding the previous float cast which was
+ * incorrect for double precision (finite doubles > ~3.4e38 overflow
+ * to float-Inf, producing a false positive).
  */
 LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value,
   int16_t* exp_biased, uint64_t* mantissa)
@@ -578,9 +458,9 @@ LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value,
 
 
 /**
- *  Scale a tile of C by beta, optionally capturing the pre-scaled block.
- *  Per BLAS spec, beta=0 must zero out C unconditionally (C may hold NaN
- *  or Inf when uninitialized); a plain multiply would give NaN.
+ * Scale a tile of C by beta, optionally capturing the pre-scaled block.
+ * Per BLAS spec, beta=0 must zero out C unconditionally (C may hold NaN
+ * or Inf when uninitialized); a plain multiply would give NaN.
  */
 LIBXS_API_INLINE void ozaki_scale_block_beta(GEMM_REAL_TYPE* mb, GEMM_INT_TYPE ldc,
   GEMM_INT_TYPE iblk, GEMM_INT_TYPE jblk, const GEMM_REAL_TYPE* beta,

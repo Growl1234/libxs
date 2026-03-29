@@ -27,11 +27,6 @@ else
 fi
 if [ $# -gt 0 ]; then shift; fi
 
-# BF16 Scheme 3 threshold (overridable via CHECK_BF16 env var).
-# BF16 splitting is inherently approximate; the GPU's fast-relaxed-math
-# and FP32 accumulation limit precision to ~1e-4 for double inputs.
-CHECK_BF16=${CHECK_BF16:-1e-3}
-
 TMPF=$(mktemp)
 trap 'rm -f ${TMPF}' EXIT
 
@@ -69,42 +64,6 @@ echo "-----------------------------------"
 echo "CHECK [${TEST}]: Scheme 2 (CRT)"
 if [ "$*" ]; then echo "args    $*"; fi
 { CHECK=-1 OZAKI_VERBOSE=1 OZAKI=2 "${EXE}" "$@" 2>"${TMPF}"; } >/dev/null || RESULT=$?
-if [ "0" != "${RESULT}" ]; then
-  echo "FAILED[${RESULT}] $(${CAT} "${TMPF}")"
-  exit ${RESULT}
-fi
-if ${GREP} -q "CHECK:" "${TMPF}"; then
-  echo "OK $(${GREP} "CHECK:" "${TMPF}")"
-else
-  echo "FAILED (no CHECK output)"
-  exit 1
-fi
-echo
-
-# Scheme 3 (BF16 Dekker split): inherently approximate (FP32 accumulation)
-# Use explicit threshold — BF16 dot products are not exact unlike int8.
-echo "-----------------------------------"
-echo "CHECK [${TEST}]: Scheme 3 (BF16)"
-if [ "$*" ]; then echo "args    $*"; fi
-{ CHECK=${CHECK_BF16} OZAKI_VERBOSE=1 OZAKI=3 "${EXE}" "$@" 2>"${TMPF}"; } >/dev/null || RESULT=$?
-if [ "0" != "${RESULT}" ]; then
-  echo "FAILED[${RESULT}] $(${CAT} "${TMPF}")"
-  exit ${RESULT}
-fi
-if ${GREP} -q "CHECK:" "${TMPF}"; then
-  echo "OK $(${GREP} "CHECK:" "${TMPF}")"
-else
-  echo "FAILED (no CHECK output)"
-  exit 1
-fi
-echo
-
-# Scheme 4 (CRT + BF16 dot products): exact — residues are small integers
-# representable in BF16, and FP32 accumulation is exact for BLOCK_K <= 64.
-echo "-----------------------------------"
-echo "CHECK [${TEST}]: Scheme 4 (CRT+BF16)"
-if [ "$*" ]; then echo "args    $*"; fi
-{ CHECK=-1 OZAKI_VERBOSE=1 OZAKI=4 "${EXE}" "$@" 2>"${TMPF}"; } >/dev/null || RESULT=$?
 if [ "0" != "${RESULT}" ]; then
   echo "FAILED[${RESULT}] $(${CAT} "${TMPF}")"
   exit ${RESULT}
