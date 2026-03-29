@@ -228,9 +228,11 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
       LIBXS_ATOMIC_RELEASE(&gemm_lock, LIBXS_ATOMIC_LOCKORDER);
     }
 #if defined(__LIBXSTREAM)
-    /* Invalidate OpenCL cache when CPU path modifies matrices */
+    /* Invalidate cache entries matching output C: the CPU path just wrote C,
+     * so any cached preprocessed data keyed by C's pointer is now stale
+     * (C's address may be reused as A or B in a subsequent GEMM call). */
     if (NULL != ozaki_ocl_handle) {
-      ozaki_ocl_invalidate_cache(ozaki_ocl_handle, a, b);
+      ozaki_ocl_invalidate_cache(ozaki_ocl_handle, c, c);
     }
 #endif
   }
