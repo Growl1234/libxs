@@ -807,8 +807,6 @@
 # define LIBXS_PRAGMA_OMP(...)
 # define LIBXS_OMP_VAR(A)
 #endif
-/** Append "_omp" postfix to the given symbol. */
-#define LIBXS_USEOMP(FUNCTION) LIBXS_CONCATENATE(FUNCTION, _omp)
 
 #if defined(LIBXS_BUILD) && (defined(__GNUC__) || defined(__clang__)) && \
    !defined(__CYGWIN__) && !defined(__MINGW32__) && !defined(_WIN32)
