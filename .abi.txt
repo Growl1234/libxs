@@ -27,14 +27,12 @@ libxs_gemm_batch
 libxs_gemm_batch_task
 libxs_gemm_call
 libxs_gemm_call_f
-libxs_gemm_dispatch_f
-libxs_gemm_groups
+libxs_gemm_dispatch
+libxs_gemm_index
+libxs_gemm_index_task
 libxs_gemm_ready
 libxs_gemm_ready_f
 libxs_gemm_release
-libxs_gemm_release_f
-libxs_gemm_strided
-libxs_gemm_strided_task
 libxs_get_verbosity
 libxs_hash
 libxs_hash16
@@ -110,7 +108,6 @@ libxs_registry_next
 libxs_registry_remove
 libxs_registry_set
 libxs_registry_value_size
-libxs_release_kernel
 libxs_remainder
 libxs_rng_f64
 libxs_rng_seq
