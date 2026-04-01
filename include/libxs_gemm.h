@@ -10,6 +10,7 @@
 #define LIBXS_GEMM_H
 
 #include "libxs.h"
+#include "libxs_reg.h"
 
 #if (defined(__MKL) || defined(MKL_DIRECT_CALL_SEQ) || defined(MKL_DIRECT_CALL)) \
   && defined(LIBXS_PLATFORM_X86)
@@ -19,6 +20,7 @@
 #if defined(__LIBXSMM)
 # include <libxsmm.h>
 #endif
+
 
 /** Standard Fortran BLAS dgemm signature (e.g., dgemm_). */
 typedef void (*libxs_gemm_dblas_t)(
@@ -69,6 +71,20 @@ typedef enum libxs_gemm_flags_t {
 } libxs_gemm_flags_t;
 
 /**
+ * GEMM shape: problem geometry, transpose flags, and scalar
+ * coefficients.  Alpha/beta are stored as double regardless of
+ * datatype (float values are promoted without loss).
+ * Also serves as registry key when caching dispatched
+ * configurations (all-int fields avoid padding).
+ */
+typedef struct libxs_gemm_shape_t {
+  libxs_data_t datatype;
+  int transa, transb;
+  int m, n, k, lda, ldb, ldc;
+  double alpha, beta;
+} libxs_gemm_shape_t;
+
+/**
  * Configuration supplying GEMM kernels. Pass NULL to batch functions
  * to use the built-in default kernel (auto-vectorized, no BLAS dependency).
  * Users can supply their own kernels. Kernel selection priority:
@@ -79,6 +95,7 @@ typedef enum libxs_gemm_flags_t {
  * Only the function pointers matching the datatype need to be set.
  * By default (flags=0), _task variants synchronize C-matrix updates.
  * Set LIBXS_GEMM_FLAG_NOLOCK if no duplicate C pointers exist.
+ * The shape member is populated by libxs_gemm_dispatch.
  */
 typedef struct libxs_gemm_config_t {
   libxs_gemm_dblas_t dgemm_blas;
@@ -88,52 +105,21 @@ typedef struct libxs_gemm_config_t {
   libxs_gemm_xfn_t xgemm;
   void* jitter;
   libxs_gemm_flags_t flags;
+  libxs_gemm_shape_t shape;
 } libxs_gemm_config_t;
-
-/**
- * Process a batch of GEMMs with strided access (constant offsets between matrices).
- * C_i := alpha * op(A_i) * op(B_i) + beta * C_i, for i in [0, batchsize).
- * Matrices are at: A + i*stride_a*elemsize, B + i*stride_b*elemsize, C + i*stride_c*elemsize.
- * Pass config=NULL to use the built-in kernel.
- */
-LIBXS_API void libxs_gemm_strided(
-  libxs_data_t datatype, const char* transa, const char* transb,
-  int m, int n, int k,
-  const void* alpha, const void* a, int lda, int stride_a,
-                     const void* b, int ldb, int stride_b,
-  const void* beta,        void* c, int ldc, int stride_c,
-  int batchsize, const libxs_gemm_config_t* config);
-
-/** Per-thread form of libxs_gemm_strided. */
-LIBXS_API void libxs_gemm_strided_task(
-  libxs_data_t datatype, const char* transa, const char* transb,
-  int m, int n, int k,
-  const void* alpha, const void* a, int lda, int stride_a,
-                     const void* b, int ldb, int stride_b,
-  const void* beta,        void* c, int ldc, int stride_c,
-  int batchsize, const libxs_gemm_config_t* config,
-  int tid, int ntasks);
 
 /**
  * Process a batch of GEMMs given arrays of pointers to matrices.
  * C_i := alpha * op(A_i) * op(B_i) + beta * C_i, for i in [0, batchsize).
- * Pass config=NULL to use the built-in kernel.
+ * Shape, alpha, beta, datatype, and transpose info come from config->shape.
  */
 LIBXS_API void libxs_gemm_batch(
-  libxs_data_t datatype, const char* transa, const char* transb,
-  int m, int n, int k,
-  const void* alpha, const void* a_array[], int lda,
-                     const void* b_array[], int ldb,
-  const void* beta,        void* c_array[], int ldc,
+  const void* a_array[], const void* b_array[], void* c_array[],
   int batchsize, const libxs_gemm_config_t* config);
 
 /** Per-thread form of libxs_gemm_batch. */
 LIBXS_API void libxs_gemm_batch_task(
-  libxs_data_t datatype, const char* transa, const char* transb,
-  int m, int n, int k,
-  const void* alpha, const void* a_array[], int lda,
-                     const void* b_array[], int ldb,
-  const void* beta,        void* c_array[], int ldc,
+  const void* a_array[], const void* b_array[], void* c_array[],
   int batchsize, const libxs_gemm_config_t* config,
   int tid, int ntasks);
 
@@ -145,137 +131,26 @@ LIBXS_API void libxs_gemm_batch_task(
  * convention: 0 for zero-based (C), 1 for one-based (Fortran).
  * index_stride is the Byte-stride used to walk the stride arrays
  * (e.g. sizeof(int) for packed int arrays).
- * Pass config=NULL to use the built-in kernel.
+ * index_stride=0 selects constant-stride mode: each stride array
+ * points to a single element, and batch i uses offset stride[0]*i
+ * (equivalent to the strided batch pattern).
+ * Shape, alpha, beta, datatype, and transpose info come from config->shape.
  */
 LIBXS_API void libxs_gemm_index(
-  libxs_data_t datatype, const char* transa, const char* transb,
-  int m, int n, int k,
-  const void* alpha, const void* a, int lda, const int stride_a[],
-                     const void* b, int ldb, const int stride_b[],
-  const void* beta,        void* c, int ldc, const int stride_c[],
+  const void* a, const int stride_a[],
+  const void* b, const int stride_b[],
+        void* c, const int stride_c[],
   int index_stride, int index_base,
   int batchsize, const libxs_gemm_config_t* config);
 
 /** Per-thread form of libxs_gemm_index. */
 LIBXS_API void libxs_gemm_index_task(
-  libxs_data_t datatype, const char* transa, const char* transb,
-  int m, int n, int k,
-  const void* alpha, const void* a, int lda, const int stride_a[],
-                     const void* b, int ldb, const int stride_b[],
-  const void* beta,        void* c, int ldc, const int stride_c[],
+  const void* a, const int stride_a[],
+  const void* b, const int stride_b[],
+        void* c, const int stride_c[],
   int index_stride, int index_base,
   int batchsize, const libxs_gemm_config_t* config,
   int tid, int ntasks);
-
-/**
- * Process groups of batched GEMMs with varying parameters.
- * Each group i has its own transa, transb, m, n, k, lda, ldb, ldc, and batchsize.
- * The a/b/c pointer arrays are concatenated across groups.
- * alpha and beta are arrays of ngroups scalars (each LIBXS_TYPESIZE Bytes).
- * Pass config=NULL to use the built-in kernel.
- */
-LIBXS_API void libxs_gemm_groups(
-  libxs_data_t datatype, const char transa_array[], const char transb_array[],
-  const int m_array[], const int n_array[], const int k_array[],
-  const void* alpha_array, const void* a_array[], const int lda_array[],
-                           const void* b_array[], const int ldb_array[],
-  const void* beta_array,        void* c_array[], const int ldc_array[],
-  int ngroups, const int batchsize[],
-  const libxs_gemm_config_t* config);
-
-/**
- * Dispatch a GEMM kernel and populate config accordingly.
- * With MKL JIT (highest priority): sets config->dgemm_jit or sgemm_jit + jitter.
- * With LIBXSMM (fallback): sets config->xgemm via libxsmm_dispatch_gemm.
- * Without either: config is unchanged (falls through to BLAS/default).
- * The caller should memset config to zero before the first call.
- * Returns EXIT_SUCCESS on success, EXIT_FAILURE when no JIT backend is available.
- */
-LIBXS_API_INLINE int libxs_gemm_dispatch(
-  libxs_gemm_config_t* config,
-  libxs_data_t datatype, char transa, char transb,
-  int m, int n, int k, int lda, int ldb, int ldc,
-  const void* alpha, const void* beta)
-{
-  int result = EXIT_FAILURE;
-  const int ta = ('N' != transa && 'n' != transa);
-  const int tb = ('N' != transb && 'n' != transb);
-#if defined(mkl_jit_create_dgemm)
-  { const MKL_TRANSPOSE mkl_ta = (0 == ta ? MKL_NOTRANS : MKL_TRANS);
-    const MKL_TRANSPOSE mkl_tb = (0 == tb ? MKL_NOTRANS : MKL_TRANS);
-    void* jitter = NULL;
-    if (LIBXS_DATATYPE_F64 == datatype) {
-      if (MKL_JIT_SUCCESS == mkl_jit_create_dgemm(&jitter,
-        MKL_COL_MAJOR, mkl_ta, mkl_tb, m, n, k,
-        NULL != alpha ? *(const double*)alpha : 1.0, lda, ldb,
-        NULL != beta ? *(const double*)beta : 0.0, ldc))
-      {
-        config->dgemm_jit = (libxs_gemm_djit_t)mkl_jit_get_dgemm_ptr(jitter);
-        result = EXIT_SUCCESS;
-      }
-    }
-    else if (LIBXS_DATATYPE_F32 == datatype) {
-      if (MKL_JIT_SUCCESS == mkl_jit_create_sgemm(&jitter,
-        MKL_COL_MAJOR, mkl_ta, mkl_tb, m, n, k,
-        NULL != alpha ? *(const float*)alpha : 1.0f, lda, ldb,
-        NULL != beta ? *(const float*)beta : 0.0f, ldc))
-      {
-        config->sgemm_jit = (libxs_gemm_sjit_t)mkl_jit_get_sgemm_ptr(jitter);
-        result = EXIT_SUCCESS;
-      }
-    }
-    config->jitter = jitter;
-  }
-#endif
-#if defined(LIBXSMM_H)
-  if (EXIT_SUCCESS != result) {
-    int xsmm_ok = 0;
-    libxsmm_bitfield xflags = LIBXSMM_GEMM_FLAG_NONE;
-    libxsmm_datatype xtype = (libxsmm_datatype)0;
-    if (0 != ta) xflags |= LIBXSMM_GEMM_FLAG_TRANS_A;
-    if (0 != tb) xflags |= LIBXSMM_GEMM_FLAG_TRANS_B;
-    if (LIBXS_DATATYPE_F64 == datatype) {
-      const double a1 = (NULL != alpha ? *(const double*)alpha : 1.0);
-      const double b1 = (NULL != beta ? *(const double*)beta : 0.0);
-      xtype = LIBXSMM_DATATYPE_F64;
-      if (1.0 == a1) {
-        if (0.0 == b1) { xflags |= LIBXSMM_GEMM_FLAG_BETA_0; xsmm_ok = 1; }
-        else if (1.0 == b1) xsmm_ok = 1;
-      }
-    }
-    else if (LIBXS_DATATYPE_F32 == datatype) {
-      const float a1 = (NULL != alpha ? *(const float*)alpha : 1.0f);
-      const float b1 = (NULL != beta ? *(const float*)beta : 0.0f);
-      xtype = LIBXSMM_DATATYPE_F32;
-      if (1.0f == a1) {
-        if (0.0f == b1) { xflags |= LIBXSMM_GEMM_FLAG_BETA_0; xsmm_ok = 1; }
-        else if (1.0f == b1) xsmm_ok = 1;
-      }
-    }
-    if (0 != xsmm_ok) {
-      libxsmm_gemm_shape gemm_shape;
-      libxsmm_gemmfunction xresult;
-      gemm_shape.m = m; gemm_shape.n = n; gemm_shape.k = k;
-      gemm_shape.lda = lda; gemm_shape.ldb = ldb; gemm_shape.ldc = ldc;
-      gemm_shape.a_in_type = xtype; gemm_shape.b_in_type = xtype;
-      gemm_shape.comp_type = xtype; gemm_shape.out_type = xtype;
-      xresult = libxsmm_dispatch_gemm(gemm_shape, xflags,
-        LIBXSMM_GEMM_PREFETCH_NONE);
-      if (NULL != xresult) {
-        config->xgemm = (libxs_gemm_xfn_t)xresult;
-        result = EXIT_SUCCESS;
-      }
-    }
-  }
-#elif !defined(mkl_jit_create_dgemm)
-  LIBXS_UNUSED(config); LIBXS_UNUSED(ta); LIBXS_UNUSED(tb);
-  LIBXS_UNUSED(datatype); LIBXS_UNUSED(transa); LIBXS_UNUSED(transb);
-  LIBXS_UNUSED(m); LIBXS_UNUSED(n); LIBXS_UNUSED(k);
-  LIBXS_UNUSED(lda); LIBXS_UNUSED(ldb); LIBXS_UNUSED(ldc);
-  LIBXS_UNUSED(alpha); LIBXS_UNUSED(beta);
-#endif
-  return result;
-}
 
 /**
  * Check whether a dispatched config holds a usable kernel.
@@ -288,6 +163,134 @@ LIBXS_API_INLINE int libxs_gemm_ready(
     && (  (NULL != config->dgemm_jit && NULL != config->jitter)
        || (NULL != config->sgemm_jit && NULL != config->jitter)
        ||  NULL != config->xgemm);
+}
+
+/**
+ * Dispatch a GEMM kernel and populate config accordingly.
+ * With MKL JIT (highest priority): sets config->dgemm_jit or sgemm_jit + jitter.
+ * With LIBXSMM (fallback): sets config->xgemm via libxsmm_dispatch_gemm.
+ * Without either: config is unchanged (falls through to BLAS/default).
+ * The caller should memset config to zero before the first call.
+ * Returns EXIT_SUCCESS on success, EXIT_FAILURE when no JIT backend is available.
+ * If registry is non-NULL, dispatched configs are cached by shape:
+ * a hit copies the cached config, a miss dispatches and stores.
+ */
+LIBXS_API_INLINE int libxs_gemm_dispatch(
+  libxs_gemm_config_t* config,
+  libxs_data_t datatype, char transa, char transb,
+  int m, int n, int k, int lda, int ldb, int ldc,
+  const void* alpha, const void* beta,
+  void* LIBXS_ARGDEF(registry, NULL))
+{
+  int result = EXIT_FAILURE;
+  /* Store shape first (serves as registry key). */
+  if (NULL != config) {
+    config->shape.datatype = datatype;
+    config->shape.transa = transa;
+    config->shape.transb = transb;
+    config->shape.m = m; config->shape.n = n; config->shape.k = k;
+    config->shape.lda = lda; config->shape.ldb = ldb; config->shape.ldc = ldc;
+    if (LIBXS_DATATYPE_F64 == datatype) {
+      config->shape.alpha = (NULL != alpha ? *(const double*)alpha : 1.0);
+      config->shape.beta  = (NULL != beta  ? *(const double*)beta  : 0.0);
+    }
+    else if (LIBXS_DATATYPE_F32 == datatype) {
+      config->shape.alpha = (NULL != alpha ? (double)*(const float*)alpha : 1.0);
+      config->shape.beta  = (NULL != beta  ? (double)*(const float*)beta  : 0.0);
+    }
+  }
+  /* Registry lookup. */
+  if (NULL != registry && NULL != config) {
+    const libxs_gemm_config_t* cached = (const libxs_gemm_config_t*)
+      libxs_registry_get((const libxs_registry_t*)registry,
+        &config->shape, sizeof(config->shape), NULL);
+    if (NULL != cached) {
+      *config = *cached;
+      return 0 != libxs_gemm_ready(config)
+        ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+  }
+  /* Dispatch kernel (MKL JIT > LIBXSMM > fallthrough). */
+  { const int ta = ('N' != transa && 'n' != transa);
+    const int tb = ('N' != transb && 'n' != transb);
+#if defined(mkl_jit_create_dgemm)
+    { const MKL_TRANSPOSE mkl_ta = (0 == ta ? MKL_NOTRANS : MKL_TRANS);
+      const MKL_TRANSPOSE mkl_tb = (0 == tb ? MKL_NOTRANS : MKL_TRANS);
+      void* jitter = NULL;
+      if (LIBXS_DATATYPE_F64 == datatype) {
+        if (MKL_JIT_SUCCESS == mkl_jit_create_dgemm(&jitter,
+          MKL_COL_MAJOR, mkl_ta, mkl_tb, m, n, k,
+          NULL != alpha ? *(const double*)alpha : 1.0, lda, ldb,
+          NULL != beta ? *(const double*)beta : 0.0, ldc))
+        {
+          config->dgemm_jit = (libxs_gemm_djit_t)mkl_jit_get_dgemm_ptr(jitter);
+          result = EXIT_SUCCESS;
+        }
+      }
+      else if (LIBXS_DATATYPE_F32 == datatype) {
+        if (MKL_JIT_SUCCESS == mkl_jit_create_sgemm(&jitter,
+          MKL_COL_MAJOR, mkl_ta, mkl_tb, m, n, k,
+          NULL != alpha ? *(const float*)alpha : 1.0f, lda, ldb,
+          NULL != beta ? *(const float*)beta : 0.0f, ldc))
+        {
+          config->sgemm_jit = (libxs_gemm_sjit_t)mkl_jit_get_sgemm_ptr(jitter);
+          result = EXIT_SUCCESS;
+        }
+      }
+      config->jitter = jitter;
+    }
+#endif
+#if defined(LIBXSMM_H)
+    if (EXIT_SUCCESS != result) {
+      int xsmm_ok = 0;
+      libxsmm_bitfield xflags = LIBXSMM_GEMM_FLAG_NONE;
+      libxsmm_datatype xtype = (libxsmm_datatype)0;
+      if (0 != ta) xflags |= LIBXSMM_GEMM_FLAG_TRANS_A;
+      if (0 != tb) xflags |= LIBXSMM_GEMM_FLAG_TRANS_B;
+      if (LIBXS_DATATYPE_F64 == datatype) {
+        const double a1 = (NULL != alpha ? *(const double*)alpha : 1.0);
+        const double b1 = (NULL != beta ? *(const double*)beta : 0.0);
+        xtype = LIBXSMM_DATATYPE_F64;
+        if (1.0 == a1) {
+          if (0.0 == b1) { xflags |= LIBXSMM_GEMM_FLAG_BETA_0; xsmm_ok = 1; }
+          else if (1.0 == b1) xsmm_ok = 1;
+        }
+      }
+      else if (LIBXS_DATATYPE_F32 == datatype) {
+        const float a1 = (NULL != alpha ? *(const float*)alpha : 1.0f);
+        const float b1 = (NULL != beta ? *(const float*)beta : 0.0f);
+        xtype = LIBXSMM_DATATYPE_F32;
+        if (1.0f == a1) {
+          if (0.0f == b1) { xflags |= LIBXSMM_GEMM_FLAG_BETA_0; xsmm_ok = 1; }
+          else if (1.0f == b1) xsmm_ok = 1;
+        }
+      }
+      if (0 != xsmm_ok) {
+        libxsmm_gemm_shape gemm_shape;
+        libxsmm_gemmfunction xresult;
+        gemm_shape.m = m; gemm_shape.n = n; gemm_shape.k = k;
+        gemm_shape.lda = lda; gemm_shape.ldb = ldb; gemm_shape.ldc = ldc;
+        gemm_shape.a_in_type = xtype; gemm_shape.b_in_type = xtype;
+        gemm_shape.comp_type = xtype; gemm_shape.out_type = xtype;
+        xresult = libxsmm_dispatch_gemm(gemm_shape, xflags,
+          LIBXSMM_GEMM_PREFETCH_NONE);
+        if (NULL != xresult) {
+          config->xgemm = (libxs_gemm_xfn_t)xresult;
+          result = EXIT_SUCCESS;
+        }
+      }
+    }
+#elif !defined(mkl_jit_create_dgemm)
+    LIBXS_UNUSED(ta); LIBXS_UNUSED(tb);
+#endif
+  }
+  /* Registry store on miss. */
+  if (NULL != registry && NULL != config) {
+    libxs_registry_set((libxs_registry_t*)registry,
+      &config->shape, sizeof(config->shape),
+      config, sizeof(*config), NULL);
+  }
+  return result;
 }
 
 /**

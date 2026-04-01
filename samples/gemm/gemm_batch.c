@@ -110,15 +110,15 @@ int main(int argc, char* argv[])
     ? LIBXS_GEMM_FLAGS_DEFAULT : LIBXS_GEMM_FLAG_NOLOCK;
   if (EXIT_SUCCESS == libxs_gemm_dispatch(&config,
     LIBXS_DATATYPE(double), 'N', 'N', m, n, k, lda, ldb, ldc,
-    &alpha, &beta))
+    &alpha, &beta, NULL))
   {
     printf("  JIT kernel dispatched\n");
   }
 
   /* warmup */
-  libxs_gemm_batch(LIBXS_DATATYPE(double), "N", "N", m, n, k,
-    &alpha, a_ptrs, lda, b_ptrs, ldb,
-    &beta, c_ptrs, ldc, batchsize, &config);
+  libxs_gemm_batch(
+    a_ptrs, b_ptrs, c_ptrs,
+    batchsize, &config);
 
   t0 = libxs_timer_tick();
   for (r = 0; r < nrepeat; ++r) {
@@ -126,14 +126,14 @@ int main(int argc, char* argv[])
 #   pragma omp parallel
     { const int tid = omp_get_thread_num();
       const int nthreads = omp_get_num_threads();
-      libxs_gemm_batch_task(LIBXS_DATATYPE(double), "N", "N", m, n, k,
-        &alpha, a_ptrs, lda, b_ptrs, ldb,
-        &beta, c_ptrs, ldc, batchsize, &config, tid, nthreads);
+      libxs_gemm_batch_task(
+        a_ptrs, b_ptrs, c_ptrs,
+        batchsize, &config, tid, nthreads);
     }
 #else
-    libxs_gemm_batch(LIBXS_DATATYPE(double), "N", "N", m, n, k,
-      &alpha, a_ptrs, lda, b_ptrs, ldb,
-      &beta, c_ptrs, ldc, batchsize, &config);
+    libxs_gemm_batch(
+      a_ptrs, b_ptrs, c_ptrs,
+      batchsize, &config);
 #endif
   }
   t1 = libxs_timer_tick();

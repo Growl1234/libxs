@@ -69,7 +69,7 @@ run_check ./gemm_index.x 221816414566.000000          8 8 8 100 1 1.0 1
 # gemm_index: ld-padding + beta=0 (pad=2, non-square)
 run_check ./gemm_index.x 1208802289760.000000         7 13 5 500 1 0.0 2
 
-# gemm_groups
+# gemm_groups: per-group dispatch + batch loop
 run_check ./gemm_groups.x 6750768.000000              1 100 1 8
 run_check ./gemm_groups.x 118725276.000000            2 50 1
 run_check ./gemm_groups.x 112034040.000000            3 100 1 4

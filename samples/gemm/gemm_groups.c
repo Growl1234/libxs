@@ -28,8 +28,8 @@ int main(int argc, char* argv[])
   int m_array[MAX_GROUPS], n_array[MAX_GROUPS], k_array[MAX_GROUPS];
   int lda_array[MAX_GROUPS], ldb_array[MAX_GROUPS], ldc_array[MAX_GROUPS];
   int batchsize[MAX_GROUPS];
-  char transa_array[MAX_GROUPS], transb_array[MAX_GROUPS];
   double alpha_array[MAX_GROUPS], beta_array[MAX_GROUPS];
+  libxs_gemm_config_t configs[MAX_GROUPS];
   const void **a_ptrs = NULL, **b_ptrs = NULL;
   void **c_ptrs = NULL;
   double *storage = NULL;
@@ -41,19 +41,29 @@ int main(int argc, char* argv[])
 
   libxs_init();
 
-  /* configure groups */
+  /* configure groups and dispatch per-group kernels */
   for (g = 0; g < ng; ++g) {
     const int dim = base_m + g * 4;
     m_array[g] = dim; n_array[g] = dim; k_array[g] = dim;
     lda_array[g] = dim + pad; ldb_array[g] = dim + pad; ldc_array[g] = dim + pad;
     batchsize[g] = batch_per_group;
-    transa_array[g] = 'N'; transb_array[g] = 'N';
     alpha_array[g] = 1.0; beta_array[g] = beta;
     total_ptrs += (size_t)batch_per_group;
     total_elems += (size_t)batch_per_group * (
       (size_t)lda_array[g] * dim + (size_t)ldb_array[g] * dim
       + (size_t)ldc_array[g] * dim);
     total_gflops += 2.0 * dim * dim * dim * batch_per_group * 1E-9;
+
+    /* dispatch a JIT kernel per group (each group has its own shape) */
+    memset(configs + g, 0, sizeof(configs[g]));
+    configs[g].flags = LIBXS_GEMM_FLAG_NOLOCK;
+    if (EXIT_SUCCESS == libxs_gemm_dispatch(configs + g,
+      LIBXS_DATATYPE(double), 'N', 'N', dim, dim, dim,
+      lda_array[g], ldb_array[g], ldc_array[g],
+      alpha_array + g, beta_array + g, NULL))
+    {
+      printf("  group %d: JIT kernel dispatched (M=%d)\n", g, dim);
+    }
   }
 
   printf("gemm_groups: ngroups=%d batch/group=%d nrepeat=%d base_m=%d\n",
@@ -103,18 +113,23 @@ int main(int argc, char* argv[])
     }
   }
 
-  /* warmup */
-  libxs_gemm_groups(LIBXS_DATATYPE(double),
-    transa_array, transb_array, m_array, n_array, k_array,
-    alpha_array, a_ptrs, lda_array, b_ptrs, ldb_array,
-    beta_array, c_ptrs, ldc_array, ng, batchsize, NULL);
+  /* warmup: loop over groups, call batch per group */
+  { size_t j = 0;
+    for (g = 0; g < ng; ++g) {
+      libxs_gemm_batch(a_ptrs + j, b_ptrs + j, c_ptrs + j,
+        batchsize[g], configs + g);
+      j += (size_t)batchsize[g];
+    }
+  }
 
   t0 = libxs_timer_tick();
   for (r = 0; r < nrepeat; ++r) {
-    libxs_gemm_groups(LIBXS_DATATYPE(double),
-      transa_array, transb_array, m_array, n_array, k_array,
-      alpha_array, a_ptrs, lda_array, b_ptrs, ldb_array,
-      beta_array, c_ptrs, ldc_array, ng, batchsize, NULL);
+    size_t j = 0;
+    for (g = 0; g < ng; ++g) {
+      libxs_gemm_batch(a_ptrs + j, b_ptrs + j, c_ptrs + j,
+        batchsize[g], configs + g);
+      j += (size_t)batchsize[g];
+    }
   }
   t1 = libxs_timer_tick();
   duration = libxs_timer_duration(t0, t1);
@@ -160,6 +175,7 @@ int main(int argc, char* argv[])
     printf("checksum=%f\n", check_diff.l1_ref + check_diff.l1_tst);
   }
 
+  for (g = 0; g < ng; ++g) libxs_gemm_release(configs + g);
   free(a_ptrs); free(b_ptrs); free(c_ptrs); free(storage);
   libxs_finalize();
   return result;

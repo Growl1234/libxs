@@ -107,138 +107,23 @@ LIBXS_API_INTERN void internal_libxs_sgemm_default(
 }
 
 
-LIBXS_API void libxs_gemm_strided_task(
-  libxs_data_t datatype, const char* transa, const char* transb,
-  int m, int n, int k,
-  const void* alpha, const void* a, int lda, int stride_a,
-                     const void* b, int ldb, int stride_b,
-  const void* beta,        void* c, int ldc, int stride_c,
-  int batchsize, const libxs_gemm_config_t* config,
-  int tid, int ntasks)
-{
-  const int size = LIBXS_ABS(batchsize);
-  const int nsplit = LIBXS_MIN(size, ntasks);
-  if (0 < nsplit && 0 <= tid && tid < nsplit) {
-    const int need_lock = (1 < ntasks
-      && (NULL == config || 0 == (config->flags & LIBXS_GEMM_FLAG_NOLOCK)));
-    const int tasksize = (size + nsplit - 1) / nsplit;
-    const int begin = tid * tasksize;
-    int end = begin + tasksize;
-    const size_t da = stride_a * LIBXS_TYPESIZE(datatype);
-    const size_t db = stride_b * LIBXS_TYPESIZE(datatype);
-    const size_t dc = stride_c * LIBXS_TYPESIZE(datatype);
-    int lockidx = -1, i;
-    if (end > size) end = size;
-    if (LIBXS_DATATYPE_F64 == datatype) {
-      if (NULL != config && NULL != config->dgemm_jit && NULL != config->jitter) {
-        for (i = begin; i < end; ++i) {
-          double* ci = (double*)((char*)c + i * dc);
-          if (need_lock) INTERNAL_GEMM_LOCKFWD(ci, lockidx);
-          config->dgemm_jit(config->jitter,
-            (const double*)((const char*)a + i * da),
-            (const double*)((const char*)b + i * db), ci);
-        }
-      }
-      else if (NULL != config && NULL != config->xgemm) {
-        libxs_gemm_param_t xparam;
-        memset(&xparam, 0, sizeof(xparam));
-        for (i = begin; i < end; ++i) {
-          char* ci = (char*)c + i * dc;
-          if (need_lock) INTERNAL_GEMM_LOCKFWD(ci, lockidx);
-          xparam.a[0] = (const void*)((uintptr_t)a + i * da);
-          xparam.b[0] = (const void*)((uintptr_t)b + i * db);
-          xparam.c[0] = ci;
-          config->xgemm(&xparam);
-        }
-      }
-      else {
-        const libxs_gemm_dblas_t dgemm_blas = (NULL != config && NULL != config->dgemm_blas)
-          ? config->dgemm_blas : internal_libxs_dgemm_default;
-        for (i = begin; i < end; ++i) {
-          double* ci = (double*)((char*)c + i * dc);
-          if (need_lock) INTERNAL_GEMM_LOCKFWD(ci, lockidx);
-          dgemm_blas(transa, transb, &m, &n, &k,
-            (const double*)alpha, (const double*)((const char*)a + i * da), &lda,
-            (const double*)((const char*)b + i * db), &ldb,
-            (const double*)beta, ci, &ldc);
-        }
-      }
-    }
-    else if (LIBXS_DATATYPE_F32 == datatype) {
-      if (NULL != config && NULL != config->sgemm_jit && NULL != config->jitter) {
-        for (i = begin; i < end; ++i) {
-          float* ci = (float*)((char*)c + i * dc);
-          if (need_lock) INTERNAL_GEMM_LOCKFWD(ci, lockidx);
-          config->sgemm_jit(config->jitter,
-            (const float*)((const char*)a + i * da),
-            (const float*)((const char*)b + i * db), ci);
-        }
-      }
-      else if (NULL != config && NULL != config->xgemm) {
-        libxs_gemm_param_t xparam;
-        memset(&xparam, 0, sizeof(xparam));
-        for (i = begin; i < end; ++i) {
-          char* ci = (char*)c + i * dc;
-          if (need_lock) INTERNAL_GEMM_LOCKFWD(ci, lockidx);
-          xparam.a[0] = (const void*)((uintptr_t)a + i * da);
-          xparam.b[0] = (const void*)((uintptr_t)b + i * db);
-          xparam.c[0] = ci;
-          config->xgemm(&xparam);
-        }
-      }
-      else {
-        const libxs_gemm_sblas_t sgemm_blas = (NULL != config && NULL != config->sgemm_blas)
-          ? config->sgemm_blas : internal_libxs_sgemm_default;
-        for (i = begin; i < end; ++i) {
-          float* ci = (float*)((char*)c + i * dc);
-          if (need_lock) INTERNAL_GEMM_LOCKFWD(ci, lockidx);
-          sgemm_blas(transa, transb, &m, &n, &k,
-            (const float*)alpha, (const float*)((const char*)a + i * da), &lda,
-            (const float*)((const char*)b + i * db), &ldb,
-            (const float*)beta, ci, &ldc);
-        }
-      }
-    }
-    INTERNAL_GEMM_UNLOCK(lockidx);
-  }
-}
-
-
-LIBXS_API void libxs_gemm_strided(
-  libxs_data_t datatype, const char* transa, const char* transb,
-  int m, int n, int k,
-  const void* alpha, const void* a, int lda, int stride_a,
-                     const void* b, int ldb, int stride_b,
-  const void* beta,        void* c, int ldc, int stride_c,
-  int batchsize, const libxs_gemm_config_t* config)
-{
-  libxs_gemm_strided_task(datatype, transa, transb, m, n, k,
-    alpha, a, lda, stride_a, b, ldb, stride_b, beta, c, ldc, stride_c,
-    batchsize, config, 0, 1);
-}
-
-
 LIBXS_API void libxs_gemm_batch_task(
-  libxs_data_t datatype, const char* transa, const char* transb,
-  int m, int n, int k,
-  const void* alpha, const void* a_array[], int lda,
-                     const void* b_array[], int ldb,
-  const void* beta,        void* c_array[], int ldc,
+  const void* a_array[], const void* b_array[], void* c_array[],
   int batchsize, const libxs_gemm_config_t* config,
   int tid, int ntasks)
 {
   const int size = LIBXS_ABS(batchsize);
   const int nsplit = LIBXS_MIN(size, ntasks);
-  if (0 < nsplit && 0 <= tid && tid < nsplit) {
+  if (NULL != config && 0 < nsplit && 0 <= tid && tid < nsplit) {
     const int need_lock = (1 < ntasks
-      && (NULL == config || 0 == (config->flags & LIBXS_GEMM_FLAG_NOLOCK)));
+      && 0 == (config->flags & LIBXS_GEMM_FLAG_NOLOCK));
     const int tasksize = (size + nsplit - 1) / nsplit;
     const int begin = tid * tasksize;
     int end = begin + tasksize;
     int lockidx = -1, i;
     if (end > size) end = size;
-    if (LIBXS_DATATYPE_F64 == datatype) {
-      if (NULL != config && NULL != config->dgemm_jit && NULL != config->jitter) {
+    if (LIBXS_DATATYPE_F64 == config->shape.datatype) {
+      if (NULL != config->dgemm_jit && NULL != config->jitter) {
         for (i = begin; i < end; ++i) {
           if (need_lock) INTERNAL_GEMM_LOCKFWD(c_array[i], lockidx);
           config->dgemm_jit(config->jitter,
@@ -247,7 +132,7 @@ LIBXS_API void libxs_gemm_batch_task(
             (double*)c_array[i]);
         }
       }
-      else if (NULL != config && NULL != config->xgemm) {
+      else if (NULL != config->xgemm) {
         libxs_gemm_param_t xparam;
         memset(&xparam, 0, sizeof(xparam));
         for (i = begin; i < end; ++i) {
@@ -259,19 +144,24 @@ LIBXS_API void libxs_gemm_batch_task(
         }
       }
       else {
-        const libxs_gemm_dblas_t dgemm_blas = (NULL != config && NULL != config->dgemm_blas)
+        const char transa = (char)config->shape.transa;
+        const char transb = (char)config->shape.transb;
+        int m = config->shape.m, n = config->shape.n, k = config->shape.k;
+        int lda = config->shape.lda, ldb = config->shape.ldb, ldc = config->shape.ldc;
+        const double dalpha = config->shape.alpha, dbeta = config->shape.beta;
+        const libxs_gemm_dblas_t dgemm_blas = NULL != config->dgemm_blas
           ? config->dgemm_blas : internal_libxs_dgemm_default;
         for (i = begin; i < end; ++i) {
           if (need_lock) INTERNAL_GEMM_LOCKFWD(c_array[i], lockidx);
-          dgemm_blas(transa, transb, &m, &n, &k,
-            (const double*)alpha, (const double*)a_array[i], &lda,
+          dgemm_blas(&transa, &transb, &m, &n, &k,
+            &dalpha, (const double*)a_array[i], &lda,
             (const double*)b_array[i], &ldb,
-            (const double*)beta, (double*)c_array[i], &ldc);
+            &dbeta, (double*)c_array[i], &ldc);
         }
       }
     }
-    else if (LIBXS_DATATYPE_F32 == datatype) {
-      if (NULL != config && NULL != config->sgemm_jit && NULL != config->jitter) {
+    else if (LIBXS_DATATYPE_F32 == config->shape.datatype) {
+      if (NULL != config->sgemm_jit && NULL != config->jitter) {
         for (i = begin; i < end; ++i) {
           if (need_lock) INTERNAL_GEMM_LOCKFWD(c_array[i], lockidx);
           config->sgemm_jit(config->jitter,
@@ -280,7 +170,7 @@ LIBXS_API void libxs_gemm_batch_task(
             (float*)c_array[i]);
         }
       }
-      else if (NULL != config && NULL != config->xgemm) {
+      else if (NULL != config->xgemm) {
         libxs_gemm_param_t xparam;
         memset(&xparam, 0, sizeof(xparam));
         for (i = begin; i < end; ++i) {
@@ -292,14 +182,19 @@ LIBXS_API void libxs_gemm_batch_task(
         }
       }
       else {
-        const libxs_gemm_sblas_t sgemm_blas = (NULL != config && NULL != config->sgemm_blas)
+        const char transa = (char)config->shape.transa;
+        const char transb = (char)config->shape.transb;
+        int m = config->shape.m, n = config->shape.n, k = config->shape.k;
+        int lda = config->shape.lda, ldb = config->shape.ldb, ldc = config->shape.ldc;
+        const float falpha = (float)config->shape.alpha, fbeta = (float)config->shape.beta;
+        const libxs_gemm_sblas_t sgemm_blas = NULL != config->sgemm_blas
           ? config->sgemm_blas : internal_libxs_sgemm_default;
         for (i = begin; i < end; ++i) {
           if (need_lock) INTERNAL_GEMM_LOCKFWD(c_array[i], lockidx);
-          sgemm_blas(transa, transb, &m, &n, &k,
-            (const float*)alpha, (const float*)a_array[i], &lda,
+          sgemm_blas(&transa, &transb, &m, &n, &k,
+            &falpha, (const float*)a_array[i], &lda,
             (const float*)b_array[i], &ldb,
-            (const float*)beta, (float*)c_array[i], &ldc);
+            &fbeta, (float*)c_array[i], &ldc);
         }
       }
     }
@@ -309,48 +204,43 @@ LIBXS_API void libxs_gemm_batch_task(
 
 
 LIBXS_API void libxs_gemm_batch(
-  libxs_data_t datatype, const char* transa, const char* transb,
-  int m, int n, int k,
-  const void* alpha, const void* a_array[], int lda,
-                     const void* b_array[], int ldb,
-  const void* beta,        void* c_array[], int ldc,
+  const void* a_array[], const void* b_array[], void* c_array[],
   int batchsize, const libxs_gemm_config_t* config)
 {
-  libxs_gemm_batch_task(datatype, transa, transb, m, n, k,
-    alpha, a_array, lda, b_array, ldb, beta, c_array, ldc,
+  libxs_gemm_batch_task(a_array, b_array, c_array,
     batchsize, config, 0, 1);
 }
 
 
 LIBXS_API void libxs_gemm_index_task(
-  libxs_data_t datatype, const char* transa, const char* transb,
-  int m, int n, int k,
-  const void* alpha, const void* a, int lda, const int stride_a[],
-                     const void* b, int ldb, const int stride_b[],
-  const void* beta,        void* c, int ldc, const int stride_c[],
+  const void* a, const int stride_a[],
+  const void* b, const int stride_b[],
+        void* c, const int stride_c[],
   int index_stride, int index_base,
   int batchsize, const libxs_gemm_config_t* config,
   int tid, int ntasks)
 {
   const int size = LIBXS_ABS(batchsize);
   const int nsplit = LIBXS_MIN(size, ntasks);
-  if (0 < nsplit && 0 <= tid && tid < nsplit
+  if (NULL != config && 0 < nsplit && 0 <= tid && tid < nsplit
     && NULL != stride_a && NULL != stride_b && NULL != stride_c
-    && 0 < index_stride)
+    && 0 <= index_stride)
   {
     const int need_lock = (1 < ntasks
-      && (NULL == config || 0 == (config->flags & LIBXS_GEMM_FLAG_NOLOCK)));
+      && 0 == (config->flags & LIBXS_GEMM_FLAG_NOLOCK));
     const int tasksize = (size + nsplit - 1) / nsplit;
     const int begin = tid * tasksize;
     int end = begin + tasksize;
-    const size_t elemsize = LIBXS_TYPESIZE(datatype);
+    const size_t elemsize = LIBXS_TYPESIZE(config->shape.datatype);
     int lockidx = -1, i;
     if (end > size) end = size;
 #define INTERNAL_GEMM_INDEX(I, STRIDE) \
-    (*(const int*)((const char*)(STRIDE) + (size_t)(I) * index_stride) \
-      - index_base)
-    if (LIBXS_DATATYPE_F64 == datatype) {
-      if (NULL != config && NULL != config->dgemm_jit && NULL != config->jitter) {
+    (0 != index_stride \
+      ? (*(const int*)((const char*)(STRIDE) + (size_t)(I) * index_stride) \
+          - index_base) \
+      : (*(STRIDE) * (I)))
+    if (LIBXS_DATATYPE_F64 == config->shape.datatype) {
+      if (NULL != config->dgemm_jit && NULL != config->jitter) {
         for (i = begin; i < end; ++i) {
           double* ci = (double*)((char*)c + (size_t)INTERNAL_GEMM_INDEX(i, stride_c) * elemsize);
           if (need_lock) INTERNAL_GEMM_LOCKFWD(ci, lockidx);
@@ -359,7 +249,7 @@ LIBXS_API void libxs_gemm_index_task(
             (const double*)((const char*)b + (size_t)INTERNAL_GEMM_INDEX(i, stride_b) * elemsize), ci);
         }
       }
-      else if (NULL != config && NULL != config->xgemm) {
+      else if (NULL != config->xgemm) {
         libxs_gemm_param_t xparam;
         memset(&xparam, 0, sizeof(xparam));
         for (i = begin; i < end; ++i) {
@@ -372,21 +262,26 @@ LIBXS_API void libxs_gemm_index_task(
         }
       }
       else {
-        const libxs_gemm_dblas_t dgemm_blas = (NULL != config && NULL != config->dgemm_blas)
+        const char transa = (char)config->shape.transa;
+        const char transb = (char)config->shape.transb;
+        int m = config->shape.m, n = config->shape.n, k = config->shape.k;
+        int lda = config->shape.lda, ldb = config->shape.ldb, ldc = config->shape.ldc;
+        const double dalpha = config->shape.alpha, dbeta = config->shape.beta;
+        const libxs_gemm_dblas_t dgemm_blas = NULL != config->dgemm_blas
           ? config->dgemm_blas : internal_libxs_dgemm_default;
         for (i = begin; i < end; ++i) {
           double* ci = (double*)((char*)c + (size_t)INTERNAL_GEMM_INDEX(i, stride_c) * elemsize);
           if (need_lock) INTERNAL_GEMM_LOCKFWD(ci, lockidx);
-          dgemm_blas(transa, transb, &m, &n, &k,
-            (const double*)alpha,
+          dgemm_blas(&transa, &transb, &m, &n, &k,
+            &dalpha,
             (const double*)((const char*)a + (size_t)INTERNAL_GEMM_INDEX(i, stride_a) * elemsize), &lda,
             (const double*)((const char*)b + (size_t)INTERNAL_GEMM_INDEX(i, stride_b) * elemsize), &ldb,
-            (const double*)beta, ci, &ldc);
+            &dbeta, ci, &ldc);
         }
       }
     }
-    else if (LIBXS_DATATYPE_F32 == datatype) {
-      if (NULL != config && NULL != config->sgemm_jit && NULL != config->jitter) {
+    else if (LIBXS_DATATYPE_F32 == config->shape.datatype) {
+      if (NULL != config->sgemm_jit && NULL != config->jitter) {
         for (i = begin; i < end; ++i) {
           float* ci = (float*)((char*)c + (size_t)INTERNAL_GEMM_INDEX(i, stride_c) * elemsize);
           if (need_lock) INTERNAL_GEMM_LOCKFWD(ci, lockidx);
@@ -395,7 +290,7 @@ LIBXS_API void libxs_gemm_index_task(
             (const float*)((const char*)b + (size_t)INTERNAL_GEMM_INDEX(i, stride_b) * elemsize), ci);
         }
       }
-      else if (NULL != config && NULL != config->xgemm) {
+      else if (NULL != config->xgemm) {
         libxs_gemm_param_t xparam;
         memset(&xparam, 0, sizeof(xparam));
         for (i = begin; i < end; ++i) {
@@ -408,16 +303,21 @@ LIBXS_API void libxs_gemm_index_task(
         }
       }
       else {
-        const libxs_gemm_sblas_t sgemm_blas = (NULL != config && NULL != config->sgemm_blas)
+        const char transa = (char)config->shape.transa;
+        const char transb = (char)config->shape.transb;
+        int m = config->shape.m, n = config->shape.n, k = config->shape.k;
+        int lda = config->shape.lda, ldb = config->shape.ldb, ldc = config->shape.ldc;
+        const float falpha = (float)config->shape.alpha, fbeta = (float)config->shape.beta;
+        const libxs_gemm_sblas_t sgemm_blas = NULL != config->sgemm_blas
           ? config->sgemm_blas : internal_libxs_sgemm_default;
         for (i = begin; i < end; ++i) {
           float* ci = (float*)((char*)c + (size_t)INTERNAL_GEMM_INDEX(i, stride_c) * elemsize);
           if (need_lock) INTERNAL_GEMM_LOCKFWD(ci, lockidx);
-          sgemm_blas(transa, transb, &m, &n, &k,
-            (const float*)alpha,
+          sgemm_blas(&transa, &transb, &m, &n, &k,
+            &falpha,
             (const float*)((const char*)a + (size_t)INTERNAL_GEMM_INDEX(i, stride_a) * elemsize), &lda,
             (const float*)((const char*)b + (size_t)INTERNAL_GEMM_INDEX(i, stride_b) * elemsize), &ldb,
-            (const float*)beta, ci, &ldc);
+            &fbeta, ci, &ldc);
         }
       }
     }
@@ -428,79 +328,18 @@ LIBXS_API void libxs_gemm_index_task(
 
 
 LIBXS_API void libxs_gemm_index(
-  libxs_data_t datatype, const char* transa, const char* transb,
-  int m, int n, int k,
-  const void* alpha, const void* a, int lda, const int stride_a[],
-                     const void* b, int ldb, const int stride_b[],
-  const void* beta,        void* c, int ldc, const int stride_c[],
+  const void* a, const int stride_a[],
+  const void* b, const int stride_b[],
+        void* c, const int stride_c[],
   int index_stride, int index_base,
   int batchsize, const libxs_gemm_config_t* config)
 {
-  libxs_gemm_index_task(datatype, transa, transb, m, n, k,
-    alpha, a, lda, stride_a, b, ldb, stride_b, beta, c, ldc, stride_c,
+  libxs_gemm_index_task(a, stride_a, b, stride_b, c, stride_c,
     index_stride, index_base, batchsize, config, 0, 1);
 }
 
 
-LIBXS_API void libxs_gemm_groups(
-  libxs_data_t datatype, const char transa_array[], const char transb_array[],
-  const int m_array[], const int n_array[], const int k_array[],
-  const void* alpha_array, const void* a_array[], const int lda_array[],
-                           const void* b_array[], const int ldb_array[],
-  const void* beta_array,        void* c_array[], const int ldc_array[],
-  int ngroups, const int batchsize[],
-  const libxs_gemm_config_t* config)
-{
-  const int ng = LIBXS_ABS(ngroups);
-  int i, j = 0;
-  for (i = 0; i < ng; ++i) {
-    const int size = LIBXS_ABS(batchsize[i]);
-    int s;
-    if (LIBXS_DATATYPE_F64 == datatype) {
-      const libxs_gemm_dblas_t dgemm_blas = (NULL != config && NULL != config->dgemm_blas)
-        ? config->dgemm_blas : internal_libxs_dgemm_default;
-      const double *const palpha = (const double*)alpha_array + i;
-      const double *const pbeta = (const double*)beta_array + i;
-      for (s = 0; s < size; ++s) {
-        dgemm_blas(transa_array + i, transb_array + i,
-          m_array + i, n_array + i, k_array + i, palpha,
-          (const double*)a_array[j + s], lda_array + i,
-          (const double*)b_array[j + s], ldb_array + i,
-          pbeta, (double*)c_array[j + s], ldc_array + i);
-      }
-    }
-    else if (LIBXS_DATATYPE_F32 == datatype) {
-      const libxs_gemm_sblas_t sgemm_blas = (NULL != config && NULL != config->sgemm_blas)
-        ? config->sgemm_blas : internal_libxs_sgemm_default;
-      const float *const palpha = (const float*)alpha_array + i;
-      const float *const pbeta = (const float*)beta_array + i;
-      for (s = 0; s < size; ++s) {
-        sgemm_blas(transa_array + i, transb_array + i,
-          m_array + i, n_array + i, k_array + i, palpha,
-          (const float*)a_array[j + s], lda_array + i,
-          (const float*)b_array[j + s], ldb_array + i,
-          pbeta, (float*)c_array[j + s], ldc_array + i);
-      }
-    }
-    j += size;
-  }
-}
-
-
 #if defined(LIBXS_BUILD) && !defined(LIBXS_NOFORTRAN)
-
-LIBXS_API int libxs_gemm_dispatch_f(libxs_gemm_config_t* config,
-  libxs_data_t, char, char, int, int, int, int, int, int,
-  const void*, const void*);
-LIBXS_API int libxs_gemm_dispatch_f(libxs_gemm_config_t* config,
-  libxs_data_t datatype, char transa, char transb,
-  int m, int n, int k, int lda, int ldb, int ldc,
-  const void* alpha, const void* beta)
-{
-  return libxs_gemm_dispatch(config, datatype, transa, transb,
-    m, n, k, lda, ldb, ldc, alpha, beta);
-}
-
 
 LIBXS_API int libxs_gemm_ready_f(const libxs_gemm_config_t*);
 LIBXS_API int libxs_gemm_ready_f(const libxs_gemm_config_t* config)
@@ -515,13 +354,6 @@ LIBXS_API int libxs_gemm_call_f(const libxs_gemm_config_t* config,
   const void* a, const void* b, void* c)
 {
   return libxs_gemm_call(config, a, b, c);
-}
-
-
-LIBXS_API void libxs_gemm_release_f(libxs_gemm_config_t*);
-LIBXS_API void libxs_gemm_release_f(libxs_gemm_config_t* config)
-{
-  libxs_gemm_release(config);
 }
 
 #endif /*defined(LIBXS_BUILD) && !defined(LIBXS_NOFORTRAN)*/

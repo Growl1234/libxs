@@ -60,15 +60,14 @@ int main(int argc, char* argv[])
   config.flags = LIBXS_GEMM_FLAG_NOLOCK;
   if (EXIT_SUCCESS == libxs_gemm_dispatch(&config,
     LIBXS_DATATYPE(double), 'N', 'N', m, n, k, lda, ldb, ldc,
-    &alpha, &beta))
+    &alpha, &beta, NULL))
   {
     printf("  JIT kernel dispatched\n");
   }
 
-  /* warmup */
-  libxs_gemm_strided(LIBXS_DATATYPE(double), "N", "N", m, n, k,
-    &alpha, a, lda, stride_a, b, ldb, stride_b,
-    &beta, c, ldc, stride_c, batchsize, &config);
+  /* warmup: index_stride=0 selects constant-stride mode */
+  libxs_gemm_index(a, &stride_a, b, &stride_b, c, &stride_c,
+    0/*index_stride*/, 0/*index_base*/, batchsize, &config);
 
   t0 = libxs_timer_tick();
   for (r = 0; r < nrepeat; ++r) {
@@ -76,14 +75,13 @@ int main(int argc, char* argv[])
 #   pragma omp parallel
     { const int tid = omp_get_thread_num();
       const int nthreads = omp_get_num_threads();
-      libxs_gemm_strided_task(LIBXS_DATATYPE(double), "N", "N", m, n, k,
-        &alpha, a, lda, stride_a, b, ldb, stride_b,
-        &beta, c, ldc, stride_c, batchsize, &config, tid, nthreads);
+      libxs_gemm_index_task(a, &stride_a, b, &stride_b, c, &stride_c,
+        0/*index_stride*/, 0/*index_base*/,
+        batchsize, &config, tid, nthreads);
     }
 #else
-    libxs_gemm_strided(LIBXS_DATATYPE(double), "N", "N", m, n, k,
-      &alpha, a, lda, stride_a, b, ldb, stride_b,
-      &beta, c, ldc, stride_c, batchsize, &config);
+    libxs_gemm_index(a, &stride_a, b, &stride_b, c, &stride_c,
+      0/*index_stride*/, 0/*index_base*/, batchsize, &config);
 #endif
   }
   t1 = libxs_timer_tick();

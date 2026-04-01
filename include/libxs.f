@@ -64,13 +64,12 @@
         PUBLIC :: libxs_cpuid_id, libxs_cpuid_vlen
 
         !> Public API: GEMM dispatch.
-        PUBLIC :: libxs_gemm_config_t
+        PUBLIC :: libxs_gemm_shape_t, libxs_gemm_config_t
         PUBLIC :: LIBXS_GEMM_FLAGS_DEFAULT, LIBXS_GEMM_FLAG_NOLOCK
         PUBLIC :: libxs_gemm_ready, libxs_gemm_call
-        PUBLIC :: libxs_gemm_strided, libxs_gemm_strided_task
+        PUBLIC :: libxs_gemm_dispatch, libxs_gemm_release
         PUBLIC :: libxs_gemm_batch, libxs_gemm_batch_task
         PUBLIC :: libxs_gemm_index, libxs_gemm_index_task
-        PUBLIC :: libxs_gemm_groups
 
         !> Re-exported from ISO_C_BINDING for convenience.
         PUBLIC :: C_DOUBLE, C_FLOAT, C_INT, C_LONG_LONG
@@ -149,10 +148,24 @@
           INTEGER(C_INT) :: constant_tsc
         END TYPE
 
+        !> GEMM shape: problem geometry, transpose flags,
+        !> and scalar coefficients. Alpha/beta stored as
+        !> double (float promoted without loss). Also serves
+        !> as registry key when caching configurations.
+        TYPE, BIND(C) :: libxs_gemm_shape_t
+          INTEGER(C_INT) :: datatype   = 0
+          INTEGER(C_INT) :: transa     = 0
+          INTEGER(C_INT) :: transb     = 0
+          INTEGER(C_INT) :: m = 0, n = 0, k = 0
+          INTEGER(C_INT) :: lda = 0, ldb = 0, ldc = 0
+          REAL(C_DOUBLE)  :: alpha = 0, beta = 0
+        END TYPE
+
         !> GEMM kernel configuration.
         !> All function-pointer fields are C_FUNPTR (default
         !> C_NULL_FUNPTR). Populate from Fortran with C_FUNLOC
         !> or pass to C code that calls libxs_gemm_dispatch.
+        !> The shape member is populated by libxs_gemm_dispatch.
         TYPE, BIND(C) :: libxs_gemm_config_t
           TYPE(C_FUNPTR) :: dgemm_blas = C_NULL_FUNPTR
           TYPE(C_FUNPTR) :: sgemm_blas = C_NULL_FUNPTR
@@ -161,6 +174,7 @@
           TYPE(C_FUNPTR) :: xgemm      = C_NULL_FUNPTR
           TYPE(C_PTR)    :: jitter     = C_NULL_PTR
           INTEGER(C_INT) :: flags      = LIBXS_GEMM_FLAGS_DEFAULT
+          TYPE(libxs_gemm_shape_t) :: shape
         END TYPE
 
         INTERFACE
@@ -458,79 +472,27 @@
      &      m, n, ldi, ldo, tid, ntasks
           END SUBROUTINE
 
-          !> Strided GEMM batch: constant offsets between
-          !> consecutive matrices A, B, C.
-          SUBROUTINE libxs_gemm_strided(datatype,                       &
-     &    transa, transb, m, n, k,                                      &
-     &    alpha, a, lda, stride_a,                                      &
-     &    b, ldb, stride_b,                                             &
-     &    beta, c, ldc, stride_c,                                       &
-     &    batchsize, config) BIND(C)
-            IMPORT :: C_PTR, C_INT, C_CHAR,                             &
-     &        libxs_gemm_config_t
-            INTEGER(C_INT), INTENT(IN), VALUE :: datatype
-            CHARACTER(C_CHAR), INTENT(IN) :: transa, transb
-            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
-     &        m, n, k, lda, stride_a, ldb, stride_b,                    &
-     &        ldc, stride_c, batchsize
-            TYPE(C_PTR), INTENT(IN), VALUE ::                           &
-     &        alpha, a, b, beta
-            TYPE(C_PTR), VALUE :: c
-            TYPE(libxs_gemm_config_t), INTENT(IN) :: config
-          END SUBROUTINE
-
-          !> Strided GEMM batch: per-thread variant.
-          SUBROUTINE libxs_gemm_strided_task(datatype,                  &
-     &    transa, transb, m, n, k,                                      &
-     &    alpha, a, lda, stride_a,                                      &
-     &    b, ldb, stride_b,                                             &
-     &    beta, c, ldc, stride_c,                                       &
-     &    batchsize, config, tid, ntasks) BIND(C)
-            IMPORT :: C_PTR, C_INT, C_CHAR,                             &
-     &        libxs_gemm_config_t
-            INTEGER(C_INT), INTENT(IN), VALUE :: datatype
-            CHARACTER(C_CHAR), INTENT(IN) :: transa, transb
-            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
-     &        m, n, k, lda, stride_a, ldb, stride_b,                    &
-     &        ldc, stride_c, batchsize, tid, ntasks
-            TYPE(C_PTR), INTENT(IN), VALUE ::                           &
-     &        alpha, a, b, beta
-            TYPE(C_PTR), VALUE :: c
-            TYPE(libxs_gemm_config_t), INTENT(IN) :: config
-          END SUBROUTINE
-
           !> Pointer-array GEMM batch.
-          SUBROUTINE libxs_gemm_batch(datatype,                         &
-     &    transa, transb, m, n, k,                                      &
-     &    alpha, a_array, lda, b_array, ldb,                            &
-     &    beta, c_array, ldc,                                           &
+          !> Shape, alpha/beta, datatype from config%shape.
+          SUBROUTINE libxs_gemm_batch(                                  &
+     &    a_array, b_array, c_array,                                    &
      &    batchsize, config) BIND(C)
-            IMPORT :: C_PTR, C_INT, C_CHAR,                             &
+            IMPORT :: C_PTR, C_INT,                                     &
      &        libxs_gemm_config_t
-            INTEGER(C_INT), INTENT(IN), VALUE :: datatype
-            CHARACTER(C_CHAR), INTENT(IN) :: transa, transb
-            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
-     &        m, n, k, lda, ldb, ldc, batchsize
-            TYPE(C_PTR), INTENT(IN), VALUE :: alpha, beta
+            INTEGER(C_INT), INTENT(IN), VALUE :: batchsize
             TYPE(C_PTR), INTENT(IN) :: a_array(*), b_array(*)
             TYPE(C_PTR) :: c_array(*)
             TYPE(libxs_gemm_config_t), INTENT(IN) :: config
           END SUBROUTINE
 
           !> Pointer-array GEMM batch: per-thread variant.
-          SUBROUTINE libxs_gemm_batch_task(datatype,                    &
-     &    transa, transb, m, n, k,                                      &
-     &    alpha, a_array, lda, b_array, ldb,                            &
-     &    beta, c_array, ldc,                                           &
+          SUBROUTINE libxs_gemm_batch_task(                             &
+     &    a_array, b_array, c_array,                                    &
      &    batchsize, config, tid, ntasks) BIND(C)
-            IMPORT :: C_PTR, C_INT, C_CHAR,                             &
+            IMPORT :: C_PTR, C_INT,                                     &
      &        libxs_gemm_config_t
-            INTEGER(C_INT), INTENT(IN), VALUE :: datatype
-            CHARACTER(C_CHAR), INTENT(IN) :: transa, transb
             INTEGER(C_INT), INTENT(IN), VALUE ::                        &
-     &        m, n, k, lda, ldb, ldc,                                   &
      &        batchsize, tid, ntasks
-            TYPE(C_PTR), INTENT(IN), VALUE :: alpha, beta
             TYPE(C_PTR), INTENT(IN) :: a_array(*), b_array(*)
             TYPE(C_PTR) :: c_array(*)
             TYPE(libxs_gemm_config_t), INTENT(IN) :: config
@@ -541,24 +503,19 @@
           !> index_stride is the Byte-stride used to walk
           !> stride_a, stride_b, stride_c (e.g. 4 for
           !> packed INTEGER(C_INT) arrays).
+          !> index_stride=0: constant-stride mode.
           !> index_base selects the indexing convention:
           !> 0 for zero-based (C), 1 for one-based (Fortran).
-          SUBROUTINE libxs_gemm_index(datatype,                         &
-     &    transa, transb, m, n, k,                                      &
-     &    alpha, a, lda, stride_a,                                      &
-     &    b, ldb, stride_b,                                             &
-     &    beta, c, ldc, stride_c,                                       &
+          !> Shape, alpha/beta, datatype from config%shape.
+          SUBROUTINE libxs_gemm_index(                                  &
+     &    a, stride_a, b, stride_b, c, stride_c,                        &
      &    index_stride, index_base,                                     &
      &    batchsize, config) BIND(C)
-            IMPORT :: C_PTR, C_INT, C_CHAR,                             &
+            IMPORT :: C_PTR, C_INT,                                     &
      &        libxs_gemm_config_t
-            INTEGER(C_INT), INTENT(IN), VALUE :: datatype
-            CHARACTER(C_CHAR), INTENT(IN) :: transa, transb
             INTEGER(C_INT), INTENT(IN), VALUE ::                        &
-     &        m, n, k, lda, ldb, ldc,                                   &
      &        index_stride, index_base, batchsize
-            TYPE(C_PTR), INTENT(IN), VALUE ::                           &
-     &        alpha, a, b, beta
+            TYPE(C_PTR), INTENT(IN), VALUE :: a, b
             TYPE(C_PTR), VALUE :: c
             TYPE(C_PTR), INTENT(IN), VALUE ::                           &
      &        stride_a, stride_b, stride_c
@@ -566,53 +523,22 @@
           END SUBROUTINE
 
           !> Index-array GEMM batch: per-thread variant.
-          SUBROUTINE libxs_gemm_index_task(datatype,                    &
-     &    transa, transb, m, n, k,                                      &
-     &    alpha, a, lda, stride_a,                                      &
-     &    b, ldb, stride_b,                                             &
-     &    beta, c, ldc, stride_c,                                       &
+          SUBROUTINE libxs_gemm_index_task(                             &
+     &    a, stride_a, b, stride_b, c, stride_c,                        &
      &    index_stride, index_base,                                     &
      &    batchsize, config, tid, ntasks) BIND(C)
-            IMPORT :: C_PTR, C_INT, C_CHAR,                             &
+            IMPORT :: C_PTR, C_INT,                                     &
      &        libxs_gemm_config_t
-            INTEGER(C_INT), INTENT(IN), VALUE :: datatype
-            CHARACTER(C_CHAR), INTENT(IN) :: transa, transb
             INTEGER(C_INT), INTENT(IN), VALUE ::                        &
-     &        m, n, k, lda, ldb, ldc,                                   &
      &        index_stride, index_base,                                 &
      &        batchsize, tid, ntasks
-            TYPE(C_PTR), INTENT(IN), VALUE ::                           &
-     &        alpha, a, b, beta
+            TYPE(C_PTR), INTENT(IN), VALUE :: a, b
             TYPE(C_PTR), VALUE :: c
             TYPE(C_PTR), INTENT(IN), VALUE ::                           &
      &        stride_a, stride_b, stride_c
             TYPE(libxs_gemm_config_t), INTENT(IN) :: config
           END SUBROUTINE
 
-          !> Grouped GEMM batch: varying parameters per group.
-          SUBROUTINE libxs_gemm_groups(datatype,                        &
-     &    transa_array, transb_array,                                   &
-     &    m_array, n_array, k_array,                                    &
-     &    alpha_array, a_array, lda_array,                              &
-     &    b_array, ldb_array,                                           &
-     &    beta_array, c_array, ldc_array,                               &
-     &    ngroups, batchsize, config) BIND(C)
-            IMPORT :: C_PTR, C_INT, C_CHAR,                             &
-     &        libxs_gemm_config_t
-            INTEGER(C_INT), INTENT(IN), VALUE :: datatype
-            CHARACTER(C_CHAR), INTENT(IN) ::                            &
-     &        transa_array(*), transb_array(*)
-            INTEGER(C_INT), INTENT(IN) ::                               &
-     &        m_array(*), n_array(*), k_array(*),                       &
-     &        lda_array(*), ldb_array(*), ldc_array(*),                 &
-     &        batchsize(*)
-            INTEGER(C_INT), INTENT(IN), VALUE :: ngroups
-            TYPE(C_PTR), INTENT(IN), VALUE ::                           &
-     &        alpha_array, beta_array
-            TYPE(C_PTR), INTENT(IN) :: a_array(*), b_array(*)
-            TYPE(C_PTR) :: c_array(*)
-            TYPE(libxs_gemm_config_t), INTENT(IN) :: config
-          END SUBROUTINE
         END INTERFACE
 
         !> Allocate memory (flags=0: automatic).
@@ -894,4 +820,109 @@
           END INTERFACE
           libxs_gemm_call = internal_gemm_call_f(config, a, b, c)
         END FUNCTION
+
+        !> Populate config with caller-provided kernel
+        !> pointers and GEMM shape. Supports MKL JIT
+        !> (dgemm_jit/sgemm_jit + jitter), LIBXSMM (xgemm),
+        !> and BLAS (dgemm_blas/sgemm_blas).
+        !> Returns nonzero if the config holds a usable
+        !> kernel for libxs_gemm_call (JIT or XGEMM).
+        !> BLAS-only configs return zero but are valid
+        !> for the batch functions.
+        !> If registry is present, dispatched configs are
+        !> cached by shape: a hit copies the cached config,
+        !> a miss dispatches and stores the result.
+        FUNCTION libxs_gemm_dispatch(config,                            &
+     &    datatype, transa, transb,                                      &
+     &    m, n, k, lda, ldb, ldc, alpha, beta,                           &
+     &    dgemm_jit, sgemm_jit, jitter,                                  &
+     &    xgemm, dgemm_blas, sgemm_blas,                                 &
+     &    registry)
+          TYPE(libxs_gemm_config_t), INTENT(INOUT) :: config
+          INTEGER(C_INT), INTENT(IN), OPTIONAL :: datatype
+          CHARACTER(C_CHAR), INTENT(IN), OPTIONAL ::                    &
+     &      transa, transb
+          INTEGER(C_INT), INTENT(IN), OPTIONAL ::                       &
+     &      m, n, k, lda, ldb, ldc
+          REAL(C_DOUBLE), INTENT(IN), OPTIONAL :: alpha, beta
+          TYPE(C_FUNPTR), INTENT(IN), OPTIONAL :: dgemm_jit
+          TYPE(C_FUNPTR), INTENT(IN), OPTIONAL :: sgemm_jit
+          TYPE(C_PTR),    INTENT(IN), OPTIONAL :: jitter
+          TYPE(C_FUNPTR), INTENT(IN), OPTIONAL :: xgemm
+          TYPE(C_FUNPTR), INTENT(IN), OPTIONAL :: dgemm_blas
+          TYPE(C_FUNPTR), INTENT(IN), OPTIONAL :: sgemm_blas
+          TYPE(C_PTR), INTENT(IN), OPTIONAL :: registry
+          INTEGER(C_INT) :: libxs_gemm_dispatch
+          TYPE(libxs_gemm_shape_t), TARGET :: key
+          TYPE(libxs_gemm_config_t), TARGET :: tmp
+          TYPE(libxs_gemm_config_t), POINTER :: cached
+          TYPE(C_PTR) :: ptr
+          LOGICAL :: from_cache
+          from_cache = .FALSE.
+          !> Set shape from optional parameters.
+          IF (PRESENT(datatype))                                        &
+     &      config%shape%datatype = datatype
+          IF (PRESENT(transa))                                          &
+     &      config%shape%transa = ICHAR(transa)
+          IF (PRESENT(transb))                                          &
+     &      config%shape%transb = ICHAR(transb)
+          IF (PRESENT(m)) config%shape%m = m
+          IF (PRESENT(n)) config%shape%n = n
+          IF (PRESENT(k)) config%shape%k = k
+          IF (PRESENT(lda)) config%shape%lda = lda
+          IF (PRESENT(ldb)) config%shape%ldb = ldb
+          IF (PRESENT(ldc)) config%shape%ldc = ldc
+          IF (PRESENT(alpha)) config%shape%alpha = alpha
+          IF (PRESENT(beta)) config%shape%beta = beta
+          !> Registry lookup (cache hit copies full config).
+          IF (PRESENT(registry)) THEN
+            key = config%shape
+            ptr = libxs_registry_get(registry,                          &
+     &        C_LOC(key),                                                &
+     &        INT(C_SIZEOF(key), C_SIZE_T))
+            IF (C_ASSOCIATED(ptr)) THEN
+              CALL C_F_POINTER(ptr, cached)
+              config = cached
+              from_cache = .TRUE.
+            END IF
+          END IF
+          !> Set kernel pointers (skipped on cache hit).
+          IF (.NOT. from_cache) THEN
+            IF (PRESENT(dgemm_jit))                                     &
+     &        config%dgemm_jit = dgemm_jit
+            IF (PRESENT(sgemm_jit))                                     &
+     &        config%sgemm_jit = sgemm_jit
+            IF (PRESENT(jitter))                                        &
+     &        config%jitter = jitter
+            IF (PRESENT(xgemm)) config%xgemm = xgemm
+            IF (PRESENT(dgemm_blas))                                    &
+     &        config%dgemm_blas = dgemm_blas
+            IF (PRESENT(sgemm_blas))                                    &
+     &        config%sgemm_blas = sgemm_blas
+            !> Cache miss: store in registry.
+            IF (PRESENT(registry)) THEN
+              tmp = config
+              ptr = libxs_registry_set(registry,                        &
+     &          C_LOC(key),                                              &
+     &          INT(C_SIZEOF(key), C_SIZE_T),                            &
+     &          C_LOC(tmp),                                              &
+     &          INT(C_SIZEOF(tmp), C_SIZE_T))
+            END IF
+          END IF
+          libxs_gemm_dispatch = libxs_gemm_ready(config)
+        END FUNCTION
+
+        !> Release a GEMM config: clear all kernel pointers.
+        !> If the config holds a JIT jitter handle, the
+        !> caller must destroy it first (e.g., call
+        !> mkl_jit_destroy before calling this routine).
+        SUBROUTINE libxs_gemm_release(config)
+          TYPE(libxs_gemm_config_t), INTENT(INOUT) :: config
+          config%dgemm_jit  = C_NULL_FUNPTR
+          config%sgemm_jit  = C_NULL_FUNPTR
+          config%jitter     = C_NULL_PTR
+          config%xgemm      = C_NULL_FUNPTR
+          config%dgemm_blas = C_NULL_FUNPTR
+          config%sgemm_blas = C_NULL_FUNPTR
+        END SUBROUTINE
       END MODULE

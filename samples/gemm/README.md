@@ -21,7 +21,7 @@ make GNU=1 DBG=1 PEDANTIC=2
 
 ### gemm_strided
 
-Strided batch DGEMM: all matrices are packed contiguously in memory with constant stride between consecutive A, B, and C matrices. With OpenMP, work is distributed across threads via `libxs_gemm_strided_task`.
+Strided batch DGEMM: all matrices are packed contiguously in memory with constant stride between consecutive A, B, and C matrices. Uses `libxs_gemm_index` with `index_stride=0` (constant-stride mode). With OpenMP, work is distributed across threads via `libxs_gemm_index_task`.
 
 ```
 ./gemm_strided.x [M [N [K [batchsize [nrepeat]]]]]
@@ -47,16 +47,6 @@ The `dup` argument controls duplicate C-matrix references:
 | 1 | Sorted | Half-unique C-pointers, duplicates consecutive. |
 | 2 | Shuffled | Half-unique C-pointers, randomly shuffled (stresses lock-forward). |
 
-### gemm_groups
-
-Grouped GEMM: multiple groups with varying matrix shapes are processed in a single call to `libxs_gemm_groups`. Each group's dimensions grow by 4 from a configurable base.
-
-```
-./gemm_groups.x [ngroups [batch_per_group [nrepeat [base_m]]]]
-```
-
-Defaults: ngroups=2, batch_per_group=30000, nrepeat=3, base_m=8.
-
 ## MKL JIT Support
 
 When built with Intel MKL (`__MKL` defined), `gemm_strided` and `gemm_batch` automatically create a JIT-compiled DGEMM kernel via `mkl_cblas_jit_create_dgemm` and wire it into `libxs_gemm_config_t`. The JIT path is selected at runtime only when the MKL headers provide the `mkl_jit_create_dgemm` macro; otherwise the built-in default kernel is used transparently.
@@ -68,7 +58,6 @@ Set the `CHECK` environment variable to enable a post-run sanity check using `li
 ```bash
 CHECK=1 ./gemm_strided.x
 CHECK=1 ./gemm_batch.x 23 23 23 1000 1 2
-CHECK=1 ./gemm_groups.x
 ```
 
-This prints the L1 norm (`l1_tst`) of the first C-matrix (or a per-group reduction for `gemm_groups`). The golden value is deterministic for a given shape and repeat count, so it can be used for regression testing across configurations and kernels.
+This prints the L1 norm (`l1_tst`) of the first C-matrix. The golden value is deterministic for a given shape and repeat count, so it can be used for regression testing across configurations and kernels.
