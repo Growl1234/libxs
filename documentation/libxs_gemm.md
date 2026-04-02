@@ -61,33 +61,6 @@ Configuration supplying GEMM kernels. Pass NULL to batch functions to use the bu
 
 ## Functions
 
-### Strided Batch
-
-```C
-void libxs_gemm_strided(
-  libxs_data_t datatype, const char* transa, const char* transb,
-  int m, int n, int k,
-  const void* alpha, const void* a, int lda, int stride_a,
-                     const void* b, int ldb, int stride_b,
-  const void* beta,        void* c, int ldc, int stride_c,
-  int batchsize, const libxs_gemm_config_t* config);
-```
-
-Process a batch of GEMMs with strided access (constant offsets between matrices). Matrices are at A + i\*stride\_a\*elemsize, etc. Pass `config=NULL` to use the built-in kernel.
-
-```C
-void libxs_gemm_strided_task(
-  libxs_data_t datatype, const char* transa, const char* transb,
-  int m, int n, int k,
-  const void* alpha, const void* a, int lda, int stride_a,
-                     const void* b, int ldb, int stride_b,
-  const void* beta,        void* c, int ldc, int stride_c,
-  int batchsize, const libxs_gemm_config_t* config,
-  int tid, int ntasks);
-```
-
-Per-thread form of `libxs_gemm_strided`. The caller distributes work by passing its `tid` and `ntasks`.
-
 ### Pointer-Array Batch
 
 ```C
@@ -115,18 +88,3 @@ void libxs_gemm_batch_task(
 
 Per-thread form of `libxs_gemm_batch`.
 
-### Grouped Batch
-
-```C
-void libxs_gemm_groups(
-  libxs_data_t datatype,
-  const char transa_array[], const char transb_array[],
-  const int m_array[], const int n_array[], const int k_array[],
-  const void* alpha_array, const void* a_array[], const int lda_array[],
-                           const void* b_array[], const int ldb_array[],
-  const void* beta_array,        void* c_array[], const int ldc_array[],
-  int ngroups, const int batchsize[],
-  const libxs_gemm_config_t* config);
-```
-
-Process groups of batched GEMMs with varying parameters. Each group has its own transa, transb, m, n, k, lda, ldb, ldc, and batchsize. The pointer arrays are concatenated across groups. `alpha_array` and `beta_array` are arrays of `ngroups` scalars (each `LIBXS_TYPESIZE` bytes).
