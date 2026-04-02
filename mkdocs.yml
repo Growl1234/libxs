@@ -1,10 +1,9 @@
 site_name: LIBXS
 site_author: Hans Pabst
-copyright: Copyright (c) Intel Corporation, LIBXS <a href="http://libxs.readthedocs.io/LICENSE/">Contributors</a>.
+copyright: Copyright (c) Intel Corporation, LIBXS Contributors.
 site_description: Library for extra small auxiliary functions and specialized operations.
 repo_url: https://github.com/hfp/libxs/
 edit_uri: edit/main/documentation
-site_url: https://libxs.readthedocs.io/
 docs_dir: documentation
 
 markdown_extensions:
@@ -12,8 +11,18 @@ markdown_extensions:
     permalink: True
     toc_depth: 3
     title: None
-- pymdownx.snippets:
-    base_path: ["."]
+- pymdownx.highlight:
+    anchor_linenums: true
+- pymdownx.inlinehilite
+- pymdownx.snippets
+- pymdownx.superfences
+- pymdownx.tabbed:
+    alternate_style: true
+- pymdownx.details
+- attr_list
+- md_in_html
+- admonition
+
 extra_css:
 - style.css
 
@@ -21,31 +30,35 @@ theme:
     name: readthedocs
     custom_dir: .theme
 
+plugins:
+  - search
+
 hooks:
-- .theme/ford_hook.py
+  - .theme/hook.py
 
 nav:
 - Overview: index.md
-- Scripts: libxs_scripts.md
+- Ozaki Getting Started:
+  - Howto: libxs_ozaki.md
+  - Details: samples/libxs_ozaki.md
 - LIBXS Domains:
-  - "GEMM: Matrix Multiplication": libxs_gemm.md
-  - "MEM: Memory Operations": libxs_mem.md
-  - "MHD: Meta Header Data": libxs_mhd.md
-  - "MATH: Math Functions": libxs_math.md
-  - "SYNC: Synchronization": libxs_sync.md
-  - "TIMER: Timer Utilities": libxs_timer.md
-  - "HIST: Histogram": libxs_hist.md
-  - "RNG: Random Number Generator": libxs_rng.md
-  - "REG: Registry": libxs_reg.md
-  - "CPUID: CPU Identification": libxs_cpuid.md
-  - "MALLOC: Memory Allocation": libxs_malloc.md
-  - "UTILS: Utility Functions": libxs_utils.md
+  - GEMM: libxs_gemm.md
+  - Malloc: libxs_malloc.md
+  - Memory: libxs_mem.md
+  - MHD: libxs_mhd.md
+  - Math: libxs_math.md
+  - Sync: libxs_sync.md
+  - Timer: libxs_timer.md
+  - Histogram: libxs_hist.md
+  - RNG: libxs_rng.md
+  - Registry: libxs_reg.md
+  - CPUID: libxs_cpuid.md
+  - Utils: libxs_utils.md
 - Fortran:
   - Reference: libxs_fortran.md
 - Example Code:
   - GEMM: samples/libxs_gemm.md
   - Memory: samples/libxs_memory.md
-  - Ozaki: samples/libxs_ozaki.md
   - Registry: samples/libxs_registry.md
   - Scratch: samples/libxs_scratch.md
   - Shuffle: samples/libxs_shuffle.md
@@ -63,5 +76,6 @@ nav:
   - MHD: tests/mhd.md
   - Registry: tests/registry.md
   - Timer: tests/timer.md
+- Scripts: libxs_scripts.md
 - About:
   - License: LICENSE.md
