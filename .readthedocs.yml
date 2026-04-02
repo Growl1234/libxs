@@ -4,22 +4,20 @@
 # Required
 version: 2
 
-# Set the version of Python and other tools you might need
 build:
   os: ubuntu-24.04
   tools:
     python: "3"
-
-# Build documentation based on Sphinx
-#sphinx:
-#  configuration: documentation/conf.py
+  jobs:
+    post_install:
+      - pip install --no-deps "FORD>=7.0.6"
 
 # Build documentation based on MkDocs
 mkdocs:
   configuration: mkdocs.yml
 
-# It is recommend specifying dependencies to enable reproducible builds:
-# https://docs.readthedocs.io/en/stable/guides/reproducible-builds.html
+# Dependencies (FORD installed via post_install with --no-deps
+# to avoid markdown version conflict with mkslides)
 python:
   install:
   - requirements: .theme/requirements.txt

@@ -443,13 +443,13 @@ documentation: $(DOCDIR)/$(PROJECT).$(DOCEXT) $(DOCDIR)/$(PROJECT)_samples.$(DOC
 
 .PHONY: mkdocs
 mkdocs: mkdocs-tests $(ROOTDIR)/$(DOCDIR)/index.md
-	@mkdocs build --clean
+#	@mkdocs build --clean
 	@mkdocs serve
 
 .PHONY: mkslides
 mkslides:
-	@mkslides build $(DOCDIR)/slides -d site/slides
-	@mkslides serve $(DOCDIR)/slides
+#	@mkslides build $(DOCDIR)/ozaki -d site/slides
+	@mkslides serve $(DOCDIR)/ozaki
 
 .PHONY: mkdocs-tests
 mkdocs-tests: $(TSTMDS)
