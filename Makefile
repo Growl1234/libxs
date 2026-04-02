@@ -446,6 +446,11 @@ mkdocs: mkdocs-tests $(ROOTDIR)/$(DOCDIR)/index.md
 	@mkdocs build --clean
 	@mkdocs serve
 
+.PHONY: mkslides
+mkslides:
+	@mkslides build $(DOCDIR)/slides -d site/slides
+	@mkslides serve $(DOCDIR)/slides
+
 .PHONY: mkdocs-tests
 mkdocs-tests: $(TSTMDS)
 
@@ -649,14 +654,9 @@ $(OUTDIR)/$(PROJECT)-static.pc: $(OUTDIR)/$(PROJECT).$(SLIBEXT)
 	@echo "libdir=$(ALIAS_LIBDIR)" >>$@
 	@echo >>$@
 	@echo "Cflags: -I\$${includedir}" >>$@
+	@echo "Libs: -L\$${libdir} -l$(patsubst lib%,%,$(PROJECT))" >>$@
   ifneq (,$(ALIAS_PRIVLIBS))
-  ifneq (Windows_NT,$(UNAME))
-	@echo "Libs: -L\$${libdir} -l:$(PROJECT).$(SLIBEXT) $(ALIAS_PRIVLIBS)" >>$@
-  else
-	@echo "Libs: -L\$${libdir} -lxsmm $(ALIAS_PRIVLIBS)" >>$@
-  endif
-  else # no private libraries
-	@echo "Libs: -L\$${libdir} -lxsmm" >>$@
+	@echo "Libs.private: $(ALIAS_PRIVLIBS)" >>$@
   endif
   ifeq (,$(filter-out 0 2,$(BUILD)))
 	@ln -fs $(notdir $@) $(OUTDIR)/$(PROJECT).pc
@@ -677,11 +677,9 @@ $(OUTDIR)/$(PROJECT)-shared.pc: $(OUTDIR)/$(PROJECT).$(DLIBEXT)
 	@echo "libdir=$(ALIAS_LIBDIR)" >>$@
 	@echo >>$@
 	@echo "Cflags: -I\$${includedir}" >>$@
+	@echo "Libs: -L\$${libdir} -l$(patsubst lib%,%,$(PROJECT))" >>$@
   ifneq (,$(ALIAS_PRIVLIBS))
-	@echo "Libs: -L\$${libdir} -lxsmm" >>$@
 	@echo "Libs.private: $(ALIAS_PRIVLIBS)" >>$@
-  else # no private libraries
-	@echo "Libs: -L\$${libdir} -lxsmm" >>$@
   endif
   ifeq (,$(filter-out 1,$(BUILD)))
 	@ln -fs $(notdir $@) $(OUTDIR)/$(PROJECT).pc
