@@ -181,7 +181,7 @@
           !> Returns the detected ISA level for the current
           !> platform. Pass C_NULL_PTR instead of info to skip
           !> filling the CPU properties structure.
-          FUNCTION libxs_cpuid(info) BIND(C)
+          PURE FUNCTION libxs_cpuid(info) BIND(C)
             IMPORT :: C_PTR, C_INT
             TYPE(C_PTR), INTENT(IN), VALUE :: info
             INTEGER(C_INT) :: libxs_cpuid
@@ -189,7 +189,7 @@
 
           !> Returns a human-readable name for the given ISA
           !> level id. The returned pointer is to static storage.
-          FUNCTION libxs_cpuid_name(id) BIND(C)
+          PURE FUNCTION libxs_cpuid_name(id) BIND(C)
             IMPORT :: C_PTR, C_INT
             INTEGER(C_INT), INTENT(IN), VALUE :: id
             TYPE(C_PTR) :: libxs_cpuid_name
@@ -197,7 +197,7 @@
 
           !> Translates a CPU architecture name (e.g., "avx2")
           !> to the corresponding LIBXS id constant.
-          FUNCTION libxs_cpuid_id(name) BIND(C)
+          PURE FUNCTION libxs_cpuid_id(name) BIND(C)
             IMPORT :: C_CHAR, C_INT
             CHARACTER(C_CHAR), INTENT(IN) :: name(*)
             INTEGER(C_INT) :: libxs_cpuid_id
@@ -205,7 +205,7 @@
 
           !> Returns the SIMD vector length (VLEN) in bytes
           !> for the given ISA level; zero if scalar.
-          FUNCTION libxs_cpuid_vlen(id) BIND(C)
+          PURE FUNCTION libxs_cpuid_vlen(id) BIND(C)
             IMPORT :: C_INT
             INTEGER(C_INT), INTENT(IN), VALUE :: id
             INTEGER(C_INT) :: libxs_cpuid_vlen
@@ -229,7 +229,7 @@
 
           !> Returns the duration (in seconds) between two ticks
           !> received by libxs_timer_tick.
-          FUNCTION libxs_timer_duration(tick0, tick1) BIND(C)
+          PURE FUNCTION libxs_timer_duration(tick0, tick1) BIND(C)
             IMPORT :: LIBXS_TIMER_TICK_KIND, C_DOUBLE
             INTEGER(LIBXS_TIMER_TICK_KIND), INTENT(IN), VALUE :: tick0
             INTEGER(LIBXS_TIMER_TICK_KIND), INTENT(IN), VALUE :: tick1
@@ -286,7 +286,7 @@
           END SUBROUTINE
 
           !> Calculate a 64-bit hash for a character string.
-          FUNCTION libxs_hash_string(string) BIND(C)
+          PURE FUNCTION libxs_hash_string(string) BIND(C)
             IMPORT :: C_CHAR, C_LONG_LONG
             CHARACTER(C_CHAR), INTENT(IN) :: string(*)
             INTEGER(C_LONG_LONG) :: libxs_hash_string
@@ -329,7 +329,7 @@
 
           !> Combine absolute and relative norms into a single
           !> value which can be used to check against a margin.
-          FUNCTION libxs_matdiff_epsilon(input) BIND(C)
+          PURE FUNCTION libxs_matdiff_epsilon(input) BIND(C)
             IMPORT :: libxs_matdiff_t, C_DOUBLE
             TYPE(libxs_matdiff_t), INTENT(IN) :: input
             REAL(C_DOUBLE) :: libxs_matdiff_epsilon
@@ -432,9 +432,10 @@
             INTEGER(C_INT) :: libxs_registry_info
           END FUNCTION
 
-          !> Copy a matrix (or zero if source is NULL).
-          SUBROUTINE libxs_matcopy(outm, inm, typesize,                 &
-     &    m, n, ldi, ldo) BIND(C)
+          !> Copy a matrix (internal, use libxs_matcopy wrapper).
+          PURE SUBROUTINE internal_matcopy(outm, inm,                   &
+     &    typesize, m, n, ldi, ldo)                                     &
+     &    BIND(C, NAME="libxs_matcopy")
             IMPORT :: C_PTR, C_INT
             TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
             INTEGER(C_INT), INTENT(IN), VALUE :: typesize
@@ -442,9 +443,10 @@
      &      m, n, ldi, ldo
           END SUBROUTINE
 
-          !> Copy a matrix: task variant for external threading.
-          SUBROUTINE libxs_matcopy_task(outm, inm,                      &
-     &    typesize, m, n, ldi, ldo, tid, ntasks) BIND(C)
+          !> Copy a matrix: task variant (internal).
+          PURE SUBROUTINE internal_matcopy_task(outm, inm,              &
+     &    typesize, m, n, ldi, ldo, tid, ntasks)                        &
+     &    BIND(C, NAME="libxs_matcopy_task")
             IMPORT :: C_PTR, C_INT
             TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
             INTEGER(C_INT), INTENT(IN), VALUE :: typesize
@@ -452,9 +454,10 @@
      &      m, n, ldi, ldo, tid, ntasks
           END SUBROUTINE
 
-          !> Out-of-place matrix transpose.
-          SUBROUTINE libxs_otrans(outm, inm, typesize,                  &
-     &    m, n, ldi, ldo) BIND(C)
+          !> Out-of-place transpose (internal).
+          PURE SUBROUTINE internal_otrans(outm, inm,                    &
+     &    typesize, m, n, ldi, ldo)                                     &
+     &    BIND(C, NAME="libxs_otrans")
             IMPORT :: C_PTR, C_INT
             TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
             INTEGER(C_INT), INTENT(IN), VALUE :: typesize
@@ -462,9 +465,10 @@
      &      m, n, ldi, ldo
           END SUBROUTINE
 
-          !> Out-of-place transpose: task variant.
-          SUBROUTINE libxs_otrans_task(outm, inm,                       &
-     &    typesize, m, n, ldi, ldo, tid, ntasks) BIND(C)
+          !> Out-of-place transpose: task variant (internal).
+          PURE SUBROUTINE internal_otrans_task(outm, inm,               &
+     &    typesize, m, n, ldi, ldo, tid, ntasks)                        &
+     &    BIND(C, NAME="libxs_otrans_task")
             IMPORT :: C_PTR, C_INT
             TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
             INTEGER(C_INT), INTENT(IN), VALUE :: typesize
@@ -550,6 +554,8 @@
         INTERFACE libxs_hash
           MODULE PROCEDURE libxs_hash_char, libxs_hash_i8
           MODULE PROCEDURE libxs_hash_i32, libxs_hash_i64
+          MODULE PROCEDURE libxs_hash_char0, libxs_hash_i8_0
+          MODULE PROCEDURE libxs_hash_i32_0, libxs_hash_i64_0
         END INTERFACE
 
         !> Check if two arrays differ (.TRUE. if different).
@@ -565,6 +571,76 @@
           INTEGER(C_INT) :: libxs_typesize
           libxs_typesize = ISHFT(datatype, -4)
         END FUNCTION
+
+        !> Copy a matrix (or zero if source is NULL).
+        !> ldo defaults to m (tightly packed output).
+        PURE SUBROUTINE libxs_matcopy(outm, inm, typesize,              &
+     &  m, n, ldi, ldo)
+          TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
+          INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+          INTEGER(C_INT), INTENT(IN), VALUE :: m, n, ldi
+          INTEGER(C_INT), INTENT(IN), VALUE, OPTIONAL :: ldo
+          IF (PRESENT(ldo)) THEN
+            CALL internal_matcopy(outm, inm, typesize,                  &
+     &        m, n, ldi, ldo)
+          ELSE
+            CALL internal_matcopy(outm, inm, typesize,                  &
+     &        m, n, ldi, m)
+          END IF
+        END SUBROUTINE
+
+        !> Copy a matrix: task variant for external threading.
+        !> ldo defaults to m (tightly packed output).
+        PURE SUBROUTINE libxs_matcopy_task(outm, inm,                   &
+     &  typesize, m, n, ldi, ldo, tid, ntasks)
+          TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
+          INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+          INTEGER(C_INT), INTENT(IN), VALUE ::                          &
+     &      m, n, ldi, tid, ntasks
+          INTEGER(C_INT), INTENT(IN), VALUE, OPTIONAL :: ldo
+          IF (PRESENT(ldo)) THEN
+            CALL internal_matcopy_task(outm, inm, typesize,             &
+     &        m, n, ldi, ldo, tid, ntasks)
+          ELSE
+            CALL internal_matcopy_task(outm, inm, typesize,             &
+     &        m, n, ldi, m, tid, ntasks)
+          END IF
+        END SUBROUTINE
+
+        !> Out-of-place matrix transpose.
+        !> ldo defaults to n (tightly packed transposed output).
+        PURE SUBROUTINE libxs_otrans(outm, inm, typesize,               &
+     &  m, n, ldi, ldo)
+          TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
+          INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+          INTEGER(C_INT), INTENT(IN), VALUE :: m, n, ldi
+          INTEGER(C_INT), INTENT(IN), VALUE, OPTIONAL :: ldo
+          IF (PRESENT(ldo)) THEN
+            CALL internal_otrans(outm, inm, typesize,                   &
+     &        m, n, ldi, ldo)
+          ELSE
+            CALL internal_otrans(outm, inm, typesize,                   &
+     &        m, n, ldi, n)
+          END IF
+        END SUBROUTINE
+
+        !> Out-of-place transpose: task variant.
+        !> ldo defaults to n (tightly packed transposed output).
+        PURE SUBROUTINE libxs_otrans_task(outm, inm,                    &
+     &  typesize, m, n, ldi, ldo, tid, ntasks)
+          TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
+          INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+          INTEGER(C_INT), INTENT(IN), VALUE ::                          &
+     &      m, n, ldi, tid, ntasks
+          INTEGER(C_INT), INTENT(IN), VALUE, OPTIONAL :: ldo
+          IF (PRESENT(ldo)) THEN
+            CALL internal_otrans_task(outm, inm, typesize,              &
+     &        m, n, ldi, ldo, tid, ntasks)
+          ELSE
+            CALL internal_otrans_task(outm, inm, typesize,              &
+     &        m, n, ldi, n, tid, ntasks)
+          END IF
+        END SUBROUTINE
 
         !> Allocate from a pool reaching steady-state.
         !> alignment=0 (LIBXS_MALLOC_AUTO, default): automatic.
@@ -616,7 +692,7 @@
         END SUBROUTINE
 
         !> Calculates a hash value for the given array and seed.
-        FUNCTION libxs_hash_char(key, seed)
+        PURE FUNCTION libxs_hash_char(key, seed)
           CHARACTER(C_CHAR), INTENT(IN), CONTIGUOUS,                    &
      &      TARGET :: key(:)
           INTEGER(C_INT), INTENT(IN) :: seed
@@ -624,7 +700,14 @@
           libxs_hash_char = libxs_hash_c(C_LOC(key), SIZE(key), seed)
         END FUNCTION
 
-        FUNCTION libxs_hash_i8(key, seed)
+        PURE FUNCTION libxs_hash_char0(key)
+          CHARACTER(C_CHAR), INTENT(IN), CONTIGUOUS,                    &
+     &      TARGET :: key(:)
+          INTEGER(C_INT) :: libxs_hash_char0
+          libxs_hash_char0 = libxs_hash_c(C_LOC(key), SIZE(key), 0)
+        END FUNCTION
+
+        PURE FUNCTION libxs_hash_i8(key, seed)
           INTEGER(C_INT8_T), INTENT(IN), CONTIGUOUS,                    &
      &      TARGET :: key(:)
           INTEGER(C_INT), INTENT(IN) :: seed
@@ -632,7 +715,14 @@
           libxs_hash_i8 = libxs_hash_c(C_LOC(key), SIZE(key), seed)
         END FUNCTION
 
-        FUNCTION libxs_hash_i32(key, seed)
+        PURE FUNCTION libxs_hash_i8_0(key)
+          INTEGER(C_INT8_T), INTENT(IN), CONTIGUOUS,                    &
+     &      TARGET :: key(:)
+          INTEGER(C_INT) :: libxs_hash_i8_0
+          libxs_hash_i8_0 = libxs_hash_c(C_LOC(key), SIZE(key), 0)
+        END FUNCTION
+
+        PURE FUNCTION libxs_hash_i32(key, seed)
           INTEGER(C_INT), INTENT(IN), CONTIGUOUS,                       &
      &      TARGET :: key(:)
           INTEGER(C_INT), INTENT(IN) :: seed
@@ -641,7 +731,15 @@
      &      C_LOC(key), SIZE(key) * 4, seed)
         END FUNCTION
 
-        FUNCTION libxs_hash_i64(key, seed)
+        PURE FUNCTION libxs_hash_i32_0(key)
+          INTEGER(C_INT), INTENT(IN), CONTIGUOUS,                       &
+     &      TARGET :: key(:)
+          INTEGER(C_INT) :: libxs_hash_i32_0
+          libxs_hash_i32_0 = libxs_hash_c(                              &
+     &      C_LOC(key), SIZE(key) * 4, 0)
+        END FUNCTION
+
+        PURE FUNCTION libxs_hash_i64(key, seed)
           INTEGER(C_LONG_LONG), INTENT(IN), CONTIGUOUS,                 &
      &      TARGET :: key(:)
           INTEGER(C_INT), INTENT(IN) :: seed
@@ -650,8 +748,16 @@
      &      C_LOC(key), SIZE(key) * 8, seed)
         END FUNCTION
 
+        PURE FUNCTION libxs_hash_i64_0(key)
+          INTEGER(C_LONG_LONG), INTENT(IN), CONTIGUOUS,                 &
+     &      TARGET :: key(:)
+          INTEGER(C_INT) :: libxs_hash_i64_0
+          libxs_hash_i64_0 = libxs_hash_c(                              &
+     &      C_LOC(key), SIZE(key) * 8, 0)
+        END FUNCTION
+
         !> Calculates if there is a difference between two arrays.
-        FUNCTION libxs_diff_char(a, b)
+        PURE FUNCTION libxs_diff_char(a, b)
           CHARACTER(C_CHAR), INTENT(IN), CONTIGUOUS,                    &
      &      TARGET :: a(:), b(:)
           LOGICAL :: libxs_diff_char
@@ -665,7 +771,7 @@
           END IF
         END FUNCTION
 
-        FUNCTION libxs_diff_i8(a, b)
+        PURE FUNCTION libxs_diff_i8(a, b)
           INTEGER(C_INT8_T), INTENT(IN), CONTIGUOUS,                    &
      &      TARGET :: a(:), b(:)
           LOGICAL :: libxs_diff_i8
@@ -679,7 +785,7 @@
           END IF
         END FUNCTION
 
-        FUNCTION libxs_diff_i32(a, b)
+        PURE FUNCTION libxs_diff_i32(a, b)
           INTEGER(C_INT), INTENT(IN), CONTIGUOUS,                       &
      &      TARGET :: a(:), b(:)
           LOGICAL :: libxs_diff_i32
@@ -693,7 +799,7 @@
           END IF
         END FUNCTION
 
-        FUNCTION libxs_diff_i64(a, b)
+        PURE FUNCTION libxs_diff_i64(a, b)
           INTEGER(C_LONG_LONG), INTENT(IN), CONTIGUOUS,                 &
      &      TARGET :: a(:), b(:)
           LOGICAL :: libxs_diff_i64
@@ -787,11 +893,11 @@
         !> Check if a dispatched GEMM config holds a usable
         !> kernel. Returns nonzero if libxs_gemm_call would
         !> succeed, zero otherwise.
-        FUNCTION libxs_gemm_ready(config)
+        PURE FUNCTION libxs_gemm_ready(config)
           TYPE(libxs_gemm_config_t), INTENT(IN) :: config
           INTEGER(C_INT) :: libxs_gemm_ready
           INTERFACE
-            FUNCTION internal_gemm_ready_f(config)                      &
+            PURE FUNCTION internal_gemm_ready_f(config)                 &
      &      RESULT(res) BIND(C, NAME="libxs_gemm_ready_f")
               IMPORT :: libxs_gemm_config_t, C_INT
               TYPE(libxs_gemm_config_t), INTENT(IN) :: config
