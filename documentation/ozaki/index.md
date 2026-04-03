@@ -242,11 +242,11 @@ ill-conditioned matrices or insufficient decomposition components
 
 When `OZAKI_RSQ` or `OZAKI_EPS` thresholds are exceeded:
 
-Creates `gemm_<slurm-rank>-a.mhd` and `gemm_<slurm-rank>-b.mhd`
+Creates `gemm_<slurm-rank-ncall>-a.mhd` and `gemm_<slurm-rank-ncall>-b.mhd`
 
 Reproduce offline:
 ```bash
-./dgemm-wrap.x gemm-292284-0-a.mhd gemm-292284-0-b.mhd
+./dgemm-wrap.x gemm-292284-0-500-a.mhd gemm-292284-0-500-b.mhd
 ```
 
 Increase accuracy: `OZAKI_N=16` (more slices) or `OZAKI=2` (CRT)
