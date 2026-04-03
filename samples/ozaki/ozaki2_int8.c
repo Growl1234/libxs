@@ -40,42 +40,43 @@
  * signed dot products without aliasing. */
 
 /* 18 pairwise coprime moduli <= 128 (prime powers + primes).
- * Product of 17 ~ 2^112 > 2^111 (double).
- * Includes 128=2^7, 125=5^3, 121=11^2, 81=3^4 alongside primes.
+ * Product of all 20 ~ 2^138 (double).
+ * Includes 128=2^7, 125=5^3, 121=11^2, 119=7*17, 81=3^4 alongside primes.
  * Residues 0..127 fit in int8 when sign is folded in (-127..+127). */
 static const uint16_t oz2_moduli[] = {
-  128, 127, 125, 121, 113, 109, 107, 103,
-  101,  97,  89,  83,  81,  79,  73,  71,
-   67,  61
+  128, 127, 125, 121, 119, 113, 109, 107,
+  103, 101,  97,  89,  83,  81,  79,  73,
+   71,  67,  61,  59
 };
 
 /* Barrett reciprocals: floor(2^32 / m_i) for single-word reduction. */
 static const uint32_t oz2_rcp[] = {
   (uint32_t)(0x100000000ULL / 128), (uint32_t)(0x100000000ULL / 127),
   (uint32_t)(0x100000000ULL / 125), (uint32_t)(0x100000000ULL / 121),
-  (uint32_t)(0x100000000ULL / 113), (uint32_t)(0x100000000ULL / 109),
-  (uint32_t)(0x100000000ULL / 107), (uint32_t)(0x100000000ULL / 103),
-  (uint32_t)(0x100000000ULL / 101), (uint32_t)(0x100000000ULL /  97),
-  (uint32_t)(0x100000000ULL /  89), (uint32_t)(0x100000000ULL /  83),
-  (uint32_t)(0x100000000ULL /  81), (uint32_t)(0x100000000ULL /  79),
-  (uint32_t)(0x100000000ULL /  73), (uint32_t)(0x100000000ULL /  71),
-  (uint32_t)(0x100000000ULL /  67), (uint32_t)(0x100000000ULL /  61)
+  (uint32_t)(0x100000000ULL / 119), (uint32_t)(0x100000000ULL / 113),
+  (uint32_t)(0x100000000ULL / 109), (uint32_t)(0x100000000ULL / 107),
+  (uint32_t)(0x100000000ULL / 103), (uint32_t)(0x100000000ULL / 101),
+  (uint32_t)(0x100000000ULL /  97), (uint32_t)(0x100000000ULL /  89),
+  (uint32_t)(0x100000000ULL /  83), (uint32_t)(0x100000000ULL /  81),
+  (uint32_t)(0x100000000ULL /  79), (uint32_t)(0x100000000ULL /  73),
+  (uint32_t)(0x100000000ULL /  71), (uint32_t)(0x100000000ULL /  67),
+  (uint32_t)(0x100000000ULL /  61), (uint32_t)(0x100000000ULL /  59)
 };
 
 /* 2^18 mod m_i and 2^36 mod m_i: used for 64-bit Barrett decomposition. */
 static const uint32_t oz2_pow18[] = {
     0U /* 128 */,  16U /* 127 */,  19U /* 125 */,  58U /* 121 */,
-   97U /* 113 */, 108U /* 109 */, 101U /* 107 */,   9U /* 103 */,
-   49U /* 101 */,  50U /*  97 */,  39U /*  89 */,  30U /*  83 */,
-   28U /*  81 */,  22U /*  79 */,   1U /*  73 */,  12U /*  71 */,
-   40U /*  67 */,  27U /*  61 */
+  106U /* 119 */,  97U /* 113 */, 108U /* 109 */, 101U /* 107 */,
+    9U /* 103 */,  49U /* 101 */,  50U /*  97 */,  39U /*  89 */,
+   30U /*  83 */,  28U /*  81 */,  22U /*  79 */,   1U /*  73 */,
+   12U /*  71 */,  40U /*  67 */,  27U /*  61 */,   7U /*  59 */
 };
 static const uint32_t oz2_pow36[] = {
     0U /* 128 */,   2U /* 127 */, 111U /* 125 */,  97U /* 121 */,
-   30U /* 113 */,   1U /* 109 */,  36U /* 107 */,  81U /* 103 */,
-   78U /* 101 */,  75U /*  97 */,   8U /*  89 */,  70U /*  83 */,
-   55U /*  81 */,  10U /*  79 */,   1U /*  73 */,   2U /*  71 */,
-   59U /*  67 */,  58U /*  61 */
+   50U /* 119 */,  30U /* 113 */,   1U /* 109 */,  36U /* 107 */,
+   81U /* 103 */,  78U /* 101 */,  75U /*  97 */,   8U /*  89 */,
+   70U /*  83 */,  55U /*  81 */,  10U /*  79 */,   1U /*  73 */,
+    2U /*  71 */,  59U /*  67 */,  58U /*  61 */,  49U /*  59 */
 };
 
 /* Residue element type: int8 (signs folded into residues for VNNI). */

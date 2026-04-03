@@ -65,10 +65,10 @@
 #define OZ1_DEFAULT (OZ1_TRIANGULAR | OZ1_SYMMETRIZE)
 
 #if GEMM_IS_DOUBLE
-# define OZ2_NPRIMES_MAX 18
-# define OZ2_NPRIMES_DEFAULT 18
+# define OZ2_NPRIMES_MAX 20
+# define OZ2_NPRIMES_DEFAULT 19
 #else /* single-precision */
-# define OZ2_NPRIMES_MAX 10
+# define OZ2_NPRIMES_MAX 12
 # define OZ2_NPRIMES_DEFAULT 10
 #endif
 
