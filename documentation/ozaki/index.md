@@ -42,14 +42,14 @@ Application calls DGEMM/SGEMM or ZGEMM/CGEMM
 
 ```bash
 cd $HOME
-git clone https://github.com/hfp/libxstream.git
-cd libxstream && make -j $(nproc)
-
-cd $HOME
 git clone https://github.com/hfp/libxs.git
 cd libxs && make -j $(nproc)
 
-cd samples/ozaki && make -j $(nproc)
+cd $HOME
+git clone https://github.com/hfp/libxstream.git
+cd libxstream && make -j $(nproc)
+
+cd $HOME/libxs/samples/ozaki && make -j $(nproc)
 ```
 
 Produces `libwrap.so` (LD_PRELOAD), `libwrap.a` (--wrap),
