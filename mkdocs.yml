@@ -42,20 +42,21 @@ nav:
   - Howto: libxs_ozaki.md
   - Details: samples/libxs_ozaki.md
 - LIBXS Domains:
-  - GEMM: libxs_gemm.md
+  - Histogram: libxs_hist.md
+  - Registry: libxs_reg.md
   - Malloc: libxs_malloc.md
   - Memory: libxs_mem.md
-  - MHD: libxs_mhd.md
-  - Math: libxs_math.md
-  - Sync: libxs_sync.md
   - Timer: libxs_timer.md
-  - Histogram: libxs_hist.md
-  - RNG: libxs_rng.md
-  - Registry: libxs_reg.md
   - CPUID: libxs_cpuid.md
   - Utils: libxs_utils.md
-- Fortran:
-  - Reference: libxs_fortran.md
+  - Sync: libxs_sync.md
+  - GEMM: libxs_gemm.md
+  - Math: libxs_math.md
+  - MHD: libxs_mhd.md
+  - RNG: libxs_rng.md
+  - Fortran: libxs_fortran.md
+- LIBXSTREAM:
+  - Reference: libxs_opencl.md
 - Example Code:
   - GEMM: samples/libxs_gemm.md
   - Memory: samples/libxs_memory.md
