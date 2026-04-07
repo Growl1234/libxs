@@ -48,6 +48,20 @@ void libxs_hist_get(libxs_lock_t* lock,
 Query statistics. Output pointers can be NULL to skip fields.
 
 ```C
+double libxs_hist_get_percentile(libxs_lock_t* lock,
+  const libxs_hist_t* hist, double percentile);
+```
+
+Query a percentile value from the histogram. `percentile` is in the range `[0..1]` (clamped). The result is linearly interpolated within the bucket that contains the target cumulative count. Commits queued items if pending. Returns 0 for an empty histogram.
+
+```C
+double libxs_hist_get_median(libxs_lock_t* lock,
+  const libxs_hist_t* hist);
+```
+
+Convenience wrapper equivalent to `libxs_hist_get_percentile(lock, hist, 0.5)`.
+
+```C
 void libxs_hist_print(FILE* ostream,
   const libxs_hist_t* hist, const char title[],
   const int prec[]);
