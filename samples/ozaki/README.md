@@ -126,7 +126,7 @@ make ECFLAGS="-DBLOCK_K=32 -DBATCH_K=2" dgemm-wrap.x
 | `OZAKI` | 1 | Scheme selector: 0 = bypass (call original BLAS directly), 1 = Scheme 1 (mantissa slicing, int8), 2 = Scheme 2 (CRT). |
 | `OZAKI_N` | *per scheme* | Number of decomposition units: slices for Scheme 1 (double: 1..16, default 8; float: 1..8, default 4) or moduli for Scheme 2 (double: 1..20, default 19; float: 1..12, default 10). |
 | `OZAKI_FLAGS` | 3 | Scheme 1 bitmask: Triangular (1), Symmetrize (2); see above. |
-| `OZAKI_TRIM` | 0 | Scheme 1 diagonal trim: 0 = exact, T = drop T least significant diagonals (~7 bits each). |
+| `OZAKI_TRIM` | 0 | Precision levels to trim: 0 = exact. Scheme 1: drops T diagonals (~7 product bits/level). Scheme 2: truncates mantissa before CRT (~2 input bits/level, ~4 product bits/level). The level semantics are calibrated so the same `OZAKI_TRIM` value gives comparable accuracy across schemes. |
 | `OZAKI_THRESHOLD` | 12 | Arithmetic intensity threshold. Ozaki is bypassed when flops/(bytes x threshold) < 1. Set to 0 to always apply Ozaki. Debug builds default to 0. |
 | `OZAKI_VERBOSE` | 0 | 0 = silent; 1 = print accumulated statistics at exit; *N* = print every *N*th GEMM call. Auto-set to 1 when `OZAKI_EPS` or `OZAKI_RSQ` is set. |
 | `OZAKI_STAT` | 0 | Track C-matrix (0), A-matrix representation (1), or B-matrix representation (2). |
@@ -139,6 +139,39 @@ make ECFLAGS="-DBLOCK_K=32 -DBATCH_K=2" dgemm-wrap.x
 | `OZAKI_TM` | auto | GPU output tile height (multiple of 8). 0 = auto-select. |
 | `OZAKI_TN` | auto | GPU output tile width (multiple of 16). 0 = auto-select. |
 | `OZAKI_GROUPS` | 0 | Scheme 2 only: K-grouping factor (0/1 = disabled). When > 1, that many consecutive K sub-panels share one Garner reconstruction. |
+| `OZAKI_PROFILE` | 0 | Profile mode: 0 = off, 1 or negative = all phases (preprocessing + kernel), 2 = kernel only, 3 = preprocess A, 4 = preprocess B. Modes 3 and 4 are equivalent on the CPU (preprocessing is combined). Reports GFLOPS/s and INT8-TOPS/s at exit. Works for both CPU and GPU paths. |
+
+## Profiling
+
+The `OZAKI_PROFILE` environment variable enables per-GEMM timing that is collected
+into a histogram and reported at program exit. The histogram tracks effective
+GFLOPS/s (based on `2*M*N*K / time`) and derives INT8-TOPS/s from the scheme's
+decomposition multiplier (number of int8 GEMMs per FP GEMM).
+
+```
+OZAKI PROF: 850 DP-GFLOPS/s (17.0 INT8-TOPS/s, 20x)
+```
+
+The multiplier depends on the scheme and configuration:
+- **Scheme 1**: Number of slice-pair int8 GEMMs, accounting for triangular
+  iteration, symmetrize, and trim. E.g., 8 slices with default flags: 36x.
+- **Scheme 2**: Number of primes. E.g., 19 primes: 19x.
+
+Profile modes select which phase is measured:
+
+| Mode | CPU | GPU |
+|------|-----|-----|
+| 1 / negative | All phases (preprocess + kernel) | All profiled kernels |
+| 2 | Kernel only (int8 dot products + accumulation) | Dotprod/compute kernel only |
+| 3 | Preprocessing (A+B combined) | Preprocess A kernel |
+| 4 | Preprocessing (A+B combined) | Preprocess B kernel |
+
+On the CPU, modes 3 and 4 are equivalent because A and B preprocessing is
+interleaved across OpenMP threads. On the GPU, they select individual
+preprocessing kernels running on separate streams.
+
+Both CPU and GPU paths push into the same histogram, so in a mixed-path
+scenario the reported median reflects whichever path handled more calls.
 
 ## Test Driver
 
