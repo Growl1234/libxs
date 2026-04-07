@@ -523,7 +523,7 @@ static int test_median_uniform(void)
   libxs_hist_t* hist = NULL;
   const libxs_hist_update_t update[] = { libxs_hist_update_avg };
   int result = EXIT_SUCCESS;
-  double median;
+  double vals[1];
   int i;
   /* 10 buckets, uniform samples over [0, 100]: median should be near 50 */
   hist = libxs_hist_create(10/*nbuckets*/, 1/*nvals*/, update);
@@ -532,21 +532,22 @@ static int test_median_uniform(void)
     const double v[] = { (double)i };
     libxs_hist_push(NULL, hist, v);
   }
-  median = libxs_hist_get_median(NULL, hist);
-  if (fabs(median - 50.0) > 5.0 + TOLERANCE) {
-    FPRINTF(stderr, "ERROR line #%i: expected median ~50.0, got %f\n", __LINE__, median);
+  libxs_hist_get_median(NULL, hist, vals);
+  if (fabs(vals[0] - 50.0) > 5.0 + TOLERANCE) {
+    FPRINTF(stderr, "ERROR line #%i: expected median ~50.0, got %f\n", __LINE__, vals[0]);
     result = EXIT_FAILURE;
   }
   /* percentile(0) should be near min, percentile(1) near max */
   {
-    const double p0 = libxs_hist_get_percentile(NULL, hist, 0.0);
-    const double p1 = libxs_hist_get_percentile(NULL, hist, 1.0);
-    if (p0 > 10.0 + TOLERANCE) {
-      FPRINTF(stderr, "ERROR line #%i: percentile(0)=%f too high\n", __LINE__, p0);
+    double p0[1], p1[1];
+    libxs_hist_get_percentile(NULL, hist, 0.0, p0);
+    libxs_hist_get_percentile(NULL, hist, 1.0, p1);
+    if (p0[0] > 10.0 + TOLERANCE) {
+      FPRINTF(stderr, "ERROR line #%i: percentile(0)=%f too high\n", __LINE__, p0[0]);
       result = EXIT_FAILURE;
     }
-    if (p1 < 90.0 - TOLERANCE) {
-      FPRINTF(stderr, "ERROR line #%i: percentile(1)=%f too low\n", __LINE__, p1);
+    if (p1[0] < 90.0 - TOLERANCE) {
+      FPRINTF(stderr, "ERROR line #%i: percentile(1)=%f too low\n", __LINE__, p1[0]);
       result = EXIT_FAILURE;
     }
   }
@@ -560,7 +561,7 @@ static int test_median_single(void)
   libxs_hist_t* hist = NULL;
   const libxs_hist_update_t update[] = { libxs_hist_update_avg };
   int result = EXIT_SUCCESS;
-  double median;
+  double vals[1];
   /* single value: median must equal that value */
   hist = libxs_hist_create(4/*nbuckets*/, 1/*nvals*/, update);
   if (NULL == hist) return EXIT_FAILURE;
@@ -568,9 +569,9 @@ static int test_median_single(void)
     const double v[] = { 42.0 };
     libxs_hist_push(NULL, hist, v);
   }
-  median = libxs_hist_get_median(NULL, hist);
-  if (fabs(median - 42.0) > TOLERANCE) {
-    FPRINTF(stderr, "ERROR line #%i: expected 42.0, got %f\n", __LINE__, median);
+  libxs_hist_get_median(NULL, hist, vals);
+  if (fabs(vals[0] - 42.0) > TOLERANCE) {
+    FPRINTF(stderr, "ERROR line #%i: expected 42.0, got %f\n", __LINE__, vals[0]);
     result = EXIT_FAILURE;
   }
   libxs_hist_destroy(hist);
@@ -581,12 +582,43 @@ static int test_median_single(void)
 static int test_median_null(void)
 {
   int result = EXIT_SUCCESS;
-  /* NULL hist should return 0 */
-  const double median = libxs_hist_get_median(NULL, NULL);
-  if (fabs(median) > TOLERANCE) {
-    FPRINTF(stderr, "ERROR line #%i: expected 0.0, got %f\n", __LINE__, median);
+  double vals[1] = { -1.0 };
+  /* NULL hist: vals should be untouched */
+  libxs_hist_get_median(NULL, NULL, vals);
+  if (fabs(vals[0] - (-1.0)) > TOLERANCE) {
+    FPRINTF(stderr, "ERROR line #%i: expected -1.0 (untouched), got %f\n", __LINE__, vals[0]);
     result = EXIT_FAILURE;
   }
+  return result;
+}
+
+
+static int test_percentile_vals(void)
+{
+  libxs_hist_t* hist = NULL;
+  const libxs_hist_update_t update[] = { libxs_hist_update_avg, libxs_hist_update_avg };
+  int result = EXIT_SUCCESS;
+  double vals[2];
+  int i;
+  /* 4 buckets, nvals=2: push {key, auxiliary} and verify interpolated vals at median */
+  hist = libxs_hist_create(4/*nbuckets*/, 2/*nvals*/, update);
+  if (NULL == hist) return EXIT_FAILURE;
+  for (i = 0; i <= 40; ++i) {
+    const double v[] = { (double)i, 100.0 + i }; /* key, auxiliary */
+    libxs_hist_push(NULL, hist, v);
+  }
+  libxs_hist_get_median(NULL, hist, vals);
+  /* primary value (median) should be near center of [0, 40] */
+  if (fabs(vals[0] - 20.0) > 5.0 + TOLERANCE) {
+    FPRINTF(stderr, "ERROR line #%i: expected median ~20.0, got %f\n", __LINE__, vals[0]);
+    result = EXIT_FAILURE;
+  }
+  /* auxiliary value at median should be near 100+20=120 */
+  if (EXIT_SUCCESS == result && fabs(vals[1] - 120.0) > 10.0 + TOLERANCE) {
+    FPRINTF(stderr, "ERROR line #%i: expected aux ~120.0, got %f\n", __LINE__, vals[1]);
+    result = EXIT_FAILURE;
+  }
+  libxs_hist_destroy(hist);
   return result;
 }
 
@@ -665,6 +697,10 @@ int main(void)
   }
   if (EXIT_SUCCESS != test_median_null()) {
     FPRINTF(stderr, "FAILED: test_median_null\n");
+    result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS != test_percentile_vals()) {
+    FPRINTF(stderr, "FAILED: test_percentile_vals\n");
     result = EXIT_FAILURE;
   }
 

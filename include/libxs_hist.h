@@ -38,12 +38,13 @@ LIBXS_API void libxs_hist_push(libxs_lock_t* lock, libxs_hist_t* hist, const dou
 LIBXS_API void libxs_hist_get(libxs_lock_t* lock, const libxs_hist_t* hist,
   const int** buckets, int* nbuckets, double range[2], const double** vals, int* nvals);
 
-/** Query percentile value (0..1); commits queued items if pending (lock can be NULL). */
-LIBXS_API double libxs_hist_get_percentile(libxs_lock_t* lock, const libxs_hist_t* hist,
-  double percentile);
+/** Query interpolated values at percentile (0..1); commits queued items if pending. */
+LIBXS_API void libxs_hist_get_percentile(libxs_lock_t* lock, const libxs_hist_t* hist,
+  double percentile, double vals[]);
 
-/** Query median value; commits queued items if pending (lock can be NULL). */
-LIBXS_API double libxs_hist_get_median(libxs_lock_t* lock, const libxs_hist_t* hist);
+/** Query interpolated values at median; commits queued items if pending. */
+LIBXS_API void libxs_hist_get_median(libxs_lock_t* lock, const libxs_hist_t* hist,
+  double vals[]);
 
 /** Print histogram to ostream (NULL ostream is accepted). */
 LIBXS_API void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist, const int prec[],

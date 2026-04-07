@@ -517,7 +517,7 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
 {
   char fname[64];
   const char *const env_slurm = getenv("SLURM_JOBID");
-  const int slurm = (NULL == env_slurm ? 0 : atoi(env_slurm));
+  const int slurm = (NULL == env_slurm ? -1 : atoi(env_slurm));
   const int id = (1 < libxs_nranks() ? libxs_nrank() : libxs_pid());
   int result = EXIT_SUCCESS;
   FILE *file;
@@ -533,7 +533,7 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
 
   LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
 
-  if (0 == slurm) LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%u-%i-a.mhd", id, gemm_diff.r);
+  if (0 > slurm) LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%u-%i-a.mhd", id, gemm_diff.r);
   else LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%i-%u-%i-a.mhd", slurm, id, gemm_diff.r);
   file = fopen(fname, "rb");
   if (NULL == file) { /* Never overwrite an existing file */
@@ -546,7 +546,7 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
   }
   else fclose(file);
 
-  if (0 == slurm) LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%u-%i-b.mhd", id, gemm_diff.r);
+  if (0 > slurm) LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%u-%i-b.mhd", id, gemm_diff.r);
   else LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%i-%u-%i-b.mhd", slurm, id, gemm_diff.r);
   file = fopen(fname, "rb");
   if (NULL == file) { /* Never overwrite an existing file */

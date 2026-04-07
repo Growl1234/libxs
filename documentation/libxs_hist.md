@@ -48,18 +48,19 @@ void libxs_hist_get(libxs_lock_t* lock,
 Query statistics. Output pointers can be NULL to skip fields.
 
 ```C
-double libxs_hist_get_percentile(libxs_lock_t* lock,
-  const libxs_hist_t* hist, double percentile);
+void libxs_hist_get_percentile(libxs_lock_t* lock,
+  const libxs_hist_t* hist, double percentile,
+  double vals[]);
 ```
 
-Query a percentile value from the histogram. `percentile` is in the range `[0..1]` (clamped). The result is linearly interpolated within the bucket that contains the target cumulative count. Commits queued items if pending. Returns 0 for an empty histogram.
+Query interpolated values at the given percentile. `percentile` is in the range `[0..1]` (clamped). `vals[]` is filled with interpolated results: `vals[0]` is the interpolated primary value (position along the range), and subsequent entries are linearly interpolated between adjacent buckets. Commits queued items if pending.
 
 ```C
-double libxs_hist_get_median(libxs_lock_t* lock,
-  const libxs_hist_t* hist);
+void libxs_hist_get_median(libxs_lock_t* lock,
+  const libxs_hist_t* hist, double vals[]);
 ```
 
-Convenience wrapper equivalent to `libxs_hist_get_percentile(lock, hist, 0.5)`.
+Convenience wrapper equivalent to `libxs_hist_get_percentile(lock, hist, 0.5, vals)`.
 
 ```C
 void libxs_hist_print(FILE* ostream,
@@ -67,7 +68,7 @@ void libxs_hist_print(FILE* ostream,
   const char fmt[], ...);
 ```
 
-Render the histogram to a stream. `prec` controls decimal precision per value (can be NULL). `fmt` is a printf-style format string for the title line, followed by optional variadic arguments. NULL `ostream` or `fmt` is accepted.
+Render the histogram to a stream. `prec` controls decimal precision per value (can be NULL); a negative `prec[k]` omits that value from output, and a negative `prec[0]` skips the bucket line entirely. `fmt` is a printf-style format string for the title line, followed by optional variadic arguments. NULL `ostream` or `fmt` is accepted.
 
 ```C
 void libxs_hist_update_avg(double* dst, const double* src);

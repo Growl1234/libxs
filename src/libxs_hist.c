@@ -169,13 +169,15 @@ LIBXS_API void libxs_hist_get(libxs_lock_t* lock, const libxs_hist_t* hist,
 }
 
 
-LIBXS_API double libxs_hist_get_percentile(libxs_lock_t* lock, const libxs_hist_t* hist,
-  double percentile)
+LIBXS_API void libxs_hist_get_percentile(libxs_lock_t* lock, const libxs_hist_t* hist,
+  double percentile, double vals[])
 {
-  double range[2], result = 0;
+  const double* v = NULL;
   const int* buckets = NULL;
-  int nbuckets = 0, i;
-  libxs_hist_get(lock, hist, &buckets, &nbuckets, range, NULL /*vals*/, NULL /*nvals*/);
+  double range[2];
+  int nbuckets = 0, m = 0, i;
+  LIBXS_ASSERT(NULL != vals);
+  libxs_hist_get(lock, hist, &buckets, &nbuckets, range, &v, &m);
   if (NULL != buckets && 0 < nbuckets) {
     const double w = range[1] - range[0];
     int total = 0, cumulative = 0;
@@ -189,19 +191,28 @@ LIBXS_API double libxs_hist_get_percentile(libxs_lock_t* lock, const libxs_hist_
         if (target <= cumulative) {
           const double fraction = (0 < buckets[i])
             ? (1.0 - (cumulative - target) / buckets[i]) : 0.5;
-          result = range[0] + (i + fraction) * w / nbuckets;
+          const int ia = i * m, ib = (fraction < 0.5 && 0 < i)
+            ? (i - 1) * m : ((fraction >= 0.5 && i + 1 < nbuckets)
+            ? (i + 1) * m : ia);
+          const double t = (ia != ib)
+            ? (fraction < 0.5 ? 0.5 + fraction : fraction - 0.5) : 0;
+          int k;
+          vals[0] = range[0] + (i + fraction) * w / nbuckets;
+          for (k = 1; k < m; ++k) {
+            vals[k] = v[ia + k] + t * (v[ib + k] - v[ia + k]);
+          }
           break;
         }
       }
     }
   }
-  return result;
 }
 
 
-LIBXS_API double libxs_hist_get_median(libxs_lock_t* lock, const libxs_hist_t* hist)
+LIBXS_API void libxs_hist_get_median(libxs_lock_t* lock, const libxs_hist_t* hist,
+  double vals[])
 {
-  return libxs_hist_get_percentile(lock, hist, 0.5);
+  libxs_hist_get_percentile(lock, hist, 0.5, vals);
 }
 
 
@@ -224,12 +235,16 @@ LIBXS_API void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist, const i
     for (; i <= nbuckets; j = nvals * i++) {
       const double q = range[0] + i * w / nbuckets;
       const int c = buckets[i - 1];
-      if (NULL != prec) fprintf(ostream, "\t#%i <= %.*f: %i", i, prec[0], q, c);
+      if (NULL != prec) {
+        if (0 > prec[0]) continue;
+        fprintf(ostream, "\t#%i <= %.*f: %i", i, prec[0], q, c);
+      }
       else fprintf(ostream, "\t#%i <= %f: %i", i, q, c);
       if (0 != c) {
         fprintf(ostream, " ->");
         for (k = 0; k < nvals; ++k) {
           const double value = vals[j + k];
+          if (NULL != prec && 0 > prec[k]) continue;
           if (NULL != prec) fprintf(ostream, " %.*f", prec[k], value);
           else fprintf(ostream, " %f", value);
         }
