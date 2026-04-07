@@ -180,12 +180,32 @@ Auto-detects Intel XMX hardware (DPAS). Falls back to CPU if unavailable.
 
 ```bash
 export OZAKI=2              # CRT (vs default Scheme 1)
-export OZAKI_TRIM=4         # Drop 4 levels (~28 bits, faster)
+export OZAKI_TRIM=4         # Drop 4 precision levels (faster)
 export OZAKI_THRESHOLD=0    # Apply Ozaki to all GEMMs (default: 12)
+export OZAKI_PROFILE=1      # Profile all phases (see Profiling slide)
 ```
 
 `OZAKI_THRESHOLD` controls minimum arithmetic intensity —
 GEMMs below the threshold fall through to original BLAS
+
+---
+
+## Profiling
+
+```bash
+export OZAKI_PROFILE=1      # All phases (preprocessing + kernel)
+export OZAKI_PROFILE=2      # Kernel only (int8 dot products)
+export OZAKI_PROFILE=3      # Preprocessing only
+```
+
+At exit:
+```
+OZAKI PROF: 850 DP-GFLOPS/s (17.0 INT8-TOPS/s, 20x)
+```
+
+Reports effective GFLOPS/s and derived INT8-TOPS/s
+
+Works for **both CPU and GPU paths** (same histogram)
 
 ---
 
