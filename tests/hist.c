@@ -289,14 +289,14 @@ static int test_print(void)
 #endif
     if (NULL != ostream) {
       const int prec[] = { 2 };
-      libxs_hist_print(ostream, hist, "test_print", prec);
+      libxs_hist_print(ostream, hist, prec, "test_print");
 #if !defined(_DEBUG)
       fclose(ostream);
 #endif
     }
   }
   /* also test print with NULL stream (should not crash) */
-  libxs_hist_print(NULL, hist, "null_stream", NULL);
+  libxs_hist_print(NULL, hist, NULL, "null_stream");
   libxs_hist_destroy(hist);
   return result;
 }

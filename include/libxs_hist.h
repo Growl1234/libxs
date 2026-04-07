@@ -46,8 +46,8 @@ LIBXS_API double libxs_hist_get_percentile(libxs_lock_t* lock, const libxs_hist_
 LIBXS_API double libxs_hist_get_median(libxs_lock_t* lock, const libxs_hist_t* hist);
 
 /** Print histogram to ostream (NULL ostream is accepted). */
-LIBXS_API void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist, const char title[],
-  const int prec[]);
+LIBXS_API void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist, const int prec[],
+  const char fmt[], ...);
 
 /** Update function (libxs_hist_update_t): sliding average, arithmetic at commit. */
 LIBXS_API void libxs_hist_update_avg(double* dst, const double* src);

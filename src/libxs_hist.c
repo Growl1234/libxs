@@ -8,6 +8,7 @@
 ******************************************************************************/
 #include <libxs_hist.h>
 #include <libxs_mem.h>
+#include <stdarg.h>
 
 
 LIBXS_EXTERN_C struct libxs_hist_t {
@@ -204,8 +205,8 @@ LIBXS_API double libxs_hist_get_median(libxs_lock_t* lock, const libxs_hist_t* h
 }
 
 
-LIBXS_API void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist, const char title[],
-  const int prec[])
+LIBXS_API void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist, const int prec[],
+  const char fmt[], ...)
 {
   int nbuckets = 0, nvals = 0, i = 1, j = 0, k;
   const int* buckets = NULL;
@@ -214,7 +215,12 @@ LIBXS_API void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist, const c
   libxs_hist_get(NULL /*lock*/, hist, &buckets, &nbuckets, range, &vals, &nvals);
   if (NULL != ostream && NULL != buckets && 0 < nbuckets && NULL != vals && 0 < nvals) {
     const double w = range[1] - range[0];
-    if (NULL != title) fprintf(ostream, "%s pid=%u\n", title, libxs_pid());
+    if (NULL != fmt) {
+      va_list args;
+      va_start(args, fmt);
+      vfprintf(ostream, fmt, args);
+      va_end(args);
+    }
     for (; i <= nbuckets; j = nvals * i++) {
       const double q = range[0] + i * w / nbuckets;
       const int c = buckets[i - 1];
