@@ -43,8 +43,30 @@ LIBXS_API_INTERN void gemm_atexit(void)
   if (NULL != ozaki_hist) {
     const char *const kind = GEMM_IS_DOUBLE ? "DP" : "SP";
     double gflops = 0;
+    int ngemms = 0; /* number of int8 GEMMs per FP GEMM */
     libxs_hist_get_median(NULL /*lock*/, ozaki_hist, &gflops);
-    fprintf(stderr, "OZAKI PROF: %.0f %s-GFLOPS/s\n", gflops, kind);
+    if (1 == ozaki) { /* Scheme 1: slice pairs */
+      const int cutoff = 2 * (ozaki_n - 1) - ozaki_trim;
+      int sa, sb;
+      for (sa = 0; sa < ozaki_n && sa <= cutoff; ++sa) {
+        const int sb_start = (0 != (ozaki_flags & OZ1_TRIANGULAR))
+          ? sa : 0;
+        const int sb_end = LIBXS_MIN(ozaki_n, cutoff + 1 - sa);
+        for (sb = sb_start; sb < sb_end; ++sb) {
+          ++ngemms;
+          if (0 != (ozaki_flags & OZ1_SYMMETRIZE) && sa != sb) ++ngemms;
+        }
+      }
+    }
+    else { /* Scheme 2: one int8 GEMM per prime */
+      ngemms = ozaki_n;
+    }
+    fprintf(stderr, "OZAKI PROF: %.0f %s-GFLOPS/s",  gflops, kind);
+    if (0 < ngemms) {
+      const double tops = gflops * ngemms * 1E-3;
+      fprintf(stderr, " (%.1f INT8-TOPS/s, %dx)", tops, ngemms);
+    }
+    fprintf(stderr, "\n");
     libxs_hist_destroy(ozaki_hist);
     ozaki_hist = NULL;
   }
