@@ -201,6 +201,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
   double *expb_fp = NULL;
   GEMM_REAL_TYPE *ref_panel = NULL;
   libxs_matdiff_t tdiff[256];
+  GEMM_PROFILE_DECL;
   int nthreads = 1;
   int s;
   LIBXS_ASSERT(LIBXS_DATATYPE_F64 == LIBXS_DATATYPE(GEMM_REAL_TYPE)
@@ -247,6 +248,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
     nthreads = omp_get_num_threads();
 #endif
     if (NULL != diff) libxs_matdiff_clear(&tdiff[tid]);
+    GEMM_PROFILE_TICK(t_start, tid);
 
     /* Phase 1: preprocess all rows of A (full K dimension) */
 #if defined(_OPENMP)
@@ -324,6 +326,8 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
     for (col = 0; col < N; ++col) {
       expb_fp[col] = libxs_pow2((int)expb_raw[col] - OZ_BIAS_PLUS_MANT);
     }
+
+    GEMM_PROFILE_TICK(t_preprocess, tid);
 
     /* Phase 2c: diff tracking for A/B decomposition (modes 1 and 2) */
     if (NULL != diff && 1 == (diff_stat % 3)) {
@@ -414,6 +418,8 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
       }
     }
 
+    GEMM_PROFILE_TICK(t_kernel, tid);
+
     /* Phase 4: full-GEMM slice-pair loop.
      * For each slice pair (sa, sb), accumulate int32 dot products over ALL
      * of K, then scale by pair_scale * expa_fp[mi] * expb_fp[nj].
@@ -463,6 +469,8 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb,
         }
       }
     }
+
+    GEMM_PROFILE_END(tid, M, N, K);
 
     /* Phase 5 (diff mode 0): reference GEMM comparison */
     if (NULL != diff && 0 == (diff_stat % 3)) {

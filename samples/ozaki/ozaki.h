@@ -9,6 +9,7 @@
 #include "gemm.h"
 #include <libxs_hist.h>
 #include <libxs_malloc.h>
+#include <libxs_timer.h>
 #include <libxs_mhd.h>
 #include <libxs_sync.h>
 #if defined(__DNNL)
@@ -72,6 +73,32 @@
 # define OZ2_NPRIMES_MAX 12
 # define OZ2_NPRIMES_DEFAULT 10
 #endif
+
+/* CPU-side profiling helpers (used inside omp parallel regions).
+ * GEMM_PROFILE_DECL: declare tick variables.
+ * GEMM_PROFILE_TICK(VAR, TID): take a tick on the master thread.
+ * GEMM_PROFILE_END(TID, M, N, K): compute duration, push GFLOPS to histogram. */
+#define GEMM_PROFILE_DECL \
+  libxs_timer_tick_t t_start = 0, t_preprocess = 0, t_kernel = 0
+#define GEMM_PROFILE_TICK(VAR, TID) \
+  if (0 == (TID) && 0 != ozaki_profile) (VAR) = libxs_timer_tick()
+#define GEMM_PROFILE_END(TID, M, N, K) \
+  if (0 == (TID) && 0 != ozaki_profile) { \
+    const libxs_timer_tick_t t_end = libxs_timer_tick(); \
+    const double flops = 2.0 * (M) * (N) * (K); \
+    double duration = 0; \
+    LIBXS_ASSERT(NULL != ozaki_hist); \
+    if (2 == ozaki_profile) \
+      duration = libxs_timer_duration(t_kernel, t_end); \
+    else if (3 == ozaki_profile || 4 == ozaki_profile) \
+      duration = libxs_timer_duration(t_start, t_preprocess); \
+    else \
+      duration = libxs_timer_duration(t_start, t_end); \
+    if (0 < duration) { \
+      const double gflops = flops / (duration * 1E9); \
+      libxs_hist_push(NULL, ozaki_hist, &gflops); \
+    } \
+  }
 
 /**
  * Implement the public gemm_ozN function: call the _diff kernel,
