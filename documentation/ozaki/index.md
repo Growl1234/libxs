@@ -41,15 +41,15 @@ Application calls DGEMM/SGEMM or ZGEMM/CGEMM
 ## Getting Started
 
 ```bash
-cd $HOME
-git clone https://github.com/hfp/libxs.git
-cd libxs && make -j $(nproc)
+cd $HOME && git clone https://github.com/hfp/libxs.git
+cd libxs && make GNU=1 -j $(nproc)
 
-cd $HOME
-git clone https://github.com/hfp/libxstream.git
-cd libxstream && make -j $(nproc)
+cd $HOME && git clone https://github.com/hfp/libxstream.git
+cd libxstream && make GNU=1 -j $(nproc)
 
-cd $HOME/libxs/samples/ozaki && make -j $(nproc)
+cd $HOME/libxs/samples/ozaki
+make GNU=1 BLAS_STATIC=0 -j $(nproc)  # builds libwrap.so
+make GNU=1               -j $(nproc)  # builds libwrap.a
 ```
 
 Produces `libwrap.so` (LD_PRELOAD), `libwrap.a` (--wrap),
