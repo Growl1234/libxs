@@ -63,11 +63,11 @@ Convenience wrapper equivalent to `libxs_hist_get_percentile(lock, hist, 0.5)`.
 
 ```C
 void libxs_hist_print(FILE* ostream,
-  const libxs_hist_t* hist, const char title[],
-  const int prec[]);
+  const libxs_hist_t* hist, const int prec[],
+  const char fmt[], ...);
 ```
 
-Render the histogram to a stream. `prec` controls decimal precision per value. NULL `ostream` is accepted.
+Render the histogram to a stream. `prec` controls decimal precision per value (can be NULL). `fmt` is a printf-style format string for the title line, followed by optional variadic arguments. NULL `ostream` or `fmt` is accepted.
 
 ```C
 void libxs_hist_update_avg(double* dst, const double* src);
