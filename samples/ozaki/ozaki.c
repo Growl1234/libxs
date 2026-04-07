@@ -7,6 +7,7 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 #include "ozaki.h"
+#include <libxs_hist.h>
 #include <libxs_sync.h>
 
 
@@ -25,6 +26,8 @@ LIBXS_APIVAR_PRIVATE_DEF(int ozaki_flags);
 LIBXS_APIVAR_PRIVATE_DEF(int ozaki_trim);
 LIBXS_APIVAR_PRIVATE_DEF(int ozaki_exit);
 LIBXS_APIVAR_PRIVATE_DEF(int ozaki_n);
+LIBXS_APIVAR_PRIVATE_DEF(int ozaki_profile);
+LIBXS_APIVAR_PRIVATE_DEF(libxs_hist_t* ozaki_hist);
 LIBXS_TLS int gemm_dump_inhibit;
 #if defined(__LIBXSTREAM)
 LIBXS_APIVAR_PRIVATE_DEF(void* ozaki_ocl_handle);
@@ -36,6 +39,14 @@ LIBXS_API_INTERN void gemm_atexit(void)
 {
   if (0 != ozaki_verbose && 0 < gemm_diff.r) {
     print_diff(stderr, &gemm_diff);
+  }
+  if (NULL != ozaki_hist) {
+    const char *const kind = GEMM_IS_DOUBLE ? "DP" : "SP";
+    double gflops = 0;
+    libxs_hist_get_median(NULL /*lock*/, ozaki_hist, &gflops);
+    fprintf(stderr, "OZAKI PROF: %.0f %s-GFLOPS/s\n", gflops, kind);
+    libxs_hist_destroy(ozaki_hist);
+    ozaki_hist = NULL;
   }
 #if defined(__LIBXSTREAM)
   ozaki_ocl_release(ozaki_ocl_handle);
@@ -72,7 +83,8 @@ LIBXS_API_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb,
   ozaki_ocl_gemm(ozaki_ocl_handle,
     *transa, *transb, *m, *n, *k,
     (double)*alpha, a, *lda, b, *ldb,
-    (double)*beta, c, *ldc);
+    (double)*beta, c, *ldc,
+    ozaki_hist, ozaki_profile);
   /* Reference BLAS and diff comparison */
   if (NULL != c_ref) {
     if (NULL != gemm_original) {
@@ -165,6 +177,15 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
           ozaki_rsq = atof(ozaki_rsq_env);
         }
         ozaki_target_arch = libxs_cpuid(NULL);
+        /* Profiling: create histogram if requested */
+        { const char* env_prof = getenv("OZAKI_PROFILE");
+          ozaki_profile = (NULL == env_prof ? 0 : atoi(env_prof));
+          if (0 != ozaki_profile) {
+            const libxs_hist_update_t update[] = { libxs_hist_update_avg };
+            ozaki_hist = libxs_hist_create(3, 1, update);
+            if (NULL == ozaki_hist) ozaki_profile = 0;
+          }
+        }
 #if defined(__LIBXSTREAM)
         /* initialize OpenCL Ozaki context */
         if (0 != ozaki_ocl && (0 < ozaki && 2 >= ozaki)) {
@@ -175,7 +196,7 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
           ozaki_ocl_handle = ozaki_ocl_create(
             GEMM_IS_DOUBLE, ozaki, ozaki_verbose,
             ocl_tm, ocl_tn, ozaki_n, ozaki_flags, ozaki_trim,
-            ocl_groups);
+            ocl_groups, 0 != ozaki_profile);
         }
 #endif
         LIBXS_EXPECT(EXIT_SUCCESS == atexit(gemm_atexit));

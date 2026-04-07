@@ -7,6 +7,7 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 #include "gemm.h"
+#include <libxs_hist.h>
 #include <libxs_malloc.h>
 #include <libxs_mhd.h>
 #include <libxs_sync.h>
@@ -136,6 +137,8 @@
 #define ozaki_verbose       LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_verbose)
 #define ozaki               LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki)
 #define ozaki_n             LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_n)
+#define ozaki_profile       LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_profile)
+#define ozaki_hist          LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_hist)
 #define ozaki_flags         LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_flags)
 #define ozaki_trim          LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_trim)
 #define ozaki_stat          LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_stat)
@@ -209,6 +212,8 @@ LIBXS_APIVAR_PRIVATE(int ozaki_flags);
 LIBXS_APIVAR_PRIVATE(int ozaki_trim);
 LIBXS_APIVAR_PRIVATE(int ozaki_exit);
 LIBXS_APIVAR_PRIVATE(int ozaki_n);
+LIBXS_APIVAR_PRIVATE(int ozaki_profile);
+LIBXS_APIVAR_PRIVATE(libxs_hist_t* ozaki_hist);
 
 extern LIBXS_TLS int gemm_dump_inhibit;
 
@@ -217,11 +222,12 @@ extern LIBXS_TLS int gemm_dump_inhibit;
 LIBXS_APIVAR_PRIVATE(void* ozaki_ocl_handle);
 void* ozaki_ocl_create(int use_double, int kind, int verbosity,
   int tm, int tn, int ndecomp, int ozflags, int oztrim,
-  int ozgroups);
+  int ozgroups, int profiling);
 void ozaki_ocl_release(void* handle);
 int ozaki_ocl_gemm(void* handle, char transa, char transb,
   int M, int N, int K, double alpha, const void* a, int lda,
-  const void* b, int ldb, double beta, void* c, int ldc);
+  const void* b, int ldb, double beta, void* c, int ldc,
+  libxs_hist_t* hist, int profile);
 int ozaki_ocl_zgemm3m(void* handle, char transa, char transb,
   int M, int N, int K,
   const double* alpha, const void* a, int lda,

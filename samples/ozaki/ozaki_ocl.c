@@ -25,7 +25,7 @@ typedef struct ozaki_ocl_handle_t {
 
 void* ozaki_ocl_create(int use_double, int kind, int verbosity,
   int tm, int tn, int ndecomp, int ozflags, int oztrim,
-  int ozgroups)
+  int ozgroups, int profiling)
 {
   ozaki_ocl_handle_t* h = NULL;
   int ndevices = 0;
@@ -39,7 +39,7 @@ void* ozaki_ocl_create(int use_double, int kind, int verbosity,
   if (NULL != h) {
     if (EXIT_SUCCESS != ozaki_init(&h->ctx, tm, tn,
           use_double, kind, verbosity, ndecomp,
-          ozflags, oztrim, ozgroups))
+          ozflags, oztrim, ozgroups, profiling))
     {
       free(h); h = NULL;
     }
@@ -52,7 +52,7 @@ void* ozaki_ocl_create(int use_double, int kind, int verbosity,
       free(h); h = NULL;
     }
     else if (EXIT_SUCCESS != libxstream_stream_create(&h->stream, "ozaki_wrap",
-      NULL != h->ctx.hist ? LIBXSTREAM_STREAM_PROFILING : LIBXSTREAM_STREAM_DEFAULT))
+      profiling ? LIBXSTREAM_STREAM_PROFILING : LIBXSTREAM_STREAM_DEFAULT))
     {
       ozaki_destroy(&h->ctx);
       free(h); h = NULL;
@@ -75,7 +75,8 @@ void ozaki_ocl_release(void* handle)
 
 int ozaki_ocl_gemm(void* handle, char transa, char transb,
   int M, int N, int K, double alpha, const void* a, int lda,
-  const void* b, int ldb, double beta, void* c, int ldc)
+  const void* b, int ldb, double beta, void* c, int ldc,
+  libxs_hist_t* hist, int profile)
 {
   int result = EXIT_FAILURE;
   ozaki_ocl_handle_t* h = (ozaki_ocl_handle_t*)handle;
@@ -83,7 +84,8 @@ int ozaki_ocl_gemm(void* handle, char transa, char transb,
     LIBXS_ATOMIC_ACQUIRE(&h->lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
     result = ozaki_gemm(&h->ctx, h->stream,
       transa, transb, M, N, K,
-      alpha, a, lda, b, ldb, beta, c, ldc);
+      alpha, a, lda, b, ldb, beta, c, ldc,
+      hist, profile);
     /* BLAS API is synchronous: caller expects result in c upon return.
      * Must sync all streams including persistent helper streams used
      * for preprocessing (stream_a, stream_b) to prevent race conditions. */
