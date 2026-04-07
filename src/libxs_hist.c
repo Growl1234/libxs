@@ -168,6 +168,42 @@ LIBXS_API void libxs_hist_get(libxs_lock_t* lock, const libxs_hist_t* hist,
 }
 
 
+LIBXS_API double libxs_hist_get_percentile(libxs_lock_t* lock, const libxs_hist_t* hist,
+  double percentile)
+{
+  double range[2], result = 0;
+  const int* buckets = NULL;
+  int nbuckets = 0, i;
+  libxs_hist_get(lock, hist, &buckets, &nbuckets, range, NULL /*vals*/, NULL /*nvals*/);
+  if (NULL != buckets && 0 < nbuckets) {
+    const double w = range[1] - range[0];
+    int total = 0, cumulative = 0;
+    if (0 > percentile) percentile = 0;
+    if (1 < percentile) percentile = 1;
+    for (i = 0; i < nbuckets; ++i) total += buckets[i];
+    if (0 < total) {
+      const double target = percentile * total;
+      for (i = 0; i < nbuckets; ++i) {
+        cumulative += buckets[i];
+        if (target <= cumulative) {
+          const double fraction = (0 < buckets[i])
+            ? (1.0 - (cumulative - target) / buckets[i]) : 0.5;
+          result = range[0] + (i + fraction) * w / nbuckets;
+          break;
+        }
+      }
+    }
+  }
+  return result;
+}
+
+
+LIBXS_API double libxs_hist_get_median(libxs_lock_t* lock, const libxs_hist_t* hist)
+{
+  return libxs_hist_get_percentile(lock, hist, 0.5);
+}
+
+
 LIBXS_API void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist, const char title[],
   const int prec[])
 {
