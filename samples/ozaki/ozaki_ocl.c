@@ -81,7 +81,7 @@ int ozaki_ocl_gemm(void* handle, char transa, char transb,
   int result = EXIT_FAILURE;
   ozaki_ocl_handle_t* h = (ozaki_ocl_handle_t*)handle;
   if (NULL != h) {
-    LIBXS_ATOMIC_ACQUIRE(&h->lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
+    LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &h->lock);
     result = ozaki_gemm(&h->ctx, h->stream,
       transa, transb, M, N, K,
       alpha, a, lda, b, ldb, beta, c, ldc,
@@ -92,7 +92,7 @@ int ozaki_ocl_gemm(void* handle, char transa, char transb,
     libxstream_stream_sync(h->stream);
     if (NULL != h->ctx.stream_a) libxstream_stream_sync(h->ctx.stream_a);
     if (NULL != h->ctx.stream_b) libxstream_stream_sync(h->ctx.stream_b);
-    LIBXS_ATOMIC_RELEASE(&h->lock, LIBXS_ATOMIC_LOCKORDER);
+    LIBXS_LOCK_RELEASE(LIBXS_LOCK, &h->lock);
   }
   return result;
 }
@@ -107,7 +107,7 @@ int ozaki_ocl_gemm3m(void* handle, char transa, char transb,
   int result = EXIT_FAILURE;
   ozaki_ocl_handle_t* h = (ozaki_ocl_handle_t*)handle;
   if (NULL != h) {
-    LIBXS_ATOMIC_ACQUIRE(&h->lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
+    LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &h->lock);
     result = ozaki_gemm3m(&h->ctx, h->stream,
       transa, transb, M, N, K,
       alpha, a, lda, b, ldb, beta, c, ldc);
@@ -117,7 +117,7 @@ int ozaki_ocl_gemm3m(void* handle, char transa, char transb,
     libxstream_stream_sync(h->stream);
     if (NULL != h->ctx.stream_a) libxstream_stream_sync(h->ctx.stream_a);
     if (NULL != h->ctx.stream_b) libxstream_stream_sync(h->ctx.stream_b);
-    LIBXS_ATOMIC_RELEASE(&h->lock, LIBXS_ATOMIC_LOCKORDER);
+    LIBXS_LOCK_RELEASE(LIBXS_LOCK, &h->lock);
   }
   return result;
 }

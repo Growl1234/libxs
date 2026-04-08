@@ -78,11 +78,11 @@ LIBXS_API_INLINE libxs_registry_t* internal_libxs_malloc_get_registry(int alignm
     {
       if (NULL == internal_libxs_malloc_registry) {
         static libxs_lock_t lock;
-        LIBXS_ATOMIC_ACQUIRE(&lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
+        LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &lock);
         if (NULL == internal_libxs_malloc_registry) {
           internal_libxs_malloc_registry = libxs_registry_create();
         }
-        LIBXS_ATOMIC_RELEASE(&lock, LIBXS_ATOMIC_LOCKORDER);
+        LIBXS_LOCK_RELEASE(LIBXS_LOCK, &lock);
       }
       result = internal_libxs_malloc_registry;
     }
@@ -105,10 +105,10 @@ LIBXS_API void* libxs_pmalloc_lock(void* pool[], size_t* num, libxs_lock_t* lock
 {
   void *pointer;
   LIBXS_ASSERT(NULL != pool && NULL != num);
-  if (NULL != lock) LIBXS_ATOMIC_ACQUIRE(lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
+  if (NULL != lock) LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
   assert(0 < *num && ((size_t)-1) != *num); /* !LIBXS_ASSERT */
   pointer = pool[--(*num)];
-  if (NULL != lock) LIBXS_ATOMIC_RELEASE(lock, LIBXS_ATOMIC_LOCKORDER);
+  if (NULL != lock) LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
   LIBXS_ASSERT(NULL != pointer);
   return pointer;
 }
@@ -126,9 +126,9 @@ LIBXS_API void libxs_pfree_lock(void* pointer, void* pool[], size_t* num, libxs_
 {
   LIBXS_ASSERT(NULL != pool && NULL != num);
   if (NULL != pointer) {
-    if (NULL != lock) LIBXS_ATOMIC_ACQUIRE(lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
+    if (NULL != lock) LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
     pool[*num] = pointer; ++(*num);
-    if (NULL != lock) LIBXS_ATOMIC_RELEASE(lock, LIBXS_ATOMIC_LOCKORDER);
+    if (NULL != lock) LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
   }
 }
 
@@ -147,7 +147,7 @@ LIBXS_API void libxs_pfree(void* pointer, void* pool[], size_t* num)
 LIBXS_API_INLINE void internal_libxs_malloc_pool_return(internal_libxs_malloc_chunk_t *chunk)
 {
   libxs_malloc_pool_t *const pool = chunk->pool;
-  LIBXS_ATOMIC_ACQUIRE(&pool->plock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
+  LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &pool->plock);
   if (pool->slots_num >= pool->slots_size) {
     const size_t new_size = (0 < pool->slots_size
       ? (2 * pool->slots_size) : LIBXS_MALLOC_POOL_INIT);
@@ -161,7 +161,7 @@ LIBXS_API_INLINE void internal_libxs_malloc_pool_return(internal_libxs_malloc_ch
   if (pool->slots_num < pool->slots_size) {
     pool->slots[pool->slots_num++] = chunk;
   }
-  LIBXS_ATOMIC_RELEASE(&pool->plock, LIBXS_ATOMIC_LOCKORDER);
+  LIBXS_LOCK_RELEASE(LIBXS_LOCK, &pool->plock);
 }
 
 
@@ -187,7 +187,7 @@ LIBXS_API void* libxs_malloc(libxs_malloc_pool_t* pool, size_t size, int alignme
     internal_libxs_malloc_chunk_t **hit = NULL;
     size_t i = 0, diff = (size_t)-1;
     LIBXS_ASSERT(NULL != pool->slots);
-    LIBXS_ATOMIC_ACQUIRE(&pool->plock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
+    LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &pool->plock);
     if (0 < pool->slots_num) {
       do {
         internal_libxs_malloc_chunk_t *const c = pool->slots[i];
@@ -213,9 +213,9 @@ LIBXS_API void* libxs_malloc(libxs_malloc_pool_t* pool, size_t size, int alignme
         pool->all = chunk;
       }
     }
-    LIBXS_ATOMIC_RELEASE(&pool->plock, LIBXS_ATOMIC_LOCKORDER);
+    LIBXS_LOCK_RELEASE(LIBXS_LOCK, &pool->plock);
 #else
-    LIBXS_ATOMIC_ACQUIRE(&pool->plock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
+    LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &pool->plock);
     if (0 < pool->slots_num) {
       chunk = pool->slots[--pool->slots_num];
     }
@@ -227,7 +227,7 @@ LIBXS_API void* libxs_malloc(libxs_malloc_pool_t* pool, size_t size, int alignme
         pool->all = chunk;
       }
     }
-    LIBXS_ATOMIC_RELEASE(&pool->plock, LIBXS_ATOMIC_LOCKORDER);
+    LIBXS_LOCK_RELEASE(LIBXS_LOCK, &pool->plock);
 #endif
     if (NULL != chunk) {
       libxs_registry_t *const reg = internal_libxs_malloc_get_registry(alignment);

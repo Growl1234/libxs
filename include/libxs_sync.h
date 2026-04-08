@@ -352,7 +352,6 @@ typedef enum libxs_atomic_kind_t {
 #endif
 
 #if (0 != LIBXS_SYNC)
-# define LIBXS_LOCK_DEFAULT LIBXS_LOCK_ATOMIC
 # if !defined(LIBXS_LOCK_SYSTEM_SPINLOCK) && !(defined(_OPENMP) && defined(LIBXS_SYNC_OMP)) && \
     (!defined(__linux__) || defined(__USE_XOPEN2K)) && 0/*disabled*/
 #   define LIBXS_LOCK_SYSTEM_SPINLOCK
@@ -461,7 +460,7 @@ typedef enum libxs_atomic_kind_t {
 #     define LIBXS_LOCK_ATTR_DESTROY_rwlock(ATTR) LIBXS_UNUSED(ATTR)
 #   endif
 #   define LIBXS_SYNC_YIELD YieldProcessor()
-# else
+# else /* !defined(LIBXS_WIN32_THREADS) */
 #   define LIBXS_TLS_TYPE pthread_key_t
 #   define LIBXS_TLS_CREATE(KEYPTR) pthread_key_create(KEYPTR, NULL)
 #   define LIBXS_TLS_DESTROY(KEY) pthread_key_delete(KEY)
@@ -696,6 +695,7 @@ typedef enum libxs_atomic_kind_t {
 # define LIBXS_LOCK_ATTR_TYPE_atomic int
 # define LIBXS_LOCK_ATTR_INIT_atomic(ATTR) LIBXS_UNUSED(ATTR)
 # define LIBXS_LOCK_ATTR_DESTROY_atomic(ATTR) LIBXS_UNUSED(ATTR)
+# define LIBXS_LOCK_DEFAULT LIBXS_LOCK_ATOMIC
 #else /* no synchronization */
 # define LIBXS_LOCK_DEFAULT int
 # define LIBXS_SYNC_YIELD LIBXS_SYNC_PAUSE
