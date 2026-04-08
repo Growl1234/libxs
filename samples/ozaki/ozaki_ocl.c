@@ -98,7 +98,7 @@ int ozaki_ocl_gemm(void* handle, char transa, char transb,
 }
 
 
-int ozaki_ocl_zgemm3m(void* handle, char transa, char transb,
+int ozaki_ocl_gemm3m(void* handle, char transa, char transb,
   int M, int N, int K,
   const double* alpha, const void* a, int lda,
   const void* b, int ldb,
@@ -108,7 +108,7 @@ int ozaki_ocl_zgemm3m(void* handle, char transa, char transb,
   ozaki_ocl_handle_t* h = (ozaki_ocl_handle_t*)handle;
   if (NULL != h) {
     LIBXS_ATOMIC_ACQUIRE(&h->lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
-    result = ozaki_zgemm3m(&h->ctx, h->stream,
+    result = ozaki_gemm3m(&h->ctx, h->stream,
       transa, transb, M, N, K,
       alpha, a, lda, b, ldb, beta, c, ldc);
     /* BLAS API is synchronous: caller expects result in c upon return.

@@ -82,7 +82,7 @@ CSOURCS := $(SRCDIR)/gemm.c
 IMPLSRCS := $(SRCDIR)/$(OUTNAME).c \
             $(SRCDIR)/ozaki1_int8.c \
             $(SRCDIR)/ozaki2_int8.c \
-            $(SRCDIR)/zgemm3m.c \
+            $(SRCDIR)/wrap3m.c \
             $(SRCDIR)/gemm-print.c \
             $(NULL)
 # Entry/dlsym source: _REAL + entry points (LD_PRELOAD path only)
@@ -209,7 +209,7 @@ $(BLDDIR)/ozaki_gemm-c.o: $(LIBXSTREAMROOT)/samples/ozaki/ozaki_gemm.c \
     $(OCLGENHDR) $(OCLGENHDR_PROD) .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc
 	$(CC) -D__OPENCL $(DFLAGS) $(IFLAGS) $(CFLAGS) $(CTARGET) -c $< -o $@
 
-$(BLDDIR)/ozaki_zgemm-c.o: $(LIBXSTREAMROOT)/samples/ozaki/ozaki_zgemm.c \
+$(BLDDIR)/ozaki_zgemm-c.o: $(LIBXSTREAMROOT)/samples/ozaki/ozaki_gemm3m.c \
     $(OCLGENHDR) $(OCLGENHDR_PROD) .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc
 	$(CC) -D__OPENCL $(DFLAGS) $(IFLAGS) $(CFLAGS) $(CTARGET) -c $< -o $@
 endif

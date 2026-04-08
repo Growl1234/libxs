@@ -155,7 +155,7 @@ LIBXS_API_INTERN void zgemm3m(GEMM_ARGDECL)
     int result;
     alpha_d[0] = (double)alpha[0]; alpha_d[1] = (double)alpha[1];
     beta_d[0]  = (double)beta[0];  beta_d[1]  = (double)beta[1];
-    result = ozaki_ocl_zgemm3m(ozaki_ocl_handle,
+    result = ozaki_ocl_gemm3m(ozaki_ocl_handle,
       *transa, *transb, *m, *n, *k,
       alpha_d, a, *lda, b, *ldb, beta_d, c, *ldc);
     if (EXIT_SUCCESS == result) return;
