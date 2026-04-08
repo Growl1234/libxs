@@ -127,9 +127,7 @@ int main(int argc, char* argv[])
   cycles = libxs_timer_ncycles(start, libxs_timer_tick());
   LIBXS_UNUSED(cycles);
 
-  /*=========================================================================
-   * (1) Registration: insert all keys (single-threaded)
-   *=========================================================================*/
+  /* (1) Registration: insert all keys (single-threaded) */
   registry = libxs_registry_create();
   if (NULL == registry) { result = EXIT_FAILURE; goto cleanup; }
 
@@ -154,9 +152,7 @@ int main(int argc, char* argv[])
     }
   }
 
-  /*=========================================================================
-   * (2) Cold lookup: shuffled access (defeats TLS cache)
-   *=========================================================================*/
+  /* (2) Cold lookup: shuffled access (defeats TLS cache) */
   { libxs_timer_tick_t total_cycles = 0;
     for (n = 0; n < nrepeat; ++n) {
       start = libxs_timer_tick();
@@ -173,9 +169,7 @@ int main(int argc, char* argv[])
       duration_ns, size_total * nrepeat, total_cycles);
   }
 
-  /*=========================================================================
-   * (3) Cached lookup: sequential repeated access (TLS-cache-friendly)
-   *=========================================================================*/
+  /* (3) Cached lookup: sequential repeated access (TLS-cache-friendly) */
   { const int local_size = LIBXS_MIN(LIBXS_REGCACHE_NENTRIES, size_total);
     libxs_timer_tick_t total_cycles = 0;
     for (n = 0; n < nrepeat; ++n) {
@@ -193,9 +187,7 @@ int main(int argc, char* argv[])
       duration_ns, size_total * nrepeat, total_cycles);
   }
 
-  /*=========================================================================
-   * (4) Multi-threaded parallel reads
-   *=========================================================================*/
+  /* (4) Multi-threaded parallel reads */
 #if defined(_OPENMP)
   if (1 < nthreads) {
     libxs_timer_tick_t total_cycles = 0;
@@ -225,9 +217,7 @@ int main(int argc, char* argv[])
   libxs_registry_destroy(registry);
   registry = NULL;
 
-  /*=========================================================================
-   * (5) Contended writes: each thread writes its own key range in parallel
-   *=========================================================================*/
+  /* (5) Contended writes: each thread writes its own key range in parallel */
 #if defined(_OPENMP)
   if (1 < nthreads) {
     libxs_timer_tick_t total_cycles = 0;
@@ -263,9 +253,7 @@ int main(int argc, char* argv[])
   }
 #endif
 
-  /*=========================================================================
-   * (6) Mixed: one writer, remaining threads read concurrently
-   *=========================================================================*/
+  /* (6) Mixed: one writer, remaining threads read concurrently */
 #if defined(_OPENMP)
   if (2 < nthreads) {
     libxs_timer_tick_t total_cycles = 0;
