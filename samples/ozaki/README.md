@@ -201,7 +201,7 @@ If the first argument is 0, the remaining arguments are treated as MHD filenames
 | `ozaki.c` | Wrapper/orchestration for real GEMM: initialization, environment handling, threshold check, fallback dispatch, and global state management. Compiled twice (double + float). |
 | `ozaki1_int8.c` | Scheme 1 computational kernel: decomposes IEEE-754 mantissa into 7-bit int8 slices for low-precision dot products. Uses function-pointer dispatch for VNNI vs scalar int8 dot product. Compiled twice (double + float). |
 | `ozaki2_int8.c` | Scheme 2 computational kernel: CRT-based modular arithmetic using small pairwise coprime moduli. Barrett reduction, Garner's algorithm with grouped Horner reconstruction. Compiled twice (double + float). |
-| `zgemm3m.c` | Complex GEMM 3M wrapper: deinterleaves complex matrices, issues 3 real GEMM calls (Karatsuba), recombines. Compiled twice (double + float). |
+| `wrap3m.c` | Complex GEMM 3M wrapper: deinterleaves complex matrices, issues 3 real GEMM calls (Karatsuba), recombines. Compiled twice (double + float). |
 | `ozaki_ocl.c` | OpenCL bridge: wraps LIBXSTREAM behind an opaque handle. Compiled only when LIBXSTREAM is detected; isolates all OpenCL includes from the rest of the code. |
 | `wrap.c` | Entry points and dlsym fallbacks for the LD_PRELOAD path. |
 | `gemm.c` | Test driver. Compiled as `dgemm-{wrap,blas}.x` (double) and `sgemm-{wrap,blas}.x` (float). |
