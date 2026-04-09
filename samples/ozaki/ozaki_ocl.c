@@ -23,25 +23,22 @@ typedef struct ozaki_ocl_handle_t {
 } ozaki_ocl_handle_t;
 
 
-void* ozaki_ocl_create(int use_double, int kind, int verbosity,
-  int tm, int tn, int ndecomp, int ozflags, int oztrim,
-  int ozgroups, int profiling)
+void* ozaki_ocl_create(
+  int use_double, int kind, int verbosity, int tm, int tn, int ndecomp, int ozflags, int oztrim, int ozgroups, int profiling)
 {
   ozaki_ocl_handle_t* h = NULL;
   int ndevices = 0;
-  if (EXIT_SUCCESS == libxstream_init()
-      && EXIT_SUCCESS == libxstream_device_count(&ndevices)
+  if (EXIT_SUCCESS == libxstream_init() &&
+      EXIT_SUCCESS == libxstream_device_count(&ndevices)
       /* MPI: avoid activating a particular device */
       && 0 < ndevices)
   {
     h = (ozaki_ocl_handle_t*)calloc(1, sizeof(*h));
   }
   if (NULL != h) {
-    if (EXIT_SUCCESS != ozaki_init(&h->ctx, tm, tn,
-          use_double, kind, verbosity, ndecomp,
-          ozflags, oztrim, ozgroups, profiling))
-    {
-      free(h); h = NULL;
+    if (EXIT_SUCCESS != ozaki_init(&h->ctx, tm, tn, use_double, kind, verbosity, ndecomp, ozflags, oztrim, ozgroups, profiling)) {
+      free(h);
+      h = NULL;
     }
     /* Refuse the handle if fp64 was requested but the device only supports fp32.
      * Silently downgrading would cause a type mismatch: the host passes double
@@ -49,13 +46,15 @@ void* ozaki_ocl_create(int use_double, int kind, int verbosity,
      * and potential memory corruption. */
     else if (use_double && !h->ctx.use_double) {
       ozaki_destroy(&h->ctx);
-      free(h); h = NULL;
+      free(h);
+      h = NULL;
     }
-    else if (EXIT_SUCCESS != libxstream_stream_create(&h->stream, "ozaki_wrap",
-      profiling ? LIBXSTREAM_STREAM_PROFILING : LIBXSTREAM_STREAM_DEFAULT))
+    else if (EXIT_SUCCESS != libxstream_stream_create(
+                               &h->stream, "ozaki_wrap", profiling ? LIBXSTREAM_STREAM_PROFILING : LIBXSTREAM_STREAM_DEFAULT))
     {
       ozaki_destroy(&h->ctx);
-      free(h); h = NULL;
+      free(h);
+      h = NULL;
     }
   }
   return h;
@@ -73,19 +72,14 @@ void ozaki_ocl_release(void* handle)
 }
 
 
-int ozaki_ocl_gemm(void* handle, char transa, char transb,
-  int M, int N, int K, double alpha, const void* a, int lda,
-  const void* b, int ldb, double beta, void* c, int ldc,
-  libxs_hist_t* hist, int profile)
+int ozaki_ocl_gemm(void* handle, char transa, char transb, int M, int N, int K, double alpha, const void* a, int lda, const void* b,
+  int ldb, double beta, void* c, int ldc, libxs_hist_t* hist, int profile)
 {
   int result = EXIT_FAILURE;
   ozaki_ocl_handle_t* h = (ozaki_ocl_handle_t*)handle;
   if (NULL != h) {
     LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &h->lock);
-    result = ozaki_gemm(&h->ctx, h->stream,
-      transa, transb, M, N, K,
-      alpha, a, lda, b, ldb, beta, c, ldc,
-      hist, profile);
+    result = ozaki_gemm(&h->ctx, h->stream, transa, transb, M, N, K, alpha, a, lda, b, ldb, beta, c, ldc, hist, profile);
     /* BLAS API is synchronous: caller expects result in c upon return.
      * Must sync all streams including persistent helper streams used
      * for preprocessing (stream_a, stream_b) to prevent race conditions. */
@@ -98,19 +92,14 @@ int ozaki_ocl_gemm(void* handle, char transa, char transb,
 }
 
 
-int ozaki_ocl_gemm3m(void* handle, char transa, char transb,
-  int M, int N, int K,
-  const double* alpha, const void* a, int lda,
-  const void* b, int ldb,
-  const double* beta, void* c, int ldc)
+int ozaki_ocl_gemm3m(void* handle, char transa, char transb, int M, int N, int K, const double* alpha, const void* a, int lda,
+  const void* b, int ldb, const double* beta, void* c, int ldc)
 {
   int result = EXIT_FAILURE;
   ozaki_ocl_handle_t* h = (ozaki_ocl_handle_t*)handle;
   if (NULL != h) {
     LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &h->lock);
-    result = ozaki_gemm3m(&h->ctx, h->stream,
-      transa, transb, M, N, K,
-      alpha, a, lda, b, ldb, beta, c, ldc);
+    result = ozaki_gemm3m(&h->ctx, h->stream, transa, transb, M, N, K, alpha, a, lda, b, ldb, beta, c, ldc);
     /* BLAS API is synchronous: caller expects result in c upon return.
      * Must sync all streams including persistent helper streams used
      * for preprocessing (stream_a, stream_b) to prevent race conditions. */
@@ -126,9 +115,9 @@ int ozaki_ocl_gemm3m(void* handle, char transa, char transb,
 int ozaki_ocl_supports_zgemm3m(void* handle)
 {
   const ozaki_ocl_handle_t* h = (const ozaki_ocl_handle_t*)handle;
-  if (NULL != h && NULL != h->ctx.kern_zgemm3m_deinterleave
-      && NULL != h->ctx.kern_zgemm3m_matadd
-      && NULL != h->ctx.kern_zgemm3m_finalize) {
+  if (NULL != h && NULL != h->ctx.kern_zgemm3m_deinterleave && NULL != h->ctx.kern_zgemm3m_matadd &&
+      NULL != h->ctx.kern_zgemm3m_finalize)
+  {
     return 1;
   }
   return 0;
@@ -144,6 +133,7 @@ void ozaki_ocl_invalidate_cache(void* handle, const void* a, const void* b)
 }
 
 
-void ozaki_ocl_finalize(void) {
+void ozaki_ocl_finalize(void)
+{
   libxstream_finalize();
 }

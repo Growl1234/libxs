@@ -13,7 +13,7 @@
 #include <libxs_mhd.h>
 #include <libxs_sync.h>
 #if defined(__DNNL)
-#include <oneapi/dnnl/dnnl.h>
+# include <oneapi/dnnl/dnnl.h>
 #endif
 
 #if GEMM_IS_DOUBLE
@@ -62,8 +62,8 @@
  * The trim parameter (OZAKI_TRIM env var) drops the T least significant
  * diagonals: pairs with sa + sb > 2*(S-1) - T are skipped. Default 0
  * means exact (all pairs). Each dropped diagonal loses ~7 bits. */
-#define OZ1_TRIANGULAR   1
-#define OZ1_SYMMETRIZE   2
+#define OZ1_TRIANGULAR 1
+#define OZ1_SYMMETRIZE 2
 #define OZ1_DEFAULT (OZ1_TRIANGULAR | OZ1_SYMMETRIZE)
 
 #if GEMM_IS_DOUBLE
@@ -86,8 +86,7 @@
  * GEMM_PROFILE_DECL: declare tick variables.
  * GEMM_PROFILE_TICK(VAR, TID): take a tick on the master thread.
  * GEMM_PROFILE_END(TID, M, N, K): compute duration, push GFLOPS to histogram. */
-#define GEMM_PROFILE_DECL \
-  libxs_timer_tick_t t_start = 0, t_preprocess = 0, t_kernel = 0
+#define GEMM_PROFILE_DECL libxs_timer_tick_t t_start = 0, t_preprocess = 0, t_kernel = 0
 #define GEMM_PROFILE_TICK(VAR, TID) \
   if (0 == (TID) && 0 != ozaki_profile) (VAR) = libxs_timer_tick()
 #define GEMM_PROFILE_END(TID, M, N, K) \
@@ -96,12 +95,9 @@
     const double flops = 2.0 * (M) * (N) * (K); \
     double duration = 0; \
     LIBXS_ASSERT(NULL != ozaki_hist); \
-    if (2 == ozaki_profile) \
-      duration = libxs_timer_duration(t_kernel, t_end); \
-    else if (3 == ozaki_profile || 4 == ozaki_profile) \
-      duration = libxs_timer_duration(t_start, t_preprocess); \
-    else \
-      duration = libxs_timer_duration(t_start, t_end); \
+    if (2 == ozaki_profile) duration = libxs_timer_duration(t_kernel, t_end); \
+    else if (3 == ozaki_profile || 4 == ozaki_profile) duration = libxs_timer_duration(t_start, t_preprocess); \
+    else duration = libxs_timer_duration(t_start, t_end); \
     if (0 < duration) { \
       const double gflops = flops / (duration * 1E9); \
       libxs_hist_push(NULL, ozaki_hist, &gflops); \
@@ -115,18 +111,17 @@
  */
 #define OZAKI_GEMM_WRAPPER(DIFF_FN) \
   if (0 == ozaki_verbose) { \
-    DIFF_FN(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, \
-      0, NULL); \
+    DIFF_FN(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, 0, NULL); \
   } \
   else { \
     double epsilon; \
     libxs_matdiff_t diff, call_diff; \
     libxs_matdiff_clear(&diff); \
-    DIFF_FN(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, \
-      LIBXS_ABS(ozaki_stat), &diff); \
+    DIFF_FN(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, LIBXS_ABS(ozaki_stat), &diff); \
     call_diff = diff; \
     LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER); \
-    libxs_matdiff_reduce(&gemm_diff, &diff); diff.r = gemm_diff.r; \
+    libxs_matdiff_reduce(&gemm_diff, &diff); \
+    diff.r = gemm_diff.r; \
     LIBXS_ATOMIC_RELEASE(&gemm_lock, LIBXS_ATOMIC_LOCKORDER); \
     call_diff.r = diff.r; \
     epsilon = libxs_matdiff_epsilon(&call_diff); \
@@ -135,8 +130,8 @@
       if (0 == (diff.r % nth)) { \
         if (0 <= ozaki_stat) print_diff(stderr, &diff); \
         else { \
-          fprintf(stderr, "GEMM: "); print_gemm(stderr, LIBXS_ABS(ozaki_stat), \
-            transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc); \
+          fprintf(stderr, "GEMM: "); \
+          print_gemm(stderr, LIBXS_ABS(ozaki_stat), transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc); \
         } \
       } \
     } \
@@ -164,33 +159,33 @@
  * These macros redirect "friendly" names used throughout the implementation
  * to unique symbols, e.g. gemm_original -> dgemm_original (double) or
  * sgemm_original (float). Both precisions can coexist in one binary. */
-#define gemm_function_t     LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_ftype_t)
-#define zgemm_function_t    LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm_ftype_t)
-#define gemm_original       LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_original)
-#define zgemm_original      LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm_original)
-#define gemm_lock           LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_lock)
-#define ozaki_verbose       LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_verbose)
-#define ozaki               LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki)
-#define ozaki_n             LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_n)
-#define ozaki_profile       LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_profile)
-#define ozaki_hist          LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_hist)
-#define ozaki_flags         LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_flags)
-#define ozaki_trim          LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_trim)
-#define ozaki_stat          LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_stat)
-#define ozaki_exit          LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_exit)
-#define ozaki_eps           LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_eps)
-#define ozaki_rsq           LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_rsq)
-#define ozaki_target_arch   LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_tarch)
-#define gemm_oz1            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz1)
-#define gemm_oz2            LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz2)
-#define gemm_dump_inhibit   LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_dump_inhibit)
-#define gemm_dump_matrices  LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_dump_mhd)
-#define zgemm3m             LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm3m)
-#define gemm_atexit         LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_atexit)
-#define gemm_pool           LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_pool)
+#define gemm_function_t LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_ftype_t)
+#define zgemm_function_t LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm_ftype_t)
+#define gemm_original LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_original)
+#define zgemm_original LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm_original)
+#define gemm_lock LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_lock)
+#define ozaki_verbose LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_verbose)
+#define ozaki LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki)
+#define ozaki_n LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_n)
+#define ozaki_profile LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_profile)
+#define ozaki_hist LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_hist)
+#define ozaki_flags LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_flags)
+#define ozaki_trim LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_trim)
+#define ozaki_stat LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_stat)
+#define ozaki_exit LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_exit)
+#define ozaki_eps LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_eps)
+#define ozaki_rsq LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_rsq)
+#define ozaki_target_arch LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_tarch)
+#define gemm_oz1 LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz1)
+#define gemm_oz2 LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz2)
+#define gemm_dump_inhibit LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_dump_inhibit)
+#define gemm_dump_matrices LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_dump_mhd)
+#define zgemm3m LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm3m)
+#define gemm_atexit LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_atexit)
+#define gemm_pool LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_pool)
 #if defined(__LIBXSTREAM)
-# define ozaki_ocl_handle   LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_ocl_handle)
-# define gemm_oz_ocl_diff   LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz_ocl_diff)
+# define ozaki_ocl_handle LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_ocl_handle)
+# define gemm_oz_ocl_diff LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz_ocl_diff)
 # define oz1_host_preprocess_a LIBXS_TPREFIX(GEMM_REAL_TYPE, oz1_host_prep_a)
 # define oz1_host_preprocess_b LIBXS_TPREFIX(GEMM_REAL_TYPE, oz1_host_prep_b)
 # define oz2_host_preprocess_a LIBXS_TPREFIX(GEMM_REAL_TYPE, oz2_host_prep_a)
@@ -206,12 +201,11 @@
 #   define ozaki_dot_i8_init() ozaki_dot_i8_vnni
 # elif (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
 #   define ozaki_dot_i8_init() \
-      ((LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) ? ozaki_dot_i8_bssd \
-        : ((LIBXS_X86_AVX512 <= ozaki_target_arch) ? ozaki_dot_i8_vnni \
-          : ozaki_dot_i8_sw))
+      ((LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) \
+          ? ozaki_dot_i8_bssd \
+          : ((LIBXS_X86_AVX512 <= ozaki_target_arch) ? ozaki_dot_i8_vnni : ozaki_dot_i8_sw))
 # elif (LIBXS_X86_AVX512 <= LIBXS_MAX_STATIC_TARGET_ARCH)
-#   define ozaki_dot_i8_init() \
-      ((LIBXS_X86_AVX512 <= ozaki_target_arch) ? ozaki_dot_i8_vnni : ozaki_dot_i8_sw)
+#   define ozaki_dot_i8_init() ((LIBXS_X86_AVX512 <= ozaki_target_arch) ? ozaki_dot_i8_vnni : ozaki_dot_i8_sw)
 # else
 #   define ozaki_dot_i8_init() ozaki_dot_i8_sw
 # endif
@@ -228,12 +222,11 @@
 #   define ozaki_dot_u8_init() ozaki_dot_u8_vnni
 # elif (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
 #   define ozaki_dot_u8_init() \
-      ((LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) ? ozaki_dot_u8_buud \
-        : ((LIBXS_X86_AVX512 <= ozaki_target_arch) ? ozaki_dot_u8_vnni \
-          : ozaki_dot_u8_sw))
+      ((LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) \
+          ? ozaki_dot_u8_buud \
+          : ((LIBXS_X86_AVX512 <= ozaki_target_arch) ? ozaki_dot_u8_vnni : ozaki_dot_u8_sw))
 # elif (LIBXS_X86_AVX512 <= LIBXS_MAX_STATIC_TARGET_ARCH)
-#   define ozaki_dot_u8_init() \
-      ((LIBXS_X86_AVX512 <= ozaki_target_arch) ? ozaki_dot_u8_vnni : ozaki_dot_u8_sw)
+#   define ozaki_dot_u8_init() ((LIBXS_X86_AVX512 <= ozaki_target_arch) ? ozaki_dot_u8_vnni : ozaki_dot_u8_sw)
 # else
 #   define ozaki_dot_u8_init() ozaki_dot_u8_sw
 # endif
@@ -286,19 +279,13 @@ extern LIBXS_TLS int gemm_dump_inhibit;
 #if defined(__LIBXSTREAM)
 /** Opaque OpenCL handle (bridge to LIBXSTREAM Ozaki). */
 LIBXS_APIVAR_PRIVATE(void* ozaki_ocl_handle);
-void* ozaki_ocl_create(int use_double, int kind, int verbosity,
-  int tm, int tn, int ndecomp, int ozflags, int oztrim,
-  int ozgroups, int profiling);
+void* ozaki_ocl_create(
+  int use_double, int kind, int verbosity, int tm, int tn, int ndecomp, int ozflags, int oztrim, int ozgroups, int profiling);
 void ozaki_ocl_release(void* handle);
-int ozaki_ocl_gemm(void* handle, char transa, char transb,
-  int M, int N, int K, double alpha, const void* a, int lda,
-  const void* b, int ldb, double beta, void* c, int ldc,
-  libxs_hist_t* hist, int profile);
-int ozaki_ocl_gemm3m(void* handle, char transa, char transb,
-  int M, int N, int K,
-  const double* alpha, const void* a, int lda,
-  const void* b, int ldb,
-  const double* beta, void* c, int ldc);
+int ozaki_ocl_gemm(void* handle, char transa, char transb, int M, int N, int K, double alpha, const void* a, int lda, const void* b,
+  int ldb, double beta, void* c, int ldc, libxs_hist_t* hist, int profile);
+int ozaki_ocl_gemm3m(void* handle, char transa, char transb, int M, int N, int K, const double* alpha, const void* a, int lda,
+  const void* b, int ldb, const double* beta, void* c, int ldc);
 int ozaki_ocl_supports_zgemm3m(void* handle);
 void ozaki_ocl_invalidate_cache(void* handle, const void* a, const void* b);
 void ozaki_ocl_finalize(void);
@@ -312,8 +299,7 @@ void ozaki_ocl_finalize(void);
  * The LIBXS_INTRINSICS guard + target attribute enable the compiler to
  * emit these instructions via function multi-versioning even when the
  * baseline -march does not include avxvnniint8. */
-#if (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH) && \
-    (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
+#if (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH) && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
 
 # if 16 == BLOCK_K /* 128-bit: one __m128i */
 
@@ -347,7 +333,8 @@ int32_t ozaki_dot_i8_bssd(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
   const __m256i va = _mm256_loadu_si256((const __m256i*)a);
   const __m256i vb = _mm256_loadu_si256((const __m256i*)b);
   __m256i dp = _mm256_dpbssd_epi32(_mm256_setzero_si256(), va, vb);
-  { const __m128i hi = _mm256_extracti128_si256(dp, 1);
+  {
+    const __m128i hi = _mm256_extracti128_si256(dp, 1);
     __m128i lo = _mm256_castsi256_si128(dp);
     lo = _mm_add_epi32(lo, hi);
     lo = _mm_hadd_epi32(lo, lo);
@@ -362,7 +349,8 @@ int32_t ozaki_dot_u8_buud(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
   const __m256i va = _mm256_loadu_si256((const __m256i*)a);
   const __m256i vb = _mm256_loadu_si256((const __m256i*)b);
   __m256i dp = _mm256_dpbuud_epi32(_mm256_setzero_si256(), va, vb);
-  { const __m128i hi = _mm256_extracti128_si256(dp, 1);
+  {
+    const __m128i hi = _mm256_extracti128_si256(dp, 1);
     __m128i lo = _mm256_castsi256_si128(dp);
     lo = _mm_add_epi32(lo, hi);
     lo = _mm_hadd_epi32(lo, lo);
@@ -424,13 +412,13 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
 int32_t ozaki_dot_i8_vnni(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
 {
   const __m256i bias = _mm256_set1_epi8((char)0x80);
-  const __m256i va = _mm256_xor_si256(
-    _mm256_loadu_si256((const __m256i*)a), bias);
+  const __m256i va = _mm256_xor_si256(_mm256_loadu_si256((const __m256i*)a), bias);
   const __m256i vb = _mm256_loadu_si256((const __m256i*)b);
   const __m256i ones = _mm256_set1_epi8(1);
   __m256i dp = _mm256_dpbusd_epi32(_mm256_setzero_si256(), va, vb);
   __m256i sb = _mm256_dpbusd_epi32(_mm256_setzero_si256(), ones, vb);
-  { const __m128i hi_dp = _mm256_extracti128_si256(dp, 1);
+  {
+    const __m128i hi_dp = _mm256_extracti128_si256(dp, 1);
     const __m128i hi_sb = _mm256_extracti128_si256(sb, 1);
     __m128i lo_dp = _mm256_castsi256_si128(dp);
     __m128i lo_sb = _mm256_castsi256_si128(sb);
@@ -448,14 +436,12 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
 int32_t ozaki_dot_i8_vnni(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
 {
   const __m512i bias = _mm512_set1_epi8((char)0x80);
-  const __m512i va = _mm512_xor_si512(
-    _mm512_loadu_si512((const __m512i*)a), bias);
+  const __m512i va = _mm512_xor_si512(_mm512_loadu_si512((const __m512i*)a), bias);
   const __m512i vb = _mm512_loadu_si512((const __m512i*)b);
   const __m512i ones = _mm512_set1_epi8(1);
   __m512i dp = _mm512_dpbusd_epi32(_mm512_setzero_si512(), va, vb);
   __m512i sb = _mm512_dpbusd_epi32(_mm512_setzero_si512(), ones, vb);
-  return _mm512_reduce_add_epi32(dp)
-       - 128 * _mm512_reduce_add_epi32(sb);
+  return _mm512_reduce_add_epi32(dp) - 128 * _mm512_reduce_add_epi32(sb);
 }
 
 # endif /* BLOCK_K width selection */
@@ -510,12 +496,12 @@ int32_t ozaki_dot_u8_vnni(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
 {
   const __m256i bias = _mm256_set1_epi8((char)0x80);
   const __m256i va = _mm256_loadu_si256((const __m256i*)a);
-  const __m256i vb = _mm256_xor_si256(
-    _mm256_loadu_si256((const __m256i*)b), bias);
+  const __m256i vb = _mm256_xor_si256(_mm256_loadu_si256((const __m256i*)b), bias);
   const __m256i ones = _mm256_set1_epi8(1);
   __m256i dp = _mm256_dpbusd_epi32(_mm256_setzero_si256(), va, vb);
   __m256i sa = _mm256_dpbusd_epi32(_mm256_setzero_si256(), va, ones);
-  { const __m128i hi_dp = _mm256_extracti128_si256(dp, 1);
+  {
+    const __m128i hi_dp = _mm256_extracti128_si256(dp, 1);
     const __m128i hi_sa = _mm256_extracti128_si256(sa, 1);
     __m128i lo_dp = _mm256_castsi256_si128(dp);
     __m128i lo_sa = _mm256_castsi256_si128(sa);
@@ -534,13 +520,11 @@ int32_t ozaki_dot_u8_vnni(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
 {
   const __m512i bias = _mm512_set1_epi8((char)0x80);
   const __m512i va = _mm512_loadu_si512((const __m512i*)a);
-  const __m512i vb = _mm512_xor_si512(
-    _mm512_loadu_si512((const __m512i*)b), bias);
+  const __m512i vb = _mm512_xor_si512(_mm512_loadu_si512((const __m512i*)b), bias);
   const __m512i ones = _mm512_set1_epi8(1);
   __m512i dp = _mm512_dpbusd_epi32(_mm512_setzero_si512(), va, vb);
   __m512i sa = _mm512_dpbusd_epi32(_mm512_setzero_si512(), va, ones);
-  return _mm512_reduce_add_epi32(dp)
-       + 128 * _mm512_reduce_add_epi32(sa);
+  return _mm512_reduce_add_epi32(dp) + 128 * _mm512_reduce_add_epi32(sa);
 }
 
 # endif /* BLOCK_K width selection */
@@ -561,30 +545,26 @@ LIBXS_API_INLINE int32_t ozaki_dot_u8_sw(const uint8_t a[BLOCK_K], const uint8_t
 /* Unified uint8 GEMM: C[M,N] = A[M,K] * B'[N,K], u8*u8 -> s32.
  * Row-major storage. beta: 0=overwrite C, nonzero=accumulate into C.
  * Requires: transa='N', transb='T', K % BLOCK_K == 0. */
-LIBXS_API_INLINE void ozaki_gemm_u8u8s32(
-  char transa, char transb,
-  GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
-  const uint8_t *a, GEMM_INT_TYPE lda,
-  const uint8_t *b, GEMM_INT_TYPE ldb,
-  int beta,
-  int32_t *c, GEMM_INT_TYPE ldc)
+LIBXS_API_INLINE void ozaki_gemm_u8u8s32(char transa, char transb, GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+  const uint8_t* a, GEMM_INT_TYPE lda, const uint8_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
   const ozaki_dot_u8_fn dot = ozaki_dot_u8_init();
   GEMM_INT_TYPE mi, nj, kb;
   LIBXS_ASSERT('N' == transa || 'n' == transa);
   LIBXS_ASSERT('T' == transb || 't' == transb);
   LIBXS_ASSERT(0 == (K % BLOCK_K));
-  LIBXS_UNUSED(transa); LIBXS_UNUSED(transb);
+  LIBXS_UNUSED(transa);
+  LIBXS_UNUSED(transb);
   LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
   for (mi = 0; mi < M; ++mi) {
-    int32_t *const crow = c + mi * ldc;
-    const uint8_t *const arow = a + mi * lda;
+    int32_t* const crow = c + mi * ldc;
+    const uint8_t* const arow = a + mi * lda;
     if (0 == beta) {
       LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N)
       for (nj = 0; nj < N; ++nj) crow[nj] = 0;
     }
     for (kb = 0; kb < K; kb += BLOCK_K) {
-      const uint8_t *const ak = arow + kb;
+      const uint8_t* const ak = arow + kb;
       LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N)
       for (nj = 0; nj < N; ++nj) {
         crow[nj] += dot(ak, b + nj * ldb + kb);
@@ -598,38 +578,32 @@ LIBXS_API_INLINE void ozaki_gemm_u8u8s32(
  * Row-major storage. beta: 0=overwrite C, nonzero=accumulate into C.
  * With __DNNL: uses dnnl_gemm_s8s8s32.
  * Without: naive dot_i8 loop (transa='N', transb='T', K % BLOCK_K == 0). */
-LIBXS_API_INLINE void ozaki_gemm_s8s8s32(
-  char transa, char transb,
-  GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
-  const int8_t *a, GEMM_INT_TYPE lda,
-  const int8_t *b, GEMM_INT_TYPE ldb,
-  int beta,
-  int32_t *c, GEMM_INT_TYPE ldc)
+LIBXS_API_INLINE void ozaki_gemm_s8s8s32(char transa, char transb, GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+  const int8_t* a, GEMM_INT_TYPE lda, const int8_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
 #if defined(__DNNL)
   static const int32_t zero = 0;
-  dnnl_gemm_s8s8s32(transa, transb, 'F',
-    (dnnl_dim_t)M, (dnnl_dim_t)N, (dnnl_dim_t)K, 1.0f,
-    a, (dnnl_dim_t)lda, 0, b, (dnnl_dim_t)ldb, 0,
-    0 != beta ? 1.0f : 0.0f, c, (dnnl_dim_t)ldc, &zero);
+  dnnl_gemm_s8s8s32(transa, transb, 'F', (dnnl_dim_t)M, (dnnl_dim_t)N, (dnnl_dim_t)K, 1.0f, a, (dnnl_dim_t)lda, 0, b,
+    (dnnl_dim_t)ldb, 0, 0 != beta ? 1.0f : 0.0f, c, (dnnl_dim_t)ldc, &zero);
 #else
   const ozaki_dot_i8_fn dot = ozaki_dot_i8_init();
   GEMM_INT_TYPE mi, nj, kb;
   LIBXS_ASSERT('N' == transa || 'n' == transa);
   LIBXS_ASSERT('T' == transb || 't' == transb);
   LIBXS_ASSERT(0 == (K % BLOCK_K));
-  LIBXS_UNUSED(transa); LIBXS_UNUSED(transb);
+  LIBXS_UNUSED(transa);
+  LIBXS_UNUSED(transb);
   /* M x K x N loop order: reuse each A chunk across all N columns. */
   LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
   for (mi = 0; mi < M; ++mi) {
-    int32_t *const crow = c + mi * ldc;
-    const int8_t *const arow = a + mi * lda;
+    int32_t* const crow = c + mi * ldc;
+    const int8_t* const arow = a + mi * lda;
     if (0 == beta) {
       LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N)
       for (nj = 0; nj < N; ++nj) crow[nj] = 0;
     }
     for (kb = 0; kb < K; kb += BLOCK_K) {
-      const int8_t *const ak = arow + kb;
+      const int8_t* const ak = arow + kb;
       LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N)
       for (nj = 0; nj < N; ++nj) {
         crow[nj] += dot(ak, b + nj * ldb + kb);
@@ -650,8 +624,7 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32(
  * incorrect for double precision (finite doubles > ~3.4e38 overflow
  * to float-Inf, producing a false positive).
  */
-LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value,
-  int16_t* exp_biased, uint64_t* mantissa)
+LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value, int16_t* exp_biased, uint64_t* mantissa)
 {
   uint64_t bits;
   uint64_t frac;
@@ -660,16 +633,31 @@ LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value,
 
   /* Fast zero check avoids bit extraction for the common sparse case */
   if (value == (GEMM_REAL_TYPE)0) {
-    *exp_biased = 0; *mantissa = 0;
+    *exp_biased = 0;
+    *mantissa = 0;
   }
   else {
     sign = (value < (GEMM_REAL_TYPE)0) ? -1 : 1;
     if (value < (GEMM_REAL_TYPE)0) value = -value;
 
 #if GEMM_IS_DOUBLE
-    { union { double d; uint64_t u; } cvt; cvt.d = value; bits = cvt.u; }
+    {
+      union {
+        double d;
+        uint64_t u;
+      } cvt;
+      cvt.d = value;
+      bits = cvt.u;
+    }
 #else
-    { union { float f; uint32_t u; } cvt; cvt.f = value; bits = cvt.u; }
+    {
+      union {
+        float f;
+        uint32_t u;
+      } cvt;
+      cvt.f = value;
+      bits = cvt.u;
+    }
 #endif
     exp_raw = (uint16_t)((bits >> OZ_MANT_BITS) & OZ_EXP_MASK);
     frac = bits & ((1ULL << OZ_MANT_BITS) - 1ULL);
@@ -677,7 +665,8 @@ LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value,
     /* exp_raw == 0: subnormal (treated as zero).
      * exp_raw == OZ_EXP_MASK: Inf (frac==0) or NaN (frac!=0). */
     if (0 == exp_raw || exp_raw == (uint16_t)OZ_EXP_MASK) {
-      *exp_biased = 0; *mantissa = 0;
+      *exp_biased = 0;
+      *mantissa = 0;
       if (0 != exp_raw) sign = 1; /* NaN/Inf: return 1 */
     }
     else {
@@ -694,26 +683,23 @@ LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value,
  * Per BLAS spec, beta=0 must zero out C unconditionally (C may hold NaN
  * or Inf when uninitialized); a plain multiply would give NaN.
  */
-LIBXS_API_INLINE void ozaki_scale_block_beta(GEMM_REAL_TYPE* mb, GEMM_INT_TYPE ldc,
-  GEMM_INT_TYPE iblk, GEMM_INT_TYPE jblk, const GEMM_REAL_TYPE* beta,
-  GEMM_REAL_TYPE* ref_blk, int capture_ref)
+LIBXS_API_INLINE void ozaki_scale_block_beta(GEMM_REAL_TYPE* mb, GEMM_INT_TYPE ldc, GEMM_INT_TYPE iblk, GEMM_INT_TYPE jblk,
+  const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* ref_blk, int capture_ref)
 {
   const GEMM_REAL_TYPE b = *beta;
   GEMM_INT_TYPE mi, nj;
   for (mi = 0; mi < iblk; ++mi) {
     for (nj = 0; nj < jblk; ++nj) {
       if (0 != capture_ref) ref_blk[LIBXS_INDEX(0, BLOCK_M, mi, nj)] = mb[LIBXS_INDEX(0, ldc, mi, nj)];
-      mb[LIBXS_INDEX(0, ldc, mi, nj)] = ((GEMM_REAL_TYPE)0 != b)
-        ? mb[LIBXS_INDEX(0, ldc, mi, nj)] * b : (GEMM_REAL_TYPE)0;
+      mb[LIBXS_INDEX(0, ldc, mi, nj)] = ((GEMM_REAL_TYPE)0 != b) ? mb[LIBXS_INDEX(0, ldc, mi, nj)] * b : (GEMM_REAL_TYPE)0;
     }
   }
 }
 
 
 /** Store a (reference, reconstructed) value pair into block buffers. */
-LIBXS_API_INLINE void ozaki_store_block_pair(GEMM_REAL_TYPE* ref_blk,
-  GEMM_REAL_TYPE* recon_blk, GEMM_INT_TYPE ld, GEMM_INT_TYPE row,
-  GEMM_INT_TYPE col, GEMM_REAL_TYPE ref_val, GEMM_REAL_TYPE recon_val)
+LIBXS_API_INLINE void ozaki_store_block_pair(GEMM_REAL_TYPE* ref_blk, GEMM_REAL_TYPE* recon_blk, GEMM_INT_TYPE ld,
+  GEMM_INT_TYPE row, GEMM_INT_TYPE col, GEMM_REAL_TYPE ref_val, GEMM_REAL_TYPE recon_val)
 {
   recon_blk[LIBXS_INDEX(0, ld, row, col)] = recon_val;
   ref_blk[LIBXS_INDEX(0, ld, row, col)] = ref_val;
@@ -721,16 +707,12 @@ LIBXS_API_INLINE void ozaki_store_block_pair(GEMM_REAL_TYPE* ref_blk,
 
 
 /** Compute matrix diff for one block and reduce into accumulator. */
-LIBXS_API_INLINE void ozaki_accumulate_block_diff(libxs_matdiff_t* acc,
-  const GEMM_REAL_TYPE* ref_blk, const GEMM_REAL_TYPE* tst_blk,
-  GEMM_INT_TYPE bm, GEMM_INT_TYPE bn, GEMM_INT_TYPE ld_ref,
-  GEMM_INT_TYPE ld_tst)
+LIBXS_API_INLINE void ozaki_accumulate_block_diff(libxs_matdiff_t* acc, const GEMM_REAL_TYPE* ref_blk,
+  const GEMM_REAL_TYPE* tst_blk, GEMM_INT_TYPE bm, GEMM_INT_TYPE bn, GEMM_INT_TYPE ld_ref, GEMM_INT_TYPE ld_tst)
 {
   libxs_matdiff_t block_diff;
   const int ild_ref = (int)ld_ref, ild_tst = (int)ld_tst;
-  if (EXIT_SUCCESS == libxs_matdiff(&block_diff, LIBXS_DATATYPE(GEMM_REAL_TYPE),
-    bm, bn, ref_blk, tst_blk, &ild_ref, &ild_tst))
-  {
+  if (EXIT_SUCCESS == libxs_matdiff(&block_diff, LIBXS_DATATYPE(GEMM_REAL_TYPE), bm, bn, ref_blk, tst_blk, &ild_ref, &ild_tst)) {
     libxs_matdiff_reduce(acc, &block_diff);
   }
 }
@@ -745,11 +727,11 @@ LIBXS_API_INLINE void ozaki_accumulate_block_diff(libxs_matdiff_t* acc,
 LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
 {
   char fname[64];
-  const char *const env_slurm = getenv("SLURM_JOBID");
+  const char* const env_slurm = getenv("SLURM_JOBID");
   const int slurm = (NULL == env_slurm ? -1 : atoi(env_slurm));
   const int id = (1 < libxs_nranks() ? libxs_nrank() : libxs_pid());
   int result = EXIT_SUCCESS;
-  FILE *file;
+  FILE* file;
 
   gemm_mhd_settings_t settings;
   settings.ozaki = ozaki;
@@ -766,8 +748,7 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
   else LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%i-%u-%i-a.mhd", slurm, id, gemm_diff.r);
   file = fopen(fname, "rb");
   if (NULL == file) { /* Never overwrite an existing file */
-    const int result_a = gemm_mhd_write(fname, a, *m, *k, *lda, *transa, alpha,
-      ncomponents, &settings);
+    const int result_a = gemm_mhd_write(fname, a, *m, *k, *lda, *transa, alpha, ncomponents, &settings);
     if (EXIT_SUCCESS != result_a && 0 != ozaki_verbose) {
       fprintf(stderr, "ERROR: dumping A-matrix to %s failed!\n", fname);
     }
@@ -779,8 +760,7 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
   else LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%i-%u-%i-b.mhd", slurm, id, gemm_diff.r);
   file = fopen(fname, "rb");
   if (NULL == file) { /* Never overwrite an existing file */
-    const int result_b = gemm_mhd_write(fname, b, *k, *n, *ldb, *transb, beta,
-      ncomponents, &settings);
+    const int result_b = gemm_mhd_write(fname, b, *k, *n, *ldb, *transb, beta, ncomponents, &settings);
     if (EXIT_SUCCESS != result_b && 0 != ozaki_verbose) {
       fprintf(stderr, "ERROR: dumping B-matrix to %s failed!\n", fname);
     }
@@ -789,8 +769,8 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
   else fclose(file);
 
   if (0 != ozaki_verbose) {
-    fprintf(stderr, "GEMM: "); print_gemm(stderr, 1/*compact*/,
-      transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
+    fprintf(stderr, "GEMM: ");
+    print_gemm(stderr, 1 /*compact*/, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
   }
 
   if (EXIT_SUCCESS == result) {

@@ -33,24 +33,22 @@
 
 /* Common GEMM argument list macros to reduce boilerplate */
 #define GEMM_ARGDECL \
-  const char* transa, const char* transb, \
-  const GEMM_INT_TYPE* m, const GEMM_INT_TYPE* n, const GEMM_INT_TYPE* k, \
-  const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda, \
-                               const GEMM_REAL_TYPE* b, const GEMM_INT_TYPE* ldb, \
-  const GEMM_REAL_TYPE*  beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc
+  const char *transa, const char *transb, const GEMM_INT_TYPE *m, const GEMM_INT_TYPE *n, const GEMM_INT_TYPE *k, \
+    const GEMM_REAL_TYPE *alpha, const GEMM_REAL_TYPE *a, const GEMM_INT_TYPE *lda, const GEMM_REAL_TYPE *b, \
+    const GEMM_INT_TYPE *ldb, const GEMM_REAL_TYPE *beta, GEMM_REAL_TYPE *c, const GEMM_INT_TYPE *ldc
 #define GEMM_ARGPASS transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc
 
 /* Precision-specific name redirects for public/driver-visible symbols */
 #define gemm_function_t LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_ftype_t)
-#define gemm_original   LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_original)
-#define gemm_diff       LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_diff)
-#define ozaki           LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki)
-#define ozaki_stat      LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_stat)
-#define ozaki_verbose   LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_verbose)
-#define print_gemm      LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_print)
-#define print_diff      LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_print_diff)
-#define gemm_mhd_read   LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_mhd_read)
-#define gemm_mhd_write  LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_mhd_write)
+#define gemm_original LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_original)
+#define gemm_diff LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_diff)
+#define ozaki LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki)
+#define ozaki_stat LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_stat)
+#define ozaki_verbose LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_verbose)
+#define print_gemm LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_print)
+#define print_diff LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_print_diff)
+#define gemm_mhd_read LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_mhd_read)
+#define gemm_mhd_write LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_mhd_write)
 
 /* Size of the serialized settings block */
 #define GEMM_MHD_SETTINGS_SIZE (5 * (int)sizeof(int) + 2 * (int)sizeof(double))
@@ -82,18 +80,13 @@ typedef struct gemm_mhd_settings_t {
  * If settings is non-NULL, fills it from extension (zeros if absent).
  * All output pointers may be NULL.  Returns EXIT_SUCCESS on success.
  */
-LIBXS_API_INLINE int gemm_mhd_read(const char* filename,
-  GEMM_INT_TYPE* rows, GEMM_INT_TYPE* cols,
-  char* trans, GEMM_INT_TYPE* ld,
-  GEMM_REAL_TYPE scalar[2], size_t* ncomp,
-  gemm_mhd_settings_t* settings,
-  GEMM_REAL_TYPE* data)
+LIBXS_API_INLINE int gemm_mhd_read(const char* filename, GEMM_INT_TYPE* rows, GEMM_INT_TYPE* cols, char* trans, GEMM_INT_TYPE* ld,
+  GEMM_REAL_TYPE scalar[2], size_t* ncomp, gemm_mhd_settings_t* settings, GEMM_REAL_TYPE* data)
 {
-  char ext[sizeof(char) + sizeof(GEMM_INT_TYPE) + 2 * sizeof(GEMM_REAL_TYPE)
-         + GEMM_MHD_SETTINGS_SIZE];
+  char ext[sizeof(char) + sizeof(GEMM_INT_TYPE) + 2 * sizeof(GEMM_REAL_TYPE) + GEMM_MHD_SETTINGS_SIZE];
   const size_t ext1 = sizeof(char) + sizeof(GEMM_INT_TYPE) + sizeof(GEMM_REAL_TYPE);
   const size_t ext2 = ext1 + sizeof(GEMM_REAL_TYPE);
-  libxs_mhd_info_t info = { 2, 0, LIBXS_DATATYPE_UNKNOWN, 0 };
+  libxs_mhd_info_t info = {2, 0, LIBXS_DATATYPE_UNKNOWN, 0};
   size_t size[2], ext_size = sizeof(ext), base_size;
   GEMM_INT_TYPE file_ld;
   char data_filename[1024];
@@ -101,11 +94,9 @@ LIBXS_API_INLINE int gemm_mhd_read(const char* filename,
   int result;
   strncpy(data_filename, filename, sizeof(data_filename) - 1);
   data_filename[sizeof(data_filename) - 1] = '\0';
-  result = libxs_mhd_read_header(filename, sizeof(data_filename) - 1,
-    data_filename, &info, size, ext, &ext_size);
-  if (EXIT_SUCCESS == result && (2 != info.ndims
-    || LIBXS_DATATYPE(GEMM_REAL_TYPE) != info.type
-    || (1 != info.ncomponents && 2 != info.ncomponents)))
+  result = libxs_mhd_read_header(filename, sizeof(data_filename) - 1, data_filename, &info, size, ext, &ext_size);
+  if (EXIT_SUCCESS == result &&
+      (2 != info.ndims || LIBXS_DATATYPE(GEMM_REAL_TYPE) != info.type || (1 != info.ncomponents && 2 != info.ncomponents)))
   {
     result = EXIT_FAILURE;
   }
@@ -123,29 +114,34 @@ LIBXS_API_INLINE int gemm_mhd_read(const char* filename,
     if (NULL != trans) *trans = *(const char*)ext;
     if (NULL != ld) *ld = file_ld;
     if (NULL != scalar) {
-      memcpy(scalar, ext + sizeof(char) + sizeof(GEMM_INT_TYPE),
-        info.ncomponents * sizeof(GEMM_REAL_TYPE));
+      memcpy(scalar, ext + sizeof(char) + sizeof(GEMM_INT_TYPE), info.ncomponents * sizeof(GEMM_REAL_TYPE));
       if (1 == info.ncomponents) scalar[1] = 0;
     }
     if (NULL != ncomp) *ncomp = info.ncomponents;
     if (NULL != settings) {
       if (0 != has_settings) {
         const char* p = ext + base_size;
-        memcpy(&settings->ozaki, p, sizeof(int)); p += sizeof(int);
-        memcpy(&settings->ozn, p, sizeof(int)); p += sizeof(int);
-        memcpy(&settings->ozflags, p, sizeof(int)); p += sizeof(int);
-        memcpy(&settings->oztrim, p, sizeof(int)); p += sizeof(int);
-        memcpy(&settings->ldc, p, sizeof(int)); p += sizeof(int);
-        memcpy(&settings->eps, p, sizeof(double)); p += sizeof(double);
+        memcpy(&settings->ozaki, p, sizeof(int));
+        p += sizeof(int);
+        memcpy(&settings->ozn, p, sizeof(int));
+        p += sizeof(int);
+        memcpy(&settings->ozflags, p, sizeof(int));
+        p += sizeof(int);
+        memcpy(&settings->oztrim, p, sizeof(int));
+        p += sizeof(int);
+        memcpy(&settings->ldc, p, sizeof(int));
+        p += sizeof(int);
+        memcpy(&settings->eps, p, sizeof(double));
+        p += sizeof(double);
         memcpy(&settings->rsq, p, sizeof(double));
       }
       else memset(settings, 0, sizeof(*settings));
     }
     if (NULL != data) {
       size_t pitch[2];
-      pitch[0] = file_ld; pitch[1] = size[1];
-      result = libxs_mhd_read(data_filename, NULL/*offset*/, size, pitch,
-        &info, data, NULL/*handler_info*/, NULL/*handler*/);
+      pitch[0] = file_ld;
+      pitch[1] = size[1];
+      result = libxs_mhd_read(data_filename, NULL /*offset*/, size, pitch, &info, data, NULL /*handler_info*/, NULL /*handler*/);
     }
   }
   return result;
@@ -156,15 +152,11 @@ LIBXS_API_INLINE int gemm_mhd_read(const char* filename,
  * Extension: [trans:char][ld:int][scalar:ncomp*real][settings(opt)].
  * If settings is non-NULL, the Ozaki settings are appended.
  */
-LIBXS_API_INLINE int gemm_mhd_write(const char* filename,
-  const GEMM_REAL_TYPE* data, GEMM_INT_TYPE rows, GEMM_INT_TYPE cols,
-  GEMM_INT_TYPE ld, char trans, const GEMM_REAL_TYPE* scalar, size_t ncomp,
-  const gemm_mhd_settings_t* settings)
+LIBXS_API_INLINE int gemm_mhd_write(const char* filename, const GEMM_REAL_TYPE* data, GEMM_INT_TYPE rows, GEMM_INT_TYPE cols,
+  GEMM_INT_TYPE ld, char trans, const GEMM_REAL_TYPE* scalar, size_t ncomp, const gemm_mhd_settings_t* settings)
 {
-  char ext[sizeof(char) + sizeof(GEMM_INT_TYPE) + 2 * sizeof(GEMM_REAL_TYPE)
-         + GEMM_MHD_SETTINGS_SIZE];
-  size_t ext_size = sizeof(char) + sizeof(GEMM_INT_TYPE)
-                  + ncomp * sizeof(GEMM_REAL_TYPE);
+  char ext[sizeof(char) + sizeof(GEMM_INT_TYPE) + 2 * sizeof(GEMM_REAL_TYPE) + GEMM_MHD_SETTINGS_SIZE];
+  size_t ext_size = sizeof(char) + sizeof(GEMM_INT_TYPE) + ncomp * sizeof(GEMM_REAL_TYPE);
   libxs_mhd_info_t mhd_info;
   size_t size[2], pitch[2];
   char* p;
@@ -172,28 +164,35 @@ LIBXS_API_INLINE int gemm_mhd_write(const char* filename,
   mhd_info.ncomponents = ncomp;
   mhd_info.header_size = 0;
   mhd_info.ndims = 2;
-  size[0] = rows; size[1] = cols;
-  pitch[0] = ld; pitch[1] = cols;
+  size[0] = rows;
+  size[1] = cols;
+  pitch[0] = ld;
+  pitch[1] = cols;
   *(char*)ext = trans;
   memcpy(ext + sizeof(char), &ld, sizeof(GEMM_INT_TYPE));
-  memcpy(ext + sizeof(char) + sizeof(GEMM_INT_TYPE),
-    scalar, ncomp * sizeof(GEMM_REAL_TYPE));
+  memcpy(ext + sizeof(char) + sizeof(GEMM_INT_TYPE), scalar, ncomp * sizeof(GEMM_REAL_TYPE));
   if (NULL != settings) {
     p = ext + ext_size;
-    memcpy(p, &settings->ozaki, sizeof(int)); p += sizeof(int);
-    memcpy(p, &settings->ozn, sizeof(int)); p += sizeof(int);
-    memcpy(p, &settings->ozflags, sizeof(int)); p += sizeof(int);
-    memcpy(p, &settings->oztrim, sizeof(int)); p += sizeof(int);
-    memcpy(p, &settings->ldc, sizeof(int)); p += sizeof(int);
-    memcpy(p, &settings->eps, sizeof(double)); p += sizeof(double);
+    memcpy(p, &settings->ozaki, sizeof(int));
+    p += sizeof(int);
+    memcpy(p, &settings->ozn, sizeof(int));
+    p += sizeof(int);
+    memcpy(p, &settings->ozflags, sizeof(int));
+    p += sizeof(int);
+    memcpy(p, &settings->oztrim, sizeof(int));
+    p += sizeof(int);
+    memcpy(p, &settings->ldc, sizeof(int));
+    p += sizeof(int);
+    memcpy(p, &settings->eps, sizeof(double));
+    p += sizeof(double);
     memcpy(p, &settings->rsq, sizeof(double));
     ext_size += GEMM_MHD_SETTINGS_SIZE;
   }
-  { libxs_mhd_write_info_t winfo = { 0 };
+  {
+    libxs_mhd_write_info_t winfo = {0};
     winfo.extension = ext;
     winfo.extension_size = ext_size;
-    return libxs_mhd_write(filename, NULL/*offset*/, size, pitch,
-      &mhd_info, data, &winfo);
+    return libxs_mhd_write(filename, NULL /*offset*/, size, pitch, &mhd_info, data, &winfo);
   }
 }
 

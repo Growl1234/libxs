@@ -34,10 +34,8 @@ LIBXS_APIVAR_PRIVATE_DEF(zgemm_function_t zgemm_original);
 
 
 /** Deinterleave complex column-major matrix into separate real and imag parts. */
-LIBXS_API_INLINE void zgemm3m_deinterleave(
-  const GEMM_REAL_TYPE* LIBXS_RESTRICT z, GEMM_INT_TYPE ldz,
-  GEMM_REAL_TYPE* LIBXS_RESTRICT re, GEMM_REAL_TYPE* LIBXS_RESTRICT im,
-  GEMM_INT_TYPE ld_ri, GEMM_INT_TYPE rows, GEMM_INT_TYPE cols)
+LIBXS_API_INLINE void zgemm3m_deinterleave(const GEMM_REAL_TYPE* LIBXS_RESTRICT z, GEMM_INT_TYPE ldz,
+  GEMM_REAL_TYPE* LIBXS_RESTRICT re, GEMM_REAL_TYPE* LIBXS_RESTRICT im, GEMM_INT_TYPE ld_ri, GEMM_INT_TYPE rows, GEMM_INT_TYPE cols)
 {
   GEMM_INT_TYPE i, j;
   for (j = 0; j < cols; ++j) {
@@ -53,10 +51,9 @@ LIBXS_API_INLINE void zgemm3m_deinterleave(
 
 
 /** Interleave separate real and imag parts into complex column-major matrix. */
-LIBXS_API_INLINE void zgemm3m_interleave(
-  GEMM_REAL_TYPE* LIBXS_RESTRICT z, GEMM_INT_TYPE ldz,
-  const GEMM_REAL_TYPE* LIBXS_RESTRICT re, const GEMM_REAL_TYPE* LIBXS_RESTRICT im,
-  GEMM_INT_TYPE ld_ri, GEMM_INT_TYPE rows, GEMM_INT_TYPE cols)
+LIBXS_API_INLINE void zgemm3m_interleave(GEMM_REAL_TYPE* LIBXS_RESTRICT z, GEMM_INT_TYPE ldz,
+  const GEMM_REAL_TYPE* LIBXS_RESTRICT re, const GEMM_REAL_TYPE* LIBXS_RESTRICT im, GEMM_INT_TYPE ld_ri, GEMM_INT_TYPE rows,
+  GEMM_INT_TYPE cols)
 {
   GEMM_INT_TYPE i, j;
   for (j = 0; j < cols; ++j) {
@@ -64,7 +61,7 @@ LIBXS_API_INLINE void zgemm3m_interleave(
     const GEMM_REAL_TYPE* rej = re + (size_t)j * ld_ri;
     const GEMM_REAL_TYPE* imj = im + (size_t)j * ld_ri;
     for (i = 0; i < rows; ++i) {
-      zj[2 * i]     = rej[i];
+      zj[2 * i] = rej[i];
       zj[2 * i + 1] = imj[i];
     }
   }
@@ -72,34 +69,28 @@ LIBXS_API_INLINE void zgemm3m_interleave(
 
 
 /** Elementwise matrix addition: dst[i,j] = a[i,j] + b[i,j]. */
-LIBXS_API_INLINE void zgemm3m_matadd(
-  GEMM_REAL_TYPE* LIBXS_RESTRICT dst, GEMM_INT_TYPE ld_dst,
-  const GEMM_REAL_TYPE* LIBXS_RESTRICT a, GEMM_INT_TYPE ld_a,
-  const GEMM_REAL_TYPE* LIBXS_RESTRICT b, GEMM_INT_TYPE ld_b,
+LIBXS_API_INLINE void zgemm3m_matadd(GEMM_REAL_TYPE* LIBXS_RESTRICT dst, GEMM_INT_TYPE ld_dst,
+  const GEMM_REAL_TYPE* LIBXS_RESTRICT a, GEMM_INT_TYPE ld_a, const GEMM_REAL_TYPE* LIBXS_RESTRICT b, GEMM_INT_TYPE ld_b,
   GEMM_INT_TYPE rows, GEMM_INT_TYPE cols)
 {
   GEMM_INT_TYPE i, j;
   for (j = 0; j < cols; ++j) {
     for (i = 0; i < rows; ++i) {
-      dst[i + (size_t)j * ld_dst] = a[i + (size_t)j * ld_a]
-                                  + b[i + (size_t)j * ld_b];
+      dst[i + (size_t)j * ld_dst] = a[i + (size_t)j * ld_a] + b[i + (size_t)j * ld_b];
     }
   }
 }
 
 
 /** Elementwise: dst[i,j] = a[i,j] - b[i,j]. */
-LIBXS_API_INLINE void zgemm3m_matsub(
-  GEMM_REAL_TYPE* LIBXS_RESTRICT dst, GEMM_INT_TYPE ld_dst,
-  const GEMM_REAL_TYPE* LIBXS_RESTRICT a, GEMM_INT_TYPE ld_a,
-  const GEMM_REAL_TYPE* LIBXS_RESTRICT b, GEMM_INT_TYPE ld_b,
+LIBXS_API_INLINE void zgemm3m_matsub(GEMM_REAL_TYPE* LIBXS_RESTRICT dst, GEMM_INT_TYPE ld_dst,
+  const GEMM_REAL_TYPE* LIBXS_RESTRICT a, GEMM_INT_TYPE ld_a, const GEMM_REAL_TYPE* LIBXS_RESTRICT b, GEMM_INT_TYPE ld_b,
   GEMM_INT_TYPE rows, GEMM_INT_TYPE cols)
 {
   GEMM_INT_TYPE i, j;
   for (j = 0; j < cols; ++j) {
     for (i = 0; i < rows; ++i) {
-      dst[i + (size_t)j * ld_dst] = a[i + (size_t)j * ld_a]
-                                  - b[i + (size_t)j * ld_b];
+      dst[i + (size_t)j * ld_dst] = a[i + (size_t)j * ld_a] - b[i + (size_t)j * ld_b];
     }
   }
 }
@@ -113,11 +104,9 @@ LIBXS_API_INLINE void zgemm3m_matsub(
  *   C_new = (ar + i*ai) * (re_ab + i*im_ab) + (br + i*bi) * C_old
  * where re_ab = Re(A*B), im_ab = Im(A*B), C_old is read from c[].
  */
-LIBXS_API_INLINE void zgemm3m_finalize(
-  GEMM_REAL_TYPE* LIBXS_RESTRICT c, GEMM_INT_TYPE ldc,
-  const GEMM_REAL_TYPE* LIBXS_RESTRICT re_ab, const GEMM_REAL_TYPE* LIBXS_RESTRICT im_ab,
-  GEMM_INT_TYPE ld_ri, GEMM_INT_TYPE m, GEMM_INT_TYPE n,
-  GEMM_REAL_TYPE ar, GEMM_REAL_TYPE ai, GEMM_REAL_TYPE br, GEMM_REAL_TYPE bi)
+LIBXS_API_INLINE void zgemm3m_finalize(GEMM_REAL_TYPE* LIBXS_RESTRICT c, GEMM_INT_TYPE ldc,
+  const GEMM_REAL_TYPE* LIBXS_RESTRICT re_ab, const GEMM_REAL_TYPE* LIBXS_RESTRICT im_ab, GEMM_INT_TYPE ld_ri, GEMM_INT_TYPE m,
+  GEMM_INT_TYPE n, GEMM_REAL_TYPE ar, GEMM_REAL_TYPE ai, GEMM_REAL_TYPE br, GEMM_REAL_TYPE bi)
 {
   GEMM_INT_TYPE i, j;
   for (j = 0; j < n; ++j) {
@@ -127,7 +116,7 @@ LIBXS_API_INLINE void zgemm3m_finalize(
     for (i = 0; i < m; ++i) {
       const GEMM_REAL_TYPE c_re = cj[2 * i];
       const GEMM_REAL_TYPE c_im = cj[2 * i + 1];
-      cj[2 * i]     = ar * rej[i] - ai * imj[i] + br * c_re - bi * c_im;
+      cj[2 * i] = ar * rej[i] - ai * imj[i] + br * c_re - bi * c_im;
       cj[2 * i + 1] = ar * imj[i] + ai * rej[i] + br * c_im + bi * c_re;
     }
   }
@@ -149,15 +138,14 @@ LIBXS_API_INTERN void zgemm3m(GEMM_ARGDECL)
 {
 #if defined(__LIBXSTREAM)
   /* Try GPU-native 3M path if OpenCL is available and 3M kernels are compiled */
-  if (NULL != ozaki_ocl_handle && ozaki_ocl_supports_zgemm3m(ozaki_ocl_handle))
-  {
+  if (NULL != ozaki_ocl_handle && ozaki_ocl_supports_zgemm3m(ozaki_ocl_handle)) {
     double alpha_d[2], beta_d[2];
     int result;
-    alpha_d[0] = (double)alpha[0]; alpha_d[1] = (double)alpha[1];
-    beta_d[0]  = (double)beta[0];  beta_d[1]  = (double)beta[1];
-    result = ozaki_ocl_gemm3m(ozaki_ocl_handle,
-      *transa, *transb, *m, *n, *k,
-      alpha_d, a, *lda, b, *ldb, beta_d, c, *ldc);
+    alpha_d[0] = (double)alpha[0];
+    alpha_d[1] = (double)alpha[1];
+    beta_d[0] = (double)beta[0];
+    beta_d[1] = (double)beta[1];
+    result = ozaki_ocl_gemm3m(ozaki_ocl_handle, *transa, *transb, *m, *n, *k, alpha_d, a, *lda, b, *ldb, beta_d, c, *ldc);
     if (EXIT_SUCCESS == result) return;
     /* Fall through to CPU path on failure */
   }
@@ -176,7 +164,7 @@ LIBXS_API_INTERN void zgemm3m(GEMM_ARGDECL)
 
     /* Complex alpha = ar + i*ai, beta = br + i*bi */
     const GEMM_REAL_TYPE ar = alpha[0], ai = alpha[1];
-    const GEMM_REAL_TYPE br = beta[0],  bi = beta[1];
+    const GEMM_REAL_TYPE br = beta[0], bi = beta[1];
 
     /* Workspace: split Re/Im for A, B, and three products + temporaries */
     const size_t sz_a = (size_t)a_rows * a_cols;
@@ -184,21 +172,20 @@ LIBXS_API_INTERN void zgemm3m(GEMM_ARGDECL)
     const size_t sz_c = (size_t)M * N;
     /* Ar, Ai, Br, Bi, Ta (=Ar+Ai), Tb (=Br+Bi), P1, P2, P3 */
     GEMM_REAL_TYPE* workspace = (GEMM_REAL_TYPE*)libxs_malloc(
-      gemm_pool, sizeof(GEMM_REAL_TYPE) * (3 * sz_a + 3 * sz_b + 3 * sz_c), 0/*auto*/);
+      gemm_pool, sizeof(GEMM_REAL_TYPE) * (3 * sz_a + 3 * sz_b + 3 * sz_c), 0 /*auto*/);
     if (NULL == workspace) {
-      fprintf(stderr, "zgemm3m: allocation failed (m=%i, n=%i, k=%i)\n",
-        (int)M, (int)N, (int)K);
+      fprintf(stderr, "zgemm3m: allocation failed (m=%i, n=%i, k=%i)\n", (int)M, (int)N, (int)K);
     }
-    else
-    { GEMM_REAL_TYPE *const ar_buf = workspace;
-      GEMM_REAL_TYPE *const ai_buf = ar_buf + sz_a;
-      GEMM_REAL_TYPE *const br_buf = ai_buf + sz_a;
-      GEMM_REAL_TYPE *const bi_buf = br_buf + sz_b;
-      GEMM_REAL_TYPE *const ta_buf = bi_buf + sz_b; /* Ar + Ai */
-      GEMM_REAL_TYPE *const tb_buf = ta_buf + sz_a; /* Br + Bi */
-      GEMM_REAL_TYPE *const p1     = tb_buf + sz_b; /* Ar * Br */
-      GEMM_REAL_TYPE *const p2     = p1 + sz_c;     /* Ai * Bi */
-      GEMM_REAL_TYPE *const p3     = p2 + sz_c;     /* (Ar+Ai) * (Br+Bi) */
+    else {
+      GEMM_REAL_TYPE* const ar_buf = workspace;
+      GEMM_REAL_TYPE* const ai_buf = ar_buf + sz_a;
+      GEMM_REAL_TYPE* const br_buf = ai_buf + sz_a;
+      GEMM_REAL_TYPE* const bi_buf = br_buf + sz_b;
+      GEMM_REAL_TYPE* const ta_buf = bi_buf + sz_b; /* Ar + Ai */
+      GEMM_REAL_TYPE* const tb_buf = ta_buf + sz_a; /* Br + Bi */
+      GEMM_REAL_TYPE* const p1 = tb_buf + sz_b; /* Ar * Br */
+      GEMM_REAL_TYPE* const p2 = p1 + sz_c; /* Ai * Bi */
+      GEMM_REAL_TYPE* const p3 = p2 + sz_c; /* (Ar+Ai) * (Br+Bi) */
       const GEMM_REAL_TYPE one = 1, zero = 0;
       const GEMM_INT_TYPE lda_ri = a_rows;
       const GEMM_INT_TYPE ldb_ri = b_rows;
@@ -216,29 +203,24 @@ LIBXS_API_INTERN void zgemm3m(GEMM_ARGDECL)
        *    P1 = Ar * Br
        *    P2 = Ai * Bi
        *    P3 = (Ar + Ai) * (Br + Bi) */
-      GEMM(transa, transb, &M, &N, &K, &one, ar_buf, &lda_ri,
-                                             br_buf, &ldb_ri,
-                                       &zero, p1,    &ldc_ri);
-      GEMM(transa, transb, &M, &N, &K, &one, ai_buf, &lda_ri,
-                                             bi_buf, &ldb_ri,
-                                       &zero, p2,    &ldc_ri);
-      GEMM(transa, transb, &M, &N, &K, &one, ta_buf, &lda_ri,
-                                             tb_buf, &ldb_ri,
-                                       &zero, p3,    &ldc_ri);
+      GEMM(transa, transb, &M, &N, &K, &one, ar_buf, &lda_ri, br_buf, &ldb_ri, &zero, p1, &ldc_ri);
+      GEMM(transa, transb, &M, &N, &K, &one, ai_buf, &lda_ri, bi_buf, &ldb_ri, &zero, p2, &ldc_ri);
+      GEMM(transa, transb, &M, &N, &K, &one, ta_buf, &lda_ri, tb_buf, &ldb_ri, &zero, p3, &ldc_ri);
 
       /* 4. Recover complex product components
        *    Re(A*B) = P1 - P2           (stored in p1)
        *    Im(A*B) = P3 - P1 - P2     (stored in p3)
        *    First: p3 = p3 - p1 - p2 (Im part) */
-      { GEMM_INT_TYPE i, j;
+      {
+        GEMM_INT_TYPE i, j;
         for (j = 0; j < N; ++j) {
           for (i = 0; i < M; ++i) {
             const size_t idx = i + (size_t)j * ldc_ri;
             const GEMM_REAL_TYPE v1 = p1[idx];
             const GEMM_REAL_TYPE v2 = p2[idx];
             const GEMM_REAL_TYPE v3 = p3[idx];
-            p1[idx] = v1 - v2;          /* Re(A*B) */
-            p3[idx] = v3 - v1 - v2;     /* Im(A*B) */
+            p1[idx] = v1 - v2; /* Re(A*B) */
+            p3[idx] = v3 - v1 - v2; /* Im(A*B) */
           }
         }
       }

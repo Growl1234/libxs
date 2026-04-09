@@ -41,7 +41,7 @@ LIBXS_API_INTERN void gemm_atexit(void)
     print_diff(stderr, &gemm_diff);
   }
   if (NULL != ozaki_hist) {
-    const char *const kind = GEMM_IS_DOUBLE ? "DP" : "SP";
+    const char* const kind = GEMM_IS_DOUBLE ? "DP" : "SP";
     double gflops = 0;
     int ngemms = 0; /* number of int8 GEMMs per FP GEMM */
     libxs_hist_get_median(NULL /*lock*/, ozaki_hist, &gflops);
@@ -49,8 +49,7 @@ LIBXS_API_INTERN void gemm_atexit(void)
       const int cutoff = 2 * (ozaki_n - 1) - ozaki_trim;
       int sa, sb;
       for (sa = 0; sa < ozaki_n && sa <= cutoff; ++sa) {
-        const int sb_start = (0 != (ozaki_flags & OZ1_TRIANGULAR))
-          ? sa : 0;
+        const int sb_start = (0 != (ozaki_flags & OZ1_TRIANGULAR)) ? sa : 0;
         const int sb_end = LIBXS_MIN(ozaki_n, cutoff + 1 - sa);
         for (sb = sb_start; sb < sb_end; ++sb) {
           ++ngemms;
@@ -61,7 +60,7 @@ LIBXS_API_INTERN void gemm_atexit(void)
     else { /* Scheme 2: one int8 GEMM per prime */
       ngemms = ozaki_n;
     }
-    fprintf(stderr, "OZAKI PROF: %.0f %s-GFLOPS/s",  gflops, kind);
+    fprintf(stderr, "OZAKI PROF: %.0f %s-GFLOPS/s", gflops, kind);
     if (0 < ngemms) {
       const double tops = gflops * ngemms * 1E-3;
       fprintf(stderr, " (%.1f INT8-TOPS/s, %dx)", tops, ngemms);
@@ -87,12 +86,10 @@ LIBXS_API_INTERN void gemm_atexit(void)
  * Computes GEMM result on GPU via ozaki_gemm, then optionally
  * runs reference BLAS on CPU and computes matdiff.
  */
-LIBXS_API_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb,
-  const GEMM_INT_TYPE* m, const GEMM_INT_TYPE* n, const GEMM_INT_TYPE* k,
-  const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda,
-                               const GEMM_REAL_TYPE* b, const GEMM_INT_TYPE* ldb,
-  const GEMM_REAL_TYPE*  beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc,
-  unsigned int diff_stat, libxs_matdiff_t* diff)
+LIBXS_API_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb, const GEMM_INT_TYPE* m, const GEMM_INT_TYPE* n,
+  const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda, const GEMM_REAL_TYPE* b,
+  const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc, unsigned int diff_stat,
+  libxs_matdiff_t* diff)
 {
   GEMM_REAL_TYPE* c_ref = NULL;
   /* Save C for reference comparison (before OpenCL modifies it) */
@@ -102,23 +99,17 @@ LIBXS_API_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb,
     if (NULL != c_ref) memcpy(c_ref, c, c_size);
   }
   /* Compute result on OpenCL device */
-  ozaki_ocl_gemm(ozaki_ocl_handle,
-    *transa, *transb, *m, *n, *k,
-    (double)*alpha, a, *lda, b, *ldb,
-    (double)*beta, c, *ldc,
+  ozaki_ocl_gemm(ozaki_ocl_handle, *transa, *transb, *m, *n, *k, (double)*alpha, a, *lda, b, *ldb, (double)*beta, c, *ldc,
     ozaki_hist, ozaki_profile);
   /* Reference BLAS and diff comparison */
   if (NULL != c_ref) {
     if (NULL != gemm_original) {
-      gemm_original(transa, transb, m, n, k, alpha, a, lda,
-                    b, ldb, beta, c_ref, ldc);
+      gemm_original(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c_ref, ldc);
     }
     else {
-      GEMM_REAL(transa, transb, m, n, k, alpha, a, lda,
-                b, ldb, beta, c_ref, ldc);
+      GEMM_REAL(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c_ref, ldc);
     }
-    libxs_matdiff(diff, LIBXS_DATATYPE(GEMM_REAL_TYPE),
-      *m, *n, c_ref, c, ldc, ldc);
+    libxs_matdiff(diff, LIBXS_DATATYPE(GEMM_REAL_TYPE), *m, *n, c_ref, c, ldc, ldc);
     libxs_free(c_ref);
   }
 }
@@ -126,11 +117,9 @@ LIBXS_API_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb,
 
 
 /** Function gemm_oz1 is called here with the original GEMM as fallback and for comparison. */
-LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const char* transb,
-  const GEMM_INT_TYPE* m, const GEMM_INT_TYPE* n, const GEMM_INT_TYPE* k,
-  const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda,
-                               const GEMM_REAL_TYPE* b, const GEMM_INT_TYPE* ldb,
-  const GEMM_REAL_TYPE*  beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc)
+LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const char* transb, const GEMM_INT_TYPE* m,
+  const GEMM_INT_TYPE* n, const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda,
+  const GEMM_REAL_TYPE* b, const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc)
 {
   static volatile int gemm_initialized = 0;
   static int gemm_threshold = 0;
@@ -143,28 +132,31 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
   if (0 == gemm_initialized) {
     LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
     if (0 == gemm_initialized) {
-      const char *const ozaki_verbose_env = getenv("OZAKI_VERBOSE");
-      const char *const ozaki_stat_env = getenv("OZAKI_STAT");
-      const char *const ozaki_env = getenv("OZAKI");
-      ozaki = (NULL == ozaki_env ? 1/*default*/ : atoi(ozaki_env));
+      const char* const ozaki_verbose_env = getenv("OZAKI_VERBOSE");
+      const char* const ozaki_stat_env = getenv("OZAKI_STAT");
+      const char* const ozaki_env = getenv("OZAKI");
+      ozaki = (NULL == ozaki_env ? 1 /*default*/ : atoi(ozaki_env));
       if (NULL != ozaki_stat_env) ozaki_stat = atoi(ozaki_stat_env);
       if (NULL != ozaki_verbose_env) ozaki_verbose = atoi(ozaki_verbose_env);
       else if (0 != ozaki_stat) ozaki_verbose = 1;
       if (0 != ozaki) {
-        const union { uint32_t raw; float value; } inf = { 0x7F800000U };
-        const char *const threshold_env = getenv("OZAKI_THRESHOLD");
-        const char *const ozaki_exit_env = getenv("OZAKI_EXIT");
-        const char *const ozaki_flags_env = getenv("OZAKI_FLAGS");
-        const char *const ozaki_trim_env = getenv("OZAKI_TRIM");
-        const char *const ozaki_eps_env = getenv("OZAKI_EPS");
-        const char *const ozaki_rsq_env = getenv("OZAKI_RSQ");
-        const char *const ozaki_n_env = getenv("OZAKI_N");
+        const union {
+          uint32_t raw;
+          float value;
+        } inf = {0x7F800000U};
+        const char* const threshold_env = getenv("OZAKI_THRESHOLD");
+        const char* const ozaki_exit_env = getenv("OZAKI_EXIT");
+        const char* const ozaki_flags_env = getenv("OZAKI_FLAGS");
+        const char* const ozaki_trim_env = getenv("OZAKI_TRIM");
+        const char* const ozaki_eps_env = getenv("OZAKI_EPS");
+        const char* const ozaki_rsq_env = getenv("OZAKI_RSQ");
+        const char* const ozaki_n_env = getenv("OZAKI_N");
 #if defined(__LIBXSTREAM)
-        const char *const ozaki_groups_env = getenv("OZAKI_GROUPS");
-        const char *const ozaki_ocl_env = getenv("OZAKI_OCL");
-        const char *const ozaki_tm_env = getenv("OZAKI_TM");
-        const char *const ozaki_tn_env = getenv("OZAKI_TN");
-        const int ozaki_ocl = (NULL == ozaki_ocl_env ? 1/*default*/ : atoi(ozaki_ocl_env));
+        const char* const ozaki_groups_env = getenv("OZAKI_GROUPS");
+        const char* const ozaki_ocl_env = getenv("OZAKI_OCL");
+        const char* const ozaki_tm_env = getenv("OZAKI_TM");
+        const char* const ozaki_tn_env = getenv("OZAKI_TN");
+        const int ozaki_ocl = (NULL == ozaki_ocl_env ? 1 /*default*/ : atoi(ozaki_ocl_env));
 #endif
         libxs_init(); /*libxs_malloc_pool()*/
         libxs_matdiff_clear(&gemm_diff);
@@ -172,21 +164,19 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
         /* consider threshold measured as arithmetic intensity */
         gemm_threshold = (NULL == threshold_env
 #if defined(NDEBUG)
-          ? 12/*default*/
+                            ? 12 /*default*/
 #else
-          ? 0/*default*/
+                            ? 0 /*default*/
 #endif
-          : atoi(threshold_env));
+                            : atoi(threshold_env));
         ozaki_flags = (NULL == ozaki_flags_env ? OZ1_DEFAULT : atoi(ozaki_flags_env));
-        ozaki_trim = (NULL == ozaki_trim_env ? 0/*exact*/ : atoi(ozaki_trim_env));
-        ozaki_exit = (NULL == ozaki_exit_env ? 1/*default*/ : atoi(ozaki_exit_env));
+        ozaki_trim = (NULL == ozaki_trim_env ? 0 /*exact*/ : atoi(ozaki_trim_env));
+        ozaki_exit = (NULL == ozaki_exit_env ? 1 /*default*/ : atoi(ozaki_exit_env));
         if (2 == ozaki) { /* Scheme 2: CRT primes */
-          ozaki_n = LIBXS_CLMP(NULL == ozaki_n_env
-            ? OZ2_NPRIMES_DEFAULT : atoi(ozaki_n_env), 1, OZ2_NPRIMES_MAX);
+          ozaki_n = LIBXS_CLMP(NULL == ozaki_n_env ? OZ2_NPRIMES_DEFAULT : atoi(ozaki_n_env), 1, OZ2_NPRIMES_MAX);
         }
         else { /* Scheme 1: mantissa slices */
-          ozaki_n = LIBXS_CLMP(NULL == ozaki_n_env
-            ? NSLICES_DEFAULT : atoi(ozaki_n_env), 1, MAX_NSLICES);
+          ozaki_n = LIBXS_CLMP(NULL == ozaki_n_env ? NSLICES_DEFAULT : atoi(ozaki_n_env), 1, MAX_NSLICES);
         }
         if (NULL == ozaki_eps_env) ozaki_eps = inf.value;
         else {
@@ -200,10 +190,11 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
         }
         ozaki_target_arch = libxs_cpuid(NULL);
         /* Profiling: create histogram if requested */
-        { const char* env_prof = getenv("OZAKI_PROFILE");
+        {
+          const char* env_prof = getenv("OZAKI_PROFILE");
           ozaki_profile = (NULL == env_prof ? 0 : atoi(env_prof));
           if (0 != ozaki_profile) {
-            const libxs_hist_update_t update[] = { libxs_hist_update_avg };
+            const libxs_hist_update_t update[] = {libxs_hist_update_avg};
             ozaki_hist = libxs_hist_create(3, 1, update);
             if (NULL == ozaki_hist) ozaki_profile = 0;
           }
@@ -213,12 +204,9 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
         if (0 != ozaki_ocl && (0 < ozaki && 2 >= ozaki)) {
           const int ocl_tm = (NULL != ozaki_tm_env ? atoi(ozaki_tm_env) : 0);
           const int ocl_tn = (NULL != ozaki_tn_env ? atoi(ozaki_tn_env) : 0);
-          const int ocl_groups = (NULL != ozaki_groups_env
-            ? atoi(ozaki_groups_env) : 0);
+          const int ocl_groups = (NULL != ozaki_groups_env ? atoi(ozaki_groups_env) : 0);
           ozaki_ocl_handle = ozaki_ocl_create(
-            GEMM_IS_DOUBLE, ozaki, ozaki_verbose,
-            ocl_tm, ocl_tn, ozaki_n, ozaki_flags, ozaki_trim,
-            ocl_groups, 0 != ozaki_profile);
+            GEMM_IS_DOUBLE, ozaki, ozaki_verbose, ocl_tm, ocl_tn, ozaki_n, ozaki_flags, ozaki_trim, ocl_groups, 0 != ozaki_profile);
         }
 #endif
         LIBXS_EXPECT(EXIT_SUCCESS == atexit(gemm_atexit));
@@ -244,7 +232,8 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
     }
     else
 #endif
-    if (1 == run_ozaki) { /* slice-based LP-GEMM (Scheme 1, default) */
+      if (1 == run_ozaki)
+    { /* slice-based LP-GEMM (Scheme 1, default) */
       gemm_oz1(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
     }
     else /*if (2 == run_ozaki)*/ { /* CRT-based LP-GEMM (Scheme 2) */
@@ -263,8 +252,8 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
       if (0 > ozaki_stat && (1 < ozaki_verbose || 0 > ozaki_verbose)) {
         const int nth = (0 < ozaki_verbose ? ozaki_verbose : 1);
         if (0 == (gemm_diff.r % nth)) {
-          fprintf(stderr, "GEMM: "); print_gemm(stderr, LIBXS_ABS(ozaki_stat),
-            transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
+          fprintf(stderr, "GEMM: ");
+          print_gemm(stderr, LIBXS_ABS(ozaki_stat), transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
         }
       }
       ++gemm_diff.r;

@@ -21,8 +21,8 @@ LIBXS_PRAGMA_WEAK(GEMM_REAL)
 
 int main(int argc, char* argv[])
 {
-  const char *const nrepeat_env = getenv("NREPEAT");
-  const char *const env_check = getenv("CHECK");
+  const char* const nrepeat_env = getenv("NREPEAT");
+  const char* const env_check = getenv("CHECK");
   const double check = (NULL == env_check || 0 == *env_check) ? 0 : atof(env_check);
   const int nrep = (NULL == nrepeat_env ? 3 : atoi(nrepeat_env));
   const int nrepeat = (0 < nrep ? nrep : 1);
@@ -44,7 +44,7 @@ int main(int argc, char* argv[])
 #else
   int complex_input = 0;
 #endif
-  GEMM_REAL_TYPE complex_alpha[2] = { 0 }, complex_beta[2] = { 0 };
+  GEMM_REAL_TYPE complex_alpha[2] = {0}, complex_beta[2] = {0};
   GEMM_REAL_TYPE *a = NULL, *b = NULL, *c = NULL, *c_ref = NULL;
   GEMM_INT_TYPE a_rows, a_cols, b_rows, b_cols;
   libxs_matdiff_t diff;
@@ -60,45 +60,53 @@ int main(int argc, char* argv[])
 #endif
 
   if (2 < argc && 0 == m) { /* Indicate filename(s) */
-    GEMM_REAL_TYPE scalar[2] = { 0 };
+    GEMM_REAL_TYPE scalar[2] = {0};
     GEMM_INT_TYPE dim0, dim1;
     size_t ncomp = 0;
     gemm_mhd_settings_t settings_a;
-    if (EXIT_SUCCESS == gemm_mhd_read(argv[1],
-      &dim0, &dim1, &transa, &lda, scalar, &ncomp, &settings_a, NULL))
-    {
+    if (EXIT_SUCCESS == gemm_mhd_read(argv[1], &dim0, &dim1, &transa, &lda, scalar, &ncomp, &settings_a, NULL)) {
       m = dim0;
-      if (3 >= argc) k = dim1;             else k = atoi(argv[3]);
-      if (4 >= argc) { /*transa from file*/ } else transa = (0 == ta ? 'N' : 'T');
-      if (6 >= argc) alpha = scalar[0];     else alpha = atof(argv[6]);
-      if (8 >= argc) { /*lda from file*/ }  else lda = atoi(argv[8]);
+      if (3 >= argc) k = dim1;
+      else k = atoi(argv[3]);
+      if (4 >= argc) { /*transa from file*/
+      }
+      else transa = (0 == ta ? 'N' : 'T');
+      if (6 >= argc) alpha = scalar[0];
+      else alpha = atof(argv[6]);
+      if (8 >= argc) { /*lda from file*/
+      }
+      else lda = atoi(argv[8]);
       if (10 >= argc) {
         ldc = (0 < settings_a.ldc) ? settings_a.ldc : dim0;
       }
       if (2 == ncomp) {
-        complex_alpha[0] = scalar[0]; complex_alpha[1] = scalar[1];
+        complex_alpha[0] = scalar[0];
+        complex_alpha[1] = scalar[1];
         complex_input = 1;
       }
       file_input |= 0x1;
     }
     if (0 == n) {
       size_t ncomp_b = 0;
-      const int b_read = gemm_mhd_read(argv[2],
-        &dim0, &dim1, &transb, &ldb, scalar, &ncomp_b, NULL, NULL);
-      if (EXIT_SUCCESS == b_read && k == dim0 && ncomp_b == ncomp)
-      {
+      const int b_read = gemm_mhd_read(argv[2], &dim0, &dim1, &transb, &ldb, scalar, &ncomp_b, NULL, NULL);
+      if (EXIT_SUCCESS == b_read && k == dim0 && ncomp_b == ncomp) {
         n = dim1;
-        if (5 >= argc) { /*transb from file*/ } else transb = (0 == tb ? 'N' : 'T');
-        if (7 >= argc) beta = scalar[0];        else beta = atof(argv[7]);
-        if (9 >= argc) { /*ldb from file*/ }    else ldb = atoi(argv[9]);
+        if (5 >= argc) { /*transb from file*/
+        }
+        else transb = (0 == tb ? 'N' : 'T');
+        if (7 >= argc) beta = scalar[0];
+        else beta = atof(argv[7]);
+        if (9 >= argc) { /*ldb from file*/
+        }
+        else ldb = atoi(argv[9]);
         if (2 == ncomp_b) {
-          complex_beta[0] = scalar[0]; complex_beta[1] = scalar[1];
+          complex_beta[0] = scalar[0];
+          complex_beta[1] = scalar[1];
         }
         file_input |= 0x2;
       }
       else if (EXIT_SUCCESS == b_read) {
-        fprintf(stderr, "Mismatched files: A implies k=%i but B has k=%i\n",
-          (int)k, (int)dim0);
+        fprintf(stderr, "Mismatched files: A implies k=%i but B has k=%i\n", (int)k, (int)dim0);
       }
     }
   }
@@ -112,8 +120,8 @@ int main(int argc, char* argv[])
   b_cols = (0x2 & file_input) ? n : (('N' == transb || 'n' == transb) ? n : k);
 
   if (1 > m || 1 > n || 1 > k || lda < a_rows || ldb < b_rows || ldc < m) {
-    fprintf(stderr, "Invalid dimensions: m=%i n=%i k=%i lda=%i(>=%i) ldb=%i(>=%i) ldc=%i(>=%i)\n",
-      (int)m, (int)n, (int)k, (int)lda, (int)a_rows, (int)ldb, (int)b_rows, (int)ldc, (int)m);
+    fprintf(stderr, "Invalid dimensions: m=%i n=%i k=%i lda=%i(>=%i) ldb=%i(>=%i) ldc=%i(>=%i)\n", (int)m, (int)n, (int)k, (int)lda,
+      (int)a_rows, (int)ldb, (int)b_rows, (int)ldc, (int)m);
     result = EXIT_FAILURE;
   }
 
@@ -134,8 +142,7 @@ int main(int argc, char* argv[])
   }
 
   /* Print requested GEMM arguments (regardless of result code) */
-  print_gemm(stdout, 0, &transa, &transb, &m, &n, &k,
-    &alpha, a, &lda, b, &ldb, &beta, c, &ldc);
+  print_gemm(stdout, 0, &transa, &transb, &m, &n, &k, &alpha, a, &lda, b, &ldb, &beta, c, &ldc);
 
   if (EXIT_SUCCESS == result) { /* Initialize A-matrix */
     if (0x1 & file_input) {
@@ -177,8 +184,8 @@ int main(int argc, char* argv[])
     const GEMM_REAL_TYPE* const ga = (0 != complex_input) ? complex_alpha : &alpha;
     const GEMM_REAL_TYPE* const gb = (0 != complex_input) ? complex_beta : &beta;
     /* gemm_original: resolved via dlsym (LD_PRELOAD); GEMM_REAL: static --wrap */
-    const gemm_function_t ref_gemm = (NULL != &gemm_original && NULL != gemm_original)
-      ? gemm_original : (NULL != &GEMM_REAL ? GEMM_REAL : NULL);
+    const gemm_function_t ref_gemm = (NULL != &gemm_original && NULL != gemm_original) ? gemm_original
+                                                                                       : (NULL != &GEMM_REAL ? GEMM_REAL : NULL);
     if (NULL != ref_gemm) {
       const double gflops = (0 != complex_input ? 8.0 : 2.0) * m * n * k * 1E-9;
       libxs_timer_tick_t start;
@@ -193,10 +200,10 @@ int main(int argc, char* argv[])
       }
       duration = libxs_timer_duration(start, libxs_timer_tick()) / nrepeat;
       printf("BLAS GEMM:  %.1f ms (%.1f GFLOPS/s)\n", 1E3 * duration, gflops / duration);
-      { const size_t nc = (0 != complex_input ? 2 : 1);
+      {
+        const size_t nc = (0 != complex_input ? 2 : 1);
         const int ldref = (int)(nc * ldc), ldtst = ldref;
-        result = libxs_matdiff(&diff, LIBXS_DATATYPE(GEMM_REAL_TYPE),
-          (int)(nc * m), n, c_ref, c, &ldref, &ldtst);
+        result = libxs_matdiff(&diff, LIBXS_DATATYPE(GEMM_REAL_TYPE), (int)(nc * m), n, c_ref, c, &ldref, &ldtst);
       }
       if (EXIT_SUCCESS == result) {
         diff.r = nrepeat;
@@ -206,8 +213,8 @@ int main(int argc, char* argv[])
     else { /* fallback: checksum only (no reference GEMM available) */
       const size_t nc = (0 != complex_input ? 2 : 1);
       const int ldtst = (int)(nc * ldc);
-      result = libxs_matdiff(&diff, LIBXS_DATATYPE(GEMM_REAL_TYPE), (int)(nc * m), n,
-          NULL/*ref*/, c/*tst*/, NULL/*ldref*/, &ldtst);
+      result = libxs_matdiff(
+        &diff, LIBXS_DATATYPE(GEMM_REAL_TYPE), (int)(nc * m), n, NULL /*ref*/, c /*tst*/, NULL /*ldref*/, &ldtst);
       if (EXIT_SUCCESS == result) {
         printf("l1_tst=%f ncalls=%i\n", diff.l1_tst, nrepeat);
       }
@@ -216,16 +223,13 @@ int main(int argc, char* argv[])
 
   if (EXIT_SUCCESS == result && 0 != check) { /* Accuracy validation */
     const double epsilon = libxs_matdiff_epsilon(&gemm_diff);
-    const double threshold = (0 < check) ? check
-      : (sizeof(double) == sizeof(GEMM_REAL_TYPE) ? 1.0E-10 : 1.0E-3);
+    const double threshold = (0 < check) ? check : (sizeof(double) == sizeof(GEMM_REAL_TYPE) ? 1.0E-10 : 1.0E-3);
     if (threshold < epsilon) {
-      fprintf(stderr, "CHECK: eps=%g exceeds threshold=%g\n",
-        epsilon, threshold);
+      fprintf(stderr, "CHECK: eps=%g exceeds threshold=%g\n", epsilon, threshold);
       result = EXIT_FAILURE;
     }
     else {
-      fprintf(stderr, "CHECK: eps=%g (threshold=%g)\n",
-        epsilon, threshold);
+      fprintf(stderr, "CHECK: eps=%g (threshold=%g)\n", epsilon, threshold);
     }
   }
 
