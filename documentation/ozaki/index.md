@@ -133,11 +133,11 @@ Uses AVX-512 VNNI or AVX-VNNI-INT8 when available
 
 ## Scheme 2: CRT
 
-Each element reduced modulo small coprimes (<= 128)
+Each element reduced modulo small coprimes (<= 256, uint8)
 
 ```
-fp64 -> 19 modular int8 residues (default, max 20)
-fp32 -> 10 modular int8 residues (default, max 12)
+fp64 -> 16 modular residues (default, max 20)
+fp32 ->  9 modular residues (default, max 12)
 ```
 
 **Linear cost** in number of primes (vs quadratic for slices)
