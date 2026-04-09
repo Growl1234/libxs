@@ -28,7 +28,7 @@ The blocking structure emulates fixed-size matrix-multiply hardware. All computa
 
 The compile-time parameter `BATCH_K` (default 4) groups consecutive BLOCK_K panels into a single batch (effective K-step = BATCH_K x BLOCK_K). Batching reduces OpenMP barrier overhead and improves temporal reuse of the C tile across K iterations, while keeping the fundamental tile size visible throughout the code.
 
-Preprocessing (exponent alignment, mantissa slicing or modular reduction) accounts for roughly 5% of runtime; the remaining 95% is spent in the inner dot-product loops. In Scheme 1, int8 dot products are dispatched once per GEMM via a function pointer: AVX-512 VNNI (`VPDPBUSD`) when available, or AVX-VNNI-INT8 (`VPDPBSSD`) for native signed x signed support, otherwise a scalar fallback. The number of pairwise slice products is quadratic in the number of slices, so for double-precision (8 slices, default) the inner loop performs up to 36 dot products per block pair. Scheme 2 performs one modular dot product per prime, so its cost is linear in the number of primes.
+Preprocessing (exponent alignment, mantissa slicing or modular reduction) accounts for roughly 5% of runtime; the remaining 95% is spent in the inner dot-product loops. Int8 dot products are dispatched once per GEMM via a function pointer: AVX-VNNI-INT8 (single instruction) when available, AVX-512 VNNI with bias correction (two instructions) otherwise, or a scalar fallback. The number of pairwise slice products is quadratic in the number of slices, so for double-precision (8 slices, default) the inner loop performs up to 36 dot products per block pair. Scheme 2 performs one modular dot product per prime, so its cost is linear in the number of primes.
 
 OpenMP parallelizes all three phases of each K-batch: Phase 1 preprocesses A panels (`schedule(dynamic) nowait`), Phase 2 preprocesses B panels (`schedule(dynamic)`, implicit barrier), and Phase 3 accumulates the dot products into C (`collapse(2) schedule(static)`). Panel buffers are shared across the parallel region and sized by `BATCH_K` x number-of-blocks, allocated via `libxs_malloc`.
 
@@ -80,16 +80,16 @@ OZAKI_FLAGS=0 ./dgemm-wrap.x 256       # full S^2 square, no symmetrize
 
 ## Scheme 2 - Chinese Remainder Theorem
 
-Scheme 2 (`OZAKI=2`) uses modular arithmetic instead of mantissa slicing. Each matrix element is reduced modulo a set of small pairwise coprime moduli (primes and prime powers <= 128) so that residues fit in int8 and dot products use VNNI int8 instructions when available. GEMM is performed independently modulo each modulus, and the exact integer result is recovered via the Chinese Remainder Theorem (Garner's algorithm with grouped uint64 Horner evaluation). The Horner reconstruction partitions mixed-radix digits into groups of up to 9, evaluates each group exactly in uint64 arithmetic, and combines groups with a minimal number of FP64 operations - avoiding double-precision throughput bottlenecks on hardware where integer arithmetic is faster. Because the work is linear in the number of moduli - versus quadratic in the number of slices for Scheme 1 - Scheme 2 can be more efficient when many moduli/slices are needed.
+Scheme 2 (`OZAKI=2`) uses modular arithmetic instead of mantissa slicing. Each matrix element is reduced modulo a set of small pairwise coprime moduli (<= 256) so that residues fit in uint8 and dot products use VNNI instructions when available. GEMM is performed independently modulo each modulus, and the exact integer result is recovered via the Chinese Remainder Theorem (Garner's algorithm with grouped uint64 Horner evaluation). Because the work is linear in the number of moduli - versus quadratic in the number of slices for Scheme 1 - Scheme 2 can be more efficient when many moduli/slices are needed.
 
-Residues are signed int8 (-127..+127) with the element sign folded directly into the residue. This maps naturally to VNNI's VPDPBUSD encoding (unsigned x signed with bias correction).
+Residues are unsigned uint8 in [0, p-1] with the element sign encoded via modular additive inverse (p - r). This enables u8 VNNI dot products: VPDPBUUD (single instruction) on AVX-VNNI-INT8 hardware, or VPDPBUSD with bias correction otherwise. A signed i8 equivalent path is available via `OZAKI_I8=1`.
 
-The number of moduli can be set at runtime via `OZAKI_N`. Defaults: double 19, float 10. Maximums: double 20, float 10. The 20th prime provides extra CRT range for K-grouping (`OZAKI_GROUPS > 1`).
+The number of moduli can be set at runtime via `OZAKI_N`. Defaults: double 16, float 9. Maximum: 20.
 
 Example:
 
 ```bash
-OZAKI=2 ./dgemm-wrap.x 256                        # use CRT scheme
+OZAKI=2 ./dgemm-wrap.x 256                        # use CRT scheme (u8 default)
 ```
 
 ## Complex GEMM (3M Method)
@@ -124,7 +124,8 @@ make ECFLAGS="-DBLOCK_K=32 -DBATCH_K=2" dgemm-wrap.x
 | Variable | Default | Description |
 |----------|:-------:|-------------|
 | `OZAKI` | 1 | Scheme selector: 0 = bypass (call original BLAS directly), 1 = Scheme 1 (mantissa slicing, int8), 2 = Scheme 2 (CRT). |
-| `OZAKI_N` | *per scheme* | Number of decomposition units: slices for Scheme 1 (double: 1..16, default 8; float: 1..8, default 4) or moduli for Scheme 2 (double: 1..20, default 19; float: 1..12, default 10). |
+| `OZAKI_N` | *per scheme* | Number of decomposition units: slices for Scheme 1 (double: 1..16, default 8; float: 1..8, default 4) or moduli for Scheme 2 (double: 1..20, default 16; float: 1..12, default 9). |
+| `OZAKI_I8` | 0 | Scheme 2 only: use signed i8 residues (moduli <= 128) instead of the default unsigned u8. Compile-time for CPU (`-DOZAKI_I8=1`), runtime for GPU. |
 | `OZAKI_FLAGS` | 3 | Scheme 1 bitmask: Triangular (1), Symmetrize (2); see above. |
 | `OZAKI_TRIM` | 0 | Precision levels to trim: 0 = exact. Scheme 1: drops T diagonals (~7 product bits/level). Scheme 2: truncates mantissa before CRT (~2 input bits/level, ~4 product bits/level). The level semantics are calibrated so the same `OZAKI_TRIM` value gives comparable accuracy across schemes. |
 | `OZAKI_THRESHOLD` | 12 | Arithmetic intensity threshold. Ozaki is bypassed when flops/(bytes x threshold) < 1. Set to 0 to always apply Ozaki. Debug builds default to 0. |
