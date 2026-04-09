@@ -578,7 +578,8 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
   const GEMM_INT_TYPE M = *m, N = *n, K = *k;
   const GEMM_INT_TYPE ldcv = *ldc;
   const int nprimes = LIBXS_CLMP(ozaki_n, 1, OZ2_NPRIMES_MAX);
-  const GEMM_INT_TYPE K_pad = ((K + BLOCK_K - 1) / BLOCK_K) * BLOCK_K;
+  const GEMM_INT_TYPE K_grp_max = LIBXS_MIN((GEMM_INT_TYPE)K_GRP, K);
+  const GEMM_INT_TYPE K_grp_pad = ((K_grp_max + BLOCK_K - 1) / BLOCK_K) * BLOCK_K;
   const GEMM_INT_TYPE nblk_m = (M + BLOCK_M - 1) / BLOCK_M;
   const GEMM_INT_TYPE nblk_n = (N + BLOCK_N - 1) / BLOCK_N;
   oz2_res_t* a_res = NULL;
@@ -602,14 +603,12 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
     }
   }
 
-  a_res = (oz2_res_t*)libxs_malloc(gemm_pool, (size_t)nprimes * M * K_pad, 0);
-  b_res = (oz2_res_t*)libxs_malloc(gemm_pool, (size_t)nprimes * N * K_pad, 0);
+  a_res = (oz2_res_t*)libxs_malloc(gemm_pool, (size_t)nprimes * M * K_grp_pad, 0);
+  b_res = (oz2_res_t*)libxs_malloc(gemm_pool, (size_t)nprimes * N * K_grp_pad, 0);
   expa_raw = (int16_t*)libxs_malloc(gemm_pool, (size_t)M * sizeof(int16_t), 0);
   expb_raw = (int16_t*)libxs_malloc(gemm_pool, (size_t)N * sizeof(int16_t), 0);
   expa_fp = (double*)libxs_malloc(gemm_pool, (size_t)M * sizeof(double), 0);
   expb_fp = (double*)libxs_malloc(gemm_pool, (size_t)N * sizeof(double), 0);
-  memset(a_res, 0, (size_t)nprimes * M * K_pad);
-  memset(b_res, 0, (size_t)nprimes * N * K_pad);
   if (NULL != diff && 0 == (diff_stat % 3)) {
     ref_panel = (GEMM_REAL_TYPE*)libxs_malloc(gemm_pool, (size_t)nblk_m * nblk_n * BLOCK_M * BLOCK_N * sizeof(*ref_panel), 0);
   }
@@ -618,7 +617,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
 # pragma omp parallel
 #endif
   {
-    GEMM_INT_TYPE row, col, ib, jb, mi, nj, kb;
+    GEMM_INT_TYPE row, col, ib, jb, mi, nj, kb, kb_grp;
     int pidx, tid;
     tid = 0;
 #if defined(_OPENMP)
@@ -629,182 +628,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
     if (NULL != diff) libxs_matdiff_clear(&tdiff[tid]);
     GEMM_PROFILE_TICK(t_start, tid);
 
-    /* Phase 1: preprocess all rows of A (full K dimension) */
-#if defined(_OPENMP)
-# pragma omp for schedule(static) nowait
-#endif
-    for (row = 0; row < M; ++row) {
-      int16_t row_max_exp = 0;
-      GEMM_INT_TYPE kk;
-      for (kk = 0; kk < K; ++kk) {
-        int16_t e;
-        uint64_t mt;
-        ozaki_extract_ieee(a[LIBXS_INDEX(ta, *lda, row, kk)], &e, &mt);
-        if (e > row_max_exp) row_max_exp = e;
-      }
-      expa_raw[row] = row_max_exp;
-      for (kk = 0; kk < K; ++kk) {
-        int16_t e;
-        uint64_t mt;
-        int sign;
-        sign = ozaki_extract_ieee(a[LIBXS_INDEX(ta, *lda, row, kk)], &e, &mt);
-        if (0 != mt) {
-          const int delta = (int)row_max_exp - (int)e;
-          uint8_t tmp[OZ2_NPRIMES_MAX];
-          oz2_reduce(mt, delta, tmp, nprimes);
-          LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
-          for (pidx = 0; pidx < nprimes; ++pidx) {
-#if defined(OZAKI_I8) && (OZAKI_I8)
-            a_res[(long)pidx * M * K_pad + (long)row * K_pad + kk] = (oz2_res_t)(sign * (int8_t)tmp[pidx]);
-#else
-            a_res[(long)pidx * M * K_pad + (long)row * K_pad + kk] =
-              (oz2_res_t)((sign < 0 && 0 != tmp[pidx]) ? (oz2_moduli[pidx] - tmp[pidx]) : tmp[pidx]);
-#endif
-          }
-        }
-      }
-    }
-
-    /* Phase 2: preprocess all columns of B (full K dimension) */
-#if defined(_OPENMP)
-# pragma omp for schedule(static)
-#endif
-    for (col = 0; col < N; ++col) {
-      int16_t col_max_exp = 0;
-      GEMM_INT_TYPE kk;
-      for (kk = 0; kk < K; ++kk) {
-        int16_t e;
-        uint64_t mt;
-        ozaki_extract_ieee(b[LIBXS_INDEX(tb, *ldb, kk, col)], &e, &mt);
-        if (e > col_max_exp) col_max_exp = e;
-      }
-      expb_raw[col] = col_max_exp;
-      for (kk = 0; kk < K; ++kk) {
-        int16_t e;
-        uint64_t mt;
-        int sign;
-        sign = ozaki_extract_ieee(b[LIBXS_INDEX(tb, *ldb, kk, col)], &e, &mt);
-        if (0 != mt) {
-          const int delta = (int)col_max_exp - (int)e;
-          uint8_t tmp[OZ2_NPRIMES_MAX];
-          oz2_reduce(mt, delta, tmp, nprimes);
-          LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
-          for (pidx = 0; pidx < nprimes; ++pidx) {
-#if defined(OZAKI_I8) && (OZAKI_I8)
-            b_res[(long)pidx * N * K_pad + (long)col * K_pad + kk] = (oz2_res_t)(sign * (int8_t)tmp[pidx]);
-#else
-            b_res[(long)pidx * N * K_pad + (long)col * K_pad + kk] =
-              (oz2_res_t)((sign < 0 && 0 != tmp[pidx]) ? (oz2_moduli[pidx] - tmp[pidx]) : tmp[pidx]);
-#endif
-          }
-        }
-      }
-    }
-    /* implicit barrier: preprocessing done */
-
-    /* Phase 2b: compute FP exponent scale factors */
-#if defined(_OPENMP)
-# pragma omp for schedule(static) nowait
-#endif
-    for (row = 0; row < M; ++row) {
-      expa_fp[row] = libxs_pow2((int)expa_raw[row] - OZ_BIAS_PLUS_MANT);
-    }
-#if defined(_OPENMP)
-# pragma omp for schedule(static)
-#endif
-    for (col = 0; col < N; ++col) {
-      expb_fp[col] = libxs_pow2((int)expb_raw[col] - OZ_BIAS_PLUS_MANT);
-    }
-
-    GEMM_PROFILE_TICK(t_preprocess, tid);
-
-    /* Phase 2c: diff tracking for A decomposition (mode 1) */
-    if (NULL != diff && 1 == (diff_stat % 3)) {
-#if defined(_OPENMP)
-# pragma omp for schedule(static)
-#endif
-      for (row = 0; row < M; ++row) {
-        GEMM_REAL_TYPE ref_blk[BLOCK_K];
-        GEMM_REAL_TYPE recon_blk[BLOCK_K];
-        GEMM_INT_TYPE kk;
-        const int sh = (int)expa_raw[row] - OZ_BIAS_PLUS_MANT;
-        for (kk = 0; kk < K; ++kk) {
-          uint8_t tmp[OZ2_NPRIMES_MAX];
-          uint64_t mant_recon;
-          int8_t ds;
-          double arecon;
-          for (pidx = 0; pidx < nprimes; ++pidx) {
-            const oz2_res_t rv = a_res[(long)pidx * M * K_pad + (long)row * K_pad + kk];
-            tmp[pidx] = (uint8_t)(rv < 0 ? -rv : rv);
-          }
-          mant_recon = oz2_reconstruct_mantissa(tmp, garner_inv, nprimes);
-          ds = 1;
-          for (pidx = 0; pidx < nprimes; ++pidx) {
-            const oz2_res_t rv = a_res[(long)pidx * M * K_pad + (long)row * K_pad + kk];
-            if (0 != rv) {
-              ds = (rv < 0) ? -1 : 1;
-              break;
-            }
-          }
-          arecon = (double)ds * (double)mant_recon * libxs_pow2(sh);
-          ref_blk[kk % BLOCK_K] = a[LIBXS_INDEX(ta, *lda, row, kk)];
-          recon_blk[kk % BLOCK_K] = (GEMM_REAL_TYPE)arecon;
-          if (BLOCK_K - 1 == (kk % BLOCK_K) || kk == K - 1) {
-            const GEMM_INT_TYPE bsize = (kk % BLOCK_K) + 1;
-            libxs_matdiff_t bd;
-            const int ild = 1, itd = 1;
-            if (EXIT_SUCCESS == libxs_matdiff(&bd, LIBXS_DATATYPE(GEMM_REAL_TYPE), bsize, 1, ref_blk, recon_blk, &ild, &itd)) {
-              libxs_matdiff_reduce(&tdiff[tid], &bd);
-            }
-          }
-        }
-      }
-    }
-
-    /* Phase 2d: diff tracking for B decomposition (mode 2) */
-    if (NULL != diff && 2 == (diff_stat % 3)) {
-#if defined(_OPENMP)
-# pragma omp for schedule(static)
-#endif
-      for (col = 0; col < N; ++col) {
-        GEMM_REAL_TYPE ref_blk[BLOCK_K];
-        GEMM_REAL_TYPE recon_blk[BLOCK_K];
-        GEMM_INT_TYPE kk;
-        const int sh = (int)expb_raw[col] - OZ_BIAS_PLUS_MANT;
-        for (kk = 0; kk < K; ++kk) {
-          uint8_t tmp[OZ2_NPRIMES_MAX];
-          uint64_t mant_recon;
-          int8_t ds;
-          double brecon;
-          for (pidx = 0; pidx < nprimes; ++pidx) {
-            const oz2_res_t rv = b_res[(long)pidx * N * K_pad + (long)col * K_pad + kk];
-            tmp[pidx] = (uint8_t)(rv < 0 ? -rv : rv);
-          }
-          mant_recon = oz2_reconstruct_mantissa(tmp, garner_inv, nprimes);
-          ds = 1;
-          for (pidx = 0; pidx < nprimes; ++pidx) {
-            const oz2_res_t rv = b_res[(long)pidx * N * K_pad + (long)col * K_pad + kk];
-            if (0 != rv) {
-              ds = (rv < 0) ? -1 : 1;
-              break;
-            }
-          }
-          brecon = (double)ds * (double)mant_recon * libxs_pow2(sh);
-          ref_blk[kk % BLOCK_K] = b[LIBXS_INDEX(tb, *ldb, kk, col)];
-          recon_blk[kk % BLOCK_K] = (GEMM_REAL_TYPE)brecon;
-          if (BLOCK_K - 1 == (kk % BLOCK_K) || kk == K - 1) {
-            const GEMM_INT_TYPE bsize = (kk % BLOCK_K) + 1;
-            libxs_matdiff_t bd;
-            const int ild = 1, itd = 1;
-            if (EXIT_SUCCESS == libxs_matdiff(&bd, LIBXS_DATATYPE(GEMM_REAL_TYPE), bsize, 1, ref_blk, recon_blk, &ild, &itd)) {
-              libxs_matdiff_reduce(&tdiff[tid], &bd);
-            }
-          }
-        }
-      }
-    }
-
-    /* Phase 3: scale C by beta */
+    /* Phase 3: scale C by beta (once, before K-group loop) */
 #if defined(_OPENMP)
 # pragma omp for LIBXS_OPENMP_COLLAPSE(2) schedule(static)
 #endif
@@ -824,101 +648,291 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
       }
     }
 
+    GEMM_PROFILE_TICK(t_preprocess, tid);
     GEMM_PROFILE_TICK(t_kernel, tid);
 
-    /* Phase 4: CRT dot products + accumulate.
-     * For each (mi,nj) pair, compute int8 dot product per prime over the
-     * full K dimension (with K-chunking for int32 safety when K > K_CHUNK),
-     * then CRT reconstruct to signed double, scale, and accumulate. */
-#if defined(_OPENMP)
-# pragma omp for LIBXS_OPENMP_COLLAPSE(2) schedule(static)
-#endif
-    for (jb = 0; jb < N; jb += BLOCK_N) {
-      for (ib = 0; ib < M; ib += BLOCK_M) {
-        const GEMM_INT_TYPE iblk = LIBXS_MIN(BLOCK_M, M - ib);
-        const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
-        GEMM_REAL_TYPE* const cb = c + jb * ldcv + ib;
-        unsigned int tile_res[BLOCK_M * BLOCK_N][OZ2_NPRIMES_MAX];
-        memset(tile_res, 0, sizeof(tile_res));
+    /* K-group loop: process K in chunks of K_GRP */
+    for (kb_grp = 0; kb_grp < K; kb_grp += K_GRP) {
+      const GEMM_INT_TYPE K_len = LIBXS_MIN((GEMM_INT_TYPE)K_GRP, K - kb_grp);
 
-        /* Accumulate per-prime residues via GEMM + mod-reduce */
-        for (kb = 0; kb < K_pad; kb += K_CHUNK) {
-          const GEMM_INT_TYPE chunk_k = ((GEMM_INT_TYPE)K_CHUNK < K_pad - kb) ? (GEMM_INT_TYPE)K_CHUNK : (K_pad - kb);
-          LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
-          for (pidx = 0; pidx < nprimes; ++pidx) {
-            int32_t partial[BLOCK_M * BLOCK_N];
-#if defined(OZAKI_I8) && (OZAKI_I8)
-            ozaki_gemm_s8s8s32('N', 'T', iblk, jblk, chunk_k,
-              (const int8_t*)(a_res + (long)pidx * M * K_pad + (long)ib * K_pad + kb), K_pad,
-              (const int8_t*)(b_res + (long)pidx * N * K_pad + (long)jb * K_pad + kb), K_pad, 0, partial, jblk);
-#else
-            ozaki_gemm_u8u8s32('N', 'T', iblk, jblk, chunk_k,
-              (const uint8_t*)(a_res + (long)pidx * M * K_pad + (long)ib * K_pad + kb), K_pad,
-              (const uint8_t*)(b_res + (long)pidx * N * K_pad + (long)jb * K_pad + kb), K_pad, 0, partial, jblk);
+      /* Phase 1: preprocess rows of A for this K-group */
+#if defined(_OPENMP)
+# pragma omp for schedule(static) nowait
 #endif
-            for (mi = 0; mi < iblk; ++mi) {
-              for (nj = 0; nj < jblk; ++nj) {
-                const int32_t dot = partial[mi * jblk + nj];
-                unsigned int r;
+      for (row = 0; row < M; ++row) {
+        int16_t row_max_exp = 0;
+        GEMM_INT_TYPE kk;
+        /* Zero this row's residue buffers */
+        for (pidx = 0; pidx < nprimes; ++pidx) {
+          memset(a_res + (long)pidx * M * K_grp_pad + (long)row * K_grp_pad, 0, (size_t)K_grp_pad);
+        }
+        for (kk = kb_grp; kk < kb_grp + K_len; ++kk) {
+          int16_t e;
+          uint64_t mt;
+          ozaki_extract_ieee(a[LIBXS_INDEX(ta, *lda, row, kk)], &e, &mt);
+          if (e > row_max_exp) row_max_exp = e;
+        }
+        expa_raw[row] = row_max_exp;
+        for (kk = kb_grp; kk < kb_grp + K_len; ++kk) {
+          int16_t e;
+          uint64_t mt;
+          int sign;
+          sign = ozaki_extract_ieee(a[LIBXS_INDEX(ta, *lda, row, kk)], &e, &mt);
+          if (0 != mt) {
+            const int delta = (int)row_max_exp - (int)e;
+            uint8_t tmp[OZ2_NPRIMES_MAX];
+            oz2_reduce(mt, delta, tmp, nprimes);
+            LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
+            for (pidx = 0; pidx < nprimes; ++pidx) {
 #if defined(OZAKI_I8) && (OZAKI_I8)
-                if (dot >= 0) {
-                  r = oz2_mod((uint32_t)dot, pidx);
-                }
-                else {
-                  r = oz2_mod((uint32_t)(-dot), pidx);
-                  r = (0 != r) ? (oz2_moduli[pidx] - r) : 0;
-                }
+              a_res[(long)pidx * M * K_grp_pad + (long)row * K_grp_pad + (kk - kb_grp)] = (oz2_res_t)(sign * (int8_t)tmp[pidx]);
 #else
-                r = oz2_mod((uint32_t)dot, pidx);
+              a_res[(long)pidx * M * K_grp_pad + (long)row * K_grp_pad + (kk - kb_grp)] =
+                (oz2_res_t)((sign < 0 && 0 != tmp[pidx]) ? (oz2_moduli[pidx] - tmp[pidx]) : tmp[pidx]);
 #endif
-                r += tile_res[mi * jblk + nj][pidx];
-                if (r >= oz2_moduli[pidx]) r -= oz2_moduli[pidx];
-                tile_res[mi * jblk + nj][pidx] = r;
-              }
             }
           }
         }
+      }
 
-        /* CRT reconstruct, scale, and accumulate to C */
-        for (mi = 0; mi < iblk; ++mi) {
-          for (nj = 0; nj < jblk; nj += OZ2_BATCH) {
-            const GEMM_INT_TYPE bsz = LIBXS_MIN(OZ2_BATCH, (int)(jblk - nj));
-            unsigned int batch_res[OZ2_BATCH][OZ2_NPRIMES_MAX];
-            double batch_val[OZ2_BATCH];
-            int bi;
-            for (bi = 0; bi < (int)bsz; ++bi) {
-              LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
-              for (pidx = 0; pidx < nprimes; ++pidx) {
-                batch_res[bi][pidx] = tile_res[mi * jblk + nj + bi][pidx];
+      /* Phase 2: preprocess columns of B for this K-group */
+#if defined(_OPENMP)
+# pragma omp for schedule(static)
+#endif
+      for (col = 0; col < N; ++col) {
+        int16_t col_max_exp = 0;
+        GEMM_INT_TYPE kk;
+        /* Zero this column's residue buffers */
+        for (pidx = 0; pidx < nprimes; ++pidx) {
+          memset(b_res + (long)pidx * N * K_grp_pad + (long)col * K_grp_pad, 0, (size_t)K_grp_pad);
+        }
+        for (kk = kb_grp; kk < kb_grp + K_len; ++kk) {
+          int16_t e;
+          uint64_t mt;
+          ozaki_extract_ieee(b[LIBXS_INDEX(tb, *ldb, kk, col)], &e, &mt);
+          if (e > col_max_exp) col_max_exp = e;
+        }
+        expb_raw[col] = col_max_exp;
+        for (kk = kb_grp; kk < kb_grp + K_len; ++kk) {
+          int16_t e;
+          uint64_t mt;
+          int sign;
+          sign = ozaki_extract_ieee(b[LIBXS_INDEX(tb, *ldb, kk, col)], &e, &mt);
+          if (0 != mt) {
+            const int delta = (int)col_max_exp - (int)e;
+            uint8_t tmp[OZ2_NPRIMES_MAX];
+            oz2_reduce(mt, delta, tmp, nprimes);
+            LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
+            for (pidx = 0; pidx < nprimes; ++pidx) {
+#if defined(OZAKI_I8) && (OZAKI_I8)
+              b_res[(long)pidx * N * K_grp_pad + (long)col * K_grp_pad + (kk - kb_grp)] = (oz2_res_t)(sign * (int8_t)tmp[pidx]);
+#else
+              b_res[(long)pidx * N * K_grp_pad + (long)col * K_grp_pad + (kk - kb_grp)] =
+                (oz2_res_t)((sign < 0 && 0 != tmp[pidx]) ? (oz2_moduli[pidx] - tmp[pidx]) : tmp[pidx]);
+#endif
+            }
+          }
+        }
+      }
+      /* implicit barrier: preprocessing done */
+
+      /* Phase 2b: compute FP exponent scale factors */
+#if defined(_OPENMP)
+# pragma omp for schedule(static) nowait
+#endif
+      for (row = 0; row < M; ++row) {
+        expa_fp[row] = libxs_pow2((int)expa_raw[row] - OZ_BIAS_PLUS_MANT);
+      }
+#if defined(_OPENMP)
+# pragma omp for schedule(static)
+#endif
+      for (col = 0; col < N; ++col) {
+        expb_fp[col] = libxs_pow2((int)expb_raw[col] - OZ_BIAS_PLUS_MANT);
+      }
+
+      /* Phase 2c: diff tracking for A decomposition (mode 1) */
+      if (NULL != diff && 1 == (diff_stat % 3)) {
+#if defined(_OPENMP)
+# pragma omp for schedule(static)
+#endif
+        for (row = 0; row < M; ++row) {
+          GEMM_REAL_TYPE ref_blk[BLOCK_K];
+          GEMM_REAL_TYPE recon_blk[BLOCK_K];
+          GEMM_INT_TYPE kk;
+          const int sh = (int)expa_raw[row] - OZ_BIAS_PLUS_MANT;
+          for (kk = kb_grp; kk < kb_grp + K_len; ++kk) {
+            const GEMM_INT_TYPE kk_local = kk - kb_grp;
+            uint8_t tmp[OZ2_NPRIMES_MAX];
+            uint64_t mant_recon;
+            int8_t ds;
+            double arecon;
+            for (pidx = 0; pidx < nprimes; ++pidx) {
+              const oz2_res_t rv = a_res[(long)pidx * M * K_grp_pad + (long)row * K_grp_pad + kk_local];
+              tmp[pidx] = (uint8_t)((int8_t)rv < 0 ? -rv : rv);
+            }
+            mant_recon = oz2_reconstruct_mantissa(tmp, garner_inv, nprimes);
+            ds = 1;
+            for (pidx = 0; pidx < nprimes; ++pidx) {
+              const oz2_res_t rv = a_res[(long)pidx * M * K_grp_pad + (long)row * K_grp_pad + kk_local];
+              if (0 != rv) {
+                ds = ((int8_t)rv < 0) ? -1 : 1;
+                break;
               }
             }
-
-#if defined(LIBXS_INTRINSICS_AVX512) && 16 == OZ2_BATCH
-# if (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH)
-            oz2_reconstruct_batch_avx512(batch_res, garner_inv, nprimes, (int)bsz, batch_val);
-# else
-            if (LIBXS_X86_AVX512 <= ozaki_target_arch) {
-              oz2_reconstruct_batch_avx512(batch_res, garner_inv, nprimes, (int)bsz, batch_val);
-            }
-            else {
-              oz2_reconstruct_batch(batch_res, garner_inv, nprimes, (int)bsz, batch_val);
-            }
-# endif
-#else
-            oz2_reconstruct_batch(batch_res, garner_inv, nprimes, (int)bsz, batch_val);
-#endif
-
-            for (bi = 0; bi < (int)bsz; ++bi) {
-              if (0.0 != batch_val[bi] && (GEMM_REAL_TYPE)0 != *alpha) {
-                const GEMM_INT_TYPE jcol = nj + bi;
-                const double contrib = (*alpha) * batch_val[bi] * expa_fp[ib + mi] * expb_fp[jb + jcol];
-                cb[mi + jcol * ldcv] += (GEMM_REAL_TYPE)contrib;
+            arecon = (double)ds * (double)mant_recon * libxs_pow2(sh);
+            ref_blk[kk_local % BLOCK_K] = a[LIBXS_INDEX(ta, *lda, row, kk)];
+            recon_blk[kk_local % BLOCK_K] = (GEMM_REAL_TYPE)arecon;
+            if (BLOCK_K - 1 == (kk_local % BLOCK_K) || kk == kb_grp + K_len - 1) {
+              const GEMM_INT_TYPE bsize = (kk_local % BLOCK_K) + 1;
+              libxs_matdiff_t bd;
+              const int ild = 1, itd = 1;
+              if (EXIT_SUCCESS == libxs_matdiff(&bd, LIBXS_DATATYPE(GEMM_REAL_TYPE), bsize, 1, ref_blk, recon_blk, &ild, &itd)) {
+                libxs_matdiff_reduce(&tdiff[tid], &bd);
               }
             }
           }
         }
       }
-    }
+
+      /* Phase 2d: diff tracking for B decomposition (mode 2) */
+      if (NULL != diff && 2 == (diff_stat % 3)) {
+#if defined(_OPENMP)
+# pragma omp for schedule(static)
+#endif
+        for (col = 0; col < N; ++col) {
+          GEMM_REAL_TYPE ref_blk[BLOCK_K];
+          GEMM_REAL_TYPE recon_blk[BLOCK_K];
+          GEMM_INT_TYPE kk;
+          const int sh = (int)expb_raw[col] - OZ_BIAS_PLUS_MANT;
+          for (kk = kb_grp; kk < kb_grp + K_len; ++kk) {
+            const GEMM_INT_TYPE kk_local = kk - kb_grp;
+            uint8_t tmp[OZ2_NPRIMES_MAX];
+            uint64_t mant_recon;
+            int8_t ds;
+            double brecon;
+            for (pidx = 0; pidx < nprimes; ++pidx) {
+              const oz2_res_t rv = b_res[(long)pidx * N * K_grp_pad + (long)col * K_grp_pad + kk_local];
+              tmp[pidx] = (uint8_t)((int8_t)rv < 0 ? -rv : rv);
+            }
+            mant_recon = oz2_reconstruct_mantissa(tmp, garner_inv, nprimes);
+            ds = 1;
+            for (pidx = 0; pidx < nprimes; ++pidx) {
+              const oz2_res_t rv = b_res[(long)pidx * N * K_grp_pad + (long)col * K_grp_pad + kk_local];
+              if (0 != rv) {
+                ds = ((int8_t)rv < 0) ? -1 : 1;
+                break;
+              }
+            }
+            brecon = (double)ds * (double)mant_recon * libxs_pow2(sh);
+            ref_blk[kk_local % BLOCK_K] = b[LIBXS_INDEX(tb, *ldb, kk, col)];
+            recon_blk[kk_local % BLOCK_K] = (GEMM_REAL_TYPE)brecon;
+            if (BLOCK_K - 1 == (kk_local % BLOCK_K) || kk == kb_grp + K_len - 1) {
+              const GEMM_INT_TYPE bsize = (kk_local % BLOCK_K) + 1;
+              libxs_matdiff_t bd;
+              const int ild = 1, itd = 1;
+              if (EXIT_SUCCESS == libxs_matdiff(&bd, LIBXS_DATATYPE(GEMM_REAL_TYPE), bsize, 1, ref_blk, recon_blk, &ild, &itd)) {
+                libxs_matdiff_reduce(&tdiff[tid], &bd);
+              }
+            }
+          }
+        }
+      }
+
+      /* Phase 4: CRT dot products + accumulate for this K-group.
+       * K_CHUNK loop retained for int32 safety when K_GRP > K_CHUNK. */
+#if defined(_OPENMP)
+# pragma omp for LIBXS_OPENMP_COLLAPSE(2) schedule(static)
+#endif
+      for (jb = 0; jb < N; jb += BLOCK_N) {
+        for (ib = 0; ib < M; ib += BLOCK_M) {
+          const GEMM_INT_TYPE iblk = LIBXS_MIN(BLOCK_M, M - ib);
+          const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
+          GEMM_REAL_TYPE* const cb = c + jb * ldcv + ib;
+          unsigned int tile_res[BLOCK_M * BLOCK_N][OZ2_NPRIMES_MAX];
+          memset(tile_res, 0, sizeof(tile_res));
+
+          /* Accumulate per-prime residues via GEMM + mod-reduce */
+          for (kb = 0; kb < K_grp_pad; kb += K_CHUNK) {
+            const GEMM_INT_TYPE chunk_k = ((GEMM_INT_TYPE)K_CHUNK < K_grp_pad - kb) ? (GEMM_INT_TYPE)K_CHUNK : (K_grp_pad - kb);
+            LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
+            for (pidx = 0; pidx < nprimes; ++pidx) {
+              int32_t partial[BLOCK_M * BLOCK_N];
+#if defined(OZAKI_I8) && (OZAKI_I8)
+              ozaki_gemm_s8s8s32('N', 'T', iblk, jblk, chunk_k,
+                (const int8_t*)(a_res + (long)pidx * M * K_grp_pad + (long)ib * K_grp_pad + kb), K_grp_pad,
+                (const int8_t*)(b_res + (long)pidx * N * K_grp_pad + (long)jb * K_grp_pad + kb), K_grp_pad, 0, partial, jblk);
+#else
+              ozaki_gemm_u8u8s32('N', 'T', iblk, jblk, chunk_k,
+                (const uint8_t*)(a_res + (long)pidx * M * K_grp_pad + (long)ib * K_grp_pad + kb), K_grp_pad,
+                (const uint8_t*)(b_res + (long)pidx * N * K_grp_pad + (long)jb * K_grp_pad + kb), K_grp_pad, 0, partial, jblk);
+#endif
+              for (mi = 0; mi < iblk; ++mi) {
+                for (nj = 0; nj < jblk; ++nj) {
+                  const int32_t dot = partial[mi * jblk + nj];
+                  unsigned int r;
+#if defined(OZAKI_I8) && (OZAKI_I8)
+                  if (dot >= 0) {
+                    r = oz2_mod((uint32_t)dot, pidx);
+                  }
+                  else {
+                    r = oz2_mod((uint32_t)(-dot), pidx);
+                    r = (0 != r) ? (oz2_moduli[pidx] - r) : 0;
+                  }
+#else
+                  r = oz2_mod((uint32_t)dot, pidx);
+#endif
+                  r += tile_res[mi * jblk + nj][pidx];
+                  if (r >= oz2_moduli[pidx]) r -= oz2_moduli[pidx];
+                  tile_res[mi * jblk + nj][pidx] = r;
+                }
+              }
+            }
+          }
+
+          /* CRT reconstruct, scale, and accumulate to C */
+          for (mi = 0; mi < iblk; ++mi) {
+            for (nj = 0; nj < jblk; nj += OZ2_BATCH) {
+              const GEMM_INT_TYPE bsz = LIBXS_MIN(OZ2_BATCH, (int)(jblk - nj));
+              unsigned int batch_res[OZ2_BATCH][OZ2_NPRIMES_MAX];
+              double batch_val[OZ2_BATCH];
+              int bi;
+              for (bi = 0; bi < (int)bsz; ++bi) {
+                LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
+                for (pidx = 0; pidx < nprimes; ++pidx) {
+                  batch_res[bi][pidx] = tile_res[mi * jblk + nj + bi][pidx];
+                }
+              }
+
+#if defined(LIBXS_INTRINSICS_AVX512) && 16 == OZ2_BATCH
+# if (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH)
+              oz2_reconstruct_batch_avx512(batch_res, garner_inv, nprimes, (int)bsz, batch_val);
+# else
+              if (LIBXS_X86_AVX512 <= ozaki_target_arch) {
+                oz2_reconstruct_batch_avx512(batch_res, garner_inv, nprimes, (int)bsz, batch_val);
+              }
+              else {
+                oz2_reconstruct_batch(batch_res, garner_inv, nprimes, (int)bsz, batch_val);
+              }
+# endif
+#else
+              oz2_reconstruct_batch(batch_res, garner_inv, nprimes, (int)bsz, batch_val);
+#endif
+
+              for (bi = 0; bi < (int)bsz; ++bi) {
+                if (0.0 != batch_val[bi] && (GEMM_REAL_TYPE)0 != *alpha) {
+                  const GEMM_INT_TYPE jcol = nj + bi;
+                  const double contrib = (*alpha) * batch_val[bi] * expa_fp[ib + mi] * expb_fp[jb + jcol];
+                  cb[mi + jcol * ldcv] += (GEMM_REAL_TYPE)contrib;
+                }
+              }
+            }
+          }
+        }
+      }
+#if defined(_OPENMP)
+# pragma omp barrier
+#endif
+    } /* end K-group loop */
 
     GEMM_PROFILE_END(tid, M, N, K);
 

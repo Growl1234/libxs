@@ -38,6 +38,9 @@
 #if !defined(BATCH_K)
 # define BATCH_K 4
 #endif
+#if !defined(K_GRP)
+# define K_GRP 32768
+#endif
 
 #if !defined(MAX_NSLICES)
 # if GEMM_IS_DOUBLE
