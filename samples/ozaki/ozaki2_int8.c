@@ -16,40 +16,44 @@
 #endif
 
 /* Maximum mixed-radix digits per uint64 Horner group.
- * 9 largest moduli product ~ 2^62.9, fits uint64.
+ * u8: 8 largest moduli product ~ 2^63.2, fits uint64.
+ * i8: 9 largest moduli product ~ 2^61.8, fits uint64.
  * Grouping eliminates FP64 from the inner Horner loop. */
 #if !defined(OZ2_HORNER_GROUP)
-# define OZ2_HORNER_GROUP 9
+# if defined(OZAKI_I8) && (OZAKI_I8)
+#   define OZ2_HORNER_GROUP 9
+# else
+#   define OZ2_HORNER_GROUP 8
+# endif
 #endif
 
 
 /* Chinese Remainder Theorem (CRT) moduli and precomputed Barrett tables.
  * Moduli must be pairwise coprime (not necessarily prime); using the
  * largest prime power of each prime that fits maximizes bits per channel.
- * Coprime moduli <= 128, residues fit in int8 (-127..+127 with sign
- * folded in), enabling VNNI int8 dot products.
  *
- * NOTE: An unsigned variant (moduli <= 256, uint8 residues) is possible
- * but was removed.  VNNI's VPDPBUSD treats the first operand as unsigned
- * and the second as signed; using int8 residues with sign folded in maps
- * naturally to this encoding (XOR+bias correction), whereas uint8 residues
- * require a separate sign array and scalar accumulation, negating the
- * VNNI advantage.
+ * u8 (default): moduli <= 256, unsigned residues [0, p-1].
+ *   Sign encoded via modular additive inverse (p - r ≡ -r mod p).
+ *   Enables u8*u8 VNNI via VPDPBUSD with B-side bias correction.
+ *   Larger moduli reduce prime count: fp64 16 (vs 19), fp32 9 (vs 10).
+ *   Safe K without chunking: ~33K (255^2 * K per int32 accumulator).
+ *
+ * i8 (OZAKI_I8=1): moduli <= 128, signed residues [-127, +127].
+ *   Sign folded by negation. Uses i8 VNNI via VPDPBUSD with A-side bias.
+ *   Safe K without chunking: ~133K (127^2 * K per int32 accumulator).
  *
  * P = prod(m_i) must exceed 2 * BLOCK_K * (2^(MANT+1))^2 to represent
  * signed dot products without aliasing. */
 
-/* 18 pairwise coprime moduli <= 128 (prime powers + primes).
- * Product of all 20 ~ 2^138 (double).
- * Includes 128=2^7, 125=5^3, 121=11^2, 119=7*17, 81=3^4 alongside primes.
- * Residues 0..127 fit in int8 when sign is folded in (-127..+127). */
+#if defined(OZAKI_I8) && (OZAKI_I8)
+
+/* 20 pairwise coprime moduli <= 128 (prime powers + primes).
+ * 128=2^7, 125=5^3, 121=11^2, 119=7*17, 81=3^4 alongside primes. */
 static const uint16_t oz2_moduli[] = {
   128, 127, 125, 121, 119, 113, 109, 107,
   103, 101,  97,  89,  83,  81,  79,  73,
    71,  67,  61,  59
 };
-
-/* Barrett reciprocals: floor(2^32 / m_i) for single-word reduction. */
 static const uint32_t oz2_rcp[] = {
   (uint32_t)(0x100000000ULL / 128), (uint32_t)(0x100000000ULL / 127),
   (uint32_t)(0x100000000ULL / 125), (uint32_t)(0x100000000ULL / 121),
@@ -62,8 +66,6 @@ static const uint32_t oz2_rcp[] = {
   (uint32_t)(0x100000000ULL /  71), (uint32_t)(0x100000000ULL /  67),
   (uint32_t)(0x100000000ULL /  61), (uint32_t)(0x100000000ULL /  59)
 };
-
-/* 2^18 mod m_i and 2^36 mod m_i: used for 64-bit Barrett decomposition. */
 static const uint32_t oz2_pow18[] = {
     0U /* 128 */,  16U /* 127 */,  19U /* 125 */,  58U /* 121 */,
   106U /* 119 */,  97U /* 113 */, 108U /* 109 */, 101U /* 107 */,
@@ -78,9 +80,58 @@ static const uint32_t oz2_pow36[] = {
    70U /*  83 */,  55U /*  81 */,  10U /*  79 */,   1U /*  73 */,
     2U /*  71 */,  59U /*  67 */,  58U /*  61 */,  49U /*  59 */
 };
-
-/* Residue element type: int8 (signs folded into residues for VNNI). */
 typedef int8_t oz2_res_t;
+
+#else /* u8 default */
+
+/* 20 pairwise coprime moduli <= 256 (prime powers + primes).
+ * 256=2^8, 243=3^5, 169=13^2 alongside primes. */
+static const uint16_t oz2_moduli[] = {
+  256, 251, 243, 241, 239, 233, 229, 227,
+  223, 211, 199, 197, 193, 191, 181, 179,
+  173, 169, 167, 163
+};
+static const uint32_t oz2_rcp[] = {
+  (uint32_t)(0x100000000ULL / 256), (uint32_t)(0x100000000ULL / 251),
+  (uint32_t)(0x100000000ULL / 243), (uint32_t)(0x100000000ULL / 241),
+  (uint32_t)(0x100000000ULL / 239), (uint32_t)(0x100000000ULL / 233),
+  (uint32_t)(0x100000000ULL / 229), (uint32_t)(0x100000000ULL / 227),
+  (uint32_t)(0x100000000ULL / 223), (uint32_t)(0x100000000ULL / 211),
+  (uint32_t)(0x100000000ULL / 199), (uint32_t)(0x100000000ULL / 197),
+  (uint32_t)(0x100000000ULL / 193), (uint32_t)(0x100000000ULL / 191),
+  (uint32_t)(0x100000000ULL / 181), (uint32_t)(0x100000000ULL / 179),
+  (uint32_t)(0x100000000ULL / 173), (uint32_t)(0x100000000ULL / 169),
+  (uint32_t)(0x100000000ULL / 167), (uint32_t)(0x100000000ULL / 163)
+};
+static const uint32_t oz2_pow18[] = {
+    0U /* 256 */, 100U /* 251 */, 190U /* 243 */, 177U /* 241 */,
+  200U /* 239 */,  19U /* 233 */, 168U /* 229 */, 186U /* 227 */,
+  119U /* 223 */,  82U /* 211 */,  61U /* 199 */, 134U /* 197 */,
+   50U /* 193 */,  92U /* 191 */,  56U /* 181 */,  88U /* 179 */,
+   49U /* 173 */,  25U /* 169 */, 121U /* 167 */,  40U /* 163 */
+};
+static const uint32_t oz2_pow36[] = {
+    0U /* 256 */, 211U /* 251 */, 136U /* 243 */, 240U /* 241 */,
+   87U /* 239 */, 128U /* 233 */,  57U /* 229 */,  92U /* 227 */,
+  112U /* 223 */, 183U /* 211 */, 139U /* 199 */,  29U /* 197 */,
+  184U /* 193 */,  60U /* 191 */,  59U /* 181 */,  47U /* 179 */,
+  152U /* 173 */, 118U /* 169 */, 112U /* 167 */, 133U /* 163 */
+};
+typedef uint8_t oz2_res_t;
+
+#endif /* OZAKI_I8 */
+
+/* Sign folding for residue storage (used by host preprocessing wrappers).
+ * u8: additive inverse (p - r) for negatives.
+ * i8: sign negation (-r) for negatives. */
+#if defined(OZAKI_I8) && (OZAKI_I8)
+# define OZ2_SIGN_FOLD_(SIGN, RES, PIDX) \
+    ((oz2_res_t)((SIGN) * (int8_t)(RES)))
+#else
+# define OZ2_SIGN_FOLD_(SIGN, RES, PIDX) \
+    ((oz2_res_t)(((SIGN) < 0 && 0 != (RES)) \
+      ? (oz2_moduli[(PIDX)] - (RES)) : (RES)))
+#endif
 
 /** Fast modular reduction: x mod oz2_moduli[pidx] (table-indexed wrapper). */
 LIBXS_API_INLINE unsigned int oz2_mod(uint32_t x, int pidx)
@@ -91,16 +142,17 @@ LIBXS_API_INLINE unsigned int oz2_mod(uint32_t x, int pidx)
 
 /**
  * Bounded modular reduction for mixed-radix digits: v mod oz2_moduli[pidx].
- * v must be a Garner digit, i.e. v < max(moduli) = 128.
- * Since min(moduli) = 61, floor(127/61) = 2, so at most two conditional
- * subtracts suffice — avoiding the Barrett multiply in the O(nprimes^2)
- * Garner inner loop.
+ * v must be a Garner digit, i.e. v < max(moduli).
+ * u8: max(moduli)=256, min=163, floor(255/163)=1 -> one subtract suffices.
+ * i8: max(moduli)=128, min= 59, floor(127/59) =2 -> two subtracts needed.
  */
 LIBXS_API_INLINE unsigned int oz2_mod_digit(unsigned int v, int pidx)
 {
   const unsigned int p = oz2_moduli[pidx];
   if (v >= p) v -= p;
+#if defined(OZAKI_I8) && (OZAKI_I8)
   if (v >= p) v -= p;
+#endif
   return v;
 }
 
@@ -266,14 +318,21 @@ LIBXS_API_INLINE void oz2_preprocess_rows(
 
     expa_row[mi] = row_max_exp;
 
-    /* Pass 2: align, reduce mod moduli, scatter into ak[mi][pidx][kk] */
+    /* Pass 2: align, reduce mod moduli, scatter into ak[mi][pidx][kk].
+     * u8: additive inverse (p - r) for negative elements.
+     * i8: sign negation (-r) for negative elements. */
     for (kk = 0; kk < kblk; ++kk) {
       const int delta = (int)row_max_exp - (int)elem_exp[mi][kk];
       uint8_t tmp[OZ2_NPRIMES_MAX];
       oz2_reduce(elem_mant[mi][kk], delta, tmp, nprimes);
       LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
       for (pidx = 0; pidx < nprimes; ++pidx) {
+#if defined(OZAKI_I8) && (OZAKI_I8)
         ak[mi][pidx][kk] = (int8_t)(local_sign[kk] * (int8_t)tmp[pidx]);
+#else
+        ak[mi][pidx][kk] = (uint8_t)((local_sign[kk] < 0 && 0 != tmp[pidx])
+          ? (oz2_moduli[pidx] - tmp[pidx]) : tmp[pidx]);
+#endif
       }
     }
     /* Zero-pad remaining k-entries */
@@ -289,7 +348,7 @@ LIBXS_API_INLINE void oz2_preprocess_rows(
  * Preprocess columns of B for one (kb, jb) tile.
  * Same as rows of A but with per-column max exponent. Writes directly
  * into bk[N][P][K] (k-contiguous layout).
- * Signs are folded into int8 residues.
+ * u8: additive inverse for sign.  i8: negation for sign.
  */
 LIBXS_API_INLINE void oz2_preprocess_cols(
   const GEMM_REAL_TYPE* b, GEMM_INT_TYPE ldb, int tb,
@@ -327,7 +386,12 @@ LIBXS_API_INLINE void oz2_preprocess_cols(
       oz2_reduce(elem_mant[kk][nj], delta, tmp, nprimes);
       LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
       for (pidx = 0; pidx < nprimes; ++pidx) {
+#if defined(OZAKI_I8) && (OZAKI_I8)
         bk[nj][pidx][kk] = (int8_t)(elem_sign[kk][nj] * (int8_t)tmp[pidx]);
+#else
+        bk[nj][pidx][kk] = (uint8_t)((elem_sign[kk][nj] < 0 && 0 != tmp[pidx])
+          ? (oz2_moduli[pidx] - tmp[pidx]) : tmp[pidx]);
+#endif
       }
     }
   }
@@ -551,8 +615,14 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb,
   unsigned int diff_stat, libxs_matdiff_t* diff)
 {
   unsigned int garner_inv[OZ2_NPRIMES_MAX][OZ2_NPRIMES_MAX];
-  /* Max K per int32 accumulation pass: K_CHUNK * 127^2 < 2^31 */
+  /* Max K per int32 accumulation pass: K_CHUNK * max_residue^2 < 2^31.
+   * u8 (max 255): 255^2 * 32768 ~ 2.13e9 < 2^31. K_CHUNK = 32768.
+   * i8 (max 127): 127^2 * 131072 ~ 2.11e9 < 2^31. K_CHUNK = 131072. */
+#if defined(OZAKI_I8) && (OZAKI_I8)
   enum { K_CHUNK = 131072 };
+#else
+  enum { K_CHUNK = 32768 };
+#endif
   const int ta = (*transa != 'N' && *transa != 'n');
   const int tb = (*transb != 'N' && *transb != 'n');
   const GEMM_INT_TYPE M = *m, N = *n, K = *k;
@@ -640,8 +710,14 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb,
           oz2_reduce(mt, delta, tmp, nprimes);
           LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
           for (pidx = 0; pidx < nprimes; ++pidx) {
+#if defined(OZAKI_I8) && (OZAKI_I8)
             a_res[(long)pidx * M * K_pad + (long)row * K_pad + kk] =
               (oz2_res_t)(sign * (int8_t)tmp[pidx]);
+#else
+            a_res[(long)pidx * M * K_pad + (long)row * K_pad + kk] =
+              (oz2_res_t)((sign < 0 && 0 != tmp[pidx])
+                ? (oz2_moduli[pidx] - tmp[pidx]) : tmp[pidx]);
+#endif
           }
         }
       }
@@ -669,8 +745,14 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb,
           oz2_reduce(mt, delta, tmp, nprimes);
           LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
           for (pidx = 0; pidx < nprimes; ++pidx) {
+#if defined(OZAKI_I8) && (OZAKI_I8)
             b_res[(long)pidx * N * K_pad + (long)col * K_pad + kk] =
               (oz2_res_t)(sign * (int8_t)tmp[pidx]);
+#else
+            b_res[(long)pidx * N * K_pad + (long)col * K_pad + kk] =
+              (oz2_res_t)((sign < 0 && 0 != tmp[pidx])
+                ? (oz2_moduli[pidx] - tmp[pidx]) : tmp[pidx]);
+#endif
           }
         }
       }
@@ -829,22 +911,35 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb,
           LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
           for (pidx = 0; pidx < nprimes; ++pidx) {
             int32_t partial[BLOCK_M * BLOCK_N];
+#if defined(OZAKI_I8) && (OZAKI_I8)
             ozaki_gemm_s8s8s32('N', 'T', iblk, jblk, chunk_k,
               (const int8_t*)(a_res + (long)pidx * M * K_pad
                 + (long)ib * K_pad + kb), K_pad,
               (const int8_t*)(b_res + (long)pidx * N * K_pad
                 + (long)jb * K_pad + kb), K_pad,
               0, partial, jblk);
+#else
+            ozaki_gemm_u8u8s32('N', 'T', iblk, jblk, chunk_k,
+              (const uint8_t*)(a_res + (long)pidx * M * K_pad
+                + (long)ib * K_pad + kb), K_pad,
+              (const uint8_t*)(b_res + (long)pidx * N * K_pad
+                + (long)jb * K_pad + kb), K_pad,
+              0, partial, jblk);
+#endif
             for (mi = 0; mi < iblk; ++mi) {
               for (nj = 0; nj < jblk; ++nj) {
                 const int32_t dot = partial[mi * jblk + nj];
                 unsigned int r;
+#if defined(OZAKI_I8) && (OZAKI_I8)
                 if (dot >= 0) {
                   r = oz2_mod((uint32_t)dot, pidx);
                 } else {
                   r = oz2_mod((uint32_t)(-dot), pidx);
                   r = (0 != r) ? (oz2_moduli[pidx] - r) : 0;
                 }
+#else
+                r = oz2_mod((uint32_t)dot, pidx);
+#endif
                 r += tile_res[mi * jblk + nj][pidx];
                 if (r >= oz2_moduli[pidx]) r -= oz2_moduli[pidx];
                 tile_res[mi * jblk + nj][pidx] = r;
@@ -1038,7 +1133,7 @@ void oz2_host_preprocess_a(
             }
             for (pidx = 0; pidx < nslices_p; ++pidx) {
               ((char*)slices)[(((long)panel * brc + mi) * nslices_p + pidx) * bk + kk]
-                = (char)(elem_sign * (int8_t)tmp[pidx]);
+                = (char)OZ2_SIGN_FOLD_(elem_sign, tmp[pidx], pidx);
             }
           }
           /* Zero-pad remaining k-entries */
@@ -1133,13 +1228,13 @@ void oz2_host_preprocess_b(
             if (0 == use_xmx_p) {
               for (pidx = 0; pidx < nslices_p; ++pidx) {
                 ((char*)slices)[(((long)panel * brc + nj) * nslices_p + pidx) * bk + kk]
-                  = (char)(elem_sign * (int8_t)tmp[pidx]);
+                  = (char)OZ2_SIGN_FOLD_(elem_sign, tmp[pidx], pidx);
               }
             }
             else {
               for (pidx = 0; pidx < nslices_p; ++pidx) {
                 ((char*)slices)[(((long)panel * nslices_p + pidx) * bk + kk) * bn_pad + nj]
-                  = (char)(elem_sign * (int8_t)tmp[pidx]);
+                  = (char)OZ2_SIGN_FOLD_(elem_sign, tmp[pidx], pidx);
               }
             }
           }

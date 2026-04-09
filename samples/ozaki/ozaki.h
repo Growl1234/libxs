@@ -68,10 +68,18 @@
 
 #if GEMM_IS_DOUBLE
 # define OZ2_NPRIMES_MAX 20
-# define OZ2_NPRIMES_DEFAULT 19
+# if defined(OZAKI_I8) && (OZAKI_I8)
+#   define OZ2_NPRIMES_DEFAULT 19
+# else
+#   define OZ2_NPRIMES_DEFAULT 16
+# endif
 #else /* single-precision */
 # define OZ2_NPRIMES_MAX 12
-# define OZ2_NPRIMES_DEFAULT 10
+# if defined(OZAKI_I8) && (OZAKI_I8)
+#   define OZ2_NPRIMES_DEFAULT 10
+# else
+#   define OZ2_NPRIMES_DEFAULT 9
+# endif
 #endif
 
 /* CPU-side profiling helpers (used inside omp parallel regions).
@@ -209,6 +217,8 @@
 LIBXS_EXTERN_C typedef void (*zgemm_function_t)(GEMM_ARGDECL);
 /** Function pointer type for int8 dot product dispatch. */
 typedef int32_t (*ozaki_dot_i8_fn)(const int8_t[BLOCK_K], const int8_t[BLOCK_K]);
+/** Function pointer type for uint8 dot product dispatch (Ozaki-2 u8 CRT). */
+typedef int32_t (*ozaki_dot_u8_fn)(const uint8_t[BLOCK_K], const uint8_t[BLOCK_K]);
 
 /** Function prototypes for wrapped / real / public GEMM and complex GEMM. */
 LIBXS_API_INTERN void GEMM_WRAP(GEMM_ARGDECL);
@@ -395,6 +405,142 @@ LIBXS_API_INLINE int32_t ozaki_dot_i8_sw(const int8_t a[BLOCK_K], const int8_t b
     dot += (int32_t)a[kk] * (int32_t)b[kk];
   }
   return dot;
+}
+
+
+/* ---- Unsigned u8 dot products for Ozaki-2 CRT ----
+ *
+ * u8 CRT stores residues in [0, p-1] with sign encoded via modular
+ * additive inverse (p - r).  Dot products need u8*u8 -> int32.
+ *
+ * VPDPBUSD is u8*i8.  To get u8*u8 we XOR B with 0x80 to convert
+ * u8 -> i8 (subtracting 128), then correct: result + 128*sum(A).
+ * Same 2-instruction cost as the i8 bias-correction path above. */
+
+/* VPDPBUSD: u8*u8 dot product via u8*i8 with bias correction on B.
+ * XOR B with 0x80 converts u8 -> i8, then VPDPBUSD gives u8*i8;
+ * adding 128*sum(A) (via VPDPBUSD(A, ones)) compensates. */
+#if defined(LIBXS_INTRINSICS_AVX512)
+
+# if 16 == BLOCK_K /* 128-bit: one __m128i */
+
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
+int32_t ozaki_dot_u8_vnni(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
+{
+  const __m128i bias = _mm_set1_epi8((char)0x80);
+  const __m128i va = _mm_loadu_si128((const __m128i*)a);
+  const __m128i vb = _mm_xor_si128(_mm_loadu_si128((const __m128i*)b), bias);
+  const __m128i ones = _mm_set1_epi8(1);
+  __m128i dp = _mm_dpbusd_epi32(_mm_setzero_si128(), va, vb);
+  __m128i sa = _mm_dpbusd_epi32(_mm_setzero_si128(), va, ones);
+  dp = _mm_hadd_epi32(dp, sa);
+  dp = _mm_hadd_epi32(dp, dp);
+  return _mm_extract_epi32(dp, 0) + 128 * _mm_extract_epi32(dp, 1);
+}
+
+# elif 32 == BLOCK_K /* 256-bit: one __m256i */
+
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
+int32_t ozaki_dot_u8_vnni(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
+{
+  const __m256i bias = _mm256_set1_epi8((char)0x80);
+  const __m256i va = _mm256_loadu_si256((const __m256i*)a);
+  const __m256i vb = _mm256_xor_si256(
+    _mm256_loadu_si256((const __m256i*)b), bias);
+  const __m256i ones = _mm256_set1_epi8(1);
+  __m256i dp = _mm256_dpbusd_epi32(_mm256_setzero_si256(), va, vb);
+  __m256i sa = _mm256_dpbusd_epi32(_mm256_setzero_si256(), va, ones);
+  { const __m128i hi_dp = _mm256_extracti128_si256(dp, 1);
+    const __m128i hi_sa = _mm256_extracti128_si256(sa, 1);
+    __m128i lo_dp = _mm256_castsi256_si128(dp);
+    __m128i lo_sa = _mm256_castsi256_si128(sa);
+    lo_dp = _mm_add_epi32(lo_dp, hi_dp);
+    lo_sa = _mm_add_epi32(lo_sa, hi_sa);
+    lo_dp = _mm_hadd_epi32(lo_dp, lo_sa);
+    lo_dp = _mm_hadd_epi32(lo_dp, lo_dp);
+    return _mm_extract_epi32(lo_dp, 0) + 128 * _mm_extract_epi32(lo_dp, 1);
+  }
+}
+
+# elif 64 == BLOCK_K /* 512-bit: one __m512i */
+
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
+int32_t ozaki_dot_u8_vnni(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
+{
+  const __m512i bias = _mm512_set1_epi8((char)0x80);
+  const __m512i va = _mm512_loadu_si512((const __m512i*)a);
+  const __m512i vb = _mm512_xor_si512(
+    _mm512_loadu_si512((const __m512i*)b), bias);
+  const __m512i ones = _mm512_set1_epi8(1);
+  __m512i dp = _mm512_dpbusd_epi32(_mm512_setzero_si512(), va, vb);
+  __m512i sa = _mm512_dpbusd_epi32(_mm512_setzero_si512(), va, ones);
+  return _mm512_reduce_add_epi32(dp)
+       + 128 * _mm512_reduce_add_epi32(sa);
+}
+
+# endif /* BLOCK_K width selection */
+#endif /* LIBXS_INTRINSICS_AVX512 */
+
+
+LIBXS_API_INLINE int32_t ozaki_dot_u8_sw(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
+{
+  int32_t dot = 0;
+  int kk;
+  for (kk = 0; kk < BLOCK_K; ++kk) {
+    dot += (int32_t)a[kk] * (int32_t)b[kk];
+  }
+  return dot;
+}
+
+/* u8 dot product dispatch macro.
+ * Priority: VPDPBUSD+bias > scalar.
+ * Future: VPDPBUUD (AVX-VNNI-INT8) as single-instruction path. */
+#if defined(LIBXS_INTRINSICS_AVX512) && \
+    (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
+# if (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH)
+#   define ozaki_dot_u8_init() ozaki_dot_u8_vnni
+# else
+#   define ozaki_dot_u8_init() \
+      ((LIBXS_X86_AVX512 <= ozaki_target_arch) ? ozaki_dot_u8_vnni : ozaki_dot_u8_sw)
+# endif
+#else
+# define ozaki_dot_u8_init() ozaki_dot_u8_sw
+#endif
+
+
+/* Unified uint8 GEMM: C[M,N] = A[M,K] * B'[N,K], u8*u8 -> s32.
+ * Row-major storage. beta: 0=overwrite C, nonzero=accumulate into C.
+ * Requires: transa='N', transb='T', K % BLOCK_K == 0. */
+LIBXS_API_INLINE void ozaki_gemm_u8u8s32(
+  char transa, char transb,
+  GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+  const uint8_t *a, GEMM_INT_TYPE lda,
+  const uint8_t *b, GEMM_INT_TYPE ldb,
+  int beta,
+  int32_t *c, GEMM_INT_TYPE ldc)
+{
+  const ozaki_dot_u8_fn dot = ozaki_dot_u8_init();
+  GEMM_INT_TYPE mi, nj, kb;
+  LIBXS_ASSERT('N' == transa || 'n' == transa);
+  LIBXS_ASSERT('T' == transb || 't' == transb);
+  LIBXS_ASSERT(0 == (K % BLOCK_K));
+  LIBXS_UNUSED(transa); LIBXS_UNUSED(transb);
+  LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
+  for (mi = 0; mi < M; ++mi) {
+    int32_t *const crow = c + mi * ldc;
+    const uint8_t *const arow = a + mi * lda;
+    if (0 == beta) {
+      LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N)
+      for (nj = 0; nj < N; ++nj) crow[nj] = 0;
+    }
+    for (kb = 0; kb < K; kb += BLOCK_K) {
+      const uint8_t *const ak = arow + kb;
+      LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N)
+      for (nj = 0; nj < N; ++nj) {
+        crow[nj] += dot(ak, b + nj * ldb + kb);
+      }
+    }
+  }
 }
 
 
