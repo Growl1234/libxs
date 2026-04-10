@@ -168,6 +168,7 @@
 #define ozaki_verbose LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_verbose)
 #define ozaki LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki)
 #define ozaki_3m LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_3m)
+#define ozaki_maxk LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_maxk)
 #define ozaki_n LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_n)
 #define ozaki_profile LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_profile)
 #define ozaki_hist LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_hist)
@@ -262,6 +263,7 @@ LIBXS_API_INTERN void zgemm3m(GEMM_ARGDECL);
 LIBXS_APIVAR_PUBLIC(gemm_function_t gemm_original);
 LIBXS_APIVAR_PUBLIC(int ozaki);
 LIBXS_APIVAR_PUBLIC(int ozaki_3m);
+LIBXS_APIVAR_PUBLIC(int ozaki_maxk);
 LIBXS_APIVAR_PUBLIC(int ozaki_verbose);
 LIBXS_APIVAR_PUBLIC(int ozaki_stat);
 
@@ -284,7 +286,7 @@ extern LIBXS_TLS int gemm_dump_inhibit;
 /** Opaque OpenCL handle (bridge to LIBXSTREAM Ozaki). */
 LIBXS_APIVAR_PRIVATE(void* ozaki_ocl_handle);
 void* ozaki_ocl_create(
-  int use_double, int kind, int verbosity, int tm, int tn, int ndecomp, int ozflags, int oztrim, int ozgroups, int profiling);
+  int use_double, int kind, int verbosity, int tm, int tn, int ndecomp, int ozflags, int oztrim, int ozgroups, int maxk, int profiling);
 void ozaki_ocl_release(void* handle);
 int ozaki_ocl_gemm(void* handle, char transa, char transb, int M, int N, int K, double alpha, const void* a, int lda, const void* b,
   int ldb, double beta, void* c, int ldc, libxs_hist_t* hist, int profile);

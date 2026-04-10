@@ -185,7 +185,8 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
   const int nslices = LIBXS_CLMP(ozaki_n, 1, MAX_NSLICES);
   const int trim = LIBXS_MIN(ozaki_trim, 2 * (nslices - 1));
   const int cutoff = 2 * (nslices - 1) - trim;
-  const GEMM_INT_TYPE K_grp_max = LIBXS_MIN((GEMM_INT_TYPE)K_GRP, K);
+  const GEMM_INT_TYPE K_grp_size = (0 < ozaki_maxk ? (GEMM_INT_TYPE)ozaki_maxk : K);
+  const GEMM_INT_TYPE K_grp_max = LIBXS_MIN(K_grp_size, K);
   const GEMM_INT_TYPE K_grp_pad = ((K_grp_max + BLOCK_K - 1) / BLOCK_K) * BLOCK_K;
   const GEMM_INT_TYPE nblk_m = (M + BLOCK_M - 1) / BLOCK_M;
   const GEMM_INT_TYPE nblk_n = (N + BLOCK_N - 1) / BLOCK_N;
@@ -260,9 +261,9 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
     GEMM_PROFILE_TICK(t_preprocess, tid);
     GEMM_PROFILE_TICK(t_kernel, tid);
 
-    /* K-group loop: process K in chunks of K_GRP */
-    for (kb_grp = 0; kb_grp < K; kb_grp += K_GRP) {
-      const GEMM_INT_TYPE K_len = LIBXS_MIN((GEMM_INT_TYPE)K_GRP, K - kb_grp);
+    /* K-group loop: process K in chunks of ozaki_maxk */
+    for (kb_grp = 0; kb_grp < K; kb_grp += K_grp_size) {
+      const GEMM_INT_TYPE K_len = LIBXS_MIN(K_grp_size, K - kb_grp);
 
       /* Phase 1: preprocess rows of A for this K-group */
 #if defined(_OPENMP)

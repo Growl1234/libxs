@@ -18,6 +18,7 @@ LIBXS_APIVAR_PUBLIC_DEF(int ozaki_verbose);
 LIBXS_APIVAR_PUBLIC_DEF(int ozaki_stat);
 LIBXS_APIVAR_PUBLIC_DEF(int ozaki);
 LIBXS_APIVAR_PUBLIC_DEF(int ozaki_3m);
+LIBXS_APIVAR_PUBLIC_DEF(int ozaki_maxk);
 
 LIBXS_APIVAR_PRIVATE_DEF(volatile LIBXS_ATOMIC_LOCKTYPE gemm_lock);
 LIBXS_APIVAR_PRIVATE_DEF(libxs_malloc_pool_t* gemm_pool);
@@ -154,6 +155,11 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
       /* OZAKI_3M: 0=original BLAS, 1=CPU 3M, 2=GPU 3M.
        * Default: 0 if OZAKI=0, else 2 (GPU preferred, CPU fallback). */
       ozaki_3m = (NULL != ozaki_3m_env ? atoi(ozaki_3m_env) : (0 != ozaki ? 2 : 0));
+      { /* OZAKI_MAXK: max K per preprocessing pass (0=no grouping).
+         * Default: K_GRP (compile-time, typically 32768). */
+        const char* const ozaki_maxk_env = getenv("OZAKI_MAXK");
+        ozaki_maxk = (NULL != ozaki_maxk_env ? atoi(ozaki_maxk_env) : K_GRP);
+      }
       if (NULL != ozaki_stat_env) ozaki_stat = atoi(ozaki_stat_env);
       if (NULL != ozaki_verbose_env) ozaki_verbose = atoi(ozaki_verbose_env);
       else if (0 != ozaki_stat) ozaki_verbose = 1;
@@ -224,7 +230,8 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
           const int ocl_tn = (NULL != ozaki_tn_env ? atoi(ozaki_tn_env) : 0);
           const int ocl_groups = (NULL != ozaki_groups_env ? atoi(ozaki_groups_env) : 0);
           ozaki_ocl_handle = ozaki_ocl_create(
-            GEMM_IS_DOUBLE, ozaki, ozaki_verbose, ocl_tm, ocl_tn, ozaki_n, ozaki_flags, ozaki_trim, ocl_groups, 0 != ozaki_profile);
+            GEMM_IS_DOUBLE, ozaki, ozaki_verbose, ocl_tm, ocl_tn, ozaki_n, ozaki_flags, ozaki_trim, ocl_groups, ozaki_maxk,
+            0 != ozaki_profile);
         }
 #endif
         atexit(gemm_atexit);
