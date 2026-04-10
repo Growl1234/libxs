@@ -223,6 +223,7 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
         }
 #endif
         atexit(gemm_atexit);
+        signal(SIGABRT, gemm_signal_handler);
         signal(SIGTERM, gemm_signal_handler);
         signal(SIGINT, gemm_signal_handler);
 #if defined(SIGHUP)
