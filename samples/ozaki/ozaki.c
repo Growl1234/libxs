@@ -9,6 +9,7 @@
 #include "ozaki.h"
 #include <libxs_hist.h>
 #include <libxs_sync.h>
+#include <signal.h>
 
 
 LIBXS_APIVAR_PUBLIC_DEF(libxs_matdiff_t gemm_diff);
@@ -37,6 +38,9 @@ LIBXS_APIVAR_PRIVATE_DEF(void* ozaki_ocl_handle);
 LIBXS_API_INTERN void gemm_atexit(void);
 LIBXS_API_INTERN void gemm_atexit(void)
 {
+  static volatile sig_atomic_t once = 0;
+  if (0 != once) return;
+  once = 1;
   if (0 != ozaki_verbose && 0 < gemm_diff.r) {
     print_diff(stderr, &gemm_diff);
   }
@@ -77,6 +81,15 @@ LIBXS_API_INTERN void gemm_atexit(void)
   libxs_free_pool(gemm_pool);
   gemm_pool = NULL;
   libxs_finalize();
+}
+
+
+LIBXS_API_INTERN void gemm_signal_handler(int sig);
+LIBXS_API_INTERN void gemm_signal_handler(int sig)
+{
+  gemm_atexit();
+  signal(sig, SIG_DFL);
+  raise(sig);
 }
 
 
@@ -209,7 +222,12 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
             GEMM_IS_DOUBLE, ozaki, ozaki_verbose, ocl_tm, ocl_tn, ozaki_n, ozaki_flags, ozaki_trim, ocl_groups, 0 != ozaki_profile);
         }
 #endif
-        LIBXS_EXPECT(EXIT_SUCCESS == atexit(gemm_atexit));
+        atexit(gemm_atexit);
+        signal(SIGTERM, gemm_signal_handler);
+        signal(SIGINT, gemm_signal_handler);
+#if defined(SIGHUP)
+        signal(SIGHUP, gemm_signal_handler);
+#endif
       }
       gemm_initialized = 1;
     }
