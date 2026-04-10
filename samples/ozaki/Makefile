@@ -110,7 +110,7 @@ XFILES := $(OUTDIR)/dgemm-blas.x $(OUTDIR)/dgemm-wrap.x \
           $(OUTDIR)/zgemm-wrap.x $(OUTDIR)/cgemm-wrap.x
 
 .PHONY: all
-all: $(XFILES)
+all: $(XFILES) $(OUTDIR)/libwrap.$(SLIBEXT) $(OUTDIR)/libwrap.$(DLIBEXT)
 
 .PHONY: compile
 compile: $(OBJECTS)
@@ -134,10 +134,18 @@ else
   endef
 endif
 
-ifneq (,$(WRAP_GEMM))
+# Both library forms are always built:
+# - libwrap.a: static archive for --wrap linkage
+# - libwrap.so: shared library for LD_PRELOAD (resolves BLAS via dlsym)
 $(OUTDIR)/libwrap.$(SLIBEXT): $(OUTDIR)/.make $(IMPLOBJS) $(OCLOBJS)
 	$(MAKE_AR) $@ $(call tailwords,$^)
 
+$(OUTDIR)/libwrap.$(DLIBEXT): $(IMPLOBJS) $(ENTRYOBJS) $(OCLOBJS) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
+	$(LIB_SOLD) $(call solink,$@) $(IMPLOBJS) $(ENTRYOBJS) $(OCLOBJS) \
+		$(XLIB) $(XSTREAM_LIB) $(XLIB) $(call cleanld,$(BASE_LDFLAGS) $(CLDFLAGS))
+
+# Executables depend on BLAS linkage mode
+ifneq (,$(WRAP_GEMM))
 $(OUTDIR)/dgemm-wrap.x: $(BLDDIR)/gemm-dc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
 	$(LINK_WRAP)
 
@@ -150,14 +158,9 @@ $(OUTDIR)/zgemm-wrap.x: $(BLDDIR)/gemm-zc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB)
 $(OUTDIR)/cgemm-wrap.x: $(BLDDIR)/gemm-cc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
 	$(LINK_WRAP)
 
-.PHONY: $(OUTDIR)/libwrap.$(DLIBEXT)
 .PHONY: $(OUTDIR)/dgemm-blas.x $(OUTDIR)/sgemm-blas.x
 .PHONY: $(OUTDIR)/zgemm-blas.x $(OUTDIR)/cgemm-blas.x
 else
-$(OUTDIR)/libwrap.$(DLIBEXT): $(IMPLOBJS) $(ENTRYOBJS) $(OCLOBJS) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
-	$(LIB_SOLD) $(call solink,$@) $(IMPLOBJS) $(ENTRYOBJS) $(OCLOBJS) \
-		$(XLIB) $(XSTREAM_LIB) $(XLIB) $(call cleanld,$(LDFLAGS) $(CLDFLAGS))
-
 $(OUTDIR)/dgemm-blas.x: $(BLDDIR)/gemm-dc.o $(BLDDIR)/gemm-print-d.o $(OUTDIR)/libwrap.$(DLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
 	$(LD) -o $@ $(BLDDIR)/gemm-dc.o $(BLDDIR)/gemm-print-d.o $(XLIB) $(XSTREAM_LIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
@@ -170,7 +173,6 @@ $(OUTDIR)/zgemm-blas.x: $(BLDDIR)/gemm-zc.o $(BLDDIR)/gemm-print-d.o $(OUTDIR)/l
 $(OUTDIR)/cgemm-blas.x: $(BLDDIR)/gemm-cc.o $(BLDDIR)/gemm-print-s.o $(OUTDIR)/libwrap.$(DLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
 	$(LD) -o $@ $(BLDDIR)/gemm-cc.o $(BLDDIR)/gemm-print-s.o $(XLIB) $(XSTREAM_LIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
-.PHONY: $(OUTDIR)/libwrap.$(SLIBEXT)
 .PHONY: $(OUTDIR)/dgemm-wrap.x $(OUTDIR)/sgemm-wrap.x
 .PHONY: $(OUTDIR)/zgemm-wrap.x $(OUTDIR)/cgemm-wrap.x
 endif
