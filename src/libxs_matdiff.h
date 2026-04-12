@@ -39,7 +39,7 @@ for (ii = 0; ii < nn; ++ii) {
 
     if (LIBXS_NOTNAN(ti) && (pos_inf > ta || ti == ri)) {
       const double di = ((NULL != real_tst && ri != ti) ? LIBXS_DELTA(ri, ti) : 0);
-      const double dri = LIBXS_MATDIFF_DIV(di, (ra < di ? 0 : ra), ta);
+      const double dri = LIBXS_MATDIFF_REL(di, ra, ta);
 
       /* minimum/maximum of test set */
       if (ti < info->min_tst) info->min_tst = ti;
@@ -54,8 +54,6 @@ for (ii = 0; ii < nn; ++ii) {
         info->n = i;
       }
 
-      /* maximum error relative to current value */
-      if (info->linf_rel < dri) info->linf_rel = dri;
       /* sum of relative differences */
       LIBXS_PRAGMA_FORCEINLINE
       libxs_kahan_sum(dri * dri, &info->l2_rel, &compd);
