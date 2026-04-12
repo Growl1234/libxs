@@ -420,24 +420,38 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
         }
       }
 
-      /* Phase 4: slice-pair GEMM + accumulate for this K-group */
-      LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
-      for (slice_a = 0; slice_a < nslices && slice_a <= cutoff; ++slice_a) {
-        const int sb_start = (0 != (ozaki_flags & OZ1_TRIANGULAR)) ? slice_a : 0;
-        const int sb_end = LIBXS_MIN(nslices, cutoff + 1 - slice_a);
-        for (slice_b = sb_start; slice_b < sb_end; ++slice_b) {
-          const double pair_scale = (*alpha) * pow2_low[slice_a] * pow2_low[slice_b];
-          const int do_mirror = (0 != (ozaki_flags & OZ1_SYMMETRIZE)) && (slice_a != slice_b);
-
+      /* Phase 4: tile-first GEMM + accumulate for this K-group.
+       * Tiles outermost (single omp for): C stays in a local buffer
+       * across all slice pairs -- one load + one store per tile instead
+       * of a read-modify-write per pair.  Also eliminates per-pair
+       * omp-for barriers (implicit barrier at end of tile loop suffices). */
 #if defined(_OPENMP)
 # pragma omp for LIBXS_OPENMP_COLLAPSE(2) schedule(static)
 #endif
-          for (jb = 0; jb < N; jb += BLOCK_N) {
-            for (ib = 0; ib < M; ib += BLOCK_M) {
-              const GEMM_INT_TYPE iblk = LIBXS_MIN(BLOCK_M, M - ib);
-              const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
-              GEMM_REAL_TYPE* const cb = c + jb * ldcv + ib;
-              int32_t c_acc[BLOCK_M * BLOCK_N];
+      for (jb = 0; jb < N; jb += BLOCK_N) {
+        for (ib = 0; ib < M; ib += BLOCK_M) {
+          const GEMM_INT_TYPE iblk = LIBXS_MIN(BLOCK_M, M - ib);
+          const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
+          GEMM_REAL_TYPE* const cb = c + jb * ldcv + ib;
+          GEMM_REAL_TYPE c_local[BLOCK_M * BLOCK_N];
+          int32_t c_acc[BLOCK_M * BLOCK_N];
+
+          /* Load current C tile into contiguous local buffer */
+          for (nj = 0; nj < jblk; ++nj) {
+            for (mi = 0; mi < iblk; ++mi) {
+              c_local[mi * jblk + nj] = cb[mi + nj * ldcv];
+            }
+          }
+
+          /* Accumulate all slice pairs into c_local */
+          LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
+          for (slice_a = 0; slice_a < nslices && slice_a <= cutoff; ++slice_a) {
+            const int sb_start = (0 != (ozaki_flags & OZ1_TRIANGULAR)) ? slice_a : 0;
+            const int sb_end = LIBXS_MIN(nslices, cutoff + 1 - slice_a);
+            for (slice_b = sb_start; slice_b < sb_end; ++slice_b) {
+              const double pair_scale = (*alpha) * pow2_low[slice_a] * pow2_low[slice_b];
+              const int do_mirror = (0 != (ozaki_flags & OZ1_SYMMETRIZE)) && (slice_a != slice_b);
+
               ozaki_gemm_s8s8s32('N', 'T', iblk, jblk, K_grp_pad,
                 a_slices + (long)slice_a * M * K_grp_pad + (long)ib * K_grp_pad, K_grp_pad,
                 b_slices + (long)slice_b * N * K_grp_pad + (long)jb * K_grp_pad, K_grp_pad, 0, c_acc, jblk);
@@ -451,17 +465,21 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
                 const double ea = pair_scale * expa_fp[ib + mi];
                 for (nj = 0; nj < jblk; ++nj) {
                   if (0 != c_acc[mi * jblk + nj]) {
-                    cb[mi + nj * ldcv] += (GEMM_REAL_TYPE)(ea * expb_fp[jb + nj] * (double)c_acc[mi * jblk + nj]);
+                    c_local[mi * jblk + nj] += (GEMM_REAL_TYPE)(ea * expb_fp[jb + nj] * (double)c_acc[mi * jblk + nj]);
                   }
                 }
               }
             }
           }
+
+          /* Store c_local back to C */
+          for (nj = 0; nj < jblk; ++nj) {
+            for (mi = 0; mi < iblk; ++mi) {
+              cb[mi + nj * ldcv] = c_local[mi * jblk + nj];
+            }
+          }
         }
       }
-#if defined(_OPENMP)
-# pragma omp barrier
-#endif
     } /* end K-group loop */
 
     GEMM_PROFILE_END(tid, M, N, K);
