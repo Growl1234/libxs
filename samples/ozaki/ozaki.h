@@ -752,7 +752,6 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
   settings.ozflags = ozaki_flags;
   settings.oztrim = ozaki_trim;
   settings.ldc = *ldc;
-  settings.idx = ozaki_idx;
   settings.eps = ozaki_eps;
   settings.rsq = ozaki_rsq;
 
