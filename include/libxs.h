@@ -28,16 +28,16 @@
 typedef enum libxs_data_t {
   LIBXS_DATATYPE_F64 = 0 | (8 << 4),
   LIBXS_DATATYPE_F32 = 1 | (4 << 4),
-  LIBXS_DATATYPE_I64 = 2 | (8 << 4),
-  LIBXS_DATATYPE_U64 = 3 | (8 << 4),
-  LIBXS_DATATYPE_I32 = 4 | (4 << 4),
-  LIBXS_DATATYPE_U32 = 5 | (4 << 4),
-  LIBXS_DATATYPE_I16 = 6 | (2 << 4),
-  LIBXS_DATATYPE_U16 = 7 | (2 << 4),
-  LIBXS_DATATYPE_I8  = 8 | (1 << 4),
-  LIBXS_DATATYPE_U8  = 9 | (1 << 4),
-  LIBXS_DATATYPE_C64 = 10 | (16 << 4),
-  LIBXS_DATATYPE_C32 = 11 | (8 << 4),
+  LIBXS_DATATYPE_C64 = 2 | (16 << 4),
+  LIBXS_DATATYPE_C32 = 3 | (8 << 4),
+  LIBXS_DATATYPE_I64 = 4 | (8 << 4),
+  LIBXS_DATATYPE_U64 = 5 | (8 << 4),
+  LIBXS_DATATYPE_I32 = 6 | (4 << 4),
+  LIBXS_DATATYPE_U32 = 7 | (4 << 4),
+  LIBXS_DATATYPE_I16 = 8 | (2 << 4),
+  LIBXS_DATATYPE_U16 = 9 | (2 << 4),
+  LIBXS_DATATYPE_I8  = 10 | (1 << 4),
+  LIBXS_DATATYPE_U8  = 11 | (1 << 4),
   LIBXS_DATATYPE_UNKNOWN = 12
 } libxs_data_t;
 

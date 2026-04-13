@@ -88,16 +88,16 @@
         INTEGER(C_INT), PARAMETER ::                                    &
      &    LIBXS_DATATYPE_F64     = IOR(0, ISHFT(8, 4)),                 &
      &    LIBXS_DATATYPE_F32     = IOR(1, ISHFT(4, 4)),                 &
-     &    LIBXS_DATATYPE_I64     = IOR(2, ISHFT(8, 4)),                 &
-     &    LIBXS_DATATYPE_U64     = IOR(3, ISHFT(8, 4)),                 &
-     &    LIBXS_DATATYPE_I32     = IOR(4, ISHFT(4, 4)),                 &
-     &    LIBXS_DATATYPE_U32     = IOR(5, ISHFT(4, 4)),                 &
-     &    LIBXS_DATATYPE_I16     = IOR(6, ISHFT(2, 4)),                 &
-     &    LIBXS_DATATYPE_U16     = IOR(7, ISHFT(2, 4)),                 &
-     &    LIBXS_DATATYPE_I8      = IOR(8, ISHFT(1, 4)),                 &
-     &    LIBXS_DATATYPE_U8      = IOR(9, ISHFT(1, 4)),                 &
-     &    LIBXS_DATATYPE_C64     = IOR(10, ISHFT(16, 4)),               &
-     &    LIBXS_DATATYPE_C32     = IOR(11, ISHFT(8, 4)),                &
+     &    LIBXS_DATATYPE_C64     = IOR(2, ISHFT(16, 4)),                &
+     &    LIBXS_DATATYPE_C32     = IOR(3, ISHFT(8, 4)),                 &
+     &    LIBXS_DATATYPE_I64     = IOR(4, ISHFT(8, 4)),                 &
+     &    LIBXS_DATATYPE_U64     = IOR(5, ISHFT(8, 4)),                 &
+     &    LIBXS_DATATYPE_I32     = IOR(6, ISHFT(4, 4)),                 &
+     &    LIBXS_DATATYPE_U32     = IOR(7, ISHFT(4, 4)),                 &
+     &    LIBXS_DATATYPE_I16     = IOR(8, ISHFT(2, 4)),                 &
+     &    LIBXS_DATATYPE_U16     = IOR(9, ISHFT(2, 4)),                 &
+     &    LIBXS_DATATYPE_I8      = IOR(10, ISHFT(1, 4)),                &
+     &    LIBXS_DATATYPE_U8      = IOR(11, ISHFT(1, 4)),                &
      &    LIBXS_DATATYPE_UNKNOWN = 12
 
         !> Enumerates GEMM batch synchronization flags (bitfield).
