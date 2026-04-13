@@ -64,7 +64,7 @@ LIBXS_API_INTERN void GEMM_REAL(GEMM_ARGDECL);
 /** Print GEMM arguments. */
 LIBXS_API void print_gemm(FILE* ostream, int compact, GEMM_ARGDECL);
 /** Print statistics. */
-LIBXS_API void print_diff(FILE* ostream, const libxs_matdiff_t* diff);
+LIBXS_API void print_diff(FILE* ostream, int detail, const libxs_matdiff_t* diff);
 
 /** Ozaki settings stored in MHD extension (optional). */
 typedef struct gemm_mhd_settings_t {

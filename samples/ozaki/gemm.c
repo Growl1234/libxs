@@ -218,7 +218,7 @@ int main(int argc, char* argv[])
       }
       if (EXIT_SUCCESS == result) {
         diff.r = nrepeat;
-        print_diff(stdout, &diff);
+        print_diff(stdout, 0 /*detail*/, &diff);
       }
     }
     else { /* fallback: checksum only (no reference GEMM available) */

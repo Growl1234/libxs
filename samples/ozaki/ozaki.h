@@ -129,7 +129,7 @@
     if (1 < ozaki_verbose || 0 > ozaki_verbose) { \
       const int nth = (0 < ozaki_verbose ? ozaki_verbose : 1); \
       if (0 == (diff.r % nth)) { \
-        if (0 <= ozaki_stat) print_diff(stderr, &diff); \
+        if (0 <= ozaki_stat) print_diff(stderr, 0 /*detail*/, &diff); \
         else { \
           fprintf(stderr, "GEMM: "); \
           print_gemm(stderr, LIBXS_ABS(ozaki_stat), transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc); \
@@ -142,7 +142,7 @@
       (3 == ozaki_idx && ozaki_eps < call_diff.l2_rel) || \
       ozaki_eps < libxs_matdiff_epsilon(&call_diff)) \
     { \
-      print_diff(stderr, &call_diff); \
+      print_diff(stderr, 0 /*detail*/, &call_diff); \
       if (0 != gemm_dump_inhibit) { \
         gemm_dump_inhibit = 2; \
       } \
