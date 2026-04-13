@@ -209,6 +209,9 @@ LIBXS_API void libxs_gemm_batch_task(
         }
       }
     }
+    else {
+      LIBXS_ASSERT_MSG(0, "unsupported datatype");
+    }
     INTERNAL_GEMM_UNLOCK(lockidx);
   }
 }
@@ -337,6 +340,9 @@ LIBXS_API void libxs_gemm_index_task(
             &fbeta, ci, &ldc);
         }
       }
+    }
+    else {
+      LIBXS_ASSERT_MSG(0, "unsupported datatype");
     }
 #undef INTERNAL_GEMM_INDEX
     INTERNAL_GEMM_UNLOCK(lockidx);
