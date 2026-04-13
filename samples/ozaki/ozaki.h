@@ -10,8 +10,9 @@
 #include <libxs_hist.h>
 #include <libxs_malloc.h>
 #include <libxs_timer.h>
-#include <libxs_mhd.h>
 #include <libxs_sync.h>
+#include <libxs_mhd.h>
+#include <libxs_mem.h>
 #if defined(__DNNL)
 # include <oneapi/dnnl/dnnl.h>
 #endif
@@ -745,18 +746,11 @@ LIBXS_API_INLINE void ozaki_repair_from_ref_panel(GEMM_REAL_TYPE* c, const GEMM_
   GEMM_INT_TYPE jb, ib;
   for (jb = 0; jb < N; jb += BLOCK_N) {
     for (ib = 0; ib < M; ib += BLOCK_M) {
-      const GEMM_INT_TYPE ibi = ib / BLOCK_M;
-      const GEMM_INT_TYPE jbi = jb / BLOCK_N;
+      const GEMM_INT_TYPE ibi = ib / BLOCK_M, jbi = jb / BLOCK_N;
       const GEMM_INT_TYPE iblk = LIBXS_MIN(BLOCK_M, M - ib);
       const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
-      const GEMM_REAL_TYPE* ref_blk = ref_panel + (jbi * nblk_m + ibi) * BLOCK_M * BLOCK_N;
-      GEMM_REAL_TYPE* cb = c + jb * ldcv + ib;
-      GEMM_INT_TYPE nj, mi;
-      for (nj = 0; nj < jblk; ++nj) {
-        for (mi = 0; mi < iblk; ++mi) {
-          cb[mi + nj * ldcv] = ref_blk[mi + nj * BLOCK_M];
-        }
-      }
+      const GEMM_REAL_TYPE *const ref_blk = ref_panel + (jbi * nblk_m + ibi) * BLOCK_M * BLOCK_N;
+      libxs_matcopy(c + jb * ldcv + ib, ref_blk, sizeof(GEMM_REAL_TYPE), iblk, jblk, BLOCK_M, ldcv);
     }
   }
 }
