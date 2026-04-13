@@ -590,8 +590,8 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
   double* expa_fp = NULL;
   double* expb_fp = NULL;
   GEMM_REAL_TYPE* ref_panel = NULL;
-  libxs_matdiff_t tdiff[256];
-  ozaki_rsq_acc_t trsq[256];
+  libxs_matdiff_t tdiff[OZAKI_MAX_NTHREADS];
+  ozaki_rsq_acc_t trsq[OZAKI_MAX_NTHREADS];
   GEMM_PROFILE_DECL;
   int nthreads = 1;
   int i, j;
@@ -627,6 +627,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
 # pragma omp single
     nthreads = omp_get_num_threads();
 #endif
+    LIBXS_ASSERT(tid < OZAKI_MAX_NTHREADS);
     if (NULL != diff) {
       libxs_matdiff_clear(&tdiff[tid]);
       trsq[tid].ss_res = trsq[tid].ss_tot = 0;

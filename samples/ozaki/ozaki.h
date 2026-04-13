@@ -27,6 +27,10 @@
 #define OZ_BIAS_PLUS_MANT (OZ_EXP_BIAS + OZ_MANT_BITS)
 #define OZ_EXP_MASK (2U * OZ_EXP_BIAS + 1U)
 
+#if !defined(OZAKI_MAX_NTHREADS)
+# define OZAKI_MAX_NTHREADS 2048
+#endif
+
 #if !defined(BLOCK_M)
 # define BLOCK_M 16
 #endif
