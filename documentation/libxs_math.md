@@ -15,6 +15,8 @@ typedef struct libxs_matdiff_t {
   double l2_abs, l2_rel, rsq;   /* L2-norm and R-squared */
   double l1_ref, min_ref, max_ref, avg_ref, var_ref;  /* reference stats */
   double l1_tst, min_tst, max_tst, avg_tst, var_tst;  /* test stats */
+  double diag_min_ref, diag_max_ref;                  /* diagonal ref */
+  double diag_min_tst, diag_max_tst;                  /* diagonal tst */
   double v_ref, v_tst;          /* values at location of max diff */
   int m, n, i, r;               /* location and reduction count */
 } libxs_matdiff_t;
@@ -48,6 +50,12 @@ void libxs_matdiff_clear(libxs_matdiff_t* info);
 ```
 
 Thread-safe reduction (max) of matdiff results. Initialize `output` with `libxs_matdiff_clear` before the first reduction.
+
+```C
+int libxs_matdiff_posdef(const libxs_matdiff_t* info);
+```
+
+Necessary condition for positive definiteness: returns non-zero if all diagonal elements of the test-side matrix are positive (`diag_min_tst > 0`). For single-matrix info (`ref=NULL`), the matrix is on the test-side after the internal swap.
 
 ## Number Theory
 
