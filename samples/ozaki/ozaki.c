@@ -45,7 +45,7 @@ LIBXS_API_INTERN void gemm_atexit(void)
   if (0 != once) return;
   once = 1;
   if (0 != ozaki_verbose && 0 < gemm_diff.r) {
-    print_diff(stderr, ozaki_stat, &gemm_diff);
+    print_diff(stderr, GEMM_LABEL, ozaki_stat, &gemm_diff);
   }
   if (NULL != ozaki_hist) {
     const char* const kind = GEMM_IS_DOUBLE ? "DP" : "SP";
@@ -263,7 +263,7 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
   if (0 != run_ozaki) {
 #if defined(__LIBXSTREAM)
     if (NULL != ozaki_ocl_handle) {
-      OZAKI_GEMM_WRAPPER(gemm_oz_ocl_diff)
+      OZAKI_GEMM_WRAPPER(gemm_oz_ocl_diff, GEMM_LABEL)
     }
     else
 #endif

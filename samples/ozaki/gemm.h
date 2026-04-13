@@ -22,6 +22,14 @@
 #define GEMM_ISDOUBLE_double 1
 #define GEMM_ISDOUBLE_float 0
 #define GEMM_IS_DOUBLE LIBXS_CONCATENATE(GEMM_ISDOUBLE_, GEMM_REAL_TYPE)
+/* Print labels for real and complex GEMM */
+#if GEMM_IS_DOUBLE
+# define GEMM_LABEL  "DGEMM"
+# define ZGEMM_LABEL "ZGEMM"
+#else
+# define GEMM_LABEL  "SGEMM"
+# define ZGEMM_LABEL "CGEMM"
+#endif
 /* GEMM symbol (dgemm_ for double, sgemm_ for float) */
 #if !defined(GEMM)
 # define GEMM LIBXS_FSYMBOL(LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm))
@@ -63,8 +71,8 @@ LIBXS_API_INTERN void GEMM_REAL(GEMM_ARGDECL);
 
 /** Print GEMM arguments. */
 LIBXS_API void print_gemm(FILE* ostream, int compact, GEMM_ARGDECL);
-/** Print statistics. */
-LIBXS_API void print_diff(FILE* ostream, int detail, const libxs_matdiff_t* diff);
+/** Print statistics (label = "DGEMM", "ZGEMM", etc.). */
+LIBXS_API void print_diff(FILE* ostream, const char* label, int detail, const libxs_matdiff_t* diff);
 
 /** Ozaki settings stored in MHD extension (optional). */
 typedef struct gemm_mhd_settings_t {

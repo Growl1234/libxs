@@ -117,7 +117,7 @@
  * then handle verbose output, diff accumulation, and matrix dumps.
  * DIFF_FN is the _diff kernel (gemm_oz1_diff or gemm_oz2_diff).
  */
-#define OZAKI_GEMM_WRAPPER(DIFF_FN) \
+#define OZAKI_GEMM_WRAPPER(DIFF_FN, LABEL) \
   if (0 == ozaki_verbose) { \
     DIFF_FN(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, 0, NULL); \
   } \
@@ -134,16 +134,16 @@
     if (1 < ozaki_verbose || 0 > ozaki_verbose) { \
       const int nth = (0 < ozaki_verbose ? ozaki_verbose : 1); \
       if (0 == (diff.r % nth)) { \
-        if (0 <= ozaki_stat) print_diff(stderr, 0 /*detail*/, &call_diff); \
+        if (0 <= ozaki_stat) print_diff(stderr, LABEL, 0 /*detail*/, &call_diff); \
         else { \
           const int id = (1 < libxs_nranks() ? libxs_nrank() : libxs_pid()); \
-          fprintf(stderr, "GEMM [%i.%i]: ", id, diff.r); \
+          fprintf(stderr, "%s [%i.%i]: ", LABEL, id, diff.r); \
           print_gemm(stderr, LIBXS_ABS(ozaki_stat), transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc); \
         } \
       } \
     } \
     if (ozaki_diff_exceeds(&call_diff) || -1 > ozaki_verbose) { \
-      print_diff(stderr, 0 /*detail*/, &call_diff); \
+      print_diff(stderr, LABEL, 0 /*detail*/, &call_diff); \
       if (0 != gemm_dump_inhibit) { \
         gemm_dump_inhibit = 2; \
       } \

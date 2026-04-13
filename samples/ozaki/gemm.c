@@ -219,7 +219,7 @@ int main(int argc, char* argv[])
       }
       if (EXIT_SUCCESS == result) {
         diff.r = nrepeat;
-        print_diff(stdout, 0 /*detail*/, &diff);
+        print_diff(stdout, (0 != complex_input ? ZGEMM_LABEL : GEMM_LABEL), 0 /*detail*/, &diff);
       }
     }
     else { /* fallback: checksum only (no reference GEMM available) */

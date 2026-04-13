@@ -1000,7 +1000,7 @@ LIBXS_API void gemm_oz2(const char* transa, const char* transb, const GEMM_INT_T
   const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda, const GEMM_REAL_TYPE* b,
   const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc)
 {
-  OZAKI_GEMM_WRAPPER(gemm_oz2_diff)
+  OZAKI_GEMM_WRAPPER(gemm_oz2_diff, GEMM_LABEL)
 }
 
 
