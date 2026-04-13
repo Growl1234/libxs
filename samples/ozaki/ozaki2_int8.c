@@ -969,6 +969,9 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
     for (i = 0; i < nthreads; ++i) {
       libxs_matdiff_reduce(diff, &tdiff[i]);
     }
+    if (NULL != ref_panel && ozaki_diff_exceeds(diff)) {
+      ozaki_repair_from_ref_panel(c, ref_panel, M, N, ldcv, nblk_m);
+    }
   }
   libxs_free(a_res);
   libxs_free(b_res);

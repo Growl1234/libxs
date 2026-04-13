@@ -108,9 +108,10 @@ LIBXS_API_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb, c
   libxs_matdiff_t* diff)
 {
   GEMM_REAL_TYPE* c_ref = NULL;
+  size_t c_size = 0;
   /* Save C for reference comparison (before OpenCL modifies it) */
   if (NULL != diff && 0 == (diff_stat % 3)) {
-    const size_t c_size = (size_t)*ldc * (size_t)*n * sizeof(GEMM_REAL_TYPE);
+    c_size = (size_t)*ldc * (size_t)*n * sizeof(GEMM_REAL_TYPE);
     c_ref = (GEMM_REAL_TYPE*)libxs_malloc(gemm_pool, c_size, 0);
     if (NULL != c_ref) memcpy(c_ref, c, c_size);
   }
@@ -126,6 +127,7 @@ LIBXS_API_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb, c
       GEMM_REAL(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c_ref, ldc);
     }
     libxs_matdiff(diff, LIBXS_DATATYPE(GEMM_REAL_TYPE), *m, *n, c_ref, c, ldc, ldc);
+    if (ozaki_diff_exceeds(diff)) memcpy(c, c_ref, c_size);
     libxs_free(c_ref);
   }
 }

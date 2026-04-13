@@ -137,12 +137,7 @@
         } \
       } \
     } \
-    if (call_diff.rsq < ozaki_rsq || -1 > ozaki_verbose || \
-      (1 == ozaki_idx && ozaki_eps < call_diff.linf_abs) || \
-      (2 == ozaki_idx && ozaki_eps < call_diff.linf_rel) || \
-      (3 == ozaki_idx && ozaki_eps < call_diff.l2_rel) || \
-      ozaki_eps < libxs_matdiff_epsilon(&call_diff)) \
-    { \
+    if (ozaki_diff_exceeds(&call_diff) || -1 > ozaki_verbose) { \
       print_diff(stderr, 0 /*detail*/, &call_diff); \
       if (0 != gemm_dump_inhibit) { \
         gemm_dump_inhibit = 2; \
@@ -720,6 +715,17 @@ LIBXS_API_INLINE void ozaki_store_block_pair(GEMM_REAL_TYPE* ref_blk, GEMM_REAL_
 }
 
 
+/** Check whether a per-call diff exceeds configured thresholds. */
+LIBXS_API_INLINE int ozaki_diff_exceeds(const libxs_matdiff_t* diff)
+{
+  return (NULL != diff &&
+    (diff->rsq < ozaki_rsq ||
+    (1 == ozaki_idx && ozaki_eps < diff->linf_abs) ||
+    (2 == ozaki_idx && ozaki_eps < diff->linf_rel) ||
+    (3 == ozaki_idx && ozaki_eps < diff->l2_rel) ||
+    ozaki_eps < libxs_matdiff_epsilon(diff)));
+}
+
 /** Compute matrix diff for one block and reduce into accumulator. */
 LIBXS_API_INLINE void ozaki_accumulate_block_diff(libxs_matdiff_t* acc, const GEMM_REAL_TYPE* ref_blk,
   const GEMM_REAL_TYPE* tst_blk, GEMM_INT_TYPE bm, GEMM_INT_TYPE bn, GEMM_INT_TYPE ld_ref, GEMM_INT_TYPE ld_tst)
@@ -728,6 +734,30 @@ LIBXS_API_INLINE void ozaki_accumulate_block_diff(libxs_matdiff_t* acc, const GE
   const int ild_ref = (int)ld_ref, ild_tst = (int)ld_tst;
   if (EXIT_SUCCESS == libxs_matdiff(&block_diff, LIBXS_DATATYPE(GEMM_REAL_TYPE), bm, bn, ref_blk, tst_blk, &ild_ref, &ild_tst)) {
     libxs_matdiff_reduce(acc, &block_diff);
+  }
+}
+
+
+/** Copy reference panel (BLOCK_M leading dim) back into C (ldcv leading dim). */
+LIBXS_API_INLINE void ozaki_repair_from_ref_panel(GEMM_REAL_TYPE* c, const GEMM_REAL_TYPE* ref_panel,
+  GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE ldcv, GEMM_INT_TYPE nblk_m)
+{
+  GEMM_INT_TYPE jb, ib;
+  for (jb = 0; jb < N; jb += BLOCK_N) {
+    for (ib = 0; ib < M; ib += BLOCK_M) {
+      const GEMM_INT_TYPE ibi = ib / BLOCK_M;
+      const GEMM_INT_TYPE jbi = jb / BLOCK_N;
+      const GEMM_INT_TYPE iblk = LIBXS_MIN(BLOCK_M, M - ib);
+      const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
+      const GEMM_REAL_TYPE* ref_blk = ref_panel + (jbi * nblk_m + ibi) * BLOCK_M * BLOCK_N;
+      GEMM_REAL_TYPE* cb = c + jb * ldcv + ib;
+      GEMM_INT_TYPE nj, mi;
+      for (nj = 0; nj < jblk; ++nj) {
+        for (mi = 0; mi < iblk; ++mi) {
+          cb[mi + nj * ldcv] = ref_blk[mi + nj * BLOCK_M];
+        }
+      }
+    }
   }
 }
 
