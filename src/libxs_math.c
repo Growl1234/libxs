@@ -498,9 +498,7 @@ LIBXS_API void libxs_matdiff_reduce(libxs_matdiff_t* output, const libxs_matdiff
       output->n = input->n;
       output->i = output->r;
     }
-    else if (output->linf_abs <= input->linf_abs
-          || output->linf_rel <= input->linf_rel)
-    {
+    else if (output->linf_abs <= input->linf_abs) {
       output->v_ref = input->v_ref;
       output->v_tst = input->v_tst;
       output->m = input->m;
