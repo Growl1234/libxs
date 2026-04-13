@@ -35,6 +35,10 @@ for (ii = 0; ii < nn; ++ii) {
     /* minimum/maximum of reference set */
     if (ri < info->min_ref) info->min_ref = ri;
     if (ri > info->max_ref) info->max_ref = ri;
+    if (j == i) { /* diagonal of reference */
+      if (ri < info->diag_min_ref) info->diag_min_ref = ri;
+      if (ri > info->diag_max_ref) info->diag_max_ref = ri;
+    }
 
     if (LIBXS_NOTNAN(ti) && (pos_inf > ta || ti == ri)) {
       const double di = ((NULL != real_tst && ri != ti) ? LIBXS_DELTA(ri, ti) : 0);
@@ -43,6 +47,10 @@ for (ii = 0; ii < nn; ++ii) {
       /* minimum/maximum of test set */
       if (ti < info->min_tst) info->min_tst = ti;
       if (ti > info->max_tst) info->max_tst = ti;
+      if (j == i) { /* diagonal of test */
+        if (ti < info->diag_min_tst) info->diag_min_tst = ti;
+        if (ti > info->diag_max_tst) info->diag_max_tst = ti;
+      }
 
       /* maximum absolute error and location */
       if (info->linf_abs < di) {

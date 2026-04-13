@@ -132,6 +132,9 @@
           !> Statistics: sum/l1, min, max, avg, variance.
           REAL(C_DOUBLE) :: l1_ref, min_ref, max_ref, avg_ref, var_ref
           REAL(C_DOUBLE) :: l1_tst, min_tst, max_tst, avg_tst, var_tst
+          !> Diagonal statistics: min and max of diagonal elements.
+          REAL(C_DOUBLE) :: diag_min_ref, diag_max_ref
+          REAL(C_DOUBLE) :: diag_min_tst, diag_max_tst
           !> Values(v_ref, v_tst) at location of largest linf_abs.
           REAL(C_DOUBLE) :: v_ref, v_tst
           !> Location (m, n) and reduction index (i, r).

@@ -261,14 +261,14 @@ LIBXS_API int libxs_matdiff(libxs_matdiff_t* info,
         if (1 == result_nan) {
           info->l1_tst = info->var_tst = pos_inf;
           info->avg_tst = /*NaN*/info->v_tst;
-          info->min_tst = +pos_inf;
-          info->max_tst = -pos_inf;
+          info->min_tst = info->diag_min_tst = +pos_inf;
+          info->max_tst = info->diag_max_tst = -pos_inf;
         }
         else {
           info->l1_ref = info->var_ref = pos_inf;
           info->avg_ref = /*NaN*/info->v_ref;
-          info->min_ref = +pos_inf;
-          info->max_ref = -pos_inf;
+          info->min_ref = info->diag_min_ref = +pos_inf;
+          info->max_ref = info->diag_max_ref = -pos_inf;
         }
       }
       if (1 == n) LIBXS_ISWAP(info->m, info->n);
@@ -277,6 +277,10 @@ LIBXS_API int libxs_matdiff(libxs_matdiff_t* info,
         info->min_ref = +pos_inf; /* sentinel: min > max marks one-sided */
         info->max_tst = info->max_ref;
         info->max_ref = -pos_inf;
+        info->diag_min_tst = info->diag_min_ref;
+        info->diag_min_ref = +pos_inf;
+        info->diag_max_tst = info->diag_max_ref;
+        info->diag_max_ref = -pos_inf;
         info->avg_tst = info->avg_ref;
         info->avg_ref = 0;
         info->var_tst = info->var_ref;
@@ -410,12 +414,16 @@ LIBXS_API int libxs_matdiff_combine(libxs_matdiff_t* output, const libxs_matdiff
       tmp.max_ref = output->max_tst;
       tmp.avg_ref = output->avg_tst;
       tmp.var_ref = output->var_tst;
+      tmp.diag_min_ref = output->diag_min_tst;
+      tmp.diag_max_ref = output->diag_max_tst;
       /* test side: adopt tst-stats from input (rhs) */
       tmp.l1_tst  = input->l1_tst;
       tmp.min_tst = input->min_tst;
       tmp.max_tst = input->max_tst;
       tmp.avg_tst = input->avg_tst;
       tmp.var_tst = input->var_tst;
+      tmp.diag_min_tst = input->diag_min_tst;
+      tmp.diag_max_tst = input->diag_max_tst;
       /* values behind the linf_abs estimate (mean shift) */
       tmp.v_ref = tmp.avg_ref;
       tmp.v_tst = tmp.avg_tst;
@@ -493,6 +501,10 @@ LIBXS_API void libxs_matdiff_reduce(libxs_matdiff_t* output, const libxs_matdiff
     if (output->max_tst <= input->max_tst) output->max_tst = input->max_tst;
     if (output->min_ref >= input->min_ref) output->min_ref = input->min_ref;
     if (output->min_tst >= input->min_tst) output->min_tst = input->min_tst;
+    if (output->diag_max_ref <= input->diag_max_ref) output->diag_max_ref = input->diag_max_ref;
+    if (output->diag_max_tst <= input->diag_max_tst) output->diag_max_tst = input->diag_max_tst;
+    if (output->diag_min_ref >= input->diag_min_ref) output->diag_min_ref = input->diag_min_ref;
+    if (output->diag_min_tst >= input->diag_min_tst) output->diag_min_tst = input->diag_min_tst;
     output->avg_ref = 0.5 * (output->avg_ref + input->avg_ref);
     output->avg_tst = 0.5 * (output->avg_tst + input->avg_tst);
     output->l1_ref += input->l1_ref;
@@ -514,6 +526,8 @@ LIBXS_API void libxs_matdiff_clear(libxs_matdiff_t* info)
     /* initial minimum/maximum of reference/test */
     info->min_ref = info->min_tst = +inf.value;
     info->max_ref = info->max_tst = -inf.value;
+    info->diag_min_ref = info->diag_min_tst = +inf.value;
+    info->diag_max_ref = info->diag_max_tst = -inf.value;
   }
 }
 

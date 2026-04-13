@@ -26,6 +26,8 @@ LIBXS_EXTERN_C typedef struct libxs_matdiff_t {
   double l1_ref, min_ref, max_ref, avg_ref, var_ref;
   /** Statistics: sum/l1, min., max., arith. avg., and variance. */
   double l1_tst, min_tst, max_tst, avg_tst, var_tst;
+  /** Diagonal statistics: min and max of diagonal elements. */
+  double diag_min_ref, diag_max_ref, diag_min_tst, diag_max_tst;
   /* Values(v_ref, v_tst) and location(m, n) of largest linf_abs. */
   double v_ref, v_tst;
   /**
@@ -78,6 +80,18 @@ LIBXS_API int libxs_matdiff_combine(libxs_matdiff_t* output, const libxs_matdiff
 LIBXS_API void libxs_matdiff_reduce(libxs_matdiff_t* output, const libxs_matdiff_t* input);
 /** Clears the given info-structure, e.g., for the initial reduction-value (libxs_matdiff_reduce). */
 LIBXS_API void libxs_matdiff_clear(libxs_matdiff_t* info);
+
+/**
+ * Necessary condition for positive definiteness: all diagonal elements are positive.
+ * Checks the test-side diagonal (tst); for single-matrix info (ref=NULL) the matrix
+ * is on the tst-side after the internal swap. Returns non-zero if the condition holds.
+ */
+LIBXS_API_INLINE int libxs_matdiff_posdef(const libxs_matdiff_t* info)
+{
+  return (NULL != info
+    && info->diag_min_tst <= info->diag_max_tst
+    && 0 < info->diag_min_tst);
+}
 
 /** Greatest common divisor (corner case: the GCD of 0 and 0 is 1). */
 LIBXS_API size_t libxs_gcd(size_t a, size_t b);
