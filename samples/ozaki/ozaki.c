@@ -260,6 +260,10 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
 
   gemm_init();
 
+  /* Quick-return for degenerate dimensions (BLAS spec: valid no-op).
+   * Some BLAS implementations reject lda=0 even when m*n*k=0. */
+  if (*m <= 0 || *n <= 0 || *k <= 0) return;
+
   /* Bypass Ozaki: fall through to original BLAS.
    * Used when the reference ZGEMM may internally call sgemm_,
    * which --wrap redirects back into GEMM_WRAP. Without bypass,
