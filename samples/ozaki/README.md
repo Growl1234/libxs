@@ -141,6 +141,7 @@ make ECFLAGS="-DBLOCK_K=32 -DBATCH_K=2" dgemm-wrap.x
 | `OZAKI_THRESHOLD` | 12 | Arithmetic intensity threshold. Ozaki is bypassed when flops/(bytes x threshold) < 1. Set to 0 to always apply Ozaki. Debug builds default to 0. |
 | `OZAKI_VERBOSE` | 0 | 0 = silent; 1 = print accumulated statistics at exit; *N* = print every *N*th GEMM call. Auto-set to 1 when `OZAKI_EPS` or `OZAKI_RSQ` is set. |
 | `OZAKI_STAT` | 0 | Track C-matrix (0), A-matrix representation (1), or B-matrix representation (2). |
+| `OZAKI_DUMP` | 0 | Dump A/B matrices as MHD-files at the given call-count (0 = disabled). |
 | `OZAKI_EPS` | inf | Dump A/B matrices as MHD-files when the epsilon error exceeds the given threshold. |
 | `OZAKI_RSQ` | 0 | Dump A/B matrices as MHD-files when RSQ drops below the given threshold; the threshold is updated after each dump. |
 | `OZAKI_EXIT` | 1 | Exit with failure after dumping matrices on accuracy violation (eps/rsq threshold exceeded). Set to 0 to continue execution. |

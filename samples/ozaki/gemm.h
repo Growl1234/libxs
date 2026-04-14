@@ -60,7 +60,7 @@
 #define gemm_mhd_write LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_mhd_write)
 
 /* Size of the serialized settings block */
-#define GEMM_MHD_SETTINGS_SIZE (5 * (int)sizeof(int) + 2 * (int)sizeof(double))
+#define GEMM_MHD_SETTINGS_SIZE (5 * (int)sizeof(int))
 
 /** Real GEMM entry point (dgemm_ or sgemm_). */
 LIBXS_API void GEMM(GEMM_ARGDECL);
@@ -78,7 +78,6 @@ LIBXS_API void print_diff(FILE* ostream, const char* label, int detail, const li
 /** Ozaki settings stored in MHD extension (optional). */
 typedef struct gemm_mhd_settings_t {
   int ozaki, ozn, ozflags, oztrim, ldc;
-  double eps, rsq;
 } gemm_mhd_settings_t;
 
 /**
@@ -139,10 +138,6 @@ LIBXS_API_INLINE int gemm_mhd_read(const char* filename, GEMM_INT_TYPE* rows, GE
         memcpy(&settings->oztrim, p, sizeof(int));
         p += sizeof(int);
         memcpy(&settings->ldc, p, sizeof(int));
-        p += sizeof(int);
-        memcpy(&settings->eps, p, sizeof(double));
-        p += sizeof(double);
-        memcpy(&settings->rsq, p, sizeof(double));
       }
       else memset(settings, 0, sizeof(*settings));
     }
@@ -197,10 +192,6 @@ LIBXS_API_INLINE int gemm_mhd_write(const char* filename, const GEMM_REAL_TYPE* 
     memcpy(p, &settings->oztrim, sizeof(int));
     p += sizeof(int);
     memcpy(p, &settings->ldc, sizeof(int));
-    p += sizeof(int);
-    memcpy(p, &settings->eps, sizeof(double));
-    p += sizeof(double);
-    memcpy(p, &settings->rsq, sizeof(double));
     ext_size += GEMM_MHD_SETTINGS_SIZE;
   }
   {
