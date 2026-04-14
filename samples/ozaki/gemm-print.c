@@ -41,12 +41,12 @@ LIBXS_API void print_diff(FILE* ostream, const char* label, int detail, const li
   const char *const name = ((NULL != label && '\0' != *label) ? label : "GEMM");
   const double epsilon = libxs_matdiff_epsilon(diff);
   if (1E-6 <= epsilon || 0 != detail) {
-    fprintf(ostream, "%s [%i.%i]: linf=%.17g linf_rel=%g l2_rel=%g eps=%g rsq=%g -> %.17g != %.17g\n",
+    fprintf(ostream, "%s[%i.%i]: linf=%.17g linf_rel=%g l2_rel=%g eps=%g rsq=%g -> %.17g != %.17g\n",
       name, diff->r, libxs_rid(), diff->linf_abs, diff->linf_rel, diff->l2_rel, epsilon, diff->rsq,
       diff->v_ref, diff->v_tst);
   }
   else {
-    fprintf(ostream, "%s [%i.%i]: linf=%.17g linf_rel=%g l2_rel=%g eps=%g rsq=%g\n",
+    fprintf(ostream, "%s[%i.%i]: linf=%.17g linf_rel=%g l2_rel=%g eps=%g rsq=%g\n",
       name, diff->r, libxs_rid(), diff->linf_abs, diff->linf_rel, diff->l2_rel, epsilon, diff->rsq);
   }
 }
