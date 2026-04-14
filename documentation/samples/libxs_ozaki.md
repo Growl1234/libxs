@@ -2,18 +2,22 @@
 
 ## Intercepted GEMM
 
-This code sample intercepts all four standard BLAS GEMM routines - DGEMM, SGEMM, ZGEMM, and CGEMM - and only relies on the LAPACK/BLAS interface. Real GEMM calls (DGEMM/SGEMM) are executed via one of two Ozaki low-precision schemes (mantissa slicing or CRT); complex GEMM calls (ZGEMM/CGEMM) are implemented via the 3M (Karatsuba) method using three real GEMM calls each. The wrapper sources are compiled twice (once for `double`, once for `float`), so all four symbols coexist in a single binary.
+This code sample intercepts all four standard BLAS GEMM routines - DGEMM, SGEMM, ZGEMM, and CGEMM - and only relies on the LAPACK/BLAS interface. Real GEMM calls (DGEMM/SGEMM) are executed via one of two Ozaki low-precision schemes (mantissa slicing or CRT); complex GEMM calls (ZGEMM/CGEMM) also leverage the real GEMM implementation. The wrapper sources are compiled twice (once for `double`, once for `float`), so all four symbols coexist in a single binary.
 
 Two link-time variants are built per precision: (1) code which is dynamically linked against LAPACK/BLAS (`dgemm-blas.x`/`sgemm-blas.x`), (2) code which is linked using `--wrap=`*symbol* supported by GNU GCC compatible tool chains (`dgemm-wrap.x`/`sgemm-wrap.x`). Running `test-wrap.sh` exercises three flavors: the two build variants and additionally the first variant using the LD_PRELOAD mechanism (available under Linux). The `test-check.sh` script validates both Ozaki schemes for correctness, and `test-mhd.sh` tests MHD file-based GEMM input pairs.
 
 Both the static wrapper library (`libwrap.a`) and the shared wrapper library (`libwrap.so`) are built by default. The static library is suitable for applications with static linkage against a LAPACK/BLAS library (`-Wl,--wrap=dgemm_ -Wl,--wrap=sgemm_ -Wl,--wrap=zgemm_ -Wl,--wrap=cgemm_`). The shared library is used via `LD_PRELOAD`:
 
 ```bash
-cd /path/to/libxs
-make -j $(nproc)
+echo "A common directory, e.g., $HOME"
+cd $HOME && git clone https://github.com/hfp/libxs.git
+cd libxs && make GNU=1 -j $(nproc)
 
-cd samples/ozaki
-make
+cd $HOME && git clone https://github.com/hfp/libxstream.git
+cd libxstream && make GNU=1 -j $(nproc)
+
+cd $HOME/libxs/samples/ozaki
+make GNU=1 -j $(nproc)
 
 LD_PRELOAD=/path/to/libwrap.so ./application
 ```
@@ -34,7 +38,7 @@ OpenMP parallelizes all three phases of each K-batch: Phase 1 preprocesses A pan
 
 An arithmetic intensity threshold (`OZAKI_THRESHOLD`, default 12) controls whether the Ozaki scheme is applied. GEMM calls with insufficient arithmetic intensity (flops / (bytes x threshold) < 1) fall through to the original BLAS. Setting the threshold to zero forces all GEMM calls through the Ozaki path.
 
-When built with [LIBXSTREAM](https://github.com/hfp/libxstream) support (sibling `libxstream` repository detected at build time), an optional OpenCL/GPU path is available for both Scheme 1 and Scheme 2 (see `OZAKI_OCL` environment variable). The GPU bridge (`ozaki_ocl.c`) wraps LIBXSTREAM behind an opaque handle so that the CPU code has no OpenCL dependency. At runtime, the GPU path is enabled by default (`OZAKI_OCL=1`) and can be disabled with `OZAKI_OCL=0` to fall back to the CPU implementation. The [LIBXSTREAM Ozaki sample](https://github.com/hfp/libxstream/tree/main/samples/ozaki) documents additional GPU-specific environment variables and features (XMX/DPAS acceleration, TinyTC kernels, preprocessing cache, kernel profiling). The CPU-only code performs the low-precision conversion on-the-fly and only requires a reasonable stack size to buffer small matrix blocks.
+When built with [LIBXSTREAM](https://github.com/hfp/libxstream) support (sibling `libxstream` repository detected at build time), an optional OpenCL/GPU path is available for both Scheme 1 and Scheme 2 (see `OZAKI_OCL` environment variable). The GPU bridge (`ozaki_ocl.c`) wraps LIBXSTREAM behind an opaque handle so that the CPU code has no OpenCL dependency. At runtime, the GPU path is disabled by default (`OZAKI_OCL=0`) and can be enabled with `OZAKI_OCL=1`. The [LIBXSTREAM Ozaki sample](https://github.com/hfp/libxstream/tree/main/samples/ozaki) documents additional GPU-specific environment variables and features (XMX/DPAS acceleration, TinyTC kernels, preprocessing cache, kernel profiling). The CPU-only code performs the low-precision conversion on-the-fly and only requires a reasonable stack size to buffer small matrix blocks.
 
 ## Scheme 1 - Mantissa Slicing
 
@@ -92,23 +96,17 @@ Example:
 OZAKI=2 ./dgemm-wrap.x 256                        # use CRT scheme (u8 default)
 ```
 
-## Complex GEMM (3M Method)
+## Complex GEMM
 
-Intercepted ZGEMM (double-complex) and CGEMM (single-complex) calls are implemented via the Karatsuba 3M method. Each complex GEMM is decomposed into three real GEMM calls:
+Intercepted ZGEMM (double-complex) and CGEMM (single-complex) calls leverage the real GEMM implementation. The real GEMM flows through the same Ozaki wrapper and is accelerated accordingly. When built with LIBXSTREAM and if GPU support is available, all intermediates stay on device to reduce transfers.
 
-- P1 = Re(A) * Re(B)
-- P2 = Im(A) * Im(B)
-- P3 = (Re(A) + Im(A)) * (Re(B) + Im(B))
+The complex dispatch can be adjusted via `OZAKI_COMPLEX`:
 
-The real and imaginary parts of the product are recovered as Re(A*B) = P1 - P2 and Im(A*B) = P3 - P1 - P2. Complex alpha/beta scaling is applied in a final pass. The three real GEMM calls flow through the same wrapper, so they are accelerated by the Ozaki scheme as well. When built with LIBXSTREAM and GPU support is available, the 3M method can keep intermediates on-device to reduce transfers.
+- `OZAKI_COMPLEX=0` passes complex GEMM calls through to the original BLAS.
+- `OZAKI_COMPLEX=1` uses the CPU path (mapped to real GEMMs and dispatched through the Ozaki wrapper).
+- `OZAKI_COMPLEX=2` uses the GPU path (intermediate data stays on device), falling back to CPU on failure.
 
-The 3M dispatch is controlled independently from the real GEMM scheme via `OZAKI_3M`:
-
-- `OZAKI_3M=0` passes complex GEMM calls through to the original BLAS.
-- `OZAKI_3M=1` uses the CPU-based 3M path (three real sub-GEMMs, each dispatched through the Ozaki real GEMM wrapper).
-- `OZAKI_3M=2` uses the GPU-native 3M path (all intermediates on device), falling back to CPU 3M on failure.
-
-By default, `OZAKI_3M` follows `OZAKI`: if `OZAKI=0`, complex GEMMs also pass through; otherwise GPU 3M is preferred (`OZAKI_3M=2`).
+By default, `OZAKI_COMPLEX` follows `OZAKI`: if `OZAKI=0`, complex GEMMs also pass through; otherwise the GPU path is preferred (`OZAKI_COMPLEX=2`).
 
 ## Compile-Time Parameters
 
@@ -132,7 +130,7 @@ make ECFLAGS="-DBLOCK_K=32 -DBATCH_K=2" dgemm-wrap.x
 | Variable | Default | Description |
 |----------|:-------:|-------------|
 | `OZAKI` | 1 | Scheme selector for real GEMM: 0 = bypass (call original BLAS directly), 1 = Scheme 1 (mantissa slicing, int8), 2 = Scheme 2 (CRT). |
-| `OZAKI_3M` | *auto* | Complex GEMM (ZGEMM/CGEMM) dispatch: 0 = pass through to original BLAS, 1 = CPU 3M (Karatsuba), 2 = GPU 3M (all on device, CPU fallback). Default: 0 if `OZAKI=0`, else 2. |
+| `OZAKI_COMPLEX` | *auto* | Complex GEMM (ZGEMM/CGEMM) dispatch: 0 = pass through to original BLAS, 1 = CPU (mapped to real GEMM), 2 = GPU (all on device, CPU fallback). Default: 0 if `OZAKI=0`, else 2. |
 | `OZAKI_MAXK` | 32768 | Max K elements per preprocessing pass (K-group size). 0 = no grouping (full K in one pass). Smaller values narrow the exponent scope per group (better local precision, more FP accumulation steps). Larger values reduce accumulation rounding but widen the exponent scope. Applies to both CPU and GPU, all schemes. |
 | `OZAKI_N` | *per scheme* | Number of decomposition units: slices for Scheme 1 (double: 1..16, default 8; float: 1..8, default 4) or moduli for Scheme 2 (double: 1..20, default 16; float: 1..12, default 9). |
 | `OZAKI_I8` | 0 | Scheme 2 only: use signed i8 residues (moduli <= 128) instead of the default unsigned u8. Compile-time for CPU (`-DOZAKI_I8=1`), runtime for GPU. |
@@ -141,12 +139,13 @@ make ECFLAGS="-DBLOCK_K=32 -DBATCH_K=2" dgemm-wrap.x
 | `OZAKI_THRESHOLD` | 12 | Arithmetic intensity threshold. Ozaki is bypassed when flops/(bytes x threshold) < 1. Set to 0 to always apply Ozaki. Debug builds default to 0. |
 | `OZAKI_VERBOSE` | 0 | 0 = silent; 1 = print accumulated statistics at exit; *N* = print every *N*th GEMM call. Auto-set to 1 when `OZAKI_EPS` or `OZAKI_RSQ` is set. |
 | `OZAKI_STAT` | 0 | Track C-matrix (0), A-matrix representation (1), or B-matrix representation (2). |
+| `OZAKI_DUMP` | 0 | Dump A/B matrices as MHD-files at the given call-count (0 = disabled). |
 | `OZAKI_EPS` | inf | Dump A/B matrices as MHD-files when the epsilon error exceeds the given threshold. |
 | `OZAKI_RSQ` | 0 | Dump A/B matrices as MHD-files when RSQ drops below the given threshold; the threshold is updated after each dump. |
 | `OZAKI_EXIT` | 1 | Exit with failure after dumping matrices on accuracy violation (eps/rsq threshold exceeded). Set to 0 to continue execution. |
 | `CHECK` | 0 | Accuracy validation against BLAS reference: 0 = disabled, negative = auto-threshold (1e-10 for double, 1e-3 for float), positive = use value as threshold. |
 | `NREPEAT` | 3 | Number of GEMM calls; when > 1 the first call is warmup and excluded from timing. |
-| `OZAKI_OCL` | 1 | Enable (1) or disable (0) the OpenCL/GPU path at runtime. Only effective when built with LIBXSTREAM support. |
+| `OZAKI_OCL` | 0 | Enable (1) or disable (0) the OpenCL/GPU path at runtime. Only effective when built with LIBXSTREAM support. |
 | `OZAKI_TM` | auto | GPU output tile height (multiple of 8). 0 = auto-select. |
 | `OZAKI_TN` | auto | GPU output tile width (multiple of 16). 0 = auto-select. |
 | `OZAKI_GROUPS` | 0 | Scheme 2 only: K-grouping factor (0/1 = disabled). When > 1, that many consecutive K sub-panels share one Garner reconstruction. |
@@ -199,24 +198,6 @@ cgemm-wrap.x  [A.mhd|M [B.mhd|N] [K [TA [TB [ALPHA [BETA [LDA [LDB [LDC]]]]]]]]]
 
 Defaults: M=N=K=257, TA=TB=0, ALPHA=BETA=1.0.
 
-TA and TB select transposition: 0 means 'N' (no transpose), non-zero means 'T' (transpose). The `dgemm-*` and `sgemm-*` drivers call DGEMM or SGEMM respectively. The `zgemm-wrap.x` and `cgemm-wrap.x` drivers call ZGEMM (double-complex) and CGEMM (single-complex) respectively; complex GEMM calls are implemented via the 3M method using three real GEMM calls each.
+TA and TB select transposition: 0 means 'N' (no transpose), non-zero means 'T' (transpose). The `dgemm-*` and `sgemm-*` drivers call DGEMM or SGEMM respectively. The `zgemm-wrap.x` and `cgemm-wrap.x` drivers call ZGEMM (double-complex) and CGEMM (single-complex) respectively; complex GEMM calls leverage the real GEMM implementation.
 
 If the first argument is 0, the remaining arguments are treated as MHD filenames for the A and B matrices, allowing accuracy issues to be analyzed outside of an application.
-
-## Source Layout
-
-| File | Purpose |
-|------|----------|
-| `ozaki.h` | Shared header: block sizes, slice and prime constants, IEEE-754 decomposition helpers, flag definitions, and inline utility functions used by both schemes. |
-| `gemm.h` | Common header: type macros, precision-specific name redirects, function prototypes for all four GEMM flavors. |
-| `ozaki.c` | Wrapper/orchestration for real GEMM: initialization, environment handling, threshold check, fallback dispatch, and global state management. Compiled twice (double + float). |
-| `ozaki1_int8.c` | Scheme 1 computational kernel: decomposes IEEE-754 mantissa into 7-bit int8 slices for low-precision dot products. Uses function-pointer dispatch for VNNI vs scalar int8 dot product. Compiled twice (double + float). |
-| `ozaki2_int8.c` | Scheme 2 computational kernel: CRT-based modular arithmetic using small pairwise coprime moduli. Barrett reduction, Garner's algorithm with grouped Horner reconstruction. Compiled twice (double + float). |
-| `wrap3m.c` | Complex GEMM 3M wrapper: deinterleaves complex matrices, issues 3 real GEMM calls (Karatsuba), recombines. Compiled twice (double + float). |
-| `ozaki_ocl.c` | OpenCL bridge: wraps LIBXSTREAM behind an opaque handle. Compiled only when LIBXSTREAM is detected; isolates all OpenCL includes from the rest of the code. |
-| `wrap.c` | Entry points and dlsym fallbacks for the LD_PRELOAD path. |
-| `gemm.c` | Test driver. Compiled as `dgemm-{wrap,blas}.x` (double) and `sgemm-{wrap,blas}.x` (float). |
-| `gemm-print.c` | `print_gemm` and `print_diff` utilities. |
-| `test-wrap.sh` | Integration test: exercises STATIC WRAP, ORIGINAL BLAS, and LD_PRELOAD paths. |
-| `test-check.sh` | Correctness test: runs both Ozaki schemes with `CHECK` validation. |
-| `test-mhd.sh` | MHD file test: runs GEMM on all A/B MHD-file pairs in a directory. |

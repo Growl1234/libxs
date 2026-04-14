@@ -147,17 +147,7 @@ Reconstruct via Garner's algorithm + Horner evaluation
 
 ## Complex GEMM (ZGEMM/CGEMM)
 
-3M (Karatsuba) method — 3 real GEMMs instead of 4:
-
-```
-P1 = Re(A) * Re(B)
-P2 = Im(A) * Im(B)
-P3 = (Re+Im)(A) * (Re+Im)(B)
-
-Re(C) = P1 - P2,  Im(C) = P3 - P1 - P2
-```
-
-Each real GEMM goes through Ozaki wrapper
+The complex GEMM leverages the real GEMM and produces both real and imaginary parts. The real GEMM goes through the Ozaki wrapper.
 
 ---
 
@@ -166,8 +156,8 @@ Each real GEMM goes through Ozaki wrapper
 If built with LIBXSTREAM (OpenCL support):
 
 ```bash
-export OZAKI_OCL=1          # Enable GPU (default)
-export OZAKI_OCL=0          # Force CPU fallback
+export OZAKI_OCL=1          # Enable GPU
+export OZAKI_OCL=0          # CPU only (default)
 export OZAKI_GROUPS=4       # K-grouping for CRT (large matrices)
 ```
 
