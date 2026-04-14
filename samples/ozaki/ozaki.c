@@ -307,7 +307,7 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
       if (0 > ozaki_stat && (1 < ozaki_verbose || 0 > ozaki_verbose)) {
         const int nth = (0 < ozaki_verbose ? ozaki_verbose : 1);
         if (0 == (gemm_diff.r % nth)) {
-          const int id = (1 < libxs_nranks() ? libxs_nrank() : libxs_pid());
+          const int id = libxs_rid();
           fprintf(stderr, GEMM_LABEL " [%i.%i]: ", gemm_diff.r, id);
           print_gemm(stderr, 2 /*compact*/, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
         }

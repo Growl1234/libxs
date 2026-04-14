@@ -684,7 +684,7 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
   char fname[64];
   const char* const env_slurm = getenv("SLURM_JOBID");
   const int slurm = (NULL == env_slurm ? -1 : atoi(env_slurm));
-  const int id = (1 < libxs_nranks() ? libxs_nrank() : libxs_pid());
+  const int rid = libxs_rid();
   int result = EXIT_SUCCESS;
   FILE* file;
 
@@ -697,8 +697,8 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
 
   LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
 
-  if (0 > slurm) LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%u-%i-a.mhd", id, gemm_diff.r);
-  else LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%i-%u-%i-a.mhd", slurm, id, gemm_diff.r);
+  if (0 > slurm) LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%u-%i-a.mhd", rid, gemm_diff.r);
+  else LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%i-%u-%i-a.mhd", slurm, rid, gemm_diff.r);
   file = fopen(fname, "rb");
   if (NULL == file) { /* Never overwrite an existing file */
     const int result_a = gemm_mhd_write(fname, a, *m, *k, *lda, *transa, alpha, ncomponents, &settings);
@@ -709,8 +709,8 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
   }
   else fclose(file);
 
-  if (0 > slurm) LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%u-%i-b.mhd", id, gemm_diff.r);
-  else LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%i-%u-%i-b.mhd", slurm, id, gemm_diff.r);
+  if (0 > slurm) LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%u-%i-b.mhd", rid, gemm_diff.r);
+  else LIBXS_SNPRINTF(fname, sizeof(fname), "gemm-%i-%u-%i-b.mhd", slurm, rid, gemm_diff.r);
   file = fopen(fname, "rb");
   if (NULL == file) { /* Never overwrite an existing file */
     const int result_b = gemm_mhd_write(fname, b, *k, *n, *ldb, *transb, beta, ncomponents, &settings);
@@ -722,7 +722,7 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
   else fclose(file);
 
   if (0 < ozaki_verbose) {
-    fprintf(stderr, GEMM_LABEL " [%i.%i]: ", gemm_diff.r, id);
+    fprintf(stderr, GEMM_LABEL " [%i.%i]: ", gemm_diff.r, rid);
     print_gemm(stderr, 2 /*compact*/, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
   }
 
@@ -757,8 +757,7 @@ LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t nc
     if (0 == (call_diff.r % nth)) {
       if (0 <= ozaki_stat) print_diff(stderr, label, 0 /*detail*/, &call_diff);
       else {
-        const int id = (1 < libxs_nranks() ? libxs_nrank() : libxs_pid());
-        fprintf(stderr, "%s [%i.%i]: ", label, call_diff.r, id);
+        fprintf(stderr, "%s [%i.%i]: ", label, call_diff.r, libxs_rid());
         print_gemm(stderr, LIBXS_ABS(ozaki_stat), transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
       }
     }
