@@ -90,8 +90,8 @@ int main(int argc, char* argv[])
       if (2 == ncomp) {
         complex_alpha[0] = scalar[0];
         complex_alpha[1] = scalar[1];
-        complex_input = 1;
       }
+      complex_input = (2 == ncomp);
       file_input |= 0x1;
     }
     if (0 == n) {

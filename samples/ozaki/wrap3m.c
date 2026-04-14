@@ -284,6 +284,7 @@ LIBXS_API_INLINE void zgemm3m_diff(GEMM_ARGDECL,
  */
 LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void ZGEMM_WRAP(GEMM_ARGDECL)
 {
+  gemm_init();
   if (0 != ozaki_3m) {
     OZAKI_GEMM_WRAPPER(zgemm3m_diff, ZGEMM_LABEL, 2)
   }

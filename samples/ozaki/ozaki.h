@@ -154,6 +154,7 @@ LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t nc
 #define ozaki_flags LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_flags)
 #define ozaki_trim LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_trim)
 #define ozaki_stat LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_stat)
+#define ozaki_dump LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_dump)
 #define ozaki_exit LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_exit)
 #define ozaki_idx LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_idx)
 #define ozaki_eps LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_eps)
@@ -161,6 +162,8 @@ LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t nc
 #define ozaki_target_arch LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_tarch)
 #define gemm_oz1 LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz1)
 #define gemm_oz2 LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz2)
+#define gemm_init LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_init)
+#define gemm_threshold LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_threshold)
 #define gemm_dump_inhibit LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_dump_inhibit)
 #define gemm_dump_matrices LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_dump_mhd)
 #define zgemm3m LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm3m)
@@ -252,10 +255,14 @@ LIBXS_APIVAR_PRIVATE(double ozaki_eps);
 LIBXS_APIVAR_PRIVATE(double ozaki_rsq);
 LIBXS_APIVAR_PRIVATE(int ozaki_flags);
 LIBXS_APIVAR_PRIVATE(int ozaki_trim);
+LIBXS_APIVAR_PRIVATE(int ozaki_dump);
 LIBXS_APIVAR_PRIVATE(int ozaki_exit);
 LIBXS_APIVAR_PRIVATE(int ozaki_n);
 LIBXS_APIVAR_PRIVATE(int ozaki_profile);
 LIBXS_APIVAR_PRIVATE(libxs_hist_t* ozaki_hist);
+LIBXS_APIVAR_PRIVATE(int gemm_threshold);
+
+LIBXS_API_INTERN void gemm_init(void);
 
 extern LIBXS_TLS int gemm_dump_inhibit;
 
@@ -685,8 +692,6 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
   settings.ozflags = ozaki_flags;
   settings.oztrim = ozaki_trim;
   settings.ldc = *ldc;
-  settings.eps = ozaki_eps;
-  settings.rsq = ozaki_rsq;
 
   LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
 
@@ -756,7 +761,7 @@ LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t nc
       }
     }
   }
-  if (ozaki_diff_exceeds(&call_diff) || -1 > ozaki_verbose) {
+  if (ozaki_diff_exceeds(&call_diff) || -1 > ozaki_verbose || (0 < ozaki_dump && call_diff.r == ozaki_dump)) {
     print_diff(stderr, label, 0 /*detail*/, &call_diff);
     if (0 != gemm_dump_inhibit) {
       gemm_dump_inhibit = 2;

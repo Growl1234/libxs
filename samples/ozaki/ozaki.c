@@ -28,10 +28,12 @@ LIBXS_APIVAR_PRIVATE_DEF(double ozaki_eps);
 LIBXS_APIVAR_PRIVATE_DEF(double ozaki_rsq);
 LIBXS_APIVAR_PRIVATE_DEF(int ozaki_flags);
 LIBXS_APIVAR_PRIVATE_DEF(int ozaki_trim);
+LIBXS_APIVAR_PRIVATE_DEF(int ozaki_dump);
 LIBXS_APIVAR_PRIVATE_DEF(int ozaki_exit);
 LIBXS_APIVAR_PRIVATE_DEF(int ozaki_n);
 LIBXS_APIVAR_PRIVATE_DEF(int ozaki_profile);
 LIBXS_APIVAR_PRIVATE_DEF(libxs_hist_t* ozaki_hist);
+LIBXS_APIVAR_PRIVATE_DEF(int gemm_threshold);
 LIBXS_TLS int gemm_dump_inhibit;
 #if defined(__LIBXSTREAM)
 LIBXS_APIVAR_PRIVATE_DEF(void* ozaki_ocl_handle);
@@ -127,19 +129,9 @@ LIBXS_API_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb, c
 #endif
 
 
-/** Function gemm_oz1 is called here with the original GEMM as fallback and for comparison. */
-LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const char* transb, const GEMM_INT_TYPE* m,
-  const GEMM_INT_TYPE* n, const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda,
-  const GEMM_REAL_TYPE* b, const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc)
+LIBXS_API_INTERN void gemm_init(void)
 {
   static volatile int gemm_initialized = 0;
-  static int gemm_threshold = 0;
-  int run_ozaki = 0;
-  LIBXS_ASSERT(NULL != lda && NULL != ldb && NULL != ldc);
-  LIBXS_ASSERT(NULL != a && NULL != b && NULL != c);
-  LIBXS_ASSERT(NULL != m && NULL != n && NULL != k);
-  LIBXS_ASSERT(NULL != transa && NULL != transb);
-
   if (0 == gemm_initialized) {
     LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
     if (0 == gemm_initialized) {
@@ -165,6 +157,7 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
           float value;
         } inf = {0x7F800000U};
         const char* const threshold_env = getenv("OZAKI_THRESHOLD");
+        const char* const ozaki_dump_env = getenv("OZAKI_DUMP");
         const char* const ozaki_exit_env = getenv("OZAKI_EXIT");
         const char* const ozaki_flags_env = getenv("OZAKI_FLAGS");
         const char* const ozaki_trim_env = getenv("OZAKI_TRIM");
@@ -199,6 +192,11 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
         }
         else { /* Scheme 1: mantissa slices */
           ozaki_n = LIBXS_CLMP(NULL == ozaki_n_env ? NSLICES_DEFAULT : atoi(ozaki_n_env), 1, MAX_NSLICES);
+        }
+        if (NULL == ozaki_dump_env) ozaki_dump = 0;
+        else {
+          if (0 == ozaki_verbose) ozaki_verbose = 1;
+          ozaki_dump = atoi(ozaki_dump_env);
         }
         if (NULL == ozaki_eps_env) ozaki_eps = inf.value;
         else {
@@ -243,7 +241,21 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
     }
     LIBXS_ATOMIC_RELEASE(&gemm_lock, LIBXS_ATOMIC_LOCKORDER);
   }
-  LIBXS_ASSERT(0 != gemm_initialized);
+}
+
+
+/** Function gemm_oz1 is called here with the original GEMM as fallback and for comparison. */
+LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const char* transb, const GEMM_INT_TYPE* m,
+  const GEMM_INT_TYPE* n, const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda,
+  const GEMM_REAL_TYPE* b, const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc)
+{
+  int run_ozaki = 0;
+  LIBXS_ASSERT(NULL != lda && NULL != ldb && NULL != ldc);
+  LIBXS_ASSERT(NULL != a && NULL != b && NULL != c);
+  LIBXS_ASSERT(NULL != m && NULL != n && NULL != k);
+  LIBXS_ASSERT(NULL != transa && NULL != transb);
+
+  gemm_init();
 
   if (0 != ozaki) { /* consider threshold */
     const size_t size = (size_t)(*m) * (*k) + (*k) * (*n) + (*m) * (*n);
