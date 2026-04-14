@@ -13,18 +13,6 @@
 #include <libxs_cpuid.h>
 #include <libxs_sync.h>
 
-#if !defined(LIBXS_NTHREADS_MAX)
-# if (0 != LIBXS_SYNC)
-#   define LIBXS_NTHREADS_MAX 1024
-# else
-#   define LIBXS_NTHREADS_MAX 1
-# endif
-#endif
-/* relies on LIBXS_NTHREADS_MAX */
-#if !defined(LIBXS_NTHREADS_USE) && 0
-# define LIBXS_NTHREADS_USE
-#endif
-
 #if defined(LIBXS_PLATFORM_AARCH64)
 # if defined(_MSC_VER)
 #   define LIBXS_ARM_ENC16(OP0, OP1, CRN, CRM, OP2) ( \
