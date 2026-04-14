@@ -164,7 +164,6 @@ LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t nc
 #define gemm_oz2 LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz2)
 #define gemm_init LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_init)
 #define gemm_threshold LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_threshold)
-#define gemm_nozaki LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_nozaki)
 #define gemm_dump_inhibit LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_dump_inhibit)
 #define gemm_dump_matrices LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_dump_mhd)
 #define zgemm3m LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm3m)
@@ -265,7 +264,7 @@ LIBXS_APIVAR_PRIVATE(int gemm_threshold);
 
 LIBXS_API_INTERN void gemm_init(void);
 
-extern LIBXS_TLS int gemm_nozaki;
+extern LIBXS_TLS int gemm_nozaki; /* not precision-prefixed: bypass must cover all precisions */
 extern LIBXS_TLS int gemm_dump_inhibit;
 
 #if defined(__LIBXSTREAM)
