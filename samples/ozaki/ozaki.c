@@ -120,14 +120,7 @@ LIBXS_API_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb, c
     ozaki_hist, ozaki_profile);
   /* Reference BLAS and diff comparison */
   if (NULL != c_ref) {
-    if (NULL != gemm_original) {
-      gemm_original(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c_ref, ldc);
-    }
-    else {
-      GEMM_REAL(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c_ref, ldc);
-    }
-    libxs_matdiff(diff, LIBXS_DATATYPE(GEMM_REAL_TYPE), *m, *n, c_ref, c, ldc, ldc);
-    if (ozaki_diff_exceeds(diff)) memcpy(c, c_ref, c_size);
+    ozaki_diff_reference(GEMM_ARGPASS, c_ref, c_size, diff);
     libxs_free(c_ref);
   }
 }
@@ -263,7 +256,7 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
   if (0 != run_ozaki) {
 #if defined(__LIBXSTREAM)
     if (NULL != ozaki_ocl_handle) {
-      OZAKI_GEMM_WRAPPER(gemm_oz_ocl_diff, GEMM_LABEL)
+      OZAKI_GEMM_WRAPPER(gemm_oz_ocl_diff, GEMM_LABEL, 1)
     }
     else
 #endif

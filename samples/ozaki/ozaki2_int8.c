@@ -112,23 +112,6 @@ LIBXS_API_INLINE unsigned int oz2_mod(uint32_t x, int pidx)
 }
 
 
-/**
- * Bounded modular reduction for mixed-radix digits: v mod oz2_moduli[pidx].
- * v must be a Garner digit, i.e. v < max(moduli).
- * u8: max(moduli)=256, min=163, floor(255/163)=1 -> one subtract suffices.
- * i8: max(moduli)=128, min= 59, floor(127/59) =2 -> two subtracts needed.
- */
-LIBXS_API_INLINE unsigned int oz2_mod_digit(unsigned int v, int pidx)
-{
-  const unsigned int p = oz2_moduli[pidx];
-  if (v >= p) v -= p;
-#if defined(OZAKI_I8) && (OZAKI_I8)
-  if (v >= p) v -= p;
-#endif
-  return v;
-}
-
-
 /** Fast 64-bit modular reduction: x mod oz2_moduli[pidx] (table-indexed wrapper). */
 LIBXS_API_INLINE unsigned int oz2_mod64(uint64_t x, int pidx)
 {
@@ -251,118 +234,6 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void oz2_reconstruct_batch_a
 
 
 /**
- * Preprocess rows of A for one (ib, kb) tile.
- * Decomposes each element, finds per-row max exponent, aligns mantissas
- * by right-shifting, reduces mod each modulus, and writes directly into
- * the k-contiguous layout ak[M][P][K] used by dot products.
- * Signs are folded into int8 residues (-p..+p).
- * This avoids a separate transpose pass over an intermediate buffer.
- */
-LIBXS_API_INLINE void oz2_preprocess_rows(const GEMM_REAL_TYPE* a, GEMM_INT_TYPE lda, int ta, GEMM_INT_TYPE M, GEMM_INT_TYPE K,
-  GEMM_INT_TYPE ib, GEMM_INT_TYPE kb, GEMM_INT_TYPE iblk, GEMM_INT_TYPE kblk, int nprimes, int16_t expa_row[BLOCK_M],
-  oz2_res_t ak[BLOCK_M][OZ2_NPRIMES_MAX][BLOCK_K])
-{
-  int16_t elem_exp[BLOCK_M][BLOCK_K];
-  uint64_t elem_mant[BLOCK_M][BLOCK_K];
-  GEMM_INT_TYPE mi, kk;
-
-  /* Pass 1: decompose and track per-row max exponent */
-  for (mi = 0; mi < iblk; ++mi) {
-    const GEMM_INT_TYPE row = ib + mi;
-    int16_t row_max_exp = INT16_MIN;
-    int8_t local_sign[BLOCK_K];
-    int pidx;
-
-    for (kk = 0; kk < kblk; ++kk) {
-      const GEMM_INT_TYPE p = kb + kk;
-      const GEMM_REAL_TYPE aval = ((row < M && p < K) ? a[LIBXS_INDEX(ta, lda, row, p)] : (GEMM_REAL_TYPE)0);
-      local_sign[kk] = (int8_t)ozaki_extract_ieee(aval, &elem_exp[mi][kk], &elem_mant[mi][kk]);
-      row_max_exp = LIBXS_MAX(row_max_exp, elem_exp[mi][kk]);
-    }
-
-    expa_row[mi] = row_max_exp;
-
-    /* Pass 2: align, reduce mod moduli, scatter into ak[mi][pidx][kk].
-     * u8: additive inverse (p - r) for negative elements.
-     * i8: sign negation (-r) for negative elements. */
-    for (kk = 0; kk < kblk; ++kk) {
-      const int delta = (int)row_max_exp - (int)elem_exp[mi][kk];
-      uint8_t tmp[OZ2_NPRIMES_MAX];
-      oz2_reduce(elem_mant[mi][kk], delta, tmp, nprimes);
-      LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
-      for (pidx = 0; pidx < nprimes; ++pidx) {
-#if defined(OZAKI_I8) && (OZAKI_I8)
-        ak[mi][pidx][kk] = (int8_t)(local_sign[kk] * (int8_t)tmp[pidx]);
-#else
-        ak[mi][pidx][kk] = (uint8_t)((local_sign[kk] < 0 && 0 != tmp[pidx]) ? (oz2_moduli[pidx] - tmp[pidx]) : tmp[pidx]);
-#endif
-      }
-    }
-    /* Zero-pad remaining k-entries */
-    LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
-    for (pidx = 0; pidx < nprimes; ++pidx) {
-      for (kk = kblk; kk < BLOCK_K; ++kk) ak[mi][pidx][kk] = 0;
-    }
-  }
-}
-
-
-/**
- * Preprocess columns of B for one (kb, jb) tile.
- * Same as rows of A but with per-column max exponent. Writes directly
- * into bk[N][P][K] (k-contiguous layout).
- * u8: additive inverse for sign.  i8: negation for sign.
- */
-LIBXS_API_INLINE void oz2_preprocess_cols(const GEMM_REAL_TYPE* b, GEMM_INT_TYPE ldb, int tb, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
-  GEMM_INT_TYPE jb, GEMM_INT_TYPE kb, GEMM_INT_TYPE jblk, GEMM_INT_TYPE kblk, int nprimes, int16_t expb_col[BLOCK_N],
-  oz2_res_t bk[BLOCK_N][OZ2_NPRIMES_MAX][BLOCK_K])
-{
-  int16_t elem_exp[BLOCK_K][BLOCK_N];
-  uint64_t elem_mant[BLOCK_K][BLOCK_N];
-  int8_t elem_sign[BLOCK_K][BLOCK_N];
-  GEMM_INT_TYPE nj, kk;
-  int pidx;
-
-  for (nj = 0; nj < jblk; ++nj) expb_col[nj] = INT16_MIN;
-
-  /* Pass 1: decompose and track per-column max exponent */
-  for (kk = 0; kk < kblk; ++kk) {
-    const GEMM_INT_TYPE p = kb + kk;
-    for (nj = 0; nj < jblk; ++nj) {
-      const GEMM_INT_TYPE col = jb + nj;
-      const GEMM_REAL_TYPE bval = ((p < K && col < N) ? b[LIBXS_INDEX(tb, ldb, p, col)] : (GEMM_REAL_TYPE)0);
-      elem_sign[kk][nj] = (int8_t)ozaki_extract_ieee(bval, &elem_exp[kk][nj], &elem_mant[kk][nj]);
-      expb_col[nj] = LIBXS_MAX(expb_col[nj], elem_exp[kk][nj]);
-    }
-  }
-
-  /* Pass 2: align, reduce mod moduli, scatter into bk[nj][pidx][kk] */
-  for (kk = 0; kk < kblk; ++kk) {
-    for (nj = 0; nj < jblk; ++nj) {
-      const int delta = (int)expb_col[nj] - (int)elem_exp[kk][nj];
-      uint8_t tmp[OZ2_NPRIMES_MAX];
-      oz2_reduce(elem_mant[kk][nj], delta, tmp, nprimes);
-      LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
-      for (pidx = 0; pidx < nprimes; ++pidx) {
-#if defined(OZAKI_I8) && (OZAKI_I8)
-        bk[nj][pidx][kk] = (int8_t)(elem_sign[kk][nj] * (int8_t)tmp[pidx]);
-#else
-        bk[nj][pidx][kk] = (uint8_t)((elem_sign[kk][nj] < 0 && 0 != tmp[pidx]) ? (oz2_moduli[pidx] - tmp[pidx]) : tmp[pidx]);
-#endif
-      }
-    }
-  }
-  /* Zero-pad remaining k-entries */
-  for (nj = 0; nj < jblk; ++nj) {
-    LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
-    for (pidx = 0; pidx < nprimes; ++pidx) {
-      for (kk = kblk; kk < BLOCK_K; ++kk) bk[nj][pidx][kk] = 0;
-    }
-  }
-}
-
-
-/**
  * Evaluate mixed-radix digits v[0..nprimes-1] via grouped uint64 Horner.
  * Partitions digits into groups of OZ2_HORNER_GROUP, evaluates each group
  * exactly in uint64 (product of OZ2_HORNER_GROUP moduli < 2^63), then combines groups
@@ -396,72 +267,6 @@ LIBXS_API_INLINE double oz2_horner_grouped(const unsigned int v[], int nprimes)
       gval = gval * (uint64_t)oz2_moduli[i] + (uint64_t)v[i];
     }
     result = result * (double)gprod + (double)gval;
-  }
-
-  return result;
-}
-
-
-/**
- * Reconstruct a signed integer from its CRT residues.
- *
- * Uses Garner's algorithm to compute mixed-radix digits, detects the
- * sign from the most significant digit (centered representation), and
- * evaluates via Horner's method into a double.
- *
- * For negative values the digits are complemented before Horner
- * evaluation so that the absolute value is computed directly, avoiding
- * catastrophic cancellation from subtracting the large modulus product P.
- *
- * Centered range: result in (-P/2, P/2], where P = prod(m_i).
- */
-LIBXS_API_INLINE double oz2_reconstruct(
-  const unsigned int residues[OZ2_NPRIMES_MAX], unsigned int garner_inv[OZ2_NPRIMES_MAX][OZ2_NPRIMES_MAX], int nprimes)
-{
-  unsigned int v[OZ2_NPRIMES_MAX]; /* mixed-radix digits */
-  double result;
-  int i, j, is_negative;
-  nprimes = LIBXS_CLMP(nprimes, 1, OZ2_NPRIMES_MAX);
-
-  /* Garner's algorithm: compute mixed-radix digits v[i] in [0, m_i) */
-  LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
-  for (i = 0; i < nprimes; ++i) {
-    unsigned int u = residues[i];
-    const unsigned int pi = oz2_moduli[i];
-    for (j = 0; j < i; ++j) {
-      /* v[j] < m_j <= 128; reduce into [0, m_i) via bounded subtract
-       * (avoids Barrett multiply; floor(127/61) = 2 so two subtracts suffice). */
-      unsigned int vj = v[j];
-      if (vj >= pi) vj -= pi;
-      if (vj >= pi) vj -= pi;
-      {
-        const unsigned int diff = (u >= vj) ? (u - vj) : (pi + u - vj);
-        u = oz2_mod(diff * garner_inv[j][i], i);
-      }
-    }
-    v[i] = u;
-  }
-
-  /* Sign detection */
-  is_negative = (v[nprimes - 1] >= (unsigned int)(oz2_moduli[nprimes - 1] + 1) / 2) ? 1 : 0;
-
-  /* Complement digits for negative values: P - 1 - V has digits
-   * (m_i - 1 - v_i) in mixed-radix representation (no borrows needed).
-   * Then |D| = (P - 1 - V) + 1 = P - V where V is the CRT result. */
-  if (0 != is_negative) {
-    LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
-    for (i = 0; i < nprimes; ++i) {
-      v[i] = oz2_moduli[i] - 1 - v[i];
-    }
-  }
-
-  /* Grouped Horner: uint64 within groups, FP64 only between groups */
-  result = oz2_horner_grouped(v, nprimes);
-
-  /* For negative values: result holds |D|-1 (the complement),
-   * so the true value is -(result + 1.0). */
-  if (0 != is_negative) {
-    result = -(result + 1.0);
   }
 
   return result;
@@ -585,16 +390,18 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
 #endif
     GEMM_PROFILE_TICK(t_start, tid);
 
-    /* Phase 3: scale C by beta (once, before K-group loop) */
+    /* Phase 3: scale C by beta (once, before K-group loop).
+     * Per BLAS spec, beta=0 must zero C unconditionally (NaN/Inf safe). */
 #if defined(_OPENMP)
-# pragma omp for LIBXS_OPENMP_COLLAPSE(2) schedule(static)
+# pragma omp for schedule(static)
 #endif
-    for (jb = 0; jb < N; jb += BLOCK_N) {
-      for (ib = 0; ib < M; ib += BLOCK_M) {
-        const GEMM_INT_TYPE iblk = LIBXS_MIN(BLOCK_M, M - ib);
-        const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
-        GEMM_REAL_TYPE* const cb = c + jb * ldcv + ib;
-        ozaki_scale_block_beta(cb, ldcv, iblk, jblk, beta);
+    for (jb = 0; jb < N; ++jb) {
+      GEMM_REAL_TYPE* const col = c + jb * ldcv;
+      if ((GEMM_REAL_TYPE)0 != *beta) {
+        for (ib = 0; ib < M; ++ib) col[ib] *= *beta;
+      }
+      else {
+        for (ib = 0; ib < M; ++ib) col[ib] = (GEMM_REAL_TYPE)0;
       }
     }
 
@@ -801,14 +608,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
 
   /* Reference BLAS and diff comparison (whole-matrix, consistent with GPU path) */
   if (NULL != c_ref) {
-    if (NULL != gemm_original) {
-      gemm_original(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c_ref, ldc);
-    }
-    else {
-      GEMM_REAL(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c_ref, ldc);
-    }
-    libxs_matdiff(diff, LIBXS_DATATYPE(GEMM_REAL_TYPE), M, N, c_ref, c, ldc, ldc);
-    if (ozaki_diff_exceeds(diff)) memcpy(c, c_ref, c_size);
+    ozaki_diff_reference(GEMM_ARGPASS, c_ref, c_size, diff);
   }
   libxs_free(a_res);
   libxs_free(b_res);
@@ -824,7 +624,7 @@ LIBXS_API void gemm_oz2(const char* transa, const char* transb, const GEMM_INT_T
   const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda, const GEMM_REAL_TYPE* b,
   const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc)
 {
-  OZAKI_GEMM_WRAPPER(gemm_oz2_diff, GEMM_LABEL)
+  OZAKI_GEMM_WRAPPER(gemm_oz2_diff, GEMM_LABEL, 1)
 }
 
 

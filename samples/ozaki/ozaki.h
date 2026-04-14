@@ -112,46 +112,23 @@
     } \
   }
 
+/* Forward declaration: ozaki_post_diff is defined after variable declarations. */
+LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t ncomponents, libxs_matdiff_t* diff);
+
 /**
  * Implement the public gemm_ozN function: call the _diff kernel,
  * then handle verbose output, diff accumulation, and matrix dumps.
  * DIFF_FN is the _diff kernel (gemm_oz1_diff or gemm_oz2_diff).
  */
-#define OZAKI_GEMM_WRAPPER(DIFF_FN, LABEL) \
+#define OZAKI_GEMM_WRAPPER(DIFF_FN, LABEL, NCOMP) \
   if (0 == ozaki_verbose) { \
     DIFF_FN(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, NULL); \
   } \
   else { \
-    libxs_matdiff_t diff, call_diff; \
+    libxs_matdiff_t diff; \
     libxs_matdiff_clear(&diff); \
     DIFF_FN(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, &diff); \
-    call_diff = diff; \
-    LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER); \
-    libxs_matdiff_reduce(&gemm_diff, &diff); \
-    diff.r = gemm_diff.r; \
-    LIBXS_ATOMIC_RELEASE(&gemm_lock, LIBXS_ATOMIC_LOCKORDER); \
-    call_diff.r = diff.r; \
-    if (1 < ozaki_verbose || 0 > ozaki_verbose) { \
-      const int nth = (0 < ozaki_verbose ? ozaki_verbose : 1); \
-      if (0 == (diff.r % nth)) { \
-        if (0 <= ozaki_stat) print_diff(stderr, LABEL, 0 /*detail*/, &call_diff); \
-        else { \
-          const int id = (1 < libxs_nranks() ? libxs_nrank() : libxs_pid()); \
-          fprintf(stderr, "%s [%i.%i]: ", LABEL, id, diff.r); \
-          print_gemm(stderr, LIBXS_ABS(ozaki_stat), transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc); \
-        } \
-      } \
-    } \
-    if (ozaki_diff_exceeds(&call_diff) || -1 > ozaki_verbose) { \
-      print_diff(stderr, LABEL, 0 /*detail*/, &call_diff); \
-      if (0 != gemm_dump_inhibit) { \
-        gemm_dump_inhibit = 2; \
-      } \
-      else { \
-        const int result = gemm_dump_matrices(GEMM_ARGPASS, 1); \
-        if (0 != ozaki_exit) exit(EXIT_SUCCESS == result ? EXIT_FAILURE : result); \
-      } \
-    } \
+    ozaki_post_diff(GEMM_ARGPASS, LABEL, NCOMP, &diff); \
   }
 
 /* Wrap/real symbol definitions for real GEMM */
@@ -556,42 +533,42 @@ LIBXS_API_INLINE int32_t ozaki_dot_u8_sw(const uint8_t a[BLOCK_K], const uint8_t
 }
 
 
-/* Unified uint8 GEMM: C[M,N] = A[M,K] * B'[N,K], u8*u8 -> s32.
- * Row-major storage. beta: 0=overwrite C, nonzero=accumulate into C.
- * Requires: transa='N', transb='T', K % BLOCK_K == 0. */
+/* Int8 GEMM loop body: C[M,N] += A[M,K] * B'[N,K] via DOT product.
+ * Row-major, transa='N', transb='T', K % BLOCK_K == 0.
+ * beta: 0=overwrite C, nonzero=accumulate. */
+#define OZAKI_GEMM_INT8_BODY(ELEM_T, DOT_INIT) \
+  { \
+    const DOT_INIT; \
+    GEMM_INT_TYPE mi, nj, kb; \
+    LIBXS_ASSERT('N' == transa || 'n' == transa); \
+    LIBXS_ASSERT('T' == transb || 't' == transb); \
+    LIBXS_ASSERT(0 == (K % BLOCK_K)); \
+    LIBXS_UNUSED(transa); \
+    LIBXS_UNUSED(transb); \
+    LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M) \
+    for (mi = 0; mi < M; ++mi) { \
+      int32_t* const crow = c + mi * ldc; \
+      const ELEM_T* const arow = a + mi * lda; \
+      if (0 == beta) { \
+        LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N) \
+        for (nj = 0; nj < N; ++nj) crow[nj] = 0; \
+      } \
+      for (kb = 0; kb < K; kb += BLOCK_K) { \
+        const ELEM_T* const ak = arow + kb; \
+        LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N) \
+        for (nj = 0; nj < N; ++nj) { \
+          crow[nj] += dot(ak, b + nj * ldb + kb); \
+        } \
+      } \
+    } \
+  }
+
+/* u8*u8 -> s32 GEMM. */
 LIBXS_API_INLINE void ozaki_gemm_u8u8s32(char transa, char transb, GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const uint8_t* a, GEMM_INT_TYPE lda, const uint8_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
-{
-  const ozaki_dot_u8_fn dot = ozaki_dot_u8_init();
-  GEMM_INT_TYPE mi, nj, kb;
-  LIBXS_ASSERT('N' == transa || 'n' == transa);
-  LIBXS_ASSERT('T' == transb || 't' == transb);
-  LIBXS_ASSERT(0 == (K % BLOCK_K));
-  LIBXS_UNUSED(transa);
-  LIBXS_UNUSED(transb);
-  LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
-  for (mi = 0; mi < M; ++mi) {
-    int32_t* const crow = c + mi * ldc;
-    const uint8_t* const arow = a + mi * lda;
-    if (0 == beta) {
-      LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N)
-      for (nj = 0; nj < N; ++nj) crow[nj] = 0;
-    }
-    for (kb = 0; kb < K; kb += BLOCK_K) {
-      const uint8_t* const ak = arow + kb;
-      LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N)
-      for (nj = 0; nj < N; ++nj) {
-        crow[nj] += dot(ak, b + nj * ldb + kb);
-      }
-    }
-  }
-}
+OZAKI_GEMM_INT8_BODY(uint8_t, ozaki_dot_u8_fn dot = ozaki_dot_u8_init())
 
-
-/* Unified int8 GEMM: C[M,N] = op(A)[M,K] * op(B)[K,N], s8*s8 -> s32.
- * Row-major storage. beta: 0=overwrite C, nonzero=accumulate into C.
- * With __DNNL: uses dnnl_gemm_s8s8s32.
- * Without: naive dot_i8 loop (transa='N', transb='T', K % BLOCK_K == 0). */
+/* s8*s8 -> s32 GEMM.  With __DNNL: delegates to dnnl_gemm_s8s8s32. */
 LIBXS_API_INLINE void ozaki_gemm_s8s8s32(char transa, char transb, GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const int8_t* a, GEMM_INT_TYPE lda, const int8_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
@@ -600,30 +577,7 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32(char transa, char transb, GEMM_INT_TYPE
   dnnl_gemm_s8s8s32(transa, transb, 'F', (dnnl_dim_t)M, (dnnl_dim_t)N, (dnnl_dim_t)K, 1.0f, a, (dnnl_dim_t)lda, 0, b,
     (dnnl_dim_t)ldb, 0, 0 != beta ? 1.0f : 0.0f, c, (dnnl_dim_t)ldc, &zero);
 #else
-  const ozaki_dot_i8_fn dot = ozaki_dot_i8_init();
-  GEMM_INT_TYPE mi, nj, kb;
-  LIBXS_ASSERT('N' == transa || 'n' == transa);
-  LIBXS_ASSERT('T' == transb || 't' == transb);
-  LIBXS_ASSERT(0 == (K % BLOCK_K));
-  LIBXS_UNUSED(transa);
-  LIBXS_UNUSED(transb);
-  /* M x K x N loop order: reuse each A chunk across all N columns. */
-  LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
-  for (mi = 0; mi < M; ++mi) {
-    int32_t* const crow = c + mi * ldc;
-    const int8_t* const arow = a + mi * lda;
-    if (0 == beta) {
-      LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N)
-      for (nj = 0; nj < N; ++nj) crow[nj] = 0;
-    }
-    for (kb = 0; kb < K; kb += BLOCK_K) {
-      const int8_t* const ak = arow + kb;
-      LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N)
-      for (nj = 0; nj < N; ++nj) {
-        crow[nj] += dot(ak, b + nj * ldb + kb);
-      }
-    }
-  }
+  OZAKI_GEMM_INT8_BODY(int8_t, ozaki_dot_i8_fn dot = ozaki_dot_i8_init())
 #endif
 }
 
@@ -692,24 +646,6 @@ LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value, int16_t* exp_biase
 }
 
 
-/**
- * Scale a tile of C by beta.
- * Per BLAS spec, beta=0 must zero out C unconditionally (C may hold NaN
- * or Inf when uninitialized); a plain multiply would give NaN.
- */
-LIBXS_API_INLINE void ozaki_scale_block_beta(GEMM_REAL_TYPE* mb, GEMM_INT_TYPE ldc, GEMM_INT_TYPE iblk, GEMM_INT_TYPE jblk,
-  const GEMM_REAL_TYPE* beta)
-{
-  const GEMM_REAL_TYPE b = *beta;
-  GEMM_INT_TYPE mi, nj;
-  for (mi = 0; mi < iblk; ++mi) {
-    for (nj = 0; nj < jblk; ++nj) {
-      mb[LIBXS_INDEX(0, ldc, mi, nj)] = ((GEMM_REAL_TYPE)0 != b) ? mb[LIBXS_INDEX(0, ldc, mi, nj)] * b : (GEMM_REAL_TYPE)0;
-    }
-  }
-}
-
-
 /** Check whether a per-call diff exceeds configured thresholds. */
 LIBXS_API_INLINE int ozaki_diff_exceeds(const libxs_matdiff_t* diff)
 {
@@ -721,6 +657,19 @@ LIBXS_API_INLINE int ozaki_diff_exceeds(const libxs_matdiff_t* diff)
     ozaki_eps < libxs_matdiff_epsilon(diff)));
 }
 
+
+/** Run reference BLAS on c_ref, compute matdiff vs c, repair c if diff exceeds threshold. */
+LIBXS_API_INLINE void ozaki_diff_reference(GEMM_ARGDECL, GEMM_REAL_TYPE* c_ref, size_t c_size, libxs_matdiff_t* diff)
+{
+  if (NULL != gemm_original) {
+    gemm_original(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c_ref, ldc);
+  }
+  else {
+    GEMM_REAL(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c_ref, ldc);
+  }
+  libxs_matdiff(diff, LIBXS_DATATYPE(GEMM_REAL_TYPE), *m, *n, c_ref, c, ldc, ldc);
+  if (ozaki_diff_exceeds(diff)) memcpy(c, c_ref, c_size);
+}
 
 
 /**
@@ -790,4 +739,39 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
 
   LIBXS_ATOMIC_RELEASE(&gemm_lock, LIBXS_ATOMIC_LOCKORDER);
   return result;
+}
+
+
+/**
+ * Post-diff processing: accumulate into global diff, verbose output,
+ * matrix dumps, and conditional exit. Called after a _diff kernel returns.
+ */
+LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t ncomponents, libxs_matdiff_t* diff)
+{
+  libxs_matdiff_t call_diff = *diff;
+  LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
+  libxs_matdiff_reduce(&gemm_diff, diff);
+  call_diff.r = gemm_diff.r;
+  LIBXS_ATOMIC_RELEASE(&gemm_lock, LIBXS_ATOMIC_LOCKORDER);
+  if (1 < ozaki_verbose || 0 > ozaki_verbose) {
+    const int nth = (0 < ozaki_verbose ? ozaki_verbose : 1);
+    if (0 == (call_diff.r % nth)) {
+      if (0 <= ozaki_stat) print_diff(stderr, label, 0 /*detail*/, &call_diff);
+      else {
+        const int id = (1 < libxs_nranks() ? libxs_nrank() : libxs_pid());
+        fprintf(stderr, "%s [%i.%i]: ", label, id, call_diff.r);
+        print_gemm(stderr, LIBXS_ABS(ozaki_stat), transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
+      }
+    }
+  }
+  if (ozaki_diff_exceeds(&call_diff) || -1 > ozaki_verbose) {
+    print_diff(stderr, label, 0 /*detail*/, &call_diff);
+    if (0 != gemm_dump_inhibit) {
+      gemm_dump_inhibit = 2;
+    }
+    else {
+      const int result = gemm_dump_matrices(GEMM_ARGPASS, ncomponents);
+      if (0 != ozaki_exit) exit(EXIT_SUCCESS == result ? EXIT_FAILURE : result);
+    }
+  }
 }

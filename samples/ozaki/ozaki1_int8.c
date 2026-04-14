@@ -213,16 +213,18 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
 #endif
     GEMM_PROFILE_TICK(t_start, tid);
 
-    /* Phase 3: scale C by beta (once, before K-group loop) */
+    /* Phase 3: scale C by beta (once, before K-group loop).
+     * Per BLAS spec, beta=0 must zero C unconditionally (NaN/Inf safe). */
 #if defined(_OPENMP)
-# pragma omp for LIBXS_OPENMP_COLLAPSE(2) schedule(static)
+# pragma omp for schedule(static)
 #endif
-    for (jb = 0; jb < N; jb += BLOCK_N) {
-      for (ib = 0; ib < M; ib += BLOCK_M) {
-        const GEMM_INT_TYPE iblk = LIBXS_MIN(BLOCK_M, M - ib);
-        const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
-        GEMM_REAL_TYPE* const cb = c + jb * ldcv + ib;
-        ozaki_scale_block_beta(cb, ldcv, iblk, jblk, beta);
+    for (jb = 0; jb < N; ++jb) {
+      GEMM_REAL_TYPE* const col = c + jb * ldcv;
+      if ((GEMM_REAL_TYPE)0 != *beta) {
+        for (ib = 0; ib < M; ++ib) col[ib] *= *beta;
+      }
+      else {
+        for (ib = 0; ib < M; ++ib) col[ib] = (GEMM_REAL_TYPE)0;
       }
     }
 
@@ -389,14 +391,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
 
   /* Reference BLAS and diff comparison (whole-matrix, consistent with GPU path) */
   if (NULL != c_ref) {
-    if (NULL != gemm_original) {
-      gemm_original(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c_ref, ldc);
-    }
-    else {
-      GEMM_REAL(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c_ref, ldc);
-    }
-    libxs_matdiff(diff, LIBXS_DATATYPE(GEMM_REAL_TYPE), M, N, c_ref, c, ldc, ldc);
-    if (ozaki_diff_exceeds(diff)) memcpy(c, c_ref, c_size);
+    ozaki_diff_reference(GEMM_ARGPASS, c_ref, c_size, diff);
   }
   libxs_free(a_slices);
   libxs_free(b_slices);
@@ -412,7 +407,7 @@ LIBXS_API void gemm_oz1(const char* transa, const char* transb, const GEMM_INT_T
   const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda, const GEMM_REAL_TYPE* b,
   const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc)
 {
-  OZAKI_GEMM_WRAPPER(gemm_oz1_diff, GEMM_LABEL)
+  OZAKI_GEMM_WRAPPER(gemm_oz1_diff, GEMM_LABEL, 1)
 }
 
 
