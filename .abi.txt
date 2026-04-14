@@ -116,6 +116,7 @@ libxs_registry_remove
 libxs_registry_set
 libxs_registry_value_size
 libxs_remainder
+libxs_rid
 libxs_rng_f64
 libxs_rng_seq
 libxs_rng_set_seed

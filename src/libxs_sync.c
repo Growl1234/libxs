@@ -33,6 +33,12 @@ LIBXS_API unsigned int libxs_nrank(void)
 }
 
 
+LIBXS_API unsigned int libxs_rid(void)
+{
+  return 1 < libxs_nranks() ? libxs_nrank() : libxs_pid();
+}
+
+
 LIBXS_API unsigned int libxs_pid(void)
 {
 #if defined(_WIN32)

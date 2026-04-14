@@ -752,6 +752,9 @@ LIBXS_API unsigned int libxs_nranks(void);
 /** Utility function to receive the MPI-rank. */
 LIBXS_API unsigned int libxs_nrank(void);
 
+/** Utility function to receive a rank ID of the calling process. */
+LIBXS_API unsigned int libxs_rid(void);
+
 /** Utility function to receive the process ID of the calling process. */
 LIBXS_API unsigned int libxs_pid(void);
 /**
