@@ -87,8 +87,7 @@ LIBXS_API void libxs_matdiff_clear(libxs_matdiff_t* info);
  * is on the tst-side after the internal swap. Returns the smallest diagonal element
  * (positive means the condition holds), or zero if no diagonal data is available.
  */
-LIBXS_API_INLINE double libxs_matdiff_posdef(const libxs_matdiff_t* info)
-{
+LIBXS_API_INLINE double libxs_matdiff_posdef(const libxs_matdiff_t* info) {
   return (NULL != info && info->diag_min_tst <= info->diag_max_tst)
     ? info->diag_min_tst : 0;
 }
@@ -176,8 +175,7 @@ LIBXS_API unsigned int libxs_barrett_pow36(unsigned int p);
  * When LIBXS_BF16 is defined, the compiler's native __bf16 cast is used;
  * otherwise a portable uint32 bit-manipulation path is taken.
  */
-LIBXS_API_INLINE libxs_bf16_t libxs_round_bf16(double x)
-{
+LIBXS_API_INLINE libxs_bf16_t libxs_round_bf16(double x) {
 #if defined(LIBXS_BF16)
   union { __bf16 h; uint16_t u; } cvt;
   cvt.h = (__bf16)x;
@@ -191,8 +189,7 @@ LIBXS_API_INLINE libxs_bf16_t libxs_round_bf16(double x)
 }
 
 /** Expand a BF16 encoding to double (exact). */
-LIBXS_API_INLINE double libxs_bf16_to_f64(libxs_bf16_t v)
-{
+LIBXS_API_INLINE double libxs_bf16_to_f64(libxs_bf16_t v) {
 #if defined(LIBXS_BF16)
   union { uint16_t u; __bf16 h; } cvt;
   cvt.u = v;
