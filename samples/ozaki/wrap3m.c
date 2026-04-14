@@ -158,6 +158,7 @@ LIBXS_API_INLINE void zgemm_block_finalize(GEMM_REAL_TYPE* LIBXS_RESTRICT c, GEM
  */
 LIBXS_API_INTERN void zgemm3m(GEMM_ARGDECL)
 {
+  int done = 0;
 #if defined(__LIBXSTREAM)
   /* GPU-native path: only when ozaki_3m >= 2 */
   if (2 <= ozaki_3m && NULL != ozaki_ocl_handle && ozaki_ocl_supports_zgemm3m(ozaki_ocl_handle)) {
@@ -168,12 +169,12 @@ LIBXS_API_INTERN void zgemm3m(GEMM_ARGDECL)
     beta_d[0] = (double)beta[0];
     beta_d[1] = (double)beta[1];
     result = ozaki_ocl_gemm3m(ozaki_ocl_handle, *transa, *transb, *m, *n, *k, alpha_d, a, *lda, b, *ldb, beta_d, c, *ldc);
-    if (EXIT_SUCCESS == result) return;
+    done = (EXIT_SUCCESS == result);
     /* Fall through to CPU path on failure */
   }
 #endif
 
-  { /* CPU-based block-embedding path (ozaki_3m == 1, or GPU fallback) */
+  if (0 == done) { /* CPU-based block-embedding path (ozaki_3m == 1, or GPU fallback) */
     const GEMM_INT_TYPE M = *m, N = *n, K = *k;
     /* Physical layout: 'T' and 'C' both store the transposed matrix.
      * Block signs: 'C' (conjugate transpose) uses the 'N' sign pattern,
@@ -298,17 +299,18 @@ LIBXS_API_INLINE void zgemm3m_diff(GEMM_ARGDECL,
 LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void ZGEMM_WRAP(GEMM_ARGDECL)
 {
   gemm_init();
-  if (*m <= 0 || *n <= 0 || *k <= 0) return;
-  if (0 != ozaki_3m) {
-    OZAKI_GEMM_WRAPPER(zgemm3m_diff, ZGEMM_LABEL, 2)
-  }
-  else {
-    /* Passthrough to original complex GEMM */
-    if (NULL != zgemm_original) {
-      zgemm_original(GEMM_ARGPASS);
+  if (*m > 0 && *n > 0 && *k > 0) {
+    if (0 != ozaki_3m) {
+      OZAKI_GEMM_WRAPPER(zgemm3m_diff, ZGEMM_LABEL, 2)
     }
     else {
-      ZGEMM_REAL(GEMM_ARGPASS);
+      /* Passthrough to original complex GEMM */
+      if (NULL != zgemm_original) {
+        zgemm_original(GEMM_ARGPASS);
+      }
+      else {
+        ZGEMM_REAL(GEMM_ARGPASS);
+      }
     }
   }
 }

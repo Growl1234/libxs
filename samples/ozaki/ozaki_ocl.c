@@ -115,12 +115,13 @@ int ozaki_ocl_gemm3m(void* handle, char transa, char transb, int M, int N, int K
 int ozaki_ocl_supports_zgemm3m(void* handle)
 {
   const ozaki_ocl_handle_t* h = (const ozaki_ocl_handle_t*)handle;
+  int result = 0;
   if (NULL != h && NULL != h->ctx.kern_zgemm_block_construct_a && NULL != h->ctx.kern_zgemm_block_construct_b_n &&
       NULL != h->ctx.kern_zgemm_block_construct_b_t && NULL != h->ctx.kern_zgemm_block_finalize)
   {
-    return 1;
+    result = 1;
   }
-  return 0;
+  return result;
 }
 
 

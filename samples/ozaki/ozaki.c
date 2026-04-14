@@ -47,48 +47,49 @@ LIBXS_API_INTERN void gemm_atexit(void);
 LIBXS_API_INTERN void gemm_atexit(void)
 {
   static volatile sig_atomic_t once = 0;
-  if (0 != once) return;
-  once = 1;
-  if (0 != ozaki_verbose && 0 < gemm_diff.r) {
-    print_diff(stderr, GEMM_LABEL, ozaki_stat, &gemm_diff);
-  }
-  if (NULL != ozaki_hist) {
-    const char* const kind = GEMM_IS_DOUBLE ? "DP" : "SP";
-    double gflops = 0;
-    int ngemms = 0; /* number of int8 GEMMs per FP GEMM */
-    libxs_hist_get_median(NULL /*lock*/, ozaki_hist, &gflops);
-    if (1 == ozaki) { /* Scheme 1: slice pairs */
-      const int cutoff = 2 * (ozaki_n - 1) - ozaki_trim;
-      int sa, sb;
-      for (sa = 0; sa < ozaki_n && sa <= cutoff; ++sa) {
-        const int sb_start = (0 != (ozaki_flags & OZ1_TRIANGULAR)) ? sa : 0;
-        const int sb_end = LIBXS_MIN(ozaki_n, cutoff + 1 - sa);
-        for (sb = sb_start; sb < sb_end; ++sb) {
-          ++ngemms;
-          if (0 != (ozaki_flags & OZ1_SYMMETRIZE) && sa != sb) ++ngemms;
+  if (0 == once) {
+    once = 1;
+    if (0 != ozaki_verbose && 0 < gemm_diff.r) {
+      print_diff(stderr, GEMM_LABEL, ozaki_stat, &gemm_diff);
+    }
+    if (NULL != ozaki_hist) {
+      const char* const kind = GEMM_IS_DOUBLE ? "DP" : "SP";
+      double gflops = 0;
+      int ngemms = 0; /* number of int8 GEMMs per FP GEMM */
+      libxs_hist_get_median(NULL /*lock*/, ozaki_hist, &gflops);
+      if (1 == ozaki) { /* Scheme 1: slice pairs */
+        const int cutoff = 2 * (ozaki_n - 1) - ozaki_trim;
+        int sa, sb;
+        for (sa = 0; sa < ozaki_n && sa <= cutoff; ++sa) {
+          const int sb_start = (0 != (ozaki_flags & OZ1_TRIANGULAR)) ? sa : 0;
+          const int sb_end = LIBXS_MIN(ozaki_n, cutoff + 1 - sa);
+          for (sb = sb_start; sb < sb_end; ++sb) {
+            ++ngemms;
+            if (0 != (ozaki_flags & OZ1_SYMMETRIZE) && sa != sb) ++ngemms;
+          }
         }
       }
+      else { /* Scheme 2: one int8 GEMM per prime */
+        ngemms = ozaki_n;
+      }
+      fprintf(stderr, "OZAKI PROF: %.0f %s-GFLOPS/s", gflops, kind);
+      if (0 < ngemms) {
+        const double tops = gflops * ngemms * 1E-3;
+        fprintf(stderr, " (%.1f INT8-TOPS/s, %dx)", tops, ngemms);
+      }
+      fprintf(stderr, "\n");
+      libxs_hist_destroy(ozaki_hist);
+      ozaki_hist = NULL;
     }
-    else { /* Scheme 2: one int8 GEMM per prime */
-      ngemms = ozaki_n;
-    }
-    fprintf(stderr, "OZAKI PROF: %.0f %s-GFLOPS/s", gflops, kind);
-    if (0 < ngemms) {
-      const double tops = gflops * ngemms * 1E-3;
-      fprintf(stderr, " (%.1f INT8-TOPS/s, %dx)", tops, ngemms);
-    }
-    fprintf(stderr, "\n");
-    libxs_hist_destroy(ozaki_hist);
-    ozaki_hist = NULL;
-  }
 #if defined(__LIBXSTREAM)
-  ozaki_ocl_release(ozaki_ocl_handle);
-  ozaki_ocl_handle = NULL;
-  ozaki_ocl_finalize();
+    ozaki_ocl_release(ozaki_ocl_handle);
+    ozaki_ocl_handle = NULL;
+    ozaki_ocl_finalize();
 #endif
-  libxs_free_pool(gemm_pool);
-  gemm_pool = NULL;
-  libxs_finalize();
+    libxs_free_pool(gemm_pool);
+    gemm_pool = NULL;
+    libxs_finalize();
+  }
 }
 
 
@@ -262,72 +263,72 @@ LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
 
   /* Quick-return for degenerate dimensions (BLAS spec: valid no-op).
    * Some BLAS implementations reject lda=0 even when m*n*k=0. */
-  if (*m <= 0 || *n <= 0 || *k <= 0) return;
-
-  /* Bypass Ozaki: fall through to original BLAS.
-   * Used when the reference ZGEMM may internally call sgemm_,
-   * which --wrap redirects back into GEMM_WRAP. Without bypass,
-   * the "reference" result would itself be Ozaki-approximate. */
-  if (0 != gemm_nozaki) {
-    if (NULL != gemm_original) {
-      gemm_original(GEMM_ARGPASS);
+  if (*m > 0 && *n > 0 && *k > 0) {
+    /* Bypass Ozaki: fall through to original BLAS.
+     * Used when the reference ZGEMM may internally call sgemm_,
+     * which --wrap redirects back into GEMM_WRAP. Without bypass,
+     * the "reference" result would itself be Ozaki-approximate. */
+    if (0 != gemm_nozaki) {
+      if (NULL != gemm_original) {
+        gemm_original(GEMM_ARGPASS);
+      }
+      else {
+        GEMM_REAL(GEMM_ARGPASS);
+      }
     }
     else {
-      GEMM_REAL(GEMM_ARGPASS);
-    }
-    return;
-  }
-
-  if (0 != ozaki) { /* consider threshold */
-    const size_t size = (size_t)(*m) * (*k) + (*k) * (*n) + (*m) * (*n);
-    const size_t flops = (size_t)(*m) * (*n) * (*k) * 2;
-    const size_t bytes = sizeof(GEMM_REAL_TYPE) * size;
-    if ((bytes * LIBXS_MAX(gemm_threshold, 0)) <= flops) {
-      run_ozaki = ozaki;
-    }
-  }
-  if (0 != run_ozaki) {
-#if defined(__LIBXSTREAM)
-    if (NULL != ozaki_ocl_handle) {
-      OZAKI_GEMM_WRAPPER(gemm_oz_ocl_diff, GEMM_LABEL, 1)
-    }
-    else
-#endif
-      if (1 == run_ozaki)
-    { /* slice-based LP-GEMM (Scheme 1, default) */
-      gemm_oz1(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
-    }
-    else /*if (2 == run_ozaki)*/ { /* CRT-based LP-GEMM (Scheme 2) */
-      gemm_oz2(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
-    }
-  }
-  else { /* only run original GEMM right away */
-    if (NULL != gemm_original) {
-      gemm_original(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
-    }
-    else {
-      GEMM_REAL(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
-    }
-    if (0 != ozaki_verbose) {
-      LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
-      if (0 > ozaki_stat && (1 < ozaki_verbose || 0 > ozaki_verbose)) {
-        const int nth = (0 < ozaki_verbose ? ozaki_verbose : 1);
-        if (0 == (gemm_diff.r % nth)) {
-          const int id = libxs_rid();
-          fprintf(stderr, GEMM_LABEL "[%i.%i]: ", gemm_diff.r, id);
-          print_gemm(stderr, 2 /*compact*/, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
+      if (0 != ozaki) { /* consider threshold */
+        const size_t size = (size_t)(*m) * (*k) + (*k) * (*n) + (*m) * (*n);
+        const size_t flops = (size_t)(*m) * (*n) * (*k) * 2;
+        const size_t bytes = sizeof(GEMM_REAL_TYPE) * size;
+        if ((bytes * LIBXS_MAX(gemm_threshold, 0)) <= flops) {
+          run_ozaki = ozaki;
         }
       }
-      ++gemm_diff.r;
-      LIBXS_ATOMIC_RELEASE(&gemm_lock, LIBXS_ATOMIC_LOCKORDER);
-    }
+      if (0 != run_ozaki) {
 #if defined(__LIBXSTREAM)
-    /* Invalidate cache entries matching output C: the CPU path just wrote C,
-     * so any cached preprocessed data keyed by C's pointer is now stale
-     * (C's address may be reused as A or B in a subsequent GEMM call). */
-    if (NULL != ozaki_ocl_handle) {
-      ozaki_ocl_invalidate_cache(ozaki_ocl_handle, c, c);
-    }
+        if (NULL != ozaki_ocl_handle) {
+          OZAKI_GEMM_WRAPPER(gemm_oz_ocl_diff, GEMM_LABEL, 1)
+        }
+        else
 #endif
+          if (1 == run_ozaki)
+        { /* slice-based LP-GEMM (Scheme 1, default) */
+          gemm_oz1(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
+        }
+        else /*if (2 == run_ozaki)*/ { /* CRT-based LP-GEMM (Scheme 2) */
+          gemm_oz2(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
+        }
+      }
+      else { /* only run original GEMM right away */
+        if (NULL != gemm_original) {
+          gemm_original(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
+        }
+        else {
+          GEMM_REAL(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
+        }
+        if (0 != ozaki_verbose) {
+          LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
+          if (0 > ozaki_stat && (1 < ozaki_verbose || 0 > ozaki_verbose)) {
+            const int nth = (0 < ozaki_verbose ? ozaki_verbose : 1);
+            if (0 == (gemm_diff.r % nth)) {
+              const int id = libxs_rid();
+              fprintf(stderr, GEMM_LABEL "[%i.%i]: ", gemm_diff.r, id);
+              print_gemm(stderr, 2 /*compact*/, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
+            }
+          }
+          ++gemm_diff.r;
+          LIBXS_ATOMIC_RELEASE(&gemm_lock, LIBXS_ATOMIC_LOCKORDER);
+        }
+#if defined(__LIBXSTREAM)
+        /* Invalidate cache entries matching output C: the CPU path just wrote C,
+         * so any cached preprocessed data keyed by C's pointer is now stale
+         * (C's address may be reused as A or B in a subsequent GEMM call). */
+        if (NULL != ozaki_ocl_handle) {
+          ozaki_ocl_invalidate_cache(ozaki_ocl_handle, c, c);
+        }
+#endif
+      }
+    }
   }
 }
