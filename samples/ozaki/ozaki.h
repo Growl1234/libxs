@@ -722,6 +722,22 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
   }
   else fclose(file);
 
+  if (0 > ozaki_dump) {
+    if (0 > slurm) LIBXS_SNPRINTF(fname, sizeof(fname), GEMM_LABEL "-%u-%i-c.mhd", rid, gemm_diff.r);
+    else LIBXS_SNPRINTF(fname, sizeof(fname), GEMM_LABEL "-%i-%u-%i-c.mhd", slurm, rid, gemm_diff.r);
+    file = fopen(fname, "rb");
+    if (NULL == file) { /* Never overwrite an existing file */
+      const GEMM_REAL_TYPE scale = 0;
+      const char transc = 'N';
+      const int result_c = gemm_mhd_write(fname, c, *m, *n, *ldc, transc, &scale, ncomponents, &settings);
+      if (EXIT_SUCCESS != result_c && 0 != ozaki_verbose) {
+        fprintf(stderr, "ERROR: dumping C-matrix to %s failed!\n", fname);
+      }
+      result |= result_c;
+    }
+    else fclose(file);
+  }
+
   if (0 < ozaki_verbose) {
     fprintf(stderr, GEMM_LABEL "[%i.%i]: ", gemm_diff.r, rid);
     print_gemm(stderr, 2 /*compact*/, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
@@ -763,7 +779,10 @@ LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t nc
       }
     }
   }
-  if (ozaki_diff_exceeds(&call_diff) || -1 > ozaki_verbose || (0 < ozaki_dump && call_diff.r == ozaki_dump)) {
+  if (ozaki_diff_exceeds(&call_diff) || -1 > ozaki_verbose
+    || (-1 > ozaki_dump && call_diff.r == -ozaki_dump)
+    || (call_diff.r == ozaki_dump))
+  {
     print_diff(stderr, label, 0 /*detail*/, &call_diff);
     if (0 != gemm_dump_inhibit) {
       gemm_dump_inhibit = 2;
