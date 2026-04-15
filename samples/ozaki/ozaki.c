@@ -50,7 +50,7 @@ LIBXS_API_INTERN void gemm_atexit(void)
   if (0 == once) {
     once = 1;
     if (0 != ozaki_verbose && 0 < gemm_diff.r) {
-      print_diff(stderr, GEMM_LABEL, ozaki_stat, &gemm_diff);
+      print_diff(stderr, NULL /*GEMM*/, ozaki_stat, &gemm_diff);
     }
     if (NULL != ozaki_hist) {
       const char* const kind = GEMM_IS_DOUBLE ? "DP" : "SP";
