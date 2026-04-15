@@ -2,7 +2,7 @@
 
 Header: `libxs_cpuid.h`
 
-Portable CPU feature detection for x86-64, AArch64, and RISC-V targets. Returns an ISA level that can be compared numerically — higher values indicate more capable instruction sets.
+Portable CPU feature detection for x86-64, AArch64, and RISC-V targets. Returns an ISA level that can be compared numerically -- higher values indicate more capable instruction sets. x86 levels use thermometer ordering: higher numeric value implies all features of lower levels. AVX10/256 sits below AVX512 because it lacks 512-bit vectors.
 
 ## ISA Constants
 
@@ -15,7 +15,10 @@ Portable CPU feature detection for x86-64, AArch64, and RISC-V targets. Returns 
 | `LIBXS_X86_SSE42` | 1004 | SSE4.2 |
 | `LIBXS_X86_AVX` | 1005 | AVX |
 | `LIBXS_X86_AVX2` | 1006 | AVX2 + FMA |
-| `LIBXS_X86_AVX512` | 1100 | AVX-512 (Foundation + VL/BW/DQ) |
+| `LIBXS_X86_AVX10_256` | 1050 | AVX10.1/256: all features, 256-bit max (Sierra Forest) |
+| `LIBXS_X86_AVX512` | 1100 | AVX-512 (F + CD + DQ + BW + VL + VNNI) |
+| `LIBXS_X86_AVX512_INT8` | 1110 | AVX-512 + AVX-VNNI-INT8 (Granite Rapids) |
+| `LIBXS_X86_AVX10_512` | 1200 | AVX10.1/512: all features, 512-bit (Granite Rapids AVX10) |
 | `LIBXS_AARCH64` | 2001 | ARMv8.1 baseline |
 | `LIBXS_AARCH64_SVE128` | 2201 | SVE 128-bit |
 | `LIBXS_AARCH64_SVE256` | 2301 | SVE 256-bit |

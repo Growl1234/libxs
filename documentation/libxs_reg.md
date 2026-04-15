@@ -38,6 +38,12 @@ void libxs_registry_destroy(libxs_registry_t* registry);
 
 Destroy a registry and release all entries.
 
+```C
+libxs_lock_t* libxs_registry_lock(libxs_registry_t* registry);
+```
+
+Return a pointer to the registry's internal lock. The returned lock can be passed as the `lock` argument to other registry functions (e.g., to hold the lock across multiple operations).
+
 ## Iteration
 
 ```C
