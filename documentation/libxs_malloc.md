@@ -14,7 +14,9 @@ typedef struct libxs_malloc_info_t {
 
 ```C
 typedef struct libxs_malloc_pool_info_t {
-  size_t size;      /* total pool size in bytes */
+  size_t used;      /* memory currently in use (sum of requested sizes) */
+  size_t size;      /* total allocated memory (sum of actual chunk sizes) */
+  size_t peak;      /* peak memory consumption */
   size_t nactive;   /* pending (not yet freed) allocations */
   size_t nmallocs;  /* total allocation count */
 } libxs_malloc_pool_info_t;

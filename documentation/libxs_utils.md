@@ -29,9 +29,9 @@ Preprocessor symbols defined when the compiler can generate code for a given ISA
 | `LIBXS_INTRINSICS_SSE42` | SSE4.2 |
 | `LIBXS_INTRINSICS_AVX` | AVX |
 | `LIBXS_INTRINSICS_AVX2` | AVX2 + FMA |
-| `LIBXS_INTRINSICS_AVX512` | AVX-512 (F + CD + DQ + BW + VL) |
+| `LIBXS_INTRINSICS_AVX512` | AVX-512 (F + CD + DQ + BW + VL + VNNI) |
 
-`LIBXS_STATIC_TARGET_ARCH` records the highest ISA provided by the compiler flags. `LIBXS_MAX_STATIC_TARGET_ARCH` records the highest ISA reachable via target attributes.
+`LIBXS_STATIC_TARGET_ARCH` records the highest ISA provided by the compiler flags. `LIBXS_MAX_STATIC_TARGET_ARCH` records the highest ISA reachable via target attributes. Target attributes (`LIBXS_ATTRIBUTE_TARGET_*`) are defined up to `LIBXS_X86_AVX10_512` depending on compiler version.
 
 ## Intrinsic Fix-ups
 
@@ -74,6 +74,17 @@ unsigned int LIBXS_ILOG2(unsigned long long n);   /* ceil(log2(n)) */
 ```
 
 `LIBXS_ILOG2` is a function (not a macro) and handles the n = 0 case.
+
+## MXCSR (FP Environment)
+
+Macros for preserving and restoring the x86 MXCSR register (floating-point control/status). On non-x86 platforms these are no-ops.
+
+| Macro | Description |
+|:------|:------------|
+| `LIBXS_MXCSR_FTZ` | Flush-to-zero flag (0x8000 on x86, 0 otherwise) |
+| `LIBXS_MXCSR_DAZ` | Denormals-are-zero flag (0x0040 on x86, 0 otherwise) |
+| `LIBXS_MXCSR_GET()` | Read the MXCSR register (`_mm_getcsr()` on x86, 0 otherwise) |
+| `LIBXS_MXCSR_SET(VALUE)` | Write the MXCSR register (`_mm_setcsr()` on x86, no-op otherwise) |
 
 ## AVX-512 Inline Functions
 

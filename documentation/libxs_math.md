@@ -116,7 +116,7 @@ Integer square root. The isqrt2 variant returns a factor of x.
 double libxs_pow2(int n);
 ```
 
-2^n via IEEE-754 exponent. Valid for n in [-1022, 1023].
+2^n via IEEE-754 exponent. Valid for n in [-1022, 1023]. Returns 0.0 for underflow (subnormals flushed to zero) and +Inf for overflow.
 
 ## Modular Arithmetic
 

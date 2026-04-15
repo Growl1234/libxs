@@ -22,11 +22,13 @@ The header provides a suite of macros for atomic loads, stores, compare-and-swap
 | `LIBXS_ATOMIC_STORE(DST, VALUE, KIND)` | Atomic store |
 | `LIBXS_ATOMIC_STORE_ZERO(DST, KIND)` | Atomic store of zero |
 | `LIBXS_ATOMIC_CMPSWP(DST, OLDVAL, NEWVAL, KIND)` | Compare-and-swap |
-| `LIBXS_ATOMIC_FETCHADD(SRC, VALUE, KIND)` | Fetch-and-add |
-| `LIBXS_ATOMIC_ADDFETCH(SRC, VALUE, KIND)` | Add-and-fetch |
-| `LIBXS_ATOMIC_SUBFETCH(SRC, VALUE, KIND)` | Subtract-and-fetch |
+| `LIBXS_ATOMIC_FETCH_OR(DST, VALUE, KIND)` | Fetch-and-or |
+| `LIBXS_ATOMIC_FETCH_ADD(DST, VALUE, KIND)` | Fetch-and-add |
+| `LIBXS_ATOMIC_FETCH_SUB(DST, VALUE, KIND)` | Fetch-and-subtract |
+| `LIBXS_ATOMIC_ADD_FETCH(DST, VALUE, KIND)` | Add-and-fetch |
+| `LIBXS_ATOMIC_SUB_FETCH(DST, VALUE, KIND)` | Subtract-and-fetch |
 | `LIBXS_ATOMIC_TRYLOCK(DST, KIND)` | Try-lock (returns acquired state) |
-| `LIBXS_ATOMIC_ACQUIRE(DST, KIND)` | Spin-acquire |
+| `LIBXS_ATOMIC_ACQUIRE(DST, NPAUSE, KIND)` | Spin-acquire with backoff |
 | `LIBXS_ATOMIC_RELEASE(DST, KIND)` | Release (store zero) |
 | `LIBXS_ATOMIC_SYNC(KIND)` | Full memory fence |
 
@@ -78,6 +80,24 @@ LIBXS_FUNLOCK(FILE)
 Per-file locking for thread-safe I/O. Maps to `flockfile`/`funlockfile` on POSIX, `_lock_file`/`_unlock_file` on Windows, or no-ops when synchronization is disabled.
 
 ## Functions
+
+```C
+unsigned int libxs_nranks(void);
+```
+
+Return the number of MPI ranks.
+
+```C
+unsigned int libxs_nrank(void);
+```
+
+Return the MPI rank of the calling process.
+
+```C
+unsigned int libxs_rid(void);
+```
+
+Return a rank ID of the calling process.
 
 ```C
 unsigned int libxs_pid(void);
