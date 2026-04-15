@@ -1,4 +1,4 @@
-.libxs_*.tex
+.libxs*.tex
 lib/libxs*
 .abi.log
 .state
@@ -6,6 +6,7 @@ lib/libxs*
 *.json
 *.mod
 *.x
+/.*
 build
 site
 bin
