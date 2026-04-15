@@ -79,6 +79,7 @@ int ozaki_ocl_gemm(void* handle, char transa, char transb, int M, int N, int K, 
   int result = EXIT_FAILURE;
   ozaki_ocl_handle_t* h = (ozaki_ocl_handle_t*)handle;
   if (NULL != h) {
+    const unsigned int mxcsr = LIBXS_MXCSR_GET();
     LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &h->lock);
     result = ozaki_gemm(&h->ctx, h->stream, transa, transb, M, N, K, alpha, a, lda, b, ldb, beta, c, ldc, hist, profile, 0);
     /* BLAS API is synchronous: caller expects result in c upon return.
@@ -88,6 +89,7 @@ int ozaki_ocl_gemm(void* handle, char transa, char transb, int M, int N, int K, 
     if (NULL != h->ctx.stream_a) libxstream_stream_sync(h->ctx.stream_a);
     if (NULL != h->ctx.stream_b) libxstream_stream_sync(h->ctx.stream_b);
     LIBXS_LOCK_RELEASE(LIBXS_LOCK, &h->lock);
+    LIBXS_MXCSR_SET(mxcsr);
   }
   return result;
 }
@@ -99,6 +101,7 @@ int ozaki_ocl_gemm_complex(void* handle, char transa, char transb, int M, int N,
   int result = EXIT_FAILURE;
   ozaki_ocl_handle_t* h = (ozaki_ocl_handle_t*)handle;
   if (NULL != h) {
+    const unsigned int mxcsr = LIBXS_MXCSR_GET();
     LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &h->lock);
     result = ozaki_gemm_complex(&h->ctx, h->stream, transa, transb, M, N, K, alpha, a, lda, b, ldb, beta, c, ldc);
     /* BLAS API is synchronous: caller expects result in c upon return.
@@ -108,6 +111,7 @@ int ozaki_ocl_gemm_complex(void* handle, char transa, char transb, int M, int N,
     if (NULL != h->ctx.stream_a) libxstream_stream_sync(h->ctx.stream_a);
     if (NULL != h->ctx.stream_b) libxstream_stream_sync(h->ctx.stream_b);
     LIBXS_LOCK_RELEASE(LIBXS_LOCK, &h->lock);
+    LIBXS_MXCSR_SET(mxcsr);
   }
   return result;
 }
