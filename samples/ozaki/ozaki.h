@@ -727,9 +727,9 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
     else LIBXS_SNPRINTF(fname, sizeof(fname), GEMM_LABEL "-%i-%u-%i-c.mhd", slurm, rid, gemm_diff.r);
     file = fopen(fname, "rb");
     if (NULL == file) { /* Never overwrite an existing file */
-      const GEMM_REAL_TYPE scale = 0;
+      const GEMM_REAL_TYPE scale[] = { 0, 0 };
       const char transc = 'N';
-      const int result_c = gemm_mhd_write(fname, c, *m, *n, *ldc, transc, &scale, ncomponents, &settings);
+      const int result_c = gemm_mhd_write(fname, c, *m, *n, *ldc, transc, scale, ncomponents, &settings);
       if (EXIT_SUCCESS != result_c && 0 != ozaki_verbose) {
         fprintf(stderr, "ERROR: dumping C-matrix to %s failed!\n", fname);
       }
