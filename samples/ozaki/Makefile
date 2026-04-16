@@ -35,8 +35,9 @@ ifneq (0,$(LIBXSTREAM))
   ifneq (,$(XSTREAM_LIB)$(XSTREAM_SOURCE))
     IFLAGS += -I$(call quote,$(LIBXSTREAMROOT)/include)
     IFLAGS += -I$(call quote,$(LIBXSTREAMROOT)/samples/ozaki)
-    ifneq (,$(XSTREAM_LIB))
-      DFLAGS += -D__LIBXSTREAM
+    DFLAGS += -D__LIBXSTREAM
+    ifeq (,$(XSTREAM_LIB))
+      DFLAGS += -DLIBXSTREAM_SOURCE
     endif
     OCLOBJS := $(BLDDIR)/ozaki_ocl-c.o \
                $(BLDDIR)/ozaki_opencl-c.o \
