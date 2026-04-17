@@ -83,7 +83,7 @@ No recompilation needed.
 
 The wrapper must reach every MPI rank, not just mpirun itself.
 
-### Wrong (wrapper only loads in the launcher process)
+### Wrong (wrapper only in the launcher process)
 
 ```bash
 LD_PRELOAD=libwrap.so mpirun -np 4 ./app
@@ -95,11 +95,13 @@ LD_PRELOAD=libwrap.so mpirun -np 4 ./app
 mpirun -np 4 env LD_PRELOAD=/path/to/libwrap.so ./app
 ```
 
-**OpenMPI**: `mpirun -np 4 -x LD_PRELOAD=/path/to/libwrap.so ./app`
+---
 
-**Intel MPI**: `mpiexec -n 4 -genv LD_PRELOAD /path/to/libwrap.so ./app`
+## SLURM and MPI
 
-**SLURM**: `srun -n 4 --export=ALL,LD_PRELOAD=/path/to/libwrap.so ./app`
+* **SLURM**: `srun -n 4 --export=ALL,LD_PRELOAD=/path/to/libwrap.so ./app`
+* **OpenMPI**: `mpirun -np 4 -x LD_PRELOAD=/path/to/libwrap.so ./app`
+* **Intel MPI**: `mpiexec -n 4 -genv LD_PRELOAD /path/to/libwrap.so ./app`
 
 ---
 
@@ -131,8 +133,7 @@ GEMM: ncalls=90620954 linf=0 linf_rel=0 l2_rel=0 eps=0.000000 rsq=1.000000
 | eps        | Normalized Frobenius error     | < 1e-10 (fp64)               |
 | rsq        | R-squared (best single metric) | > 0.99 = good, 1.0 = perfect |
 
-The rsq value is the single most important number.
-Values below 0.99 need investigation.
+The RSQ is the important number. Values below 0.99 need investigation.
 
 ---
 
@@ -153,8 +154,8 @@ or insufficient decomposition depth.
 
 ## Debugging Accuracy Problems
 
-When OZAKI_RSQ or OZAKI_EPS thresholds are exceeded, the wrapper
-dumps the A and B matrices as MHD files automatically.
+When OZAKI_RSQ or OZAKI_EPS thresholds are exceeded,
+A and B matrices are dumped as MHD files (viewers available).
 
 Reproduce the problem offline:
 
@@ -177,7 +178,7 @@ Try increasing accuracy:
 | OZAKI=1   | S*(S+1)/2 dot prods   | Smaller matrices, high acc.   |
 | OZAKI=2   | P dot products        | Large matrices, large K       |
 
-S = number of slices (default 8 for fp64).
+S = number of slices (default 8 for fp64).  
 P = number of primes (default 16 for fp64).
 
 ```bash
@@ -209,10 +210,7 @@ export OZAKI_OCL=1          # enable GPU offload
 export OZAKI_OCL=0          # CPU only (default)
 ```
 
-Auto-detects Intel XMX hardware (DPAS instructions).
-Falls back to CPU transparently if no GPU is available.
-
-For large matrices with Scheme 2, K-grouping helps significantly:
+For large matrices with Scheme 2, K-grouping can help:
 
 ```bash
 export OZAKI=2 OZAKI_GROUPS=4
@@ -234,7 +232,7 @@ At program exit:
 OZAKI PROF: 850 DP-GFLOPS/s (17.0 INT8-TOPS/s, 20x)
 ```
 
-Reports effective GFLOPS/s and derived INT8 throughput.
+Reports effective GFLOPS/s and derived INT8 throughput.  
 Works for both CPU and GPU paths (same histogram).
 
 ---
@@ -272,7 +270,8 @@ srun --export=ALL ./yourapp.x workload.inp
 ## Troubleshooting
 
 **Segfault on startup?**
-The application may statically link BLAS. Use --wrap instead:
+The application may statically link BLAS.  
+Use --wrap instead:
 
 ```bash
 gcc -o app app.o -lwrap \
