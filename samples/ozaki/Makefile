@@ -13,9 +13,11 @@ DNNL = 0
 OMP = 1
 OCL = 2
 SYM = 1
+SSE = 0
 
 BLAS = $(if $(filter-out 0,$(OMP)),2,1)
 #BLAS_STATIC = 0
+STATIC=0
 
 # include common Makefile artifacts
 include $(DEPDIR)/Makefile.inc
@@ -123,18 +125,18 @@ compile: $(OBJECTS)
 # Link recipe for static-wrap executables (handles OMP variants)
 ifneq (0,$(OMP))
   define LINK_WRAP
-	$(LD) -o $@ $< $(OUTDIR)/libwrap.$(SLIBEXT) $(XSTREAM_LIB) $(XLIB) \
+	$(LD) -o $@ $< $(OUTDIR)/libwrap.$(SLIBEXT) $(call abslib,$(XSTREAM_LIB)) $(call abslib,$(XLIB)) \
 		$(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS) $(WRAP_GEMM)
   endef
 else ifneq (,$(strip $(OMPLIB)))
   define LINK_WRAP
-	$(LD) -o $@ $< $(OUTDIR)/libwrap.$(SLIBEXT) $(XSTREAM_LIB) $(XLIB) \
+	$(LD) -o $@ $< $(OUTDIR)/libwrap.$(SLIBEXT) $(call abslib,$(XSTREAM_LIB)) $(call abslib,$(XLIB)) \
 		$(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS) $(WRAP_GEMM) \
 		$(XLIB_BEGIN) $(OMPLIB) $(XLIB_END)
   endef
 else
   define LINK_WRAP
-	$(LD) -o $@ $< $(OUTDIR)/libwrap.$(SLIBEXT) $(XSTREAM_LIB) $(XLIB) \
+	$(LD) -o $@ $< $(OUTDIR)/libwrap.$(SLIBEXT) $(call abslib,$(XSTREAM_LIB)) $(call abslib,$(XLIB)) \
 		$(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS) $(WRAP_GEMM)
   endef
 endif
@@ -145,38 +147,38 @@ endif
 $(OUTDIR)/libwrap.$(SLIBEXT): $(OUTDIR)/.make $(IMPLOBJS) $(OCLOBJS)
 	$(MAKE_AR) $@ $(call tailwords,$^)
 
-$(OUTDIR)/libwrap.$(DLIBEXT): $(IMPLOBJS) $(ENTRYOBJS) $(OCLOBJS) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
+$(OUTDIR)/libwrap.$(DLIBEXT): $(IMPLOBJS) $(ENTRYOBJS) $(OCLOBJS) $(XSTREAM_LIB) $(XLIB) $(OUTDIR)/.make
 	$(LIB_SOLD) $(call solink,$@) $(IMPLOBJS) $(ENTRYOBJS) $(OCLOBJS) \
-		$(XLIB) $(XSTREAM_LIB) $(XLIB) $(call cleanld,$(BASE_LDFLAGS) $(CLDFLAGS))
+		$(call abslib,$(XSTREAM_LIB)) $(call abslib,$(XLIB)) $(call cleanld,$(BASE_LDFLAGS) $(CLDFLAGS))
 
 # Executables depend on BLAS linkage mode
 ifneq (,$(WRAP_GEMM))
-$(OUTDIR)/dgemm-wrap.x: $(BLDDIR)/gemm-dc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
+$(OUTDIR)/dgemm-wrap.x: $(BLDDIR)/gemm-dc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XSTREAM_LIB) $(XLIB) $(OUTDIR)/.make
 	$(LINK_WRAP)
 
-$(OUTDIR)/sgemm-wrap.x: $(BLDDIR)/gemm-sc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
+$(OUTDIR)/sgemm-wrap.x: $(BLDDIR)/gemm-sc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XSTREAM_LIB) $(XLIB) $(OUTDIR)/.make
 	$(LINK_WRAP)
 
-$(OUTDIR)/zgemm-wrap.x: $(BLDDIR)/gemm-zc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
+$(OUTDIR)/zgemm-wrap.x: $(BLDDIR)/gemm-zc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XSTREAM_LIB) $(XLIB) $(OUTDIR)/.make
 	$(LINK_WRAP)
 
-$(OUTDIR)/cgemm-wrap.x: $(BLDDIR)/gemm-cc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
+$(OUTDIR)/cgemm-wrap.x: $(BLDDIR)/gemm-cc.o $(OUTDIR)/libwrap.$(SLIBEXT) $(XSTREAM_LIB) $(XLIB) $(OUTDIR)/.make
 	$(LINK_WRAP)
 
 .PHONY: $(OUTDIR)/dgemm-blas.x $(OUTDIR)/sgemm-blas.x
 .PHONY: $(OUTDIR)/zgemm-blas.x $(OUTDIR)/cgemm-blas.x
 else
-$(OUTDIR)/dgemm-blas.x: $(BLDDIR)/gemm-dc.o $(BLDDIR)/gemm-print-d.o $(OUTDIR)/libwrap.$(DLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
-	$(LD) -o $@ $(BLDDIR)/gemm-dc.o $(BLDDIR)/gemm-print-d.o $(XLIB) $(XSTREAM_LIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+$(OUTDIR)/dgemm-blas.x: $(BLDDIR)/gemm-dc.o $(BLDDIR)/gemm-print-d.o $(OUTDIR)/libwrap.$(DLIBEXT) $(XSTREAM_LIB) $(XLIB) $(OUTDIR)/.make
+	$(LD) -o $@ $(BLDDIR)/gemm-dc.o $(BLDDIR)/gemm-print-d.o $(call abslib,$(XSTREAM_LIB)) $(call abslib,$(XLIB)) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
-$(OUTDIR)/sgemm-blas.x: $(BLDDIR)/gemm-sc.o $(BLDDIR)/gemm-print-s.o $(OUTDIR)/libwrap.$(DLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
-	$(LD) -o $@ $(BLDDIR)/gemm-sc.o $(BLDDIR)/gemm-print-s.o $(XLIB) $(XSTREAM_LIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+$(OUTDIR)/sgemm-blas.x: $(BLDDIR)/gemm-sc.o $(BLDDIR)/gemm-print-s.o $(OUTDIR)/libwrap.$(DLIBEXT) $(XSTREAM_LIB) $(XLIB) $(OUTDIR)/.make
+	$(LD) -o $@ $(BLDDIR)/gemm-sc.o $(BLDDIR)/gemm-print-s.o $(call abslib,$(XSTREAM_LIB)) $(call abslib,$(XLIB)) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
-$(OUTDIR)/zgemm-blas.x: $(BLDDIR)/gemm-zc.o $(BLDDIR)/gemm-print-d.o $(OUTDIR)/libwrap.$(DLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
-	$(LD) -o $@ $(BLDDIR)/gemm-zc.o $(BLDDIR)/gemm-print-d.o $(XLIB) $(XSTREAM_LIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+$(OUTDIR)/zgemm-blas.x: $(BLDDIR)/gemm-zc.o $(BLDDIR)/gemm-print-d.o $(OUTDIR)/libwrap.$(DLIBEXT) $(XSTREAM_LIB) $(XLIB) $(OUTDIR)/.make
+	$(LD) -o $@ $(BLDDIR)/gemm-zc.o $(BLDDIR)/gemm-print-d.o $(call abslib,$(XSTREAM_LIB)) $(call abslib,$(XLIB)) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
-$(OUTDIR)/cgemm-blas.x: $(BLDDIR)/gemm-cc.o $(BLDDIR)/gemm-print-s.o $(OUTDIR)/libwrap.$(DLIBEXT) $(XLIB) $(XSTREAM_LIB) $(OUTDIR)/.make
-	$(LD) -o $@ $(BLDDIR)/gemm-cc.o $(BLDDIR)/gemm-print-s.o $(XLIB) $(XSTREAM_LIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+$(OUTDIR)/cgemm-blas.x: $(BLDDIR)/gemm-cc.o $(BLDDIR)/gemm-print-s.o $(OUTDIR)/libwrap.$(DLIBEXT) $(XSTREAM_LIB) $(XLIB) $(OUTDIR)/.make
+	$(LD) -o $@ $(BLDDIR)/gemm-cc.o $(BLDDIR)/gemm-print-s.o $(call abslib,$(XSTREAM_LIB)) $(call abslib,$(XLIB)) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
 .PHONY: $(OUTDIR)/dgemm-wrap.x $(OUTDIR)/sgemm-wrap.x
 .PHONY: $(OUTDIR)/zgemm-wrap.x $(OUTDIR)/cgemm-wrap.x
