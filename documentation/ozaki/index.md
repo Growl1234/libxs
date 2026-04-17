@@ -20,7 +20,7 @@ Built-in accuracy tracking tells you whether results are trustworthy.
 
 ## How It Works
 
-```
+```text
 Application calls DGEMM/SGEMM/ZGEMM/CGEMM
             |
             v
@@ -59,7 +59,7 @@ Produces `libwrap.so`, `libwrap.a`, and test drivers
 ./dgemm-wrap.x 256
 ```
 
-```
+```text
 Ozaki-Scheme Low-Precision GEMM
 GEMM: NN M=256 N=256 K=256
 ozaki_oz1: nslices=8 block=16x16x16 vnni=1
@@ -118,7 +118,7 @@ Run your workload and check the exit summary.
 
 ## Reading the Statistics Output
 
-```
+```text
 GEMM: ncalls=90620954 linf=0 linf_rel=0 l2_rel=0 eps=0.000000 rsq=1.000000
 ```
 
@@ -230,7 +230,7 @@ export OZAKI_PROFILE=3      # preprocessing only
 
 At program exit:
 
-```
+```text
 OZAKI PROF: 850 DP-GFLOPS/s (17.0 INT8-TOPS/s, 20x)
 ```
 
