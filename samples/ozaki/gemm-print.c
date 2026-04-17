@@ -10,7 +10,7 @@
 #include <libxs_sync.h>
 
 
-LIBXS_API void print_gemm(FILE* ostream, int compact, const char* transa, const char* transb, const GEMM_INT_TYPE* m,
+OZAKI_API void print_gemm(FILE* ostream, int compact, const char* transa, const char* transb, const GEMM_INT_TYPE* m,
   const GEMM_INT_TYPE* n, const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda,
   const GEMM_REAL_TYPE* b, const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc)
 {
@@ -36,7 +36,7 @@ LIBXS_API void print_gemm(FILE* ostream, int compact, const char* transa, const 
 }
 
 
-LIBXS_API void print_diff(FILE* ostream, const char* label, int detail, const libxs_matdiff_t* diff)
+OZAKI_API void print_diff(FILE* ostream, const char* label, int detail, const libxs_matdiff_t* diff)
 {
   const char *const name = ((NULL != label && '\0' != *label) ? label : "GEMM");
   const double epsilon = libxs_matdiff_epsilon(diff);

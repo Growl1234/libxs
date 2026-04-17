@@ -9,6 +9,16 @@
 #include <libxs_math.h>
 #include <libxs_mhd.h>
 
+/* Sample-specific API macros: always EXPORT (regular object files),
+ * independent of the LIBXS build-kind (which may be INLINE). */
+#define OZAKI_BUILD_KIND LIBXS_APIKIND_EXPORT
+#define OZAKI_API LIBXS_API_DECL(OZAKI_BUILD_KIND)
+#define OZAKI_API_INTERN LIBXS_API_DECL_INTERN(OZAKI_BUILD_KIND)
+#define OZAKI_APIVAR_PUBLIC(DECL) LIBXS_APIVAR_DECL_PUBLIC(DECL, OZAKI_BUILD_KIND)
+#define OZAKI_APIVAR_PRIVATE(DECL) LIBXS_APIVAR_DECL_PRIVATE(DECL, OZAKI_BUILD_KIND)
+#define OZAKI_APIVAR_PUBLIC_DEF(DECL) LIBXS_APIVAR_DECL_PUBLIC_DEF(DECL, OZAKI_BUILD_KIND)
+#define OZAKI_APIVAR_PRIVATE_DEF(DECL) LIBXS_APIVAR_DECL_PRIVATE_DEF(DECL, OZAKI_BUILD_KIND)
+
 #if !defined(GEMM_REAL_TYPE)
 # define GEMM_REAL_TYPE double
 #endif
@@ -62,17 +72,17 @@
 #define GEMM_MHD_SETTINGS_SIZE (5 * (int)sizeof(int))
 
 /** Real GEMM entry point (dgemm_ or sgemm_). */
-LIBXS_API void GEMM(GEMM_ARGDECL);
+LIBXS_EXTERN void GEMM(GEMM_ARGDECL);
 /** Complex GEMM entry point (zgemm_ or cgemm_). */
-LIBXS_API void ZGEMM(GEMM_ARGDECL);
+LIBXS_EXTERN void ZGEMM(GEMM_ARGDECL);
 /** Original (unwrapped) real GEMM. */
 #define GEMM_REAL LIBXS_CONCATENATE(__real_, GEMM)
-LIBXS_API_INTERN void GEMM_REAL(GEMM_ARGDECL);
+LIBXS_EXTERN void GEMM_REAL(GEMM_ARGDECL);
 
 /** Print GEMM arguments. */
-LIBXS_API void print_gemm(FILE* ostream, int compact, GEMM_ARGDECL);
+OZAKI_API void print_gemm(FILE* ostream, int compact, GEMM_ARGDECL);
 /** Print statistics (label = "DGEMM", "ZGEMM", etc.). */
-LIBXS_API void print_diff(FILE* ostream, const char* label, int detail, const libxs_matdiff_t* diff);
+OZAKI_API void print_diff(FILE* ostream, const char* label, int detail, const libxs_matdiff_t* diff);
 
 /** Ozaki settings stored in MHD extension (optional). */
 typedef struct gemm_mhd_settings_t {
@@ -204,8 +214,8 @@ LIBXS_API_INLINE int gemm_mhd_write(const char* filename, const GEMM_REAL_TYPE* 
 /** Function type for GEMM (precision-specific). */
 LIBXS_EXTERN_C typedef void (*gemm_function_t)(GEMM_ARGDECL);
 
-LIBXS_APIVAR_PUBLIC(gemm_function_t gemm_original);
-LIBXS_APIVAR_PUBLIC(libxs_matdiff_t gemm_diff);
-LIBXS_APIVAR_PUBLIC(int ozaki);
-LIBXS_APIVAR_PUBLIC(int ozaki_verbose);
-LIBXS_APIVAR_PUBLIC(int ozaki_stat);
+OZAKI_APIVAR_PUBLIC(gemm_function_t gemm_original);
+OZAKI_APIVAR_PUBLIC(libxs_matdiff_t gemm_diff);
+OZAKI_APIVAR_PUBLIC(int ozaki);
+OZAKI_APIVAR_PUBLIC(int ozaki_verbose);
+OZAKI_APIVAR_PUBLIC(int ozaki_stat);

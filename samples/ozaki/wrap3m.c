@@ -32,7 +32,7 @@
  * Complex alpha and beta scaling is applied in a finalize step.
  */
 
-LIBXS_APIVAR_PRIVATE_DEF(zgemm_function_t zgemm_original);
+OZAKI_APIVAR_PRIVATE_DEF(zgemm_function_t zgemm_original);
 
 
 /**
@@ -156,7 +156,7 @@ LIBXS_API_INLINE void zgemm_block_finalize(GEMM_REAL_TYPE* LIBXS_RESTRICT c, GEM
  * this function delegates to the GPU-native path which keeps all intermediate
  * buffers on device, minimizing PCIe transfers.
  */
-LIBXS_API_INTERN void gemm_complex(GEMM_ARGDECL)
+OZAKI_API_INTERN void gemm_complex(GEMM_ARGDECL)
 {
   int done = 0;
 #if defined(__LIBXSTREAM)
@@ -296,7 +296,7 @@ LIBXS_API_INLINE void gemm_complex_diff(GEMM_ARGDECL,
  *   2 = GPU-native block embedding (all on device, falls back to CPU).
  * Default: follows OZAKI (0 if OZAKI=0, else 2).
  */
-LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void ZGEMM_WRAP(GEMM_ARGDECL)
+OZAKI_API_INTERN LIBXS_ATTRIBUTE_WEAK void ZGEMM_WRAP(GEMM_ARGDECL)
 {
   gemm_init();
   if (*m > 0 && *n > 0 && *k > 0) {

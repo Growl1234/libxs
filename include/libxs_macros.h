@@ -9,6 +9,11 @@
 #ifndef LIBXS_MACROS_H
 #define LIBXS_MACROS_H
 
+/* LIBXSTREAM header-only implies LIBXS header-only */
+#if defined(LIBXSTREAM_SOURCE) && !defined(LIBXS_SOURCE)
+# define LIBXS_SOURCE
+#endif
+
 #if defined(LIBXS_BUILD)
 # include "libxs_version.h"
 #endif
@@ -477,7 +482,7 @@
 #define LIBXS_APIKIND_EXPORT 1
 #define LIBXS_APIKIND_INLINE 2
 
-#if defined(LIBXS_SOURCE_H)
+#if defined(LIBXS_SOURCE_H) || defined(LIBXS_SOURCE)
 # define LIBXS_BUILD_KIND LIBXS_APIKIND_INLINE
 #elif defined(LIBXS_BUILD)
 # define LIBXS_BUILD_KIND LIBXS_APIKIND_EXPORT

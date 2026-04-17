@@ -65,4 +65,9 @@ LIBXS_API int libxs_cpuid_id(const char* name);
 /** Returns the SIMD vector length (VLEN) in bytes for the given ISA level; zero if scalar. */
 LIBXS_API int libxs_cpuid_vlen(int id);
 
+/* header-only: include implementation (deferred from libxs_macros.h) */
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+# include "libxs_source.h"
+#endif
+
 #endif /*LIBXS_CPUID_H*/

@@ -17,7 +17,7 @@
  * on first call (LD_PRELOAD path) and caches the function pointer.
  */
 #define GEMM_DEFINE_DLSYM(FUNC, SYMBOL, FTYPE, ORIGPTR) \
-  LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void FUNC(GEMM_ARGDECL) \
+  OZAKI_API_INTERN LIBXS_ATTRIBUTE_WEAK void FUNC(GEMM_ARGDECL) \
   { \
     if (NULL == ORIGPTR) { \
       union { \
@@ -53,13 +53,13 @@ GEMM_DEFINE_DLSYM(ZGEMM_REAL, ZGEMM, zgemm_function_t, zgemm_original)
 
 
 /** Real GEMM entry point: delegates to GEMM_WRAP (Ozaki implementation). */
-LIBXS_API LIBXS_ATTRIBUTE_USED void GEMM(GEMM_ARGDECL)
+OZAKI_API LIBXS_ATTRIBUTE_USED void GEMM(GEMM_ARGDECL)
 {
   GEMM_WRAP(GEMM_ARGPASS);
 }
 
 /** Complex GEMM entry point: delegates to ZGEMM_WRAP. */
-LIBXS_API LIBXS_ATTRIBUTE_USED void ZGEMM(GEMM_ARGDECL)
+OZAKI_API LIBXS_ATTRIBUTE_USED void ZGEMM(GEMM_ARGDECL)
 {
   ZGEMM_WRAP(GEMM_ARGPASS);
 }

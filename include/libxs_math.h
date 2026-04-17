@@ -231,4 +231,9 @@ LIBXS_API_INLINE unsigned int libxs_mod_u64(uint64_t x, unsigned int p,
   return libxs_mod_u32(a2 * pow36 + a1 * pow18 + a0, p, rcp);
 }
 
+/* header-only: include implementation (deferred from libxs_macros.h) */
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+# include "libxs_source.h"
+#endif
+
 #endif /*LIBXS_MATH_H*/

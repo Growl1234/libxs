@@ -55,4 +55,9 @@ LIBXS_API void libxs_hist_update_avg(double* dst, const double* src);
 /** Update function (libxs_hist_update_t): accumulate. */
 LIBXS_API void libxs_hist_update_add(double* dst, const double* src);
 
+/* header-only: include implementation (deferred from libxs_macros.h) */
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+# include "libxs_source.h"
+#endif
+
 #endif /*LIBXS_HIST_H*/

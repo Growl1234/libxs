@@ -171,4 +171,9 @@ LIBXS_API size_t libxs_unshuffle(
   /** Shall be co-prime to count-argument; uses libxs_coprime2(count) if shuffle=NULL. */
   const size_t* shuffle);
 
+/* header-only: include implementation (deferred from libxs_macros.h) */
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+# include "libxs_source.h"
+#endif
+
 #endif /*LIBXS_MEM_H*/

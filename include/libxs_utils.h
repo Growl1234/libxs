@@ -491,4 +491,9 @@ __m512i libxs_mod_u32x16(__m512i x, unsigned int p, unsigned int rcp)
 }
 #endif /* LIBXS_INTRINSICS_AVX512 */
 
+/* header-only: include implementation (deferred from libxs_macros.h) */
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+# include "libxs_source.h"
+#endif
+
 #endif /*LIBXS_UTILS_H*/

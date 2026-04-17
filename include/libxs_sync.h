@@ -769,4 +769,9 @@ LIBXS_API void libxs_stdio_acquire(void);
 /** Synchronize console output (unlock). */
 LIBXS_API void libxs_stdio_release(void);
 
+/* header-only: include implementation (deferred from libxs_macros.h) */
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+# include "libxs_source.h"
+#endif
+
 #endif /*LIBXS_SYNC_H*/

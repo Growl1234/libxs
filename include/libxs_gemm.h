@@ -367,4 +367,9 @@ LIBXS_API_INLINE void libxs_gemm_release_registry(libxs_registry_t* registry)
   }
 }
 
+/* header-only: include implementation (deferred from libxs_macros.h) */
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+# include "libxs_source.h"
+#endif
+
 #endif /*LIBXS_GEMM_H*/

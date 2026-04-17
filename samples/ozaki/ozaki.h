@@ -226,50 +226,50 @@ typedef int32_t (*ozaki_dot_i8_fn)(const int8_t[BLOCK_K], const int8_t[BLOCK_K])
 typedef int32_t (*ozaki_dot_u8_fn)(const uint8_t[BLOCK_K], const uint8_t[BLOCK_K]);
 
 /** Function prototypes for wrapped / real / public GEMM and complex GEMM. */
-LIBXS_API_INTERN void GEMM_WRAP(GEMM_ARGDECL);
-LIBXS_API_INTERN void GEMM_REAL(GEMM_ARGDECL);
-LIBXS_API_INTERN void ZGEMM_WRAP(GEMM_ARGDECL);
-LIBXS_API_INTERN void ZGEMM_REAL(GEMM_ARGDECL);
-LIBXS_API void ZGEMM(GEMM_ARGDECL);
+OZAKI_API_INTERN void GEMM_WRAP(GEMM_ARGDECL);
+OZAKI_API_INTERN void GEMM_REAL(GEMM_ARGDECL);
+OZAKI_API_INTERN void ZGEMM_WRAP(GEMM_ARGDECL);
+OZAKI_API_INTERN void ZGEMM_REAL(GEMM_ARGDECL);
+OZAKI_API void ZGEMM(GEMM_ARGDECL);
 
 /** Function prototype for GEMM using low-precision (Ozaki scheme 1). */
-LIBXS_API void gemm_oz1(GEMM_ARGDECL);
+OZAKI_API void gemm_oz1(GEMM_ARGDECL);
 /** Function prototype for GEMM using CRT modular arithmetic (Ozaki scheme 2). */
-LIBXS_API void gemm_oz2(GEMM_ARGDECL);
+OZAKI_API void gemm_oz2(GEMM_ARGDECL);
 /** Complex GEMM implementation (internal). */
-LIBXS_API_INTERN void gemm_complex(GEMM_ARGDECL);
+OZAKI_API_INTERN void gemm_complex(GEMM_ARGDECL);
 
-LIBXS_APIVAR_PUBLIC(gemm_function_t gemm_original);
-LIBXS_APIVAR_PUBLIC(int ozaki);
-LIBXS_APIVAR_PUBLIC(int ozaki_complex);
-LIBXS_APIVAR_PUBLIC(int ozaki_maxk);
-LIBXS_APIVAR_PUBLIC(int ozaki_verbose);
-LIBXS_APIVAR_PUBLIC(int ozaki_stat);
+OZAKI_APIVAR_PUBLIC(gemm_function_t gemm_original);
+OZAKI_APIVAR_PUBLIC(int ozaki);
+OZAKI_APIVAR_PUBLIC(int ozaki_complex);
+OZAKI_APIVAR_PUBLIC(int ozaki_maxk);
+OZAKI_APIVAR_PUBLIC(int ozaki_verbose);
+OZAKI_APIVAR_PUBLIC(int ozaki_stat);
 
-LIBXS_APIVAR_PRIVATE(volatile LIBXS_ATOMIC_LOCKTYPE gemm_lock);
-LIBXS_APIVAR_PRIVATE(zgemm_function_t zgemm_original);
-LIBXS_APIVAR_PRIVATE(libxs_malloc_pool_t* gemm_pool);
-LIBXS_APIVAR_PRIVATE(int ozaki_target_arch);
-LIBXS_APIVAR_PRIVATE(int ozaki_idx);
-LIBXS_APIVAR_PRIVATE(double ozaki_eps);
-LIBXS_APIVAR_PRIVATE(double ozaki_rsq);
-LIBXS_APIVAR_PRIVATE(int ozaki_flags);
-LIBXS_APIVAR_PRIVATE(int ozaki_trim);
-LIBXS_APIVAR_PRIVATE(int ozaki_dump);
-LIBXS_APIVAR_PRIVATE(int ozaki_exit);
-LIBXS_APIVAR_PRIVATE(int ozaki_n);
-LIBXS_APIVAR_PRIVATE(int ozaki_profile);
-LIBXS_APIVAR_PRIVATE(libxs_hist_t* ozaki_hist);
-LIBXS_APIVAR_PRIVATE(int gemm_threshold);
+OZAKI_APIVAR_PRIVATE(volatile LIBXS_ATOMIC_LOCKTYPE gemm_lock);
+OZAKI_APIVAR_PRIVATE(zgemm_function_t zgemm_original);
+OZAKI_APIVAR_PRIVATE(libxs_malloc_pool_t* gemm_pool);
+OZAKI_APIVAR_PRIVATE(int ozaki_target_arch);
+OZAKI_APIVAR_PRIVATE(int ozaki_idx);
+OZAKI_APIVAR_PRIVATE(double ozaki_eps);
+OZAKI_APIVAR_PRIVATE(double ozaki_rsq);
+OZAKI_APIVAR_PRIVATE(int ozaki_flags);
+OZAKI_APIVAR_PRIVATE(int ozaki_trim);
+OZAKI_APIVAR_PRIVATE(int ozaki_dump);
+OZAKI_APIVAR_PRIVATE(int ozaki_exit);
+OZAKI_APIVAR_PRIVATE(int ozaki_n);
+OZAKI_APIVAR_PRIVATE(int ozaki_profile);
+OZAKI_APIVAR_PRIVATE(libxs_hist_t* ozaki_hist);
+OZAKI_APIVAR_PRIVATE(int gemm_threshold);
 
-LIBXS_API_INTERN void gemm_init(void);
+OZAKI_API_INTERN void gemm_init(void);
 
 extern LIBXS_TLS int gemm_nozaki; /* not precision-prefixed: bypass must cover all precisions */
 extern LIBXS_TLS int gemm_dump_inhibit;
 
 #if defined(__LIBXSTREAM)
 /** Opaque OpenCL handle (bridge to LIBXSTREAM Ozaki). */
-LIBXS_APIVAR_PRIVATE(void* ozaki_ocl_handle);
+OZAKI_APIVAR_PRIVATE(void* ozaki_ocl_handle);
 void* ozaki_ocl_create(
   int use_double, int kind, int verbosity, int tm, int tn, int ndecomp, int ozflags, int oztrim, int ozgroups, int maxk, int profiling);
 void ozaki_ocl_release(void* handle);

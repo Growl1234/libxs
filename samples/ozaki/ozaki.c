@@ -12,39 +12,39 @@
 #include <signal.h>
 
 
-LIBXS_APIVAR_PUBLIC_DEF(libxs_matdiff_t gemm_diff);
-LIBXS_APIVAR_PUBLIC_DEF(gemm_function_t gemm_original);
-LIBXS_APIVAR_PUBLIC_DEF(int ozaki_verbose);
-LIBXS_APIVAR_PUBLIC_DEF(int ozaki_stat);
-LIBXS_APIVAR_PUBLIC_DEF(int ozaki);
-LIBXS_APIVAR_PUBLIC_DEF(int ozaki_complex);
-LIBXS_APIVAR_PUBLIC_DEF(int ozaki_maxk);
+OZAKI_APIVAR_PUBLIC_DEF(libxs_matdiff_t gemm_diff);
+OZAKI_APIVAR_PUBLIC_DEF(gemm_function_t gemm_original);
+OZAKI_APIVAR_PUBLIC_DEF(int ozaki_verbose);
+OZAKI_APIVAR_PUBLIC_DEF(int ozaki_stat);
+OZAKI_APIVAR_PUBLIC_DEF(int ozaki);
+OZAKI_APIVAR_PUBLIC_DEF(int ozaki_complex);
+OZAKI_APIVAR_PUBLIC_DEF(int ozaki_maxk);
 
-LIBXS_APIVAR_PRIVATE_DEF(volatile LIBXS_ATOMIC_LOCKTYPE gemm_lock);
-LIBXS_APIVAR_PRIVATE_DEF(libxs_malloc_pool_t* gemm_pool);
-LIBXS_APIVAR_PRIVATE_DEF(int ozaki_target_arch);
-LIBXS_APIVAR_PRIVATE_DEF(int ozaki_idx);
-LIBXS_APIVAR_PRIVATE_DEF(double ozaki_eps);
-LIBXS_APIVAR_PRIVATE_DEF(double ozaki_rsq);
-LIBXS_APIVAR_PRIVATE_DEF(int ozaki_flags);
-LIBXS_APIVAR_PRIVATE_DEF(int ozaki_trim);
-LIBXS_APIVAR_PRIVATE_DEF(int ozaki_dump);
-LIBXS_APIVAR_PRIVATE_DEF(int ozaki_exit);
-LIBXS_APIVAR_PRIVATE_DEF(int ozaki_n);
-LIBXS_APIVAR_PRIVATE_DEF(int ozaki_profile);
-LIBXS_APIVAR_PRIVATE_DEF(libxs_hist_t* ozaki_hist);
-LIBXS_APIVAR_PRIVATE_DEF(int gemm_threshold);
+OZAKI_APIVAR_PRIVATE_DEF(volatile LIBXS_ATOMIC_LOCKTYPE gemm_lock);
+OZAKI_APIVAR_PRIVATE_DEF(libxs_malloc_pool_t* gemm_pool);
+OZAKI_APIVAR_PRIVATE_DEF(int ozaki_target_arch);
+OZAKI_APIVAR_PRIVATE_DEF(int ozaki_idx);
+OZAKI_APIVAR_PRIVATE_DEF(double ozaki_eps);
+OZAKI_APIVAR_PRIVATE_DEF(double ozaki_rsq);
+OZAKI_APIVAR_PRIVATE_DEF(int ozaki_flags);
+OZAKI_APIVAR_PRIVATE_DEF(int ozaki_trim);
+OZAKI_APIVAR_PRIVATE_DEF(int ozaki_dump);
+OZAKI_APIVAR_PRIVATE_DEF(int ozaki_exit);
+OZAKI_APIVAR_PRIVATE_DEF(int ozaki_n);
+OZAKI_APIVAR_PRIVATE_DEF(int ozaki_profile);
+OZAKI_APIVAR_PRIVATE_DEF(libxs_hist_t* ozaki_hist);
+OZAKI_APIVAR_PRIVATE_DEF(int gemm_threshold);
 #if GEMM_IS_DOUBLE /* single definition across both precision builds */
 LIBXS_TLS int gemm_nozaki;
 LIBXS_TLS int gemm_dump_inhibit;
 #endif
 #if defined(__LIBXSTREAM)
-LIBXS_APIVAR_PRIVATE_DEF(void* ozaki_ocl_handle);
+OZAKI_APIVAR_PRIVATE_DEF(void* ozaki_ocl_handle);
 #endif
 
 
-LIBXS_API_INTERN void gemm_atexit(void);
-LIBXS_API_INTERN void gemm_atexit(void)
+OZAKI_API_INTERN void gemm_atexit(void);
+OZAKI_API_INTERN void gemm_atexit(void)
 {
   static volatile sig_atomic_t once = 0;
   if (0 == once) {
@@ -93,8 +93,8 @@ LIBXS_API_INTERN void gemm_atexit(void)
 }
 
 
-LIBXS_API_INTERN void gemm_signal_handler(int sig);
-LIBXS_API_INTERN void gemm_signal_handler(int sig)
+OZAKI_API_INTERN void gemm_signal_handler(int sig);
+OZAKI_API_INTERN void gemm_signal_handler(int sig)
 {
   gemm_atexit();
   signal(sig, SIG_DFL);
@@ -133,7 +133,7 @@ LIBXS_API_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb, c
 #endif
 
 
-LIBXS_API_INTERN void gemm_init(void)
+OZAKI_API_INTERN void gemm_init(void)
 {
   static volatile int gemm_initialized = 0;
   if (0 == gemm_initialized) {
@@ -250,7 +250,7 @@ LIBXS_API_INTERN void gemm_init(void)
 
 
 /** Function gemm_oz1 is called here with the original GEMM as fallback and for comparison. */
-LIBXS_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const char* transb, const GEMM_INT_TYPE* m,
+OZAKI_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const char* transb, const GEMM_INT_TYPE* m,
   const GEMM_INT_TYPE* n, const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda,
   const GEMM_REAL_TYPE* b, const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc)
 {

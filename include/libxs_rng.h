@@ -93,4 +93,9 @@ LIBXS_API double libxs_rng_f64(void);
  */
 LIBXS_API void libxs_rng_seq(void* data, size_t nbytes);
 
+/* header-only: include implementation (deferred from libxs_macros.h) */
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+# include "libxs_source.h"
+#endif
+
 #endif /*LIBXS_RNG_H*/
