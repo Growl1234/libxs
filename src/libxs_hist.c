@@ -198,10 +198,13 @@ LIBXS_API void libxs_hist_get_percentile(libxs_lock_t* lock, const libxs_hist_t*
           const double t = (ia != ib
             ? (fraction < 0.5 ? 0.5 + fraction : fraction - 0.5) : 0);
           vals[0] = range[0] + (i + fraction) * w / nbuckets;
+          LIBXS_PRAGMA_DIAG_PUSH()
+          LIBXS_PRAGMA_DIAG_OFF("-Warray-bounds")
+          LIBXS_PRAGMA_DIAG_OFF("-Warray-bounds=")
           for (; k < m; ++k) {
-            /* cast mutes false positive OOB warning */
-            ((double*)(void*)vals)[k] = v[ia + k] + t * (v[ib + k] - v[ia + k]);
+            vals[k] = v[ia + k] + t * (v[ib + k] - v[ia + k]);
           }
+          LIBXS_PRAGMA_DIAG_POP()
           break;
         }
       }
