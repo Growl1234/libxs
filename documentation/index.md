@@ -60,12 +60,20 @@ desired headers:
 #include <libxs_timer.h>
 ```
 
-**Header-only** -- include `libxs_source.h` in exactly one
-translation unit (no separate library needed):
+**Header-only** (explicit) -- include `libxs_source.h` (no
+separate library needed). Safe to include from multiple
+translation units:
 
 ```c
 #include <libxs_source.h>
 ```
+
+**Header-only** (implicit) -- compile with `-DLIBXS_SOURCE` and
+any LIBXS public header automatically includes the implementation.
+No special include order is required. When used through
+[LIBXSTREAM](https://github.com/hfp/libxstream) without a
+pre-built library (`-DLIBXSTREAM_SOURCE`), `LIBXS_SOURCE` is
+implied automatically.
 
 **Fortran** -- use the provided module
 ([documentation](libxs_fortran.md)):
