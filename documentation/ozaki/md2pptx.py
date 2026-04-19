@@ -6,6 +6,7 @@
 # For information on the license, see the LICENSE file.                       #
 # SPDX-License-Identifier: BSD-3-Clause                                       #
 ###############################################################################
+import argparse
 import os
 import re
 import subprocess
@@ -23,6 +24,8 @@ SLIDE_HEIGHT = Inches(7.5)
 CODE_FONT = "Courier New"
 CODE_SIZE = Pt(20)
 TABLE_SIZE = Pt(12)
+BODY_SIZE = Pt(18)
+INLINE_CODE_SCALE = 0.85
 
 # Layout
 MARGIN = Inches(0.5)
@@ -32,26 +35,35 @@ BODY_TOP = TITLE_TOP + TITLE_BOX + Inches(0.1)
 BODY_HEIGHT = SLIDE_HEIGHT - BODY_TOP - MARGIN
 CONTENT_WIDTH = SLIDE_WIDTH - 2 * MARGIN
 TABLE_ROW_HEIGHT = Inches(0.5)
-LINE_HEIGHT = Inches(0.25)
-BLOCK_SPACING = Inches(0.2)
+CODE_LINE_HEIGHT = Inches(0.35)
+TEXT_LINE_HEIGHT = Inches(0.4)
+BLOCK_SPACING = Inches(0.6)
 
 
 # Inline markdown parsing
 #
+def _typographic(text):
+    """Replace ASCII sequences with typographic equivalents."""
+    text = text.replace("---", "\u2014")  # em dash
+    text = text.replace("--", "\u2013")  # en dash
+    text = re.sub(r"\\([*_`\\])", r"\1", text)  # unescape markdown
+    return text
+
+
 def parse_inline(text):
     """Parse **bold** and `code` into [(text, style), ...]."""
     result = []
     pos = 0
     for m in re.finditer(r"\*\*(.+?)\*\*|`(.+?)`", text):
         if m.start() > pos:
-            result.append((text[pos : m.start()], "normal"))
+            result.append((_typographic(text[pos : m.start()]), "normal"))
         if m.group(1) is not None:
-            result.append((m.group(1), "bold"))
+            result.append((_typographic(m.group(1)), "bold"))
         else:
             result.append((m.group(2), "code"))
         pos = m.end()
     if pos < len(text):
-        result.append((text[pos:], "normal"))
+        result.append((_typographic(text[pos:]), "normal"))
     return result or [("", "normal")]
 
 
@@ -64,6 +76,7 @@ def add_runs(para, text, font_size=None, code=False):
         if font_size:
             run.font.size = font_size
         return
+    base = font_size or BODY_SIZE
     for content, style in parse_inline(text):
         run = para.add_run()
         run.text = content
@@ -73,6 +86,7 @@ def add_runs(para, text, font_size=None, code=False):
             run.font.bold = True
         elif style == "code":
             run.font.name = CODE_FONT
+            run.font.size = Pt(int(base / Pt(1) * INLINE_CODE_SCALE))
 
 
 def no_bullet(para):
@@ -171,14 +185,15 @@ def _parse_slide(text):
             i += 1
             continue
 
-        # Bullet item
-        if line.strip().startswith("- "):
+        # Bullet item (-, *, or \*)
+        m_bullet = re.match(r"^\s*(?:\\?[-*])\s+(.*)$", line)
+        if m_bullet:
             if cur and cur["type"] != "bullets":
                 slide["blocks"].append(cur)
                 cur = None
             if not cur:
                 cur = {"type": "bullets", "items": []}
-            cur["items"].append(line.strip()[2:])
+            cur["items"].append(m_bullet.group(1))
             i += 1
             continue
 
@@ -275,7 +290,8 @@ def _table_slide(prs, data):
                 n = len(block.get("lines", block.get("items", [])))
             elif block["type"] == "text":
                 n = len(block["lines"])
-            height = LINE_HEIGHT * max(n, 1)
+            lh = CODE_LINE_HEIGHT if block["type"] == "code" else TEXT_LINE_HEIGHT
+            height = lh * max(n, 1)
             txbox = slide.shapes.add_textbox(left, top, width, height)
             tf = txbox.text_frame
             tf.word_wrap = True
@@ -294,6 +310,7 @@ def _render_blocks(tf, blocks, placeholder=False):
                 p = tf.paragraphs[0] if first else tf.add_paragraph()
                 first = False
                 add_runs(p, line)
+                p.line_spacing = 1.0
                 if placeholder:
                     no_bullet(p)
 
@@ -311,9 +328,9 @@ def _render_blocks(tf, blocks, placeholder=False):
                 p = tf.paragraphs[0] if first else tf.add_paragraph()
                 first = False
                 if not placeholder:
-                    # Textboxes don't have automatic bullets
                     item = "\u2022 " + item
                 add_runs(p, item)
+                p.line_spacing = 1.0
 
         elif btype == "code":
             for line in block["lines"]:
@@ -404,8 +421,19 @@ def resave(pptx_path):
 #
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    output = os.path.join(here, "ozaki.pptx")
-    source = os.path.join(here, "index.md")
+    default_in = os.path.join(here, "index.md")
+
+    ap = argparse.ArgumentParser(description="Markdown to PowerPoint")
+    ap.add_argument("input", nargs="?", default=default_in, help="input .md")
+    ap.add_argument("output", nargs="?", default=None, help="output .pptx")
+    ap.add_argument("-in", dest="src", default=None, help="input .md")
+    ap.add_argument("-out", dest="dst", default=None, help="output .pptx")
+    args = ap.parse_args()
+
+    source = args.src or args.input
+    output = args.dst or args.output
+    if output is None:
+        output = os.path.splitext(source)[0] + ".pptx"
 
     slides = parse_markdown(source)
     prs = build_presentation(slides)
