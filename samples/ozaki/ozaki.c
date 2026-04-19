@@ -139,20 +139,19 @@ OZAKI_API_INTERN void gemm_init(void)
   if (0 == gemm_initialized) {
     LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);
     if (0 == gemm_initialized) {
-      const char* const ozaki_verbose_env = getenv("OZAKI_VERBOSE");
-      const char* const ozaki_stat_env = getenv("OZAKI_STAT");
       const char* const ozaki_env = getenv("OZAKI");
+      const char* const ozaki_stat_env = getenv("OZAKI_STAT");
+      const char* const ozaki_maxk_env = getenv("OZAKI_MAXK");
+      const char* const ozaki_verbose_env = getenv("OZAKI_VERBOSE");
       const char* const ozaki_complex_env = getenv("OZAKI_COMPLEX");
       ozaki = (NULL == ozaki_env ? 1 /*default*/ : atoi(ozaki_env));
+      /* OZAKI_MAXK: max K per preprocessing pass (0=no grouping).
+       * Default: K_GRP (compile-time, typically 32768). */
+      ozaki_maxk = (NULL != ozaki_maxk_env ? atoi(ozaki_maxk_env) : K_GRP);
       /* OZAKI_COMPLEX: 0=original BLAS, 1=CPU, 2=GPU,
        * 3=original ZGEMM + lock out real GEMM during ZGEMM.
        * Default: 0 if OZAKI=0, else 2 (GPU preferred, CPU fallback). */
       ozaki_complex = (NULL != ozaki_complex_env ? atoi(ozaki_complex_env) : (0 != ozaki ? 2 : 0));
-      { /* OZAKI_MAXK: max K per preprocessing pass (0=no grouping).
-         * Default: K_GRP (compile-time, typically 32768). */
-        const char* const ozaki_maxk_env = getenv("OZAKI_MAXK");
-        ozaki_maxk = (NULL != ozaki_maxk_env ? atoi(ozaki_maxk_env) : K_GRP);
-      }
       if (NULL != ozaki_stat_env) ozaki_stat = atoi(ozaki_stat_env);
       if (NULL != ozaki_verbose_env) ozaki_verbose = atoi(ozaki_verbose_env);
       else if (0 != ozaki_stat) ozaki_verbose = 1;
