@@ -175,55 +175,8 @@ LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t nc
 # define gemm_oz_ocl_diff LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz_ocl_diff)
 #endif
 
-/* Int8 dot product dispatch macro (Ozaki-1 slicing).
- * Priority: VPDPBSSD (1 instr) > VPDPBUSD+bias (2 instr) > scalar. */
-#if (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
-# if (LIBXS_X86_AVX512_INT8 <= LIBXS_STATIC_TARGET_ARCH)
-#   define ozaki_dot_i8_init() ozaki_dot_i8_bssd
-# elif (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH)
-#   define ozaki_dot_i8_init() ozaki_dot_i8_vnni
-# elif (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
-#   define ozaki_dot_i8_init() \
-      ((LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) \
-          ? ozaki_dot_i8_bssd \
-          : ((LIBXS_X86_AVX512 <= ozaki_target_arch) ? ozaki_dot_i8_vnni : ozaki_dot_i8_sw))
-# elif (LIBXS_X86_AVX512 <= LIBXS_MAX_STATIC_TARGET_ARCH)
-#   define ozaki_dot_i8_init() ((LIBXS_X86_AVX512 <= ozaki_target_arch) ? ozaki_dot_i8_vnni : ozaki_dot_i8_sw)
-# else
-#   define ozaki_dot_i8_init() ozaki_dot_i8_sw
-# endif
-#else
-# define ozaki_dot_i8_init() ozaki_dot_i8_sw
-#endif
-
-/* u8 dot product dispatch macro (Ozaki-2 CRT).
- * Priority: VPDPBUUD (1 instr) > VPDPBUSD+bias (2 instr) > scalar. */
-#if (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
-# if (LIBXS_X86_AVX512_INT8 <= LIBXS_STATIC_TARGET_ARCH)
-#   define ozaki_dot_u8_init() ozaki_dot_u8_buud
-# elif (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH)
-#   define ozaki_dot_u8_init() ozaki_dot_u8_vnni
-# elif (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
-#   define ozaki_dot_u8_init() \
-      ((LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) \
-          ? ozaki_dot_u8_buud \
-          : ((LIBXS_X86_AVX512 <= ozaki_target_arch) ? ozaki_dot_u8_vnni : ozaki_dot_u8_sw))
-# elif (LIBXS_X86_AVX512 <= LIBXS_MAX_STATIC_TARGET_ARCH)
-#   define ozaki_dot_u8_init() ((LIBXS_X86_AVX512 <= ozaki_target_arch) ? ozaki_dot_u8_vnni : ozaki_dot_u8_sw)
-# else
-#   define ozaki_dot_u8_init() ozaki_dot_u8_sw
-# endif
-#else
-# define ozaki_dot_u8_init() ozaki_dot_u8_sw
-#endif
-
-
 /** Function type for complex GEMM (precision-specific). */
 LIBXS_EXTERN_C typedef void (*zgemm_function_t)(GEMM_ARGDECL);
-/** Function pointer type for int8 dot product dispatch. */
-typedef int32_t (*ozaki_dot_i8_fn)(const int8_t[BLOCK_K], const int8_t[BLOCK_K]);
-/** Function pointer type for uint8 dot product dispatch (Ozaki-2 u8 CRT). */
-typedef int32_t (*ozaki_dot_u8_fn)(const uint8_t[BLOCK_K], const uint8_t[BLOCK_K]);
 
 /** Function prototypes for wrapped / real / public GEMM and complex GEMM. */
 OZAKI_API_INTERN void GEMM_WRAP(GEMM_ARGDECL);
@@ -282,163 +235,7 @@ void ozaki_ocl_invalidate_cache(void* handle, const void* a, const void* b);
 void ozaki_ocl_finalize(void);
 #endif
 
-/* Shared int8 dot-product infrastructure (VNNI + scalar fallback).
- *
- * VPDPBSSD (i8*i8): true signed×signed, single instruction, no bias.
- * VPDPBUUD (u8*u8): true unsigned×unsigned, single instruction, no bias.
- * Both require AVX-VNNI-INT8 (LIBXS_X86_AVX512_INT8 / LIBXS_X86_AVX10_256).
- * The LIBXS_INTRINSICS guard + target attribute enable the compiler to
- * emit these instructions via function multi-versioning even when the
- * baseline -march does not include avxvnniint8. */
-#if (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH) && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
-
-# if 16 == BLOCK_K /* 128-bit: one __m128i */
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8)
-int32_t ozaki_dot_i8_bssd(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
-{
-  const __m128i va = _mm_loadu_si128((const __m128i*)a);
-  const __m128i vb = _mm_loadu_si128((const __m128i*)b);
-  __m128i dp = _mm_dpbssd_epi32(_mm_setzero_si128(), va, vb);
-  dp = _mm_hadd_epi32(dp, dp);
-  dp = _mm_hadd_epi32(dp, dp);
-  return _mm_extract_epi32(dp, 0);
-}
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8)
-int32_t ozaki_dot_u8_buud(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
-{
-  const __m128i va = _mm_loadu_si128((const __m128i*)a);
-  const __m128i vb = _mm_loadu_si128((const __m128i*)b);
-  __m128i dp = _mm_dpbuud_epi32(_mm_setzero_si128(), va, vb);
-  dp = _mm_hadd_epi32(dp, dp);
-  dp = _mm_hadd_epi32(dp, dp);
-  return _mm_extract_epi32(dp, 0);
-}
-
-# elif 32 == BLOCK_K /* 256-bit: one __m256i */
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8)
-int32_t ozaki_dot_i8_bssd(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
-{
-  const __m256i va = _mm256_loadu_si256((const __m256i*)a);
-  const __m256i vb = _mm256_loadu_si256((const __m256i*)b);
-  __m256i dp = _mm256_dpbssd_epi32(_mm256_setzero_si256(), va, vb);
-  {
-    const __m128i hi = _mm256_extracti128_si256(dp, 1);
-    __m128i lo = _mm256_castsi256_si128(dp);
-    lo = _mm_add_epi32(lo, hi);
-    lo = _mm_hadd_epi32(lo, lo);
-    lo = _mm_hadd_epi32(lo, lo);
-    return _mm_extract_epi32(lo, 0);
-  }
-}
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8)
-int32_t ozaki_dot_u8_buud(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
-{
-  const __m256i va = _mm256_loadu_si256((const __m256i*)a);
-  const __m256i vb = _mm256_loadu_si256((const __m256i*)b);
-  __m256i dp = _mm256_dpbuud_epi32(_mm256_setzero_si256(), va, vb);
-  {
-    const __m128i hi = _mm256_extracti128_si256(dp, 1);
-    __m128i lo = _mm256_castsi256_si128(dp);
-    lo = _mm_add_epi32(lo, hi);
-    lo = _mm_hadd_epi32(lo, lo);
-    lo = _mm_hadd_epi32(lo, lo);
-    return _mm_extract_epi32(lo, 0);
-  }
-}
-
-# elif 64 == BLOCK_K /* 512-bit: one __m512i */
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8)
-int32_t ozaki_dot_i8_bssd(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
-{
-  const __m512i va = _mm512_loadu_si512((const __m512i*)a);
-  const __m512i vb = _mm512_loadu_si512((const __m512i*)b);
-  __m512i dp = _mm512_dpbssd_epi32(_mm512_setzero_si512(), va, vb);
-  return _mm512_reduce_add_epi32(dp);
-}
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8)
-int32_t ozaki_dot_u8_buud(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
-{
-  const __m512i va = _mm512_loadu_si512((const __m512i*)a);
-  const __m512i vb = _mm512_loadu_si512((const __m512i*)b);
-  __m512i dp = _mm512_dpbuud_epi32(_mm512_setzero_si512(), va, vb);
-  return _mm512_reduce_add_epi32(dp);
-}
-
-# endif /* BLOCK_K width selection */
-#endif /* AVX512_INT8 <= MAX_STATIC_TARGET_ARCH */
-
-
-/* VPDPBUSD: unsigned×signed int8 dot product with bias correction.
- * XOR with 0x80 converts signed a[] to unsigned, then VPDPBUSD
- * computes u8×s8 dot; subtracting 128*sum(b[]) compensates the
- * bias.  Requires two VPDPBUSD calls per vector (one for dp, one
- * for the b-sum used in compensation). */
-#if defined(LIBXS_INTRINSICS_AVX512)
-
-# if 16 == BLOCK_K /* 128-bit: one __m128i */
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
-int32_t ozaki_dot_i8_vnni(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
-{
-  const __m128i bias = _mm_set1_epi8((char)0x80);
-  const __m128i va = _mm_xor_si128(_mm_loadu_si128((const __m128i*)a), bias);
-  const __m128i vb = _mm_loadu_si128((const __m128i*)b);
-  const __m128i ones = _mm_set1_epi8(1);
-  __m128i dp = _mm_dpbusd_epi32(_mm_setzero_si128(), va, vb);
-  __m128i sb = _mm_dpbusd_epi32(_mm_setzero_si128(), ones, vb);
-  dp = _mm_hadd_epi32(dp, sb);
-  dp = _mm_hadd_epi32(dp, dp);
-  return _mm_extract_epi32(dp, 0) - 128 * _mm_extract_epi32(dp, 1);
-}
-
-# elif 32 == BLOCK_K /* 256-bit: one __m256i */
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
-int32_t ozaki_dot_i8_vnni(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
-{
-  const __m256i bias = _mm256_set1_epi8((char)0x80);
-  const __m256i va = _mm256_xor_si256(_mm256_loadu_si256((const __m256i*)a), bias);
-  const __m256i vb = _mm256_loadu_si256((const __m256i*)b);
-  const __m256i ones = _mm256_set1_epi8(1);
-  __m256i dp = _mm256_dpbusd_epi32(_mm256_setzero_si256(), va, vb);
-  __m256i sb = _mm256_dpbusd_epi32(_mm256_setzero_si256(), ones, vb);
-  {
-    const __m128i hi_dp = _mm256_extracti128_si256(dp, 1);
-    const __m128i hi_sb = _mm256_extracti128_si256(sb, 1);
-    __m128i lo_dp = _mm256_castsi256_si128(dp);
-    __m128i lo_sb = _mm256_castsi256_si128(sb);
-    lo_dp = _mm_add_epi32(lo_dp, hi_dp);
-    lo_sb = _mm_add_epi32(lo_sb, hi_sb);
-    lo_dp = _mm_hadd_epi32(lo_dp, lo_sb);
-    lo_dp = _mm_hadd_epi32(lo_dp, lo_dp);
-    return _mm_extract_epi32(lo_dp, 0) - 128 * _mm_extract_epi32(lo_dp, 1);
-  }
-}
-
-# elif 64 == BLOCK_K /* 512-bit: one __m512i */
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
-int32_t ozaki_dot_i8_vnni(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
-{
-  const __m512i bias = _mm512_set1_epi8((char)0x80);
-  const __m512i va = _mm512_xor_si512(_mm512_loadu_si512((const __m512i*)a), bias);
-  const __m512i vb = _mm512_loadu_si512((const __m512i*)b);
-  const __m512i ones = _mm512_set1_epi8(1);
-  __m512i dp = _mm512_dpbusd_epi32(_mm512_setzero_si512(), va, vb);
-  __m512i sb = _mm512_dpbusd_epi32(_mm512_setzero_si512(), ones, vb);
-  return _mm512_reduce_add_epi32(dp) - 128 * _mm512_reduce_add_epi32(sb);
-}
-
-# endif /* BLOCK_K width selection */
-#endif /* LIBXS_INTRINSICS_AVX512 */
-
-
+/* Scalar int8 dot product fallback (auto-vectorizable). */
 LIBXS_API_INLINE int32_t ozaki_dot_i8_sw(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
 {
   int32_t dot = 0;
@@ -449,79 +246,7 @@ LIBXS_API_INLINE int32_t ozaki_dot_i8_sw(const int8_t a[BLOCK_K], const int8_t b
   return dot;
 }
 
-
-/* ---- Unsigned u8 dot products for Ozaki-2 CRT ----
- *
- * u8 CRT stores residues in [0, p-1] with sign encoded via modular
- * additive inverse (p - r).  Dot products need u8*u8 -> int32.
- *
- * VPDPBUSD is u8*i8.  To get u8*u8 we XOR B with 0x80 to convert
- * u8 -> i8 (subtracting 128), then correct: result + 128*sum(A).
- * Same 2-instruction cost as the i8 bias-correction path above. */
-
-/* VPDPBUSD: u8*u8 dot product via u8*i8 with bias correction on B.
- * XOR B with 0x80 converts u8 -> i8, then VPDPBUSD gives u8*i8;
- * adding 128*sum(A) (via VPDPBUSD(A, ones)) compensates. */
-#if defined(LIBXS_INTRINSICS_AVX512)
-
-# if 16 == BLOCK_K /* 128-bit: one __m128i */
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
-int32_t ozaki_dot_u8_vnni(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
-{
-  const __m128i bias = _mm_set1_epi8((char)0x80);
-  const __m128i va = _mm_loadu_si128((const __m128i*)a);
-  const __m128i vb = _mm_xor_si128(_mm_loadu_si128((const __m128i*)b), bias);
-  const __m128i ones = _mm_set1_epi8(1);
-  __m128i dp = _mm_dpbusd_epi32(_mm_setzero_si128(), va, vb);
-  __m128i sa = _mm_dpbusd_epi32(_mm_setzero_si128(), va, ones);
-  dp = _mm_hadd_epi32(dp, sa);
-  dp = _mm_hadd_epi32(dp, dp);
-  return _mm_extract_epi32(dp, 0) + 128 * _mm_extract_epi32(dp, 1);
-}
-
-# elif 32 == BLOCK_K /* 256-bit: one __m256i */
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
-int32_t ozaki_dot_u8_vnni(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
-{
-  const __m256i bias = _mm256_set1_epi8((char)0x80);
-  const __m256i va = _mm256_loadu_si256((const __m256i*)a);
-  const __m256i vb = _mm256_xor_si256(_mm256_loadu_si256((const __m256i*)b), bias);
-  const __m256i ones = _mm256_set1_epi8(1);
-  __m256i dp = _mm256_dpbusd_epi32(_mm256_setzero_si256(), va, vb);
-  __m256i sa = _mm256_dpbusd_epi32(_mm256_setzero_si256(), va, ones);
-  {
-    const __m128i hi_dp = _mm256_extracti128_si256(dp, 1);
-    const __m128i hi_sa = _mm256_extracti128_si256(sa, 1);
-    __m128i lo_dp = _mm256_castsi256_si128(dp);
-    __m128i lo_sa = _mm256_castsi256_si128(sa);
-    lo_dp = _mm_add_epi32(lo_dp, hi_dp);
-    lo_sa = _mm_add_epi32(lo_sa, hi_sa);
-    lo_dp = _mm_hadd_epi32(lo_dp, lo_sa);
-    lo_dp = _mm_hadd_epi32(lo_dp, lo_dp);
-    return _mm_extract_epi32(lo_dp, 0) + 128 * _mm_extract_epi32(lo_dp, 1);
-  }
-}
-
-# elif 64 == BLOCK_K /* 512-bit: one __m512i */
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
-int32_t ozaki_dot_u8_vnni(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
-{
-  const __m512i bias = _mm512_set1_epi8((char)0x80);
-  const __m512i va = _mm512_loadu_si512((const __m512i*)a);
-  const __m512i vb = _mm512_xor_si512(_mm512_loadu_si512((const __m512i*)b), bias);
-  const __m512i ones = _mm512_set1_epi8(1);
-  __m512i dp = _mm512_dpbusd_epi32(_mm512_setzero_si512(), va, vb);
-  __m512i sa = _mm512_dpbusd_epi32(_mm512_setzero_si512(), va, ones);
-  return _mm512_reduce_add_epi32(dp) + 128 * _mm512_reduce_add_epi32(sa);
-}
-
-# endif /* BLOCK_K width selection */
-#endif /* LIBXS_INTRINSICS_AVX512 */
-
-
+/* Scalar u8 dot product fallback (auto-vectorizable). */
 LIBXS_API_INLINE int32_t ozaki_dot_u8_sw(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
 {
   int32_t dot = 0;
@@ -533,12 +258,11 @@ LIBXS_API_INLINE int32_t ozaki_dot_u8_sw(const uint8_t a[BLOCK_K], const uint8_t
 }
 
 
-/* Int8 GEMM loop body: C[M,N] += A[M,K] * B'[N,K] via DOT product.
- * Row-major, transa='N', transb='T', K % BLOCK_K == 0.
- * beta: 0=overwrite C, nonzero=accumulate. */
-#define OZAKI_GEMM_INT8_BODY(ELEM_T, DOT_INIT) \
+/* Scalar int8 GEMM fallback: C[M,N] += A[M,K] * B'[N,K] via per-element
+ * dot product. Used for edge tiles where N < BLOCK_N (panel path not
+ * applicable). Auto-vectorizable inner loop. */
+#define OZAKI_GEMM_INT8_BODY(ELEM_T, DOT_FN) \
   { \
-    const DOT_INIT; \
     GEMM_INT_TYPE mi, nj, kb; \
     LIBXS_ASSERT('N' == transa || 'n' == transa); \
     LIBXS_ASSERT('T' == transb || 't' == transb); \
@@ -557,7 +281,7 @@ LIBXS_API_INLINE int32_t ozaki_dot_u8_sw(const uint8_t a[BLOCK_K], const uint8_t
         const ELEM_T* const ak = arow + kb; \
         LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_N, BLOCK_N) \
         for (nj = 0; nj < N; ++nj) { \
-          crow[nj] += dot(ak, b + nj * ldb + kb); \
+          crow[nj] += DOT_FN(ak, b + nj * ldb + kb); \
         } \
       } \
     } \
@@ -763,7 +487,7 @@ LIBXS_API_INLINE void ozaki_gemm_u8u8s32(char transa, char transb, GEMM_INT_TYPE
 # endif
   }
 #endif
-  OZAKI_GEMM_INT8_BODY(uint8_t, ozaki_dot_u8_fn dot = ozaki_dot_u8_init())
+  OZAKI_GEMM_INT8_BODY(uint8_t, ozaki_dot_u8_sw)
 }
 
 /* s8*s8 -> s32 GEMM.  With __DNNL: delegates to dnnl_gemm_s8s8s32. */
@@ -800,7 +524,7 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32(char transa, char transb, GEMM_INT_TYPE
 #   endif
   }
 # endif
-  OZAKI_GEMM_INT8_BODY(int8_t, ozaki_dot_i8_fn dot = ozaki_dot_i8_init())
+  OZAKI_GEMM_INT8_BODY(int8_t, ozaki_dot_i8_sw)
 #endif
 }
 
