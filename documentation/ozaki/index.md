@@ -14,7 +14,7 @@ transparently, via LD_PRELOAD. No source changes needed.
 - **Scheme 2**: Chinese Remainder Theorem (CRT) -- linear in primes
 - Intercepts DGEMM, SGEMM, ZGEMM, and CGEMM
 
-Built-in accuracy tracking tells you whether results are trustworthy.
+Built-in accuracy tracking tells if results are trustworthy.
 
 ---
 
@@ -75,6 +75,7 @@ LD_PRELOAD=/path/to/libwrap.so ./your_application
 ```
 
 All DGEMM/SGEMM/ZGEMM/CGEMM calls are intercepted automatically.
+
 No recompilation needed.
 
 ---
@@ -154,7 +155,7 @@ or insufficient decomposition depth.
 
 ## Debugging Accuracy Problems
 
-When OZAKI_RSQ or OZAKI_EPS thresholds are exceeded,
+When `OZAKI_RSQ` or `OZAKI_EPS` thresholds are exceeded,
 A and B matrices are dumped as MHD files (viewers available).
 
 Reproduce the problem offline:
@@ -175,7 +176,7 @@ Try increasing accuracy:
 
 | Setting   | Cost model            | Best for                      |
 |-----------|-----------------------|-------------------------------|
-| OZAKI=1   | S*(S+1)/2 dot prods   | Smaller matrices, high acc.   |
+| OZAKI=1   | S\*(S+1)/2 dot prods  | Smaller matrices, high acc.   |
 | OZAKI=2   | P dot products        | Large matrices, large K       |
 
 S = number of slices (default 8 for fp64).  
@@ -191,12 +192,12 @@ export OZAKI=2              # Scheme 2 (CRT)
 ## Tuning: Accuracy vs Speed
 
 ```bash
-export OZAKI_TRIM=4         # drop 4 precision levels (faster, less accurate)
+export OZAKI_TRIM=4         # drop four precision levels (faster)
 export OZAKI_THRESHOLD=0    # apply Ozaki to ALL GEMMs (default: 12)
-export OZAKI_N=12           # more slices/primes (slower, more accurate)
+export OZAKI_N=12           # more slices/primes (more accurate)
 ```
 
-The OZAKI_THRESHOLD controls minimum arithmetic intensity.
+The `OZAKI_THRESHOLD` controls minimum arithmetic intensity.
 GEMMs below the threshold fall through to the original BLAS unchanged.
 
 ---
@@ -222,7 +223,7 @@ export OZAKI=2 OZAKI_GROUPS=4
 
 ```bash
 export OZAKI_PROFILE=1      # all phases (preprocessing + kernel)
-export OZAKI_PROFILE=2      # kernel only (dot products)
+export OZAKI_PROFILE=2      # kernel only (dot/matrix products)
 export OZAKI_PROFILE=3      # preprocessing only
 ```
 
@@ -242,7 +243,7 @@ Works for both CPU and GPU paths (same histogram).
 Complex GEMM is mapped to real GEMM internally.
 The real GEMM goes through the Ozaki wrapper automatically.
 
-Controlled via OZAKI_COMPLEX (default: follows OZAKI setting).
+Can be controlled via `OZAKI_COMPLEX`.
 
 ---
 
@@ -296,7 +297,7 @@ ldd ./app | grep libwrap
 3. Validate: `export OZAKI_VERBOSE=1 OZAKI_RSQ=0.95`
 4. Monitor: `export OZAKI_VERBOSE=1000 OZAKI_EXIT=0`
 5. Debug: `./dgemm-wrap.x dumped-a.mhd dumped-b.mhd`
-6. Tune: `export OZAKI_TRIM=4` or `export OZAKI=2`
+6. Tune: `export OZAKI_TRIM=7` or `export OZAKI=2`
 
 ---
 
