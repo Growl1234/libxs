@@ -50,6 +50,24 @@ cmake -S . -B build -DLIBXS_HEADER_ONLY=ON
 cmake --build build
 ```
 
+## Installation
+
+Install into a chosen prefix:
+
+```bash
+make GNU=1 -j $(nproc) install PREFIX=$HOME/libxs
+```
+
+This installs headers, the Fortran module, the static and shared
+libraries, and the header-only source tree under `PREFIX`.
+
+Out-of-tree builds are also supported:
+
+```bash
+mkdir /tmp/libxs-build && cd /tmp/libxs-build
+make -j $(nproc) -f /path/to/libxs/Makefile
+```
+
 ## Usage
 
 **Library** -- link against `libxs.a` (or `.so`) and include the
