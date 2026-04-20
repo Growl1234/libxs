@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.13 FATAL_ERROR)
+
 project(libxs
   VERSION 0.0.0
   LANGUAGES C)
@@ -23,6 +24,32 @@ set(LIBXS_ROOT_DIR ${PROJECT_SOURCE_DIR})
 set(LIBXS_INCLUDE_DIR ${LIBXS_ROOT_DIR}/include)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Generate include/libxs_version.h
+set(LIBXS_VERSION_HEADER "${LIBXS_INCLUDE_DIR}/libxs_version.h")
+set(LIBXS_VERSION_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/tool_version.sh")
+
+if(NOT EXISTS "${LIBXS_VERSION_SCRIPT}")
+  message(FATAL_ERROR "Missing ${LIBXS_VERSION_SCRIPT}")
+endif()
+
+find_program(SH_EXECUTABLE NAMES sh bash REQUIRED)
+
+# -1 means "emit full C header" (see tool_version.sh)
+execute_process(
+  COMMAND "${SH_EXECUTABLE}" "${LIBXS_VERSION_SCRIPT}" libxs -1
+  OUTPUT_FILE "${LIBXS_VERSION_HEADER}"
+  RESULT_VARIABLE LIBXS_VERSION_RC
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+if(NOT LIBXS_VERSION_RC EQUAL 0)
+  message(FATAL_ERROR "tool_version.sh failed with code ${LIBXS_VERSION_RC}")
+endif()
+
+# Re-run on reconfigure whenever the script changes
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${LIBXS_VERSION_SCRIPT}")
 
 if(LIBXS_HEADER_ONLY)
   add_library(libxs INTERFACE)
@@ -78,3 +105,38 @@ else()
       $<INSTALL_INTERFACE:include>)
   endif()
 endif()
+
+# Installation rules
+include(GNUInstallDirs)
+
+if(LIBXS_HEADER_ONLY)
+  install(TARGETS libxs
+    EXPORT libxsTargets
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+else()
+  install(TARGETS libxs
+    EXPORT libxsTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
+# Install public headers (picks up the freshly generated libxs_version.h)
+install(DIRECTORY ${LIBXS_INCLUDE_DIR}/
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  FILES_MATCHING
+    PATTERN "*.h"
+    PATTERN "*.f"
+    PATTERN "*.mod")
+
+if(LIBXS_FORTRAN)
+  install(DIRECTORY ${LIBXS_Fortran_MODULE_DIR}/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILES_MATCHING PATTERN "*.mod")
+endif()
+
+# CMake package config export
+install(EXPORT libxsTargets
+  FILE libxsTargets.cmake
+  NAMESPACE libxs::
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libxs)
