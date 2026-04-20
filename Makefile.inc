@@ -12,7 +12,7 @@ DEPDIR ?= $(ROOTDIR)
 
 # project name
 ifeq (,$(PROJECT))
-  PROJECT := libxs
+  PROJECT := $(notdir $(abspath $(MAKEINC)))
 endif
 PROJUPP := $(shell echo "$(PROJECT)" | tr a-z A-Z)
 
