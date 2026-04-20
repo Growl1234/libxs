@@ -230,8 +230,8 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
           const GEMM_INT_TYPE iblk = LIBXS_MIN(BLOCK_M, M - ib);
           const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
           GEMM_REAL_TYPE* const cb = c + jb * ldcv + ib;
-          GEMM_REAL_TYPE c_local[BLOCK_M * BLOCK_N];
-          int32_t c_acc[BLOCK_M * BLOCK_N];
+          LIBXS_ALIGNED(GEMM_REAL_TYPE c_local[BLOCK_M * BLOCK_N], LIBXS_ALIGNMENT);
+          LIBXS_ALIGNED(int32_t c_acc[BLOCK_M * BLOCK_N], LIBXS_ALIGNMENT);
 
           /* Load current C tile into contiguous local buffer */
           for (nj = 0; nj < jblk; ++nj) {

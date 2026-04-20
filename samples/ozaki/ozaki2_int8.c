@@ -524,7 +524,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
             const GEMM_INT_TYPE chunk_k = ((GEMM_INT_TYPE)K_CHUNK < K_grp_pad - kb) ? (GEMM_INT_TYPE)K_CHUNK : (K_grp_pad - kb);
             LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
             for (pidx = 0; pidx < nprimes; ++pidx) {
-              int32_t partial[BLOCK_M * BLOCK_N];
+              LIBXS_ALIGNED(int32_t partial[BLOCK_M * BLOCK_N], LIBXS_ALIGNMENT);
 #if defined(OZAKI_I8) && (OZAKI_I8)
               ozaki_gemm_s8s8s32('N', 'T', iblk, jblk, chunk_k,
                 (const int8_t*)(a_res + (long)pidx * M * K_grp_pad + (long)ib * K_grp_pad + kb), K_grp_pad,
