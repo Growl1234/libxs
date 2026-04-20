@@ -15,7 +15,7 @@ Portable CPU feature detection for x86-64, AArch64, and RISC-V targets. Returns 
 | `LIBXS_X86_SSE42` | 1004 | SSE4.2 |
 | `LIBXS_X86_AVX` | 1005 | AVX |
 | `LIBXS_X86_AVX2` | 1006 | AVX2 + FMA |
-| `LIBXS_X86_AVX10_256` | 1050 | AVX10.1/256: all features, 256-bit max (Sierra Forest) |
+| `LIBXS_X86_AVX10_256` | 1030 | AVX10.1/256: all features, 256-bit max (Sierra Forest) |
 | `LIBXS_X86_AVX512` | 1100 | AVX-512 (F + CD + DQ + BW + VL + VNNI) |
 | `LIBXS_X86_AVX512_INT8` | 1110 | AVX-512 + AVX-VNNI-INT8 (Granite Rapids) |
 | `LIBXS_X86_AVX10_512` | 1200 | AVX10.1/512: all features, 512-bit (Granite Rapids AVX10) |

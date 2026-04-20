@@ -29,8 +29,9 @@
         PUBLIC :: LIBXS_TARGET_ARCH_GENERIC
         PUBLIC :: LIBXS_X86_GENERIC, LIBXS_X86_SSE3
         PUBLIC :: LIBXS_X86_SSE42, LIBXS_X86_AVX
-        PUBLIC :: LIBXS_X86_AVX2, LIBXS_X86_AVX512
-        PUBLIC :: LIBXS_X86_ALLFEAT
+        PUBLIC :: LIBXS_X86_AVX2, LIBXS_X86_AVX10_256
+        PUBLIC :: LIBXS_X86_AVX512, LIBXS_X86_AVX512_INT8
+        PUBLIC :: LIBXS_X86_AVX10_512, LIBXS_X86_ALLFEAT
         PUBLIC :: LIBXS_AARCH64, LIBXS_AARCH64_SVE128
         PUBLIC :: LIBXS_AARCH64_SVE256, LIBXS_AARCH64_SVE512
         PUBLIC :: LIBXS_AARCH64_ALLFEAT
@@ -115,7 +116,10 @@
      &    LIBXS_X86_SSE42             = 1004,                           &
      &    LIBXS_X86_AVX               = 1005,                           &
      &    LIBXS_X86_AVX2              = 1006,                           &
+     &    LIBXS_X86_AVX10_256         = 1030,                           &
      &    LIBXS_X86_AVX512            = 1100,                           &
+     &    LIBXS_X86_AVX512_INT8       = 1110,                           &
+     &    LIBXS_X86_AVX10_512         = 1200,                           &
      &    LIBXS_X86_ALLFEAT           = 1999,                           &
      &    LIBXS_AARCH64               = 2001,                           &
      &    LIBXS_AARCH64_SVE128        = 2201,                           &
