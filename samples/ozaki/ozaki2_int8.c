@@ -449,27 +449,16 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
         }
       }
 
-      /* Phase 2: preprocess columns of B into VNNI-packed layout.
-       * Output: b_res[pidx][(k/4)*N*4 + col*4 + (k%4)] groups 4 K-bytes
-       * per column into int32-aligned dwords, N columns contiguous per
-       * K-quad. For u8 mode, residues are pre-XOR'd with 0x80 so DPBUSD
-       * (u8*s8) can load B directly without per-tile bias conversion.
-       * The bias correction (add 128*row_sum(A)) accounts for this. */
+      /* Phase 2: preprocess columns of B for this K-group */
 #if defined(_OPENMP)
 # pragma omp for schedule(static)
 #endif
       for (col = 0; col < N; ++col) {
         int16_t col_max_exp = 0;
         GEMM_INT_TYPE kk;
+        /* Zero this column's residue buffers */
         for (pidx = 0; pidx < nprimes; ++pidx) {
-          GEMM_INT_TYPE q;
-          for (q = 0; q < K_grp_pad / 4; ++q) {
-#if defined(OZAKI_I8) && (OZAKI_I8)
-            memset(b_res + (long)pidx * N * K_grp_pad + q * N * 4 + (long)col * 4, 0, 4);
-#else
-            memset(b_res + (long)pidx * N * K_grp_pad + q * N * 4 + (long)col * 4, 0x80, 4);
-#endif
-          }
+          memset(b_res + (long)pidx * N * K_grp_pad + (long)col * K_grp_pad, 0, (size_t)K_grp_pad);
         }
         for (kk = kb_grp; kk < kb_grp + K_len; ++kk) {
           int16_t e;
@@ -486,18 +475,15 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
           if (0 != mt) {
             const int delta = (int)col_max_exp - (int)e;
             uint8_t tmp[OZ2_NPRIMES_MAX];
-            const GEMM_INT_TYPE ko = kk - kb_grp;
             oz2_reduce(mt, delta, tmp, nprimes);
             LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
             for (pidx = 0; pidx < nprimes; ++pidx) {
-              oz2_res_t r;
 #if defined(OZAKI_I8) && (OZAKI_I8)
-              r = (oz2_res_t)(sign * (int8_t)tmp[pidx]);
+              b_res[(long)pidx * N * K_grp_pad + (long)col * K_grp_pad + (kk - kb_grp)] = (oz2_res_t)(sign * (int8_t)tmp[pidx]);
 #else
-              r = (oz2_res_t)((sign < 0 && 0 != tmp[pidx]) ? (oz2_moduli[pidx] - tmp[pidx]) : tmp[pidx]);
-              r ^= 0x80u;
+              b_res[(long)pidx * N * K_grp_pad + (long)col * K_grp_pad + (kk - kb_grp)] =
+                (oz2_res_t)((sign < 0 && 0 != tmp[pidx]) ? (oz2_moduli[pidx] - tmp[pidx]) : tmp[pidx]);
 #endif
-              b_res[(long)pidx * N * K_grp_pad + (ko / 4) * N * 4 + (long)col * 4 + (ko & 3)] = r;
             }
           }
         }
@@ -532,62 +518,22 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
           memset(tile_res, 0, sizeof(tile_res));
 
           /* Accumulate per-prime residues via GEMM + mod-reduce.
-           * B is pre-packed in VNNI layout: b_res[pidx][(k/4)*N*4 + col*4 + (k%4)].
-           * For a tile at column jb, b_packed = (int32_t*)(b_res + pidx*N*K_grp_pad) + jb
-           * with stride N between K-quads. */
+           * B is column-contiguous, pre-XOR'd with 0x80 for u8 mode.
+           * The panel GEMM reformats B into VNNI layout on the fly. */
           for (kb = 0; kb < K_grp_pad; kb += K_CHUNK) {
             const GEMM_INT_TYPE chunk_k = ((GEMM_INT_TYPE)K_CHUNK < K_grp_pad - kb) ? (GEMM_INT_TYPE)K_CHUNK : (K_grp_pad - kb);
             LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
             for (pidx = 0; pidx < nprimes; ++pidx) {
               int32_t partial[BLOCK_M * BLOCK_N];
-              const oz2_res_t* const b_prime = b_res + (long)pidx * N * K_grp_pad;
-              const int32_t* const b_packed = (const int32_t*)b_prime + (kb >> 2) * N + jb;
-#if defined(LIBXS_INTRINSICS_AMX) && 16 == BLOCK_M && 16 == BLOCK_N
-              if (BLOCK_N == jblk && LIBXS_X86_AVX512_AMX <= ozaki_target_arch) {
-# if defined(OZAKI_I8) && (OZAKI_I8)
-                ozaki_panel_i8_amx_packed(iblk, jblk, chunk_k,
-                  (const int8_t*)(a_res + (long)pidx * M * K_grp_pad + (long)ib * K_grp_pad + kb), K_grp_pad,
-                  b_packed, N, 0, partial, jblk);
-# else
-                ozaki_panel_u8_amx_packed(iblk, jblk, chunk_k,
-                  (const uint8_t*)(a_res + (long)pidx * M * K_grp_pad + (long)ib * K_grp_pad + kb), K_grp_pad,
-                  b_packed, N, 0, partial, jblk);
-# endif
-              }
-              else
-#endif
-#if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N
-              if (BLOCK_N == jblk) {
-# if defined(OZAKI_I8) && (OZAKI_I8)
-                ozaki_panel_i8_vnni_packed(iblk, jblk, chunk_k,
-                  (const int8_t*)(a_res + (long)pidx * M * K_grp_pad + (long)ib * K_grp_pad + kb), K_grp_pad,
-                  b_packed, N, 0, partial, jblk);
-# else
-                ozaki_panel_u8_vnni_packed(iblk, jblk, chunk_k,
-                  (const uint8_t*)(a_res + (long)pidx * M * K_grp_pad + (long)ib * K_grp_pad + kb), K_grp_pad,
-                  b_packed, N, 0, partial, jblk);
-# endif
-              }
-              else
-#endif
-              { /* Scalar fallback for edge tiles */
-                const oz2_res_t* const a_ptr = a_res + (long)pidx * M * K_grp_pad + (long)ib * K_grp_pad + kb;
-                GEMM_INT_TYPE ri, ci, ki;
-                for (ri = 0; ri < iblk; ++ri) {
-                  for (ci = 0; ci < jblk; ++ci) {
-                    int32_t dot = 0;
-                    for (ki = 0; ki < chunk_k; ++ki) {
-                      const oz2_res_t bval = b_prime[(ki / 4) * N * 4 + (jb + ci) * 4 + (ki & 3)];
 #if defined(OZAKI_I8) && (OZAKI_I8)
-                      dot += (int32_t)a_ptr[ri * K_grp_pad + ki] * (int32_t)bval;
+              ozaki_gemm_s8s8s32('N', 'T', iblk, jblk, chunk_k,
+                (const int8_t*)(a_res + (long)pidx * M * K_grp_pad + (long)ib * K_grp_pad + kb), K_grp_pad,
+                (const int8_t*)(b_res + (long)pidx * N * K_grp_pad + (long)jb * K_grp_pad + kb), K_grp_pad, 0, partial, jblk);
 #else
-                      dot += (int32_t)a_ptr[ri * K_grp_pad + ki] * (int32_t)(uint8_t)(bval ^ 0x80u);
+              ozaki_gemm_u8u8s32('N', 'T', iblk, jblk, chunk_k,
+                (const uint8_t*)(a_res + (long)pidx * M * K_grp_pad + (long)ib * K_grp_pad + kb), K_grp_pad,
+                (const uint8_t*)(b_res + (long)pidx * N * K_grp_pad + (long)jb * K_grp_pad + kb), K_grp_pad, 0, partial, jblk);
 #endif
-                    }
-                    partial[ri * jblk + ci] = dot;
-                  }
-                }
-              }
               for (mi = 0; mi < iblk; ++mi) {
                 for (nj = 0; nj < jblk; ++nj) {
                   const int32_t dot = partial[mi * jblk + nj];
