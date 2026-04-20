@@ -48,6 +48,22 @@ jobs:
     - name: Test
       run: make -j $(nproc) ${{ matrix.flags }} test
 
+    - name: Install (PREFIX)
+      run: make -j $(nproc) ${{ matrix.flags }} install PREFIX=$HOME/libxs-install
+
+    - name: Verify install (PREFIX)
+      run: |
+        test -f $HOME/libxs-install/include/libxs.h
+        test -f $HOME/libxs-install/include/libxs_version.h
+        test -f $HOME/libxs-install/include/libxs_source.h
+        test -d $HOME/libxs-install/include/libxs
+        ls $HOME/libxs-install/lib/libxs.* >/dev/null
+
+    - name: Out-of-tree build and test
+      run: |
+        mkdir $HOME/libxs-oot && cd $HOME/libxs-oot
+        make -j $(nproc) -f ${{ github.workspace }}/Makefile ${{ matrix.flags }} test
+
     - name: Build samples
       if: matrix.libxstream == 'header-only'
       run: make -j $(nproc) ${{ matrix.flags }} samples
