@@ -147,6 +147,10 @@
 #       elif (defined(__GNUC__)  && LIBXS_VERSION2(12, 0) <= LIBXS_VERSION2(__GNUC__, __GNUC_MINOR__)) \
           || (defined(__clang__) && LIBXS_VERSION2(16, 0) <= LIBXS_VERSION2(__clang_major__, __clang_minor__))
 #         define LIBXS_MAX_STATIC_TARGET_ARCH LIBXS_X86_AVX512_INT8
+          /* GCC >= 11 / Clang >= 14: target("amx-tile,amx-int8") available */
+#       elif (defined(__GNUC__)  && LIBXS_VERSION2(11, 0) <= LIBXS_VERSION2(__GNUC__, __GNUC_MINOR__)) \
+          || (defined(__clang__) && LIBXS_VERSION2(14, 0) <= LIBXS_VERSION2(__clang_major__, __clang_minor__))
+#         define LIBXS_MAX_STATIC_TARGET_ARCH LIBXS_X86_AVX512_AMX
           /* GCC >= 8 / Clang >= 8.1: target("avx512f,...,avx512vnni") available */
 #       elif (defined(__GNUC__)  && LIBXS_VERSION2(8, 0) <= LIBXS_VERSION2(__GNUC__, __GNUC_MINOR__)) \
           || (defined(__clang__) && LIBXS_VERSION2(8, 1) <= LIBXS_VERSION2(__clang_major__, __clang_minor__))
@@ -224,6 +228,11 @@
 #       else
 #         define LIBXS_ATTRIBUTE_TARGET_1100 LIBXS_ATTRIBUTE_TARGET_1050
 #       endif
+#       if (LIBXS_X86_AVX512_AMX <= LIBXS_MAX_STATIC_TARGET_ARCH)
+#         define LIBXS_ATTRIBUTE_TARGET_1105 target("avx2,fma,avx512f,avx512cd,avx512dq,avx512bw,avx512vl,avx512vnni,amx-tile,amx-int8,amx-bf16")
+#       else
+#         define LIBXS_ATTRIBUTE_TARGET_1105 LIBXS_ATTRIBUTE_TARGET_1100
+#       endif
 #       if (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
 #         define LIBXS_ATTRIBUTE_TARGET_1110 target("avx2,fma,avx512f,avx512cd,avx512dq,avx512bw,avx512vl,avx512vnni,avxvnniint8")
 #       else
@@ -292,6 +301,11 @@
 #if !defined(LIBXS_INTRINSICS_AVX512) && !defined(__NO_INTRINSICS) && \
     (LIBXS_X86_AVX512 <= LIBXS_MAX_STATIC_TARGET_ARCH)
 # define LIBXS_INTRINSICS_AVX512
+#endif
+/** LIBXS_INTRINSICS_AMX is defined only if the compiler can generate AMX tile code via target attribute. */
+#if !defined(LIBXS_INTRINSICS_AMX) && !defined(__NO_INTRINSICS) && \
+    (LIBXS_X86_AVX512_AMX <= LIBXS_MAX_STATIC_TARGET_ARCH)
+# define LIBXS_INTRINSICS_AMX
 #endif
 
 /** Include basic x86 intrinsics such as __rdtsc. */

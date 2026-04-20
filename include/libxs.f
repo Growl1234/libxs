@@ -30,7 +30,8 @@
         PUBLIC :: LIBXS_X86_GENERIC, LIBXS_X86_SSE3
         PUBLIC :: LIBXS_X86_SSE42, LIBXS_X86_AVX
         PUBLIC :: LIBXS_X86_AVX2, LIBXS_X86_AVX10_256
-        PUBLIC :: LIBXS_X86_AVX512, LIBXS_X86_AVX512_INT8
+        PUBLIC :: LIBXS_X86_AVX512, LIBXS_X86_AVX512_AMX
+        PUBLIC :: LIBXS_X86_AVX512_INT8
         PUBLIC :: LIBXS_X86_AVX10_512, LIBXS_X86_ALLFEAT
         PUBLIC :: LIBXS_AARCH64, LIBXS_AARCH64_SVE128
         PUBLIC :: LIBXS_AARCH64_SVE256, LIBXS_AARCH64_SVE512
@@ -65,6 +66,7 @@
         PUBLIC :: libxs_cpuid_t
         PUBLIC :: libxs_cpuid, libxs_cpuid_name
         PUBLIC :: libxs_cpuid_id, libxs_cpuid_vlen
+        PUBLIC :: libxs_cpuid_amx_enable
 
         !> Public API: GEMM dispatch.
         PUBLIC :: libxs_gemm_shape_t, libxs_gemm_config_t
@@ -118,6 +120,7 @@
      &    LIBXS_X86_AVX2              = 1006,                           &
      &    LIBXS_X86_AVX10_256         = 1030,                           &
      &    LIBXS_X86_AVX512            = 1100,                           &
+     &    LIBXS_X86_AVX512_AMX        = 1105,                           &
      &    LIBXS_X86_AVX512_INT8       = 1110,                           &
      &    LIBXS_X86_AVX10_512         = 1200,                           &
      &    LIBXS_X86_ALLFEAT           = 1999,                           &
@@ -220,6 +223,13 @@
             IMPORT :: C_INT
             INTEGER(C_INT), INTENT(IN), VALUE :: id
             INTEGER(C_INT) :: libxs_cpuid_vlen
+          END FUNCTION
+
+          !> Request AMX tile state from the OS.
+          !> Returns 0 on success, -1 on failure.
+          FUNCTION libxs_cpuid_amx_enable() BIND(C)
+            IMPORT :: C_INT
+            INTEGER(C_INT) :: libxs_cpuid_amx_enable
           END FUNCTION
 
           !> Initialize the library.

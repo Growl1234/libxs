@@ -2,7 +2,7 @@
 
 Header: `libxs_cpuid.h`
 
-Portable CPU feature detection for x86-64, AArch64, and RISC-V targets. Returns an ISA level that can be compared numerically -- higher values indicate more capable instruction sets. x86 levels use thermometer ordering: higher numeric value implies all features of lower levels. AVX10/256 sits below AVX512 because it lacks 512-bit vectors. On Linux, AMX tile state (XTILE_DATA) is automatically requested via `arch_prctl` when AMX capability is detected.
+Portable CPU feature detection for x86-64, AArch64, and RISC-V targets. Returns an ISA level that can be compared numerically -- higher values indicate more capable instruction sets. x86 levels use thermometer ordering: higher numeric value implies all features of lower levels. AVX10/256 sits below AVX512 because it lacks 512-bit vectors.
 
 ## ISA Constants
 
@@ -66,3 +66,9 @@ int libxs_cpuid_vlen(int id);
 ```
 
 Returns the SIMD vector length in bytes for the given ISA level (0 for scalar-only targets).
+
+```C
+int libxs_cpuid_amx_enable(void);
+```
+
+Request AMX tile state (XTILE_DATA) from the OS. Must be called before any AMX tile instruction. Returns `EXIT_SUCCESS` if tiles are ready (or were already enabled), `EXIT_FAILURE` on unsupported platform or OS refusal. Not called automatically by `libxs_cpuid` to avoid the per-thread XSAVE overhead for non-AMX workloads.

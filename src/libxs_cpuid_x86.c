@@ -17,6 +17,10 @@
 # endif
 # include <sys/mman.h>
 #endif
+#if defined(__linux__) && defined(LIBXS_PLATFORM_X86)
+# include <sys/syscall.h>
+LIBXS_EXTERN long syscall(long, ...) LIBXS_NOTHROW;
+#endif
 
 #define LIBXS_CPUID_CHECK(VALUE, CHECK) ((CHECK) == ((CHECK) & (VALUE)))
 
@@ -68,6 +72,24 @@
 #   define LIBXS_CPUID_X86(FUNCTION, SUBFN, EAX, EBX, ECX, EDX) (EAX) = (EBX) = (ECX) = (EDX) = 0
 # endif
 #endif
+
+
+LIBXS_API int libxs_cpuid_amx_enable(void)
+{
+#if defined(LIBXS_PLATFORM_X86) && defined(__linux__) && defined(SYS_arch_prctl)
+  unsigned long bitmask = 0;
+  int status = (int)syscall(SYS_arch_prctl, 0x1022/*ARCH_GET_XCOMP_PERM*/, &bitmask);
+  if (EXIT_SUCCESS != status) return status;
+  if (0 != (bitmask & (1UL << 18))) return EXIT_SUCCESS;
+  status = (int)syscall(SYS_arch_prctl, 0x1023/*ARCH_REQ_XCOMP_PERM*/, 18);
+  if (EXIT_SUCCESS != status) return status;
+  status = (int)syscall(SYS_arch_prctl, 0x1022/*ARCH_GET_XCOMP_PERM*/, &bitmask);
+  if (EXIT_SUCCESS != status) return status;
+  return (0 != (bitmask & (1UL << 18))) ? EXIT_SUCCESS : EXIT_FAILURE;
+#else
+  return EXIT_FAILURE;
+#endif
+}
 
 
 LIBXS_API_INTERN void internal_libxs_cpuid_model(char model[], size_t* model_size)
@@ -146,8 +168,8 @@ LIBXS_API_INTERN int internal_libxs_cpuid_x86(libxs_cpuid_t* info)
         if (LIBXS_CPUID_CHECK(ecx, 0x00100000)) { /* SSE42(0x00100000) */
           if (LIBXS_CPUID_CHECK(ecx, 0x10000000)) { /* AVX(0x10000000) */
             if (LIBXS_CPUID_CHECK(ecx, 0x00001000)) { /* FMA(0x00001000) */
-              unsigned int ecx2;
-              LIBXS_CPUID_X86(7, 0/*ecx*/, eax, ebx, ecx2, edx);
+              unsigned int ecx2, edx_7_0;
+              LIBXS_CPUID_X86(7, 0/*ecx*/, eax, ebx, ecx2, edx_7_0);
               if ( /* AVX512F(0x00010000), AVX512CD(0x10000000) */
 #if 0           /* AVX512DQ(0x00020000), AVX512BW(0x40000000), AVX512VL(0x80000000) */
                 LIBXS_CPUID_CHECK(ebx, 0xC0020000) &&
@@ -155,25 +177,25 @@ LIBXS_API_INTERN int internal_libxs_cpuid_x86(libxs_cpuid_t* info)
                 LIBXS_CPUID_CHECK(ebx, 0x10010000) /* Common */
                 && LIBXS_CPUID_CHECK(ecx2, 0x00000800)) /* AVX512_VNNI */
               {
-                feature_cpu = LIBXS_X86_AVX512; /* AVX512-Core/SKX/baseline */
-                /* Check for AVX-VNNI-INT8: leaf 7, subleaf 1, EAX bit 4.
-                 * Enables VPDPBUUD/VPDPBSSD (u8*u8, i8*i8 dot products). */
+                feature_cpu = LIBXS_X86_AVX512;
+                /* AMX-TILE(bit22) + AMX-INT8(bit24) + AMX-BF16(bit25) in EDX of leaf 7/0 */
+                if (LIBXS_CPUID_CHECK(edx_7_0, 0x03400000)) {
+                  feature_cpu = LIBXS_X86_AVX512_AMX;
+                }
                 { unsigned int eax2, ebx2, ecx3, edx2;
                   int has_vnni_int8 = 0;
                   LIBXS_CPUID_X86(7, 1/*ecx*/, eax2, ebx2, ecx3, edx2);
                   if (LIBXS_CPUID_CHECK(eax2, 0x00000010)) { /* AVX_VNNI_INT8 */
-                    feature_cpu = LIBXS_X86_AVX512_INT8;
+                    feature_cpu = LIBXS_MAX(feature_cpu, LIBXS_X86_AVX512_INT8);
                     has_vnni_int8 = 1;
                   }
-                  /* Check for AVX10: leaf 7, subleaf 1, EDX bit 19.
-                   * If present, query leaf 0x24 for version and max vector length.
-                   * Only promote to AVX10_512 if VNNI-INT8 is also present
-                   * (the hierarchy 1200 > 1110 implies INT8 capability). */
                   if (LIBXS_CPUID_CHECK(edx2, 0x00080000)) { /* AVX10 */
                     unsigned int eax_10, ebx_10, ecx_10, edx_10;
                     LIBXS_CPUID_X86(0x24, 0/*ecx*/, eax_10, ebx_10, ecx_10, edx_10);
-                    if (LIBXS_CPUID_CHECK(ebx_10, 0x00040000) && 0 != has_vnni_int8) {
-                      feature_cpu = LIBXS_X86_AVX10_512; /* 512-bit + INT8 */
+                    if (LIBXS_CPUID_CHECK(ebx_10, 0x00040000) && 0 != has_vnni_int8
+                      && LIBXS_X86_AVX512_AMX <= feature_cpu)
+                    {
+                      feature_cpu = LIBXS_X86_AVX10_512;
                     }
                   }
                 }
@@ -211,7 +233,13 @@ LIBXS_API_INTERN int internal_libxs_cpuid_x86(libxs_cpuid_t* info)
           if (LIBXS_CPUID_CHECK(eax, 0x00000006)) { /* OS XSAVE 256-bit */
             feature_os = LIBXS_MIN(LIBXS_X86_AVX10_256, feature_cpu);
             if (LIBXS_CPUID_CHECK(eax, 0x000000E0)) { /* OS XSAVE 512-bit */
-              feature_os = LIBXS_MIN(LIBXS_X86_AVX10_512, feature_cpu);
+              feature_os = LIBXS_MIN(LIBXS_X86_AVX512, feature_cpu);
+              /* XSAVE bits 17:16: TILECFG + TILEDATA (AMX state) */
+              if (LIBXS_X86_AVX512_AMX <= feature_cpu
+                && LIBXS_CPUID_CHECK(eax, 0x00060000))
+              {
+                feature_os = LIBXS_MIN(LIBXS_X86_AVX10_512, feature_cpu);
+              }
             }
           }
         }
@@ -318,6 +346,9 @@ LIBXS_API const char* libxs_cpuid_name(int id)
     case LIBXS_X86_AVX512_INT8: {
       target_arch = "avx8";
     } break;
+    case LIBXS_X86_AVX512_AMX: {
+      target_arch = "amx";
+    } break;
     case LIBXS_X86_AVX512: {
       target_arch = "avx512";
     } break;
@@ -384,8 +415,10 @@ LIBXS_API int libxs_cpuid_id(const char* arch)
   if (strcmp(arch, "avx10-512") == 0 || strcmp(arch, "avx10_512") == 0) {
     target_archid = LIBXS_X86_AVX10_512;
   }
-  else if (strcmp(arch, "gnr") == 0) {
-    target_archid = LIBXS_X86_AVX512;
+  else if (strcmp(arch, "amx") == 0 || strcmp(arch, "spr") == 0
+    || strcmp(arch, "gnr") == 0)
+  {
+    target_archid = LIBXS_X86_AVX512_AMX;
   }
   else if (strcmp(arch, "avx8") == 0 || strcmp(arch, "avx512int8") == 0
     || strcmp(arch, "avx512_int8") == 0)

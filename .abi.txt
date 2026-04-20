@@ -8,6 +8,7 @@ libxs_barrett_rcp
 libxs_coprime
 libxs_coprime2
 libxs_cpuid
+libxs_cpuid_amx_enable
 libxs_cpuid_id
 libxs_cpuid_name
 libxs_cpuid_vlen
