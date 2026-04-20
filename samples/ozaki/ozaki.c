@@ -165,6 +165,7 @@ OZAKI_API_INTERN void gemm_init(void)
         const char* const ozaki_exit_env = getenv("OZAKI_EXIT");
         const char* const ozaki_flags_env = getenv("OZAKI_FLAGS");
         const char* const ozaki_trim_env = getenv("OZAKI_TRIM");
+        const char* const ozaki_amx_env = getenv("OZAKI_AMX");
         const char* const ozaki_idx_env = getenv("OZAKI_IDX");
         const char* const ozaki_eps_env = getenv("OZAKI_EPS");
         const char* const ozaki_rsq_env = getenv("OZAKI_RSQ");
@@ -176,6 +177,7 @@ OZAKI_API_INTERN void gemm_init(void)
         const char* const ozaki_tn_env = getenv("OZAKI_TN");
         const int ozaki_ocl = (NULL == ozaki_ocl_env ? 0 /*default*/ : atoi(ozaki_ocl_env));
 #endif
+        const int ozaki_amx = (NULL == ozaki_amx_env ? 0 /*default*/ : atoi(ozaki_amx_env));
         libxs_init(); /*libxs_malloc_pool()*/
         libxs_matdiff_clear(&gemm_diff);
         gemm_pool = libxs_malloc_pool(NULL, NULL);
@@ -212,9 +214,16 @@ OZAKI_API_INTERN void gemm_init(void)
           if (0 == ozaki_verbose) ozaki_verbose = 1;
           ozaki_rsq = atof(ozaki_rsq_env);
         }
-        ozaki_target_arch = libxs_cpuid(NULL);
+        if (0 != ozaki_amx) {
+          ozaki_target_arch = libxs_cpuid(NULL);
+          if (LIBXS_X86_AVX512_AMX <= ozaki_target_arch) {
+            if (EXIT_SUCCESS != libxs_cpuid_amx_enable()) {
+              ozaki_target_arch = LIBXS_X86_AVX512;
+            }
+          }
+        }
         { /* Profiling: create histogram if requested */
-          const char* env_prof = getenv("OZAKI_PROFILE");
+          const char *const env_prof = getenv("OZAKI_PROFILE");
           ozaki_profile = (NULL == env_prof ? 0 : atoi(env_prof));
           if (0 != ozaki_profile) {
             const libxs_hist_update_t update[] = {libxs_hist_update_avg};
