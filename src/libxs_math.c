@@ -44,6 +44,82 @@
 #define LIBXS_MATDIFF_REL(DI, RA, TA) \
   LIBXS_MATDIFF_DIV(DI, ((RA) < (DI) ? 0 : (RA)), TA)
 
+/** O(na*nb) multiset matching loop for real (scalar) element types. */
+#define LIBXS_SETDIFF_REAL(TYPE, CVT) { \
+  const TYPE *const ra = (const TYPE*)a, *const rb = (const TYPE*)b; \
+  int u = 0, v = 0; \
+  for (j = 0; j < nb; ++j) { \
+    for (i = 0; i < na && u < nmin; ++i) { \
+      if (LIBXS_DELTA(CVT(ra[i]), CVT(rb[j])) <= tol) { ++u; break; } \
+    } \
+  } \
+  for (i = 0; i < na; ++i) { \
+    for (j = 0; j < nb && v < nmin; ++j) { \
+      if (LIBXS_DELTA(CVT(ra[i]), CVT(rb[j])) <= tol) { ++v; break; } \
+    } \
+  } \
+  { const int m = LIBXS_MIN(LIBXS_MAX(u, v), nmin); result = nmax - m; } \
+}
+
+/** O(na*nb) multiset matching loop for complex element types. */
+#define LIBXS_SETDIFF_CMPLX(TYPE, CVT) { \
+  const TYPE *const ra = (const TYPE*)a, *const rb = (const TYPE*)b; \
+  int u = 0, v = 0; \
+  for (j = 0; j < nb; ++j) { \
+    for (i = 0; i < na && u < nmin; ++i) { \
+      const double dre = CVT(ra[2*i]) - CVT(rb[2*j]); \
+      const double dim = CVT(ra[2*i+1]) - CVT(rb[2*j+1]); \
+      if (sqrt(dre * dre + dim * dim) <= tol) { ++u; break; } \
+    } \
+  } \
+  for (i = 0; i < na; ++i) { \
+    for (j = 0; j < nb && v < nmin; ++j) { \
+      const double dre = CVT(ra[2*i]) - CVT(rb[2*j]); \
+      const double dim = CVT(ra[2*i+1]) - CVT(rb[2*j+1]); \
+      if (sqrt(dre * dre + dim * dim) <= tol) { ++v; break; } \
+    } \
+  } \
+  { const int m = LIBXS_MIN(LIBXS_MAX(u, v), nmin); result = nmax - m; } \
+}
+
+/** Min/max scan over a real array. */
+#define LIBXS_SETDIFF_RANGE(TYPE, CVT, SRC, N, LO, HI) { \
+  const TYPE *const p = (const TYPE*)(SRC); \
+  int ii; \
+  (LO) = (HI) = CVT(p[0]); \
+  for (ii = 1; ii < (N); ++ii) { \
+    const double vi = CVT(p[ii]); \
+    if (vi < (LO)) (LO) = vi; \
+    if (vi > (HI)) (HI) = vi; \
+  } \
+}
+
+/** Min/max scan over a complex array (component-wise bounding box). */
+#define LIBXS_SETDIFF_RANGE_CMPLX(TYPE, CVT, SRC, N, LO_RE, HI_RE, LO_IM, HI_IM) { \
+  const TYPE *const p = (const TYPE*)(SRC); \
+  int ii; \
+  (LO_RE) = (HI_RE) = CVT(p[0]); \
+  (LO_IM) = (HI_IM) = CVT(p[1]); \
+  for (ii = 1; ii < (N); ++ii) { \
+    const double re = CVT(p[2*ii]), im = CVT(p[2*ii+1]); \
+    if (re < (LO_RE)) (LO_RE) = re; \
+    if (re > (HI_RE)) (HI_RE) = re; \
+    if (im < (LO_IM)) (LO_IM) = im; \
+    if (im > (HI_IM)) (HI_IM) = im; \
+  } \
+}
+
+#define LIBXS_SETDIFF_CVT(VALUE) ((double)(VALUE))
+#define LIBXS_SETDIFF_NOP(VALUE) (VALUE)
+
+
+/** Context for the GSS callback used by libxs_setdiff_min. */
+LIBXS_EXTERN_C typedef struct internal_libxs_setdiff_ctx_t {
+  const void *a, *b;
+  libxs_data_t datatype;
+  int na, nb;
+} internal_libxs_setdiff_ctx_t;
+
 
 LIBXS_API int libxs_matdiff(libxs_matdiff_t* info,
   libxs_data_t datatype, int m, int n, const void* ref, const void* tst,
@@ -847,3 +923,143 @@ LIBXS_API unsigned int libxs_barrett_pow36(unsigned int p)
   LIBXS_ASSERT(0 != p);
   return (unsigned int)(LIBXS_CONCATENATE(0x1000000000, ULL) % p);
 }
+
+
+LIBXS_API double libxs_gss_min(
+  double (*fn)(double x, const void* data), const void* data,
+  double x0, double x1, double* xmin, int maxiter)
+{
+  const double phi = (sqrt(5.0) - 1.0) * 0.5;
+  double b0 = x0, b1 = x1, d = b1 - b0;
+  double c0 = b0 + (1.0 - phi) * d;
+  double c1 = b0 + phi * d;
+  double f0, f1;
+  int n;
+  LIBXS_ASSERT(NULL != fn && x0 <= x1 && 0 < maxiter);
+  f0 = fn(c0, data); f1 = fn(c1, data);
+  for (n = 0; n < maxiter && b0 != c0 && b1 != c1; ++n) {
+    if (f0 <= f1) {
+      b1 = c1; c1 = c0; f1 = f0;
+      d = b1 - b0;
+      c0 = b0 + (1.0 - phi) * d;
+      f0 = fn(c0, data);
+    }
+    else {
+      b0 = c0; c0 = c1; f0 = f1;
+      d = b1 - b0;
+      c1 = b0 + phi * d;
+      f1 = fn(c1, data);
+    }
+  }
+  if (f0 <= f1) {
+    if (NULL != xmin) *xmin = c0;
+    return f0;
+  }
+  else {
+    if (NULL != xmin) *xmin = c1;
+    return f1;
+  }
+}
+
+
+LIBXS_API int libxs_setdiff(
+  libxs_data_t datatype, const void* a, int na,
+  const void* b, int nb, double tol)
+{
+  const int nmin = LIBXS_MIN(na, nb);
+  const int nmax = LIBXS_MAX(na, nb);
+  int result = -1, i, j;
+  LIBXS_ASSERT(NULL != a && NULL != b && 0 <= na && 0 <= nb && 0 <= tol);
+  switch ((int)datatype) {
+    case LIBXS_DATATYPE_F64: LIBXS_SETDIFF_REAL(double, LIBXS_SETDIFF_NOP) break;
+    case LIBXS_DATATYPE_F32: LIBXS_SETDIFF_REAL(float, LIBXS_SETDIFF_CVT) break;
+    case LIBXS_DATATYPE_C64: LIBXS_SETDIFF_CMPLX(double, LIBXS_SETDIFF_NOP) break;
+    case LIBXS_DATATYPE_C32: LIBXS_SETDIFF_CMPLX(float, LIBXS_SETDIFF_CVT) break;
+    case LIBXS_DATATYPE_I64: LIBXS_SETDIFF_REAL(long long, LIBXS_SETDIFF_CVT) break;
+    case LIBXS_DATATYPE_I32: LIBXS_SETDIFF_REAL(int, LIBXS_SETDIFF_CVT) break;
+    case LIBXS_DATATYPE_U32: LIBXS_SETDIFF_REAL(unsigned int, LIBXS_SETDIFF_CVT) break;
+    case LIBXS_DATATYPE_I16: LIBXS_SETDIFF_REAL(short, LIBXS_SETDIFF_CVT) break;
+    case LIBXS_DATATYPE_U16: LIBXS_SETDIFF_REAL(unsigned short, LIBXS_SETDIFF_CVT) break;
+    case LIBXS_DATATYPE_I8:  LIBXS_SETDIFF_REAL(signed char, LIBXS_SETDIFF_CVT) break;
+    case LIBXS_DATATYPE_U8:  LIBXS_SETDIFF_REAL(unsigned char, LIBXS_SETDIFF_CVT) break;
+    default: {
+      static int error_once = 0;
+      if (0 != libxs_verbosity
+        && 1 == LIBXS_ATOMIC_ADD_FETCH(&error_once, 1, LIBXS_ATOMIC_RELAXED))
+      {
+        fprintf(stderr, "LIBXS ERROR: libxs_setdiff unsupported data-type!\n");
+      }
+    }
+  }
+  LIBXS_ASSERT(0 <= result || LIBXS_DATATYPE_UNKNOWN == datatype);
+  return result;
+}
+
+
+LIBXS_API_INTERN double internal_libxs_setdiff_fn(double tol, const void* data)
+{
+  const internal_libxs_setdiff_ctx_t *const ctx =
+    (const internal_libxs_setdiff_ctx_t*)data;
+  return (double)libxs_setdiff(ctx->datatype,
+    ctx->a, ctx->na, ctx->b, ctx->nb, tol);
+}
+
+
+LIBXS_API_INLINE double internal_libxs_setdiff_range(
+  libxs_data_t datatype, const void* a, int na,
+  const void* b, int nb)
+{
+  double mina, maxa, minb, maxb;
+  switch ((int)datatype) {
+    case LIBXS_DATATYPE_F64: LIBXS_SETDIFF_RANGE(double, LIBXS_SETDIFF_NOP, a, na, mina, maxa)
+                              LIBXS_SETDIFF_RANGE(double, LIBXS_SETDIFF_NOP, b, nb, minb, maxb) break;
+    case LIBXS_DATATYPE_F32: LIBXS_SETDIFF_RANGE(float, LIBXS_SETDIFF_CVT, a, na, mina, maxa)
+                              LIBXS_SETDIFF_RANGE(float, LIBXS_SETDIFF_CVT, b, nb, minb, maxb) break;
+    case LIBXS_DATATYPE_C64: case LIBXS_DATATYPE_C32: {
+      double a_rlo, a_rhi, a_ilo, a_ihi, b_rlo, b_rhi, b_ilo, b_ihi, dre, dim;
+      if (LIBXS_DATATYPE_C64 == (int)datatype) {
+        LIBXS_SETDIFF_RANGE_CMPLX(double, LIBXS_SETDIFF_NOP, a, na, a_rlo, a_rhi, a_ilo, a_ihi)
+        LIBXS_SETDIFF_RANGE_CMPLX(double, LIBXS_SETDIFF_NOP, b, nb, b_rlo, b_rhi, b_ilo, b_ihi)
+      }
+      else {
+        LIBXS_SETDIFF_RANGE_CMPLX(float, LIBXS_SETDIFF_CVT, a, na, a_rlo, a_rhi, a_ilo, a_ihi)
+        LIBXS_SETDIFF_RANGE_CMPLX(float, LIBXS_SETDIFF_CVT, b, nb, b_rlo, b_rhi, b_ilo, b_ihi)
+      }
+      dre = LIBXS_MAX(LIBXS_DELTA(a_rlo, b_rhi), LIBXS_DELTA(b_rlo, a_rhi));
+      dim = LIBXS_MAX(LIBXS_DELTA(a_ilo, b_ihi), LIBXS_DELTA(b_ilo, a_ihi));
+      return sqrt(dre * dre + dim * dim);
+    }
+    default: return 0;
+  }
+  { const double d0 = LIBXS_DELTA(mina, maxb), d1 = LIBXS_DELTA(minb, maxa);
+    return LIBXS_MAX(d0, d1);
+  }
+}
+
+
+LIBXS_API int libxs_setdiff_min(
+  libxs_data_t datatype, const void* a, int na,
+  const void* b, int nb, double* tol)
+{
+  LIBXS_ASSERT(NULL != a && NULL != b && 0 <= na && 0 <= nb);
+  if (0 < na && 0 < nb && LIBXS_ENUM_IS_FLOAT((int)datatype)) {
+    internal_libxs_setdiff_ctx_t ctx;
+    const double x1 = internal_libxs_setdiff_range(datatype, a, na, b, nb);
+    ctx.datatype = datatype;
+    ctx.a = a; ctx.b = b;
+    ctx.na = na; ctx.nb = nb;
+    return (int)libxs_gss_min(
+      internal_libxs_setdiff_fn, &ctx, 0.0, x1, tol, 10000);
+  }
+  else {
+    if (NULL != tol) *tol = 0;
+    return LIBXS_MAX(na, nb);
+  }
+}
+
+#undef LIBXS_SETDIFF_NOP
+#undef LIBXS_SETDIFF_CVT
+#undef LIBXS_SETDIFF_RANGE_CMPLX
+#undef LIBXS_SETDIFF_RANGE
+#undef LIBXS_SETDIFF_CMPLX
+#undef LIBXS_SETDIFF_REAL

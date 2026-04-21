@@ -92,6 +92,28 @@ LIBXS_API_INLINE double libxs_matdiff_posdef(const libxs_matdiff_t* info) {
     ? info->diag_min_tst : 0;
 }
 
+/**
+ * Order-independent multiset distance between a[na] and b[nb]:
+ * counts elements that cannot be matched within the given tolerance.
+ * Two elements match if their absolute difference does not exceed tol.
+ * The distance satisfies metric properties (symmetry, non-negativity,
+ * identity of indiscernibles). Complex types use modulus for comparison.
+ */
+LIBXS_API int libxs_setdiff(
+  libxs_data_t datatype, const void* a, int na,
+  const void* b, int nb, double tol);
+
+/**
+ * Minimize the multiset distance (libxs_setdiff) over all tolerances
+ * using Golden Section Search (libxs_gss_min). Returns the minimum
+ * unmatched count; *tol optionally receives the smallest tolerance
+ * achieving this minimum (may be NULL).
+ * Supported types: F64, F32, C64, C32 (not integer types).
+ */
+LIBXS_API int libxs_setdiff_min(
+  libxs_data_t datatype, const void* a, int na,
+  const void* b, int nb, double* tol);
+
 /** Greatest common divisor (corner case: the GCD of 0 and 0 is 1). */
 LIBXS_API size_t libxs_gcd(size_t a, size_t b);
 /** Least common multiple. */
@@ -132,6 +154,17 @@ LIBXS_API unsigned int libxs_product_limit(unsigned int product, unsigned int li
 
 /* Kahan's summation returns accumulator += value and updates compensation. */
 LIBXS_API double libxs_kahan_sum(double value, double* accumulator, double* compensation);
+
+/**
+ * Golden Section Search for the minimum of a unimodal function f on [x0, x1].
+ * The function f is evaluated via a callback; context is forwarded opaquely.
+ * Returns f(x*) where x* is the minimizer; *xmin optionally receives x*
+ * (may be NULL). Converges when the bracket width reaches zero or maxiter
+ * iterations are exhausted.
+ */
+LIBXS_API double libxs_gss_min(
+  double (*fn)(double x, const void* data), const void* data,
+  double x0, double x1, double* xmin, int maxiter);
 
 /** SQRT with Newton's method using integer arithmetic. */
 LIBXS_API unsigned int libxs_isqrt_u64(unsigned long long x);
