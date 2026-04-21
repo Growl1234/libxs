@@ -35,6 +35,7 @@ libxs_gemm_ready
 libxs_gemm_ready_f
 libxs_gemm_release
 libxs_get_verbosity
+libxs_gss_min
 libxs_hash
 libxs_hash16
 libxs_hash32
@@ -123,6 +124,8 @@ libxs_rng_seq
 libxs_rng_set_seed
 libxs_rng_u32
 libxs_set_verbosity
+libxs_setdiff
+libxs_setdiff_min
 libxs_shuffle
 libxs_shuffle2
 libxs_stdio_acquire

@@ -56,7 +56,67 @@ Worst-case reduction of matdiff results. Initialize with `libxs_matdiff_clear`.
 double libxs_matdiff_posdef(const libxs_matdiff_t* info);  /* inline */
 ```
 
-Returns the smallest test-side diagonal element (positive = necessary condition for positive definiteness met). Zero if no diagonal data.
+Returns the smallest test-side diagonal element (positive = necessary
+condition for positive definiteness met). Zero if no diagonal data.
+
+## Multiset Distance
+
+Order-independent distance between two vectors treated as multisets.
+The metric counts how many elements have no counterpart (within
+tolerance) in the other vector. The result is a non-negative integer
+that satisfies the metric properties: symmetry, non-negativity, and
+identity of indiscernibles.
+
+For each element in b, the algorithm checks whether any element in a
+matches (and vice versa). The maximum of both one-sided match counts
+determines the distance. Elements are compared by absolute difference
+for real types and by complex modulus for C64/C32. The tolerance
+threshold is inclusive (less-than-or-equal).
+
+```C
+int libxs_setdiff(libxs_data_t datatype,
+  const void* a, int na,
+  const void* b, int nb, double tol);
+```
+
+Supports all libxs_data_t types. Returns the number of unmatched
+elements, or -1 for unsupported types. The distance is at least
+abs(na - nb) when the vector lengths differ.
+
+```C
+int libxs_setdiff_min(libxs_data_t datatype,
+  const void* a, int na,
+  const void* b, int nb, double* tol);
+```
+
+Minimizes the multiset distance over all tolerances using Golden
+Section Search (libxs_gss_min). Returns the minimum unmatched count.
+The pointer tol (may be NULL) receives the smallest tolerance that
+achieves this minimum. Supported types: F64, F32, C64, C32 only
+(integer types are not meaningful here; returns max(na, nb) with
+tol set to zero).
+
+The distance as a function of tolerance is monotonically
+non-increasing (a step function with discrete drops), which makes
+it unimodal -- the prerequisite for Golden Section Search.
+
+## Golden Section Search
+
+```C
+double libxs_gss_min(
+  double (*fn)(double x, const void* data),
+  const void* data,
+  double x0, double x1, double* xmin, int maxiter);
+```
+
+Minimizes a unimodal function fn on the interval [x0, x1]. The
+callback receives x and an opaque context pointer. Returns f(x*)
+where x* is the minimizer; xmin (may be NULL) receives x*.
+
+The bracket shrinks by factor phi = (sqrt(5)-1)/2 per iteration,
+reusing one evaluation from the previous step. Convergence is
+reached when the bracket collapses to machine precision or maxiter
+iterations are exhausted.
 
 ## Number Theory
 
