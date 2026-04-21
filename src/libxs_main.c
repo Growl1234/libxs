@@ -10,7 +10,7 @@
 #include <libxs_cpuid.h>
 #include <libxs_malloc.h>
 
-static libxs_malloc_pool_t* internal_libxs_default_pool;
+LIBXS_APIVAR_PRIVATE_DEF(struct libxs_malloc_pool_t* internal_libxs_default_pool);
 
 #include <signal.h>
 #if !defined(NDEBUG)

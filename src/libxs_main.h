@@ -106,6 +106,9 @@ LIBXS_APIVAR_PRIVATE(int libxs_verbosity);
 /** Security-enhanced environment. */
 LIBXS_APIVAR_PRIVATE(int libxs_se);
 
+/** Default memory pool (created by libxs_init, NULL otherwise). */
+LIBXS_APIVAR_PRIVATE(struct libxs_malloc_pool_t* internal_libxs_default_pool);
+
 /** Number of seconds per RDTSC-cycle (zero or negative if RDTSC invalid). */
 LIBXS_APIVAR_PRIVATE(double libxs_timer_scale);
 /** Counts the maximum number of thread that have been active. */
