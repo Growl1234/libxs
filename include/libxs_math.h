@@ -11,6 +11,15 @@
 
 #include "libxs.h"
 
+/**
+ * Maximum derivative order for Foeppl polynomial fingerprints.
+ * Orders 0..LIBXS_FPRINT_MAXORDER correspond to value, slope,
+ * curvature, and higher structural features.
+ */
+#if !defined(LIBXS_FPRINT_MAXORDER)
+# define LIBXS_FPRINT_MAXORDER 8
+#endif
+
 
 /**
  * Structure of differences with matrix norms according
@@ -113,6 +122,40 @@ LIBXS_API int libxs_setdiff(
 LIBXS_API int libxs_setdiff_min(
   libxs_data_t datatype, const void* a, int na,
   const void* b, int nb, double* tol);
+
+/** Foeppl polynomial fingerprint: per-derivative-order L2 norms. */
+LIBXS_EXTERN_C typedef struct libxs_fprint_t {
+  /** L2 norm of the k-th finite difference (k = 0..order). */
+  double norms[LIBXS_FPRINT_MAXORDER + 1];
+  /** Derivative orders used and original data length. */
+  int order, n;
+} libxs_fprint_t;
+
+/**
+ * Hierarchical Foeppl polynomial fingerprint for n-dimensional data.
+ * For 1-D data, builds per-derivative-order L2 norms normalized to
+ * the unit interval [0,1] so that fingerprints of different lengths
+ * are directly comparable. For higher dimensions, sweeps the innermost
+ * dimension first and collapses each level into the next outer dimension.
+ * stride[] gives the element step for each dimension (NULL: contiguous,
+ * i.e., stride[0]=1, stride[k]=product of shape[0..k-1]).
+ * Order is clamped to min(order, extent-1, LIBXS_FPRINT_MAXORDER).
+ * Supported types: F64, F32 (integer types are promoted).
+ */
+LIBXS_API int libxs_fprint(libxs_fprint_t* info,
+  libxs_data_t datatype, const void* data,
+  size_t ndims, const size_t shape[], const size_t stride[],
+  int order);
+
+/**
+ * Weighted Sobolev distance between two fingerprints:
+ *   d = sqrt(sum_k weights[k] * (a->norms[k] - b->norms[k])^2).
+ * The number of orders used is min(a->order, b->order) + 1.
+ * If weights is NULL, default weights w_k = 1/(k!) are used.
+ */
+LIBXS_API double libxs_fprint_diff(
+  const libxs_fprint_t* a, const libxs_fprint_t* b,
+  const double* weights);
 
 /** Greatest common divisor (corner case: the GCD of 0 and 0 is 1). */
 LIBXS_API size_t libxs_gcd(size_t a, size_t b);

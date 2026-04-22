@@ -7,6 +7,7 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 #include <libxs_math.h>
+#include <libxs_malloc.h>
 #include "libxs_main.h"
 
 #include <sys/types.h>
@@ -112,6 +113,9 @@
 #define LIBXS_SETDIFF_CVT(VALUE) ((double)(VALUE))
 #define LIBXS_SETDIFF_NOP(VALUE) (VALUE)
 
+#define LIBXS_MATH_MALLOC(SIZE, POOL) internal_libxs_math_malloc(SIZE, &(POOL))
+#define LIBXS_MATH_FREE(PTR, POOL) internal_libxs_math_free(PTR, POOL)
+
 
 /** Context for the GSS callback used by libxs_setdiff_min. */
 LIBXS_EXTERN_C typedef struct internal_libxs_setdiff_ctx_t {
@@ -119,6 +123,17 @@ LIBXS_EXTERN_C typedef struct internal_libxs_setdiff_ctx_t {
   libxs_data_t datatype;
   int na, nb;
 } internal_libxs_setdiff_ctx_t;
+
+
+LIBXS_API_INLINE void* internal_libxs_math_malloc(size_t size, int* pool) {
+  void* p = libxs_malloc(internal_libxs_default_pool, size, LIBXS_MALLOC_AUTO);
+  if (NULL != p) { *pool = 1; return p; }
+  *pool = 0; return malloc(size);
+}
+
+LIBXS_API_INLINE void internal_libxs_math_free(void* ptr, int pool) {
+  if (0 != pool) libxs_free(ptr); else free(ptr);
+}
 
 
 LIBXS_API int libxs_matdiff(libxs_matdiff_t* info,
@@ -1063,3 +1078,161 @@ LIBXS_API int libxs_setdiff_min(
 #undef LIBXS_SETDIFF_RANGE
 #undef LIBXS_SETDIFF_CMPLX
 #undef LIBXS_SETDIFF_REAL
+
+
+/** Compute fingerprint from double values already in cur[0..n-1].
+ * buf must point to an allocation of at least 2*n doubles;
+ * cur must equal buf or buf+n. */
+LIBXS_API_INTERN void internal_libxs_fprint_core(
+  libxs_fprint_t* info, double* buf, double* cur, int n, int kmax)
+{
+  const double h = 1 < n ? 1.0 / (n - 1) : 1.0;
+  double *prv = (cur == buf) ? buf + n : buf;
+  int k, i;
+  { double acc = 0, comp = 0;
+    for (i = 0; i < n; ++i) libxs_kahan_sum(cur[i] * cur[i], &acc, &comp);
+    info->norms[0] = sqrt(acc * h);
+  }
+  for (k = 1; k <= kmax; ++k) {
+    const int nk = n - k;
+    double *tmp, acc = 0, comp = 0;
+    tmp = prv; prv = cur; cur = tmp;
+    for (i = 0; i < nk; ++i) cur[i] = (prv[i + 1] - prv[i]) / h;
+    for (i = 0; i < nk; ++i) libxs_kahan_sum(cur[i] * cur[i], &acc, &comp);
+    info->norms[k] = sqrt(acc * h);
+  }
+}
+
+
+/** Convert typed data with stride to double array dst[0..n-1]. */
+#define LIBXS_FPRINT_LOAD(TYPE, SRC, STRIDE, N, DST) { \
+  const TYPE *const p = (const TYPE*)(SRC); \
+  const size_t s = (STRIDE); int ii; \
+  for (ii = 0; ii < (N); ++ii) (DST)[ii] = (double)p[ii * s]; \
+}
+
+LIBXS_API_INTERN int internal_libxs_fprint_load(
+  double* dst, libxs_data_t datatype,
+  const void* data, size_t stride, int n)
+{
+  switch ((int)datatype) {
+    case LIBXS_DATATYPE_F64: LIBXS_FPRINT_LOAD(double, data, stride, n, dst) break;
+    case LIBXS_DATATYPE_F32: LIBXS_FPRINT_LOAD(float, data, stride, n, dst) break;
+    case LIBXS_DATATYPE_I64: LIBXS_FPRINT_LOAD(long long, data, stride, n, dst) break;
+    case LIBXS_DATATYPE_I32: LIBXS_FPRINT_LOAD(int, data, stride, n, dst) break;
+    case LIBXS_DATATYPE_U32: LIBXS_FPRINT_LOAD(unsigned int, data, stride, n, dst) break;
+    case LIBXS_DATATYPE_I16: LIBXS_FPRINT_LOAD(short, data, stride, n, dst) break;
+    case LIBXS_DATATYPE_U16: LIBXS_FPRINT_LOAD(unsigned short, data, stride, n, dst) break;
+    case LIBXS_DATATYPE_I8:  LIBXS_FPRINT_LOAD(signed char, data, stride, n, dst) break;
+    case LIBXS_DATATYPE_U8:  LIBXS_FPRINT_LOAD(unsigned char, data, stride, n, dst) break;
+    default: return EXIT_FAILURE;
+  }
+  return EXIT_SUCCESS;
+}
+
+#undef LIBXS_FPRINT_LOAD
+
+
+LIBXS_API int libxs_fprint(libxs_fprint_t* info,
+  libxs_data_t datatype, const void* data,
+  size_t ndims, const size_t shape[], const size_t stride[],
+  int order)
+{
+  int result = EXIT_SUCCESS;
+  LIBXS_ASSERT(NULL != info && NULL != data && 0 < ndims);
+  LIBXS_ASSERT(NULL != shape);
+  memset(info, 0, sizeof(*info));
+  if (1 == ndims) {
+    const size_t s = (NULL != stride ? stride[0] : 1);
+    const int n = (int)shape[0];
+    int kmax, pool = 0;
+    double *buf, *cur;
+    if (1 > n) return EXIT_SUCCESS;
+    kmax = LIBXS_MIN(order, n - 1);
+    kmax = LIBXS_MIN(kmax, LIBXS_FPRINT_MAXORDER);
+    if (0 > kmax) kmax = 0;
+    info->order = kmax; info->n = n;
+    buf = (double*)LIBXS_MATH_MALLOC(2 * (size_t)n * sizeof(double), pool);
+    if (NULL == buf) return EXIT_FAILURE;
+    cur = buf;
+    result = internal_libxs_fprint_load(cur, datatype, data, s, n);
+    if (EXIT_SUCCESS != result) {
+      static int error_once = 0;
+      if (0 != libxs_verbosity
+        && 1 == LIBXS_ATOMIC_ADD_FETCH(&error_once, 1, LIBXS_ATOMIC_RELAXED))
+      {
+        fprintf(stderr, "LIBXS ERROR: libxs_fprint unsupported data-type!\n");
+      }
+    }
+    else {
+      internal_libxs_fprint_core(info, buf, cur, n, kmax);
+    }
+    LIBXS_MATH_FREE(buf, pool);
+  }
+  else {
+    const size_t nouter = shape[ndims - 1];
+    size_t souter;
+    const size_t typesize = LIBXS_TYPESIZE((int)datatype);
+    size_t j;
+    libxs_fprint_t child;
+    double *scalars, *buf, *cur;
+    int kmax, pool_s = 0, pool_b = 0;
+    if (NULL != stride) {
+      souter = stride[ndims - 1];
+    }
+    else {
+      size_t p = 1, d;
+      for (d = 0; d + 1 < ndims; ++d) p *= shape[d];
+      souter = p;
+    }
+    if (1 > (int)nouter) return EXIT_SUCCESS;
+    scalars = (double*)LIBXS_MATH_MALLOC(nouter * sizeof(double), pool_s);
+    if (NULL == scalars) return EXIT_FAILURE;
+    for (j = 0; j < nouter && EXIT_SUCCESS == result; ++j) {
+      const void* slice = (const char*)data + j * souter * typesize;
+      double snorm = 0, scomp = 0, wk = 1.0;
+      int k;
+      result = libxs_fprint(&child, datatype, slice,
+        ndims - 1, shape, stride, order);
+      for (k = 0; k <= child.order; ++k) {
+        if (0 < k) wk /= k;
+        libxs_kahan_sum(wk * child.norms[k] * child.norms[k], &snorm, &scomp);
+      }
+      scalars[j] = sqrt(snorm);
+    }
+    if (EXIT_SUCCESS == result) {
+      kmax = LIBXS_MIN(order, (int)nouter - 1);
+      kmax = LIBXS_MIN(kmax, LIBXS_FPRINT_MAXORDER);
+      if (0 > kmax) kmax = 0;
+      info->order = kmax; info->n = (int)nouter;
+      buf = (double*)LIBXS_MATH_MALLOC(2 * nouter * sizeof(double), pool_b);
+      if (NULL != buf) {
+        cur = buf;
+        for (j = 0; j < nouter; ++j) cur[j] = scalars[j];
+        internal_libxs_fprint_core(info, buf, cur, (int)nouter, kmax);
+        LIBXS_MATH_FREE(buf, pool_b);
+      }
+      else result = EXIT_FAILURE;
+    }
+    LIBXS_MATH_FREE(scalars, pool_s);
+  }
+  return result;
+}
+
+
+LIBXS_API double libxs_fprint_diff(
+  const libxs_fprint_t* a, const libxs_fprint_t* b,
+  const double* weights)
+{
+  int k, kmax;
+  double acc = 0, comp = 0, wk = 1.0;
+  LIBXS_ASSERT(NULL != a && NULL != b);
+  kmax = LIBXS_MIN(a->order, b->order);
+  for (k = 0; k <= kmax; ++k) {
+    const double d = a->norms[k] - b->norms[k];
+    if (NULL != weights) wk = weights[k];
+    else if (0 < k) wk /= k; /* 1/k! */
+    libxs_kahan_sum(wk * d * d, &acc, &comp);
+  }
+  return sqrt(acc);
+}

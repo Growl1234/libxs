@@ -21,6 +21,8 @@ libxs_diff_n
 libxs_dvalue
 libxs_finalize
 libxs_format_value
+libxs_fprint
+libxs_fprint_diff
 libxs_free
 libxs_free_pool
 libxs_gcd
