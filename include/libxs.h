@@ -24,6 +24,10 @@
 /** Determine the type-size of the type (libxs_data_t). */
 #define LIBXS_TYPESIZE(ENUM) ((ENUM) >> 4)
 
+/** Removes type-size info from type (libxs_data_t). */
+#define LIBXS_TYPEORDER(ENUM) (0xF & (ENUM))
+
+
 /** Enumerate primitive element/data types. */
 typedef enum libxs_data_t {
   LIBXS_DATATYPE_F64 = 0 | (8 << 4),
@@ -40,9 +44,6 @@ typedef enum libxs_data_t {
   LIBXS_DATATYPE_U8  = 11 | (1 << 4),
   LIBXS_DATATYPE_UNKNOWN = 12
 } libxs_data_t;
-
-/** Removes type-size info from type (libxs_data_t). */
-#define LIBXS_TYPEORDER(ENUM) (0xF & (ENUM))
 
 /** Initialize the library; pay for setup cost at a specific point. */
 LIBXS_API void libxs_init(void);

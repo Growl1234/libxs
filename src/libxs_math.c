@@ -1222,7 +1222,7 @@ LIBXS_API int libxs_fprint(libxs_fprint_t* info,
 
 LIBXS_API double libxs_fprint_diff(
   const libxs_fprint_t* a, const libxs_fprint_t* b,
-  const double* weights)
+  const double weights[])
 {
   int k, kmax;
   double acc = 0, comp = 0, wk = 1.0;

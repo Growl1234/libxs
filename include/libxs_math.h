@@ -155,7 +155,7 @@ LIBXS_API int libxs_fprint(libxs_fprint_t* info,
  */
 LIBXS_API double libxs_fprint_diff(
   const libxs_fprint_t* a, const libxs_fprint_t* b,
-  const double* weights);
+  const double weights[]);
 
 /** Greatest common divisor (corner case: the GCD of 0 and 0 is 1). */
 LIBXS_API size_t libxs_gcd(size_t a, size_t b);
