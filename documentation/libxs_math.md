@@ -100,6 +100,69 @@ The distance as a function of tolerance is monotonically
 non-increasing (a step function with discrete drops), which makes
 it unimodal -- the prerequisite for Golden Section Search.
 
+## Foeppl Polynomial Fingerprint
+
+Structural fingerprint for n-dimensional data based on Foeppl (Macaulay)
+bracket polynomials. For 1-D data, the fingerprint records per-derivative-order
+L2 norms of the forward finite differences, normalized to the unit interval
+[0,1]. Higher dimensions are handled hierarchically: the innermost dimension
+is fingerprinted first, each child fingerprint is collapsed to a Sobolev
+self-norm scalar, and those scalars form the 1-D input for the next outer
+dimension.
+
+Because the fingerprint is normalized to the unit interval, datasets of
+different lengths (or shapes) produce directly comparable fingerprints.
+The derivative-order decomposition captures structural features at
+multiple scales: order 0 measures value magnitude, order 1 measures
+slope/trend, order 2 measures curvature, and so on.
+
+```C
+#define LIBXS_FPRINT_MAXORDER 8
+
+typedef struct libxs_fprint_t {
+  double norms[LIBXS_FPRINT_MAXORDER + 1];
+  int order, n;
+} libxs_fprint_t;
+```
+
+The `norms` array holds the L2 norm of the k-th finite difference
+for k = 0..order. The `order` field records how many derivative orders
+were used; `n` is the extent of the outermost dimension.
+
+```C
+int libxs_fprint(libxs_fprint_t* info,
+  libxs_data_t datatype, const void* data,
+  size_t ndims, const size_t shape[], const size_t stride[],
+  int order);
+```
+
+Build a fingerprint from data described by shape and stride arrays.
+For 1-D data, pass `ndims=1`, `shape={n}`, `stride=NULL`. For higher
+dimensions, `shape[0]` is the innermost extent and `shape[ndims-1]`
+the outermost. When `stride` is NULL, contiguous storage is assumed
+(stride[0]=1, stride[k]=product of shape[0..k-1]). The requested
+order is clamped to min(order, extent-1, LIBXS_FPRINT_MAXORDER).
+
+Supported types: F64, F32, and all integer libxs_data_t types
+(promoted to double internally).
+
+```C
+double libxs_fprint_diff(
+  const libxs_fprint_t* a, const libxs_fprint_t* b,
+  const double* weights);
+```
+
+Weighted Sobolev distance between two fingerprints:
+d = sqrt( sum over k of weights[k] * (a->norms[k] - b->norms[k])^2 ).
+The number of orders compared is min(a->order, b->order) + 1.
+If weights is NULL, default weights w(k) = 1/k! are used, which
+naturally dampens higher-order (noisier) derivatives.
+
+The distance is a metric: symmetric, non-negative, zero if and
+only if the fingerprints are identical. The same function serves
+both as a distance measure and as a fingerprint comparator since
+the fingerprint is the decomposed form of the Sobolev norm.
+
 ## Golden Section Search
 
 ```C
