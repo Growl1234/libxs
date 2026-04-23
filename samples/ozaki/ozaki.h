@@ -148,6 +148,7 @@
 #define gemm_oz1 LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz1)
 #define gemm_oz2 LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz2)
 #define gemm_oz3 LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz3)
+#define ozaki_order LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_order)
 #define gemm_init LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_init)
 #define gemm_threshold LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_threshold)
 /* gemm_dump_inhibit: not precision-prefixed (like gemm_nozaki) */
@@ -252,6 +253,7 @@ OZAKI_APIVAR_PRIVATE(int ozaki_trim);
 OZAKI_APIVAR_PRIVATE(int ozaki_dump);
 OZAKI_APIVAR_PRIVATE(int ozaki_exit);
 OZAKI_APIVAR_PRIVATE(int ozaki_n);
+OZAKI_APIVAR_PRIVATE(int ozaki_order);
 OZAKI_APIVAR_PRIVATE(int ozaki_profile);
 OZAKI_APIVAR_PRIVATE(libxs_hist_t* ozaki_hist);
 OZAKI_APIVAR_PRIVATE(int gemm_threshold);
