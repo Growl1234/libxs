@@ -120,7 +120,7 @@ if(NOT LIBXS_HEADER_ONLY)
   endif()
 
   configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/libxs.pc.in"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/tool_pkgconfig.pc.in"
     "${CMAKE_CURRENT_BINARY_DIR}/libxs.pc"
     @ONLY
   )

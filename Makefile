@@ -504,7 +504,7 @@ deepclean: realclean
 distclean: deepclean
 	@find $(ROOTDIR)/$(SPLDIR) $(ROOTDIR)/$(TSTDIR) -type f -name Makefile -exec $(FLOCK) {} \
 		"$(MAKE) --no-print-directory deepclean" \; 2>/dev/null || true
-	@-rm -rf $(PROJECT)*
+	@find . -maxdepth 1 -name '$(PROJECT)*' -not -name '*.in' -exec rm -rf {} +
 
 # keep original prefix (:)
 ALIAS_PREFIX := $(PREFIX)
