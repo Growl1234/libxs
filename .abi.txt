@@ -132,7 +132,9 @@ libxs_shuffle
 libxs_shuffle2
 libxs_stdio_acquire
 libxs_stdio_release
+libxs_stridist
 libxs_strimatch
+libxs_strisimilar
 libxs_stristr
 libxs_stristrn
 libxs_tid
