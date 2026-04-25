@@ -6,7 +6,7 @@ libxs_barrett_pow18
 libxs_barrett_pow36
 libxs_barrett_rcp
 libxs_coprime
-libxs_coprime2
+libxs_coprime_bias
 libxs_cpuid
 libxs_cpuid_amx_enable
 libxs_cpuid_id
