@@ -849,13 +849,22 @@ LIBXS_API size_t libxs_coprime(size_t n, size_t minco)
 
 LIBXS_API size_t libxs_coprime_bias(size_t n, double bias)
 {
-  size_t target, result;
-  if (n <= 4) return libxs_coprime(n, libxs_isqrt_u64(n));
+  const size_t sqrtn = libxs_isqrt_u64(n);
+  const size_t half = n / 2;
+  size_t target, d;
+  if (n <= 4) return libxs_coprime(n, sqrtn);
   bias = LIBXS_CLMP(bias, -1.0, 1.0);
-  target = (size_t)(pow((double)n, 0.5 * (1.0 + bias)) + 0.5);
-  target = LIBXS_CLMP(target, 3, n / 2);
-  result = libxs_coprime(n, target);
-  return (result < 2) ? libxs_coprime(n, libxs_isqrt_u64(n)) : result;
+  if (bias < 0.0) target = (size_t)(pow((double)sqrtn, 1.0 + bias) + 0.5);
+  else if (bias <= 0.0) target = sqrtn;
+  else target = (size_t)(pow((double)n, 0.5 * (1.0 + bias)) + 0.5);
+  target = LIBXS_CLMP(target, 2, half);
+  for (d = target; d >= 2; --d) {
+    if (1 == libxs_gcd(d, n)) return d;
+  }
+  for (d = target + 1; d <= half; ++d) {
+    if (1 == libxs_gcd(d, n)) return d;
+  }
+  return libxs_coprime(n, sqrtn);
 }
 
 
