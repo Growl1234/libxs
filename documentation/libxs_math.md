@@ -104,7 +104,7 @@ it unimodal -- the prerequisite for Golden Section Search.
 
 Structural fingerprint for n-dimensional data based on Foeppl (Macaulay)
 bracket polynomials. For 1-D data, the fingerprint records per-derivative-order
-L2 norms of the forward finite differences, normalized to the unit interval
+norms of the forward finite differences, normalized to the unit interval
 [0,1]. Higher dimensions are handled hierarchically: the innermost dimension
 is fingerprinted first, each child fingerprint is collapsed to a Sobolev
 self-norm scalar, and those scalars form the 1-D input for the next outer
@@ -120,14 +120,32 @@ slope/trend, order 2 measures curvature, and so on.
 #define LIBXS_FPRINT_MAXORDER 8
 
 typedef struct libxs_fprint_t {
-  double norms[LIBXS_FPRINT_MAXORDER + 1];
+  double l2[LIBXS_FPRINT_MAXORDER + 1];
+  double l1[LIBXS_FPRINT_MAXORDER + 1];
+  double linf[LIBXS_FPRINT_MAXORDER + 1];
   int order, n;
 } libxs_fprint_t;
 ```
 
-The `norms` array holds the L2 norm of the k-th finite difference
-for k = 0..order. The `order` field records how many derivative orders
-were used; `n` is the extent of the outermost dimension.
+Three norm families are computed per derivative order k = 0..order:
+
+| Field     | Norm | Description                               |
+|-----------|------|-------------------------------------------|
+| `l2[k]`   | L2   | RMS of the k-th finite difference         |
+| `l1[k]`   | L1   | Mean absolute value (total variation)     |
+| `linf[k]` | Linf | Maximum absolute value (worst-case decay) |
+
+All three are normalized to the unit interval (h = 1/(n-1)).
+To recover raw (unnormalized) values, multiply by pow(n-1, k).
+The `order` field records how many derivative orders were used;
+`n` is the extent of the outermost dimension.
+
+The L2 norms serve comparison via the Sobolev distance.
+The Linf norms serve as a decay diagnostic: decaying linf[k]
+indicates structurally smooth data (compressible under Newton
+truncation), while growing linf[k] indicates unstructured data
+(no exploitable smoothness). The L1 norms provide a
+noise-robust middle ground between L2 and Linf.
 
 ```C
 int libxs_fprint(libxs_fprint_t* info,
@@ -144,7 +162,7 @@ the outermost. When `stride` is NULL, contiguous storage is assumed
 order is clamped to min(order, extent-1, LIBXS_FPRINT_MAXORDER).
 
 Supported types: F64, F32, and all integer libxs_data_t types
-(promoted to double internally).
+(I64, I32, U32, I16, U16, I8, U8 -- promoted to double internally).
 
 ```C
 double libxs_fprint_diff(
@@ -153,7 +171,7 @@ double libxs_fprint_diff(
 ```
 
 Weighted Sobolev distance between two fingerprints:
-d = sqrt( sum over k of weights[k] * (a->norms[k] - b->norms[k])^2 ).
+d = sqrt( sum over k of weights[k] * (a->l2[k] - b->l2[k])^2 ).
 The number of orders compared is min(a->order, b->order) + 1.
 If weights is NULL, default weights w(k) = 1/k! are used, which
 naturally dampens higher-order (noisier) derivatives.
@@ -199,10 +217,20 @@ Prime factors of `num` in ascending order. Returns factor count.
 
 ```C
 size_t libxs_coprime(size_t n, size_t minco);
-size_t libxs_coprime2(size_t n);
+size_t libxs_coprime_bias(size_t n, double bias);
+size_t libxs_coprime2(size_t n); /* inline: coprime_bias(n, 0) */
 ```
 
-Co-prime of `n` not exceeding `minco` (or sqrt(n)).
+`libxs_coprime`: co-prime of `n` not exceeding `minco`.
+
+`libxs_coprime_bias`: co-prime of `n` selected by bias in [-1, +1]
+via a logarithmic mapping (target = n^((1+bias)/2)).
+bias=-1 selects the smallest non-trivial coprime (maximum
+displacement), bias=0 selects near sqrt(n) (balanced, same as
+libxs_coprime2), bias=+1 selects near n/2 (near-alternation).
+Monotonic: larger bias always yields a larger (or equal) coprime.
+
+`libxs_coprime2`: inline convenience for `libxs_coprime_bias(n, 0)`.
 
 ```C
 unsigned int libxs_remainder(unsigned int a, unsigned int b,
