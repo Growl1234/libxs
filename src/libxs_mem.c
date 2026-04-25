@@ -24,10 +24,6 @@
 
 #define LIBXS_MEM_SHUFFLE_COPRIME(N) libxs_coprime2(N)
 
-#if !defined(LIBXS_MEM_SHUFFLE_CYCLE) && 0
-# define LIBXS_MEM_SHUFFLE_CYCLE
-#endif
-
 #if defined(LIBXS_INTRINSICS_AVX512)
 LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
 void internal_libxs_shuffle2_u32_avx512(
@@ -84,67 +80,68 @@ void internal_libxs_shuffle2_u64_avx512(
 }
 #endif /* LIBXS_INTRINSICS_AVX512 */
 
-#if defined(LIBXS_MEM_SHUFFLE_CYCLE)
+#define LIBXS_MEM_SHUFFLE_MALLOC(SIZE, POOL) \
+  internal_libxs_mem_shuffle_malloc(SIZE, &(POOL))
+#define LIBXS_MEM_SHUFFLE_FREE(PTR, POOL) \
+  internal_libxs_mem_shuffle_free(PTR, POOL)
+
+LIBXS_API_INLINE void* internal_libxs_mem_shuffle_malloc(size_t size, int* pool) {
+  void* p = libxs_malloc(internal_libxs_default_pool, size, LIBXS_MALLOC_AUTO);
+  if (NULL != p) { *pool = 1; return p; }
+  *pool = 0; return malloc(size);
+}
+
+LIBXS_API_INLINE void internal_libxs_mem_shuffle_free(void* ptr, int pool) {
+  if (0 != pool) libxs_free(ptr); else free(ptr);
+}
+
 #define LIBXS_MEM_SHUFFLE(INOUT, ELEMSIZE, COUNT, SHUFFLE, NREPEAT) do { \
-  unsigned char *const LIBXS_RESTRICT data = (unsigned char*)(INOUT); \
-  const size_t count_ = (COUNT), s_ = (SHUFFLE), c_ = count_ - 1; \
-  const size_t nrep_ = (NREPEAT); \
-  const size_t nbitmask_ = (count_ + 7) / 8; \
-  unsigned char *const visited_ = (unsigned char*)calloc(nbitmask_, 1); \
-  if (NULL != visited_ && 0 != nrep_) { \
-    unsigned char tmp_[(ELEMSIZE) <= 64 ? (ELEMSIZE) : 1]; \
-    void *const tmpbuf_ = (ELEMSIZE) <= 64 ? tmp_ : malloc(ELEMSIZE); \
-    if (NULL != tmpbuf_) { \
-      size_t i_; \
-      for (i_ = 0; i_ < count_; ++i_) { \
-        size_t src_, dst_, k_; \
-        if (0 != (visited_[i_ / 8] & (1u << (i_ % 8)))) continue; \
-        src_ = i_; \
-        for (k_ = 0; k_ < nrep_; ++k_) src_ = c_ - ((s_ * src_) % count_); \
-        if (src_ == i_) { \
-          visited_[i_ / 8] |= (unsigned char)(1u << (i_ % 8)); \
+  unsigned char *const LIBXS_RESTRICT shfl_data = (unsigned char*)(INOUT); \
+  const size_t shfl_count = (COUNT), shfl_stride = (SHUFFLE); \
+  const size_t shfl_last = shfl_count - 1, shfl_nrep = (NREPEAT); \
+  const size_t shfl_nbitmask = (shfl_count + 7) / 8; \
+  int shfl_pool_v = 0, shfl_pool_t = 0; \
+  unsigned char *const shfl_visited = (unsigned char*) \
+    LIBXS_MEM_SHUFFLE_MALLOC(shfl_nbitmask, shfl_pool_v); \
+  if (NULL != shfl_visited && 0 != shfl_nrep) { \
+    void *const shfl_tmp = LIBXS_MEM_SHUFFLE_MALLOC(ELEMSIZE, shfl_pool_t); \
+    memset(shfl_visited, 0, shfl_nbitmask); \
+    if (NULL != shfl_tmp) { \
+      size_t shfl_i; \
+      for (shfl_i = 0; shfl_i < shfl_count; ++shfl_i) { \
+        size_t shfl_src, shfl_dst, shfl_k; \
+        if (0 != (shfl_visited[shfl_i / 8] & (1u << (shfl_i % 8)))) continue; \
+        shfl_src = shfl_i; \
+        for (shfl_k = 0; shfl_k < shfl_nrep; ++shfl_k) { \
+          shfl_src = shfl_last - ((shfl_stride * shfl_src) % shfl_count); \
+        } \
+        if (shfl_src == shfl_i) { \
+          shfl_visited[shfl_i / 8] |= (unsigned char)(1u << (shfl_i % 8)); \
           continue; \
         } \
-        LIBXS_MEMCPY(tmpbuf_, data + (ELEMSIZE) * i_, ELEMSIZE); \
-        dst_ = i_; \
+        LIBXS_MEMCPY(shfl_tmp, shfl_data + (ELEMSIZE) * shfl_i, ELEMSIZE); \
+        shfl_dst = shfl_i; \
         do { \
-          src_ = dst_; \
-          for (k_ = 0; k_ < nrep_; ++k_) src_ = c_ - ((s_ * src_) % count_); \
-          visited_[dst_ / 8] |= (unsigned char)(1u << (dst_ % 8)); \
-          if (src_ != i_) { \
-            LIBXS_MEMCPY(data + (ELEMSIZE) * dst_, data + (ELEMSIZE) * src_, ELEMSIZE); \
+          shfl_src = shfl_dst; \
+          for (shfl_k = 0; shfl_k < shfl_nrep; ++shfl_k) { \
+            shfl_src = shfl_last - ((shfl_stride * shfl_src) % shfl_count); \
+          } \
+          shfl_visited[shfl_dst / 8] |= (unsigned char)(1u << (shfl_dst % 8)); \
+          if (shfl_src != shfl_i) { \
+            LIBXS_MEMCPY(shfl_data + (ELEMSIZE) * shfl_dst, \
+              shfl_data + (ELEMSIZE) * shfl_src, ELEMSIZE); \
           } \
           else { \
-            LIBXS_MEMCPY(data + (ELEMSIZE) * dst_, tmpbuf_, ELEMSIZE); \
+            LIBXS_MEMCPY(shfl_data + (ELEMSIZE) * shfl_dst, shfl_tmp, ELEMSIZE); \
           } \
-          dst_ = src_; \
-        } while (src_ != i_); \
+          shfl_dst = shfl_src; \
+        } while (shfl_src != shfl_i); \
       } \
-      if ((ELEMSIZE) > 64) free(tmpbuf_); \
+      LIBXS_MEM_SHUFFLE_FREE(shfl_tmp, shfl_pool_t); \
     } \
-    free(visited_); \
+    LIBXS_MEM_SHUFFLE_FREE(shfl_visited, shfl_pool_v); \
   } \
 } while(0)
-
-#else /* original cycle-leader detection (no extra memory) */
-#define LIBXS_MEM_SHUFFLE(INOUT, ELEMSIZE, COUNT, SHUFFLE, NREPEAT) do { \
-  unsigned char *const LIBXS_RESTRICT data = (unsigned char*)(INOUT); \
-  const size_t c = (COUNT) - 1, c2 = ((COUNT) + 1) / 2; \
-  size_t i; \
-  for (i = (0 != (NREPEAT) ? 0 : (COUNT)); i < (COUNT); ++i) { \
-    size_t j = i, k = 0; \
-    for (; k < (NREPEAT) || j < i; ++k) j = ((SHUFFLE) * j) % (COUNT); \
-    if (i < j) LIBXS_MEMSWP( \
-      data + (ELEMSIZE) * (c - j), \
-      data + (ELEMSIZE) * (c - i), \
-      ELEMSIZE); \
-    if (c2 <= i) LIBXS_MEMSWP( \
-      data + (ELEMSIZE) * (c - i), \
-      data + (ELEMSIZE) * i, \
-      ELEMSIZE); \
-  } \
-} while(0)
-#endif /* LIBXS_MEM_SHUFFLE_CYCLE */
 
 /* xcopy kernel: consecutive loads and stores (matcopy) */
 #define LIBXS_MCOPY_KERNEL(TYPE, TS, OUT, IN, LDI, LDO, I, J, SRC, DST) \
