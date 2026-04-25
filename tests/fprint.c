@@ -29,14 +29,14 @@ int main(void)
       FPRINTF(stderr, "ERROR line #%i: order=%d n=%d\n", __LINE__, fa.order, fa.n);
       exit(EXIT_FAILURE);
     }
-    if (1E-12 > fa.norms[0]) {
-      FPRINTF(stderr, "ERROR line #%i: constant norm[0]=%.17g\n", __LINE__, fa.norms[0]);
+    if (1E-12 > fa.l2[0]) {
+      FPRINTF(stderr, "ERROR line #%i: constant norm[0]=%.17g\n", __LINE__, fa.l2[0]);
       exit(EXIT_FAILURE);
     }
     { int k;
       for (k = 1; k <= fa.order; ++k) {
-        if (1E-10 < fa.norms[k]) {
-          FPRINTF(stderr, "ERROR line #%i: constant norm[%d]=%.17g\n", __LINE__, k, fa.norms[k]);
+        if (1E-10 < fa.l2[k]) {
+          FPRINTF(stderr, "ERROR line #%i: constant norm[%d]=%.17g\n", __LINE__, k, fa.l2[k]);
           exit(EXIT_FAILURE);
         }
       }
@@ -51,15 +51,15 @@ int main(void)
       FPRINTF(stderr, "ERROR line #%i: linear fprint failed\n", __LINE__);
       exit(EXIT_FAILURE);
     }
-    if (1E-12 > fa.norms[0] || 1E-12 > fa.norms[1]) {
+    if (1E-12 > fa.l2[0] || 1E-12 > fa.l2[1]) {
       FPRINTF(stderr, "ERROR line #%i: linear norm[0]=%.17g norm[1]=%.17g\n",
-        __LINE__, fa.norms[0], fa.norms[1]);
+        __LINE__, fa.l2[0], fa.l2[1]);
       exit(EXIT_FAILURE);
     }
     { int k;
       for (k = 2; k <= fa.order; ++k) {
-        if (1E-8 < fa.norms[k]) {
-          FPRINTF(stderr, "ERROR line #%i: linear norm[%d]=%.17g\n", __LINE__, k, fa.norms[k]);
+        if (1E-8 < fa.l2[k]) {
+          FPRINTF(stderr, "ERROR line #%i: linear norm[%d]=%.17g\n", __LINE__, k, fa.l2[k]);
           exit(EXIT_FAILURE);
         }
       }
@@ -146,8 +146,8 @@ int main(void)
       FPRINTF(stderr, "ERROR line #%i: F32 fprint failed\n", __LINE__);
       exit(EXIT_FAILURE);
     }
-    if (1E-12 > fa.norms[0]) {
-      FPRINTF(stderr, "ERROR line #%i: F32 norm[0]=%.17g\n", __LINE__, fa.norms[0]);
+    if (1E-12 > fa.l2[0]) {
+      FPRINTF(stderr, "ERROR line #%i: F32 norm[0]=%.17g\n", __LINE__, fa.l2[0]);
       exit(EXIT_FAILURE);
     }
   }
@@ -160,8 +160,8 @@ int main(void)
       FPRINTF(stderr, "ERROR line #%i: I32 fprint failed\n", __LINE__);
       exit(EXIT_FAILURE);
     }
-    if (1E-12 > fa.norms[0]) {
-      FPRINTF(stderr, "ERROR line #%i: I32 norm[0]=%.17g\n", __LINE__, fa.norms[0]);
+    if (1E-12 > fa.l2[0]) {
+      FPRINTF(stderr, "ERROR line #%i: I32 norm[0]=%.17g\n", __LINE__, fa.l2[0]);
       exit(EXIT_FAILURE);
     }
   }
@@ -186,8 +186,8 @@ int main(void)
       FPRINTF(stderr, "ERROR line #%i: single order=%d n=%d\n", __LINE__, fa.order, fa.n);
       exit(EXIT_FAILURE);
     }
-    if (1E-12 > fa.norms[0]) {
-      FPRINTF(stderr, "ERROR line #%i: single norm[0]=%.17g\n", __LINE__, fa.norms[0]);
+    if (1E-12 > fa.l2[0]) {
+      FPRINTF(stderr, "ERROR line #%i: single norm[0]=%.17g\n", __LINE__, fa.l2[0]);
       exit(EXIT_FAILURE);
     }
   }
@@ -283,8 +283,8 @@ int main(void)
       FPRINTF(stderr, "ERROR line #%i: 3D fprint failed\n", __LINE__);
       exit(EXIT_FAILURE);
     }
-    if (1E-12 > fa.norms[0]) {
-      FPRINTF(stderr, "ERROR line #%i: 3D norm[0]=%.17g\n", __LINE__, fa.norms[0]);
+    if (1E-12 > fa.l2[0]) {
+      FPRINTF(stderr, "ERROR line #%i: 3D norm[0]=%.17g\n", __LINE__, fa.l2[0]);
       exit(EXIT_FAILURE);
     }
   }

@@ -1106,17 +1106,31 @@ LIBXS_API_INTERN void internal_libxs_fprint_core(
   const double h = 1 < n ? 1.0 / (n - 1) : 1.0;
   double *prv = (cur == buf) ? buf + n : buf;
   int k, i;
-  { double acc = 0, comp = 0;
-    for (i = 0; i < n; ++i) libxs_kahan_sum(cur[i] * cur[i], &acc, &comp);
-    info->norms[0] = sqrt(acc * h);
+  { double l2acc = 0, l2comp = 0, l1acc = 0, l1comp = 0, amax = 0;
+    for (i = 0; i < n; ++i) {
+      const double a = cur[i] < 0 ? -cur[i] : cur[i];
+      libxs_kahan_sum(cur[i] * cur[i], &l2acc, &l2comp);
+      libxs_kahan_sum(a, &l1acc, &l1comp);
+      if (a > amax) amax = a;
+    }
+    info->l2[0] = sqrt(l2acc * h);
+    info->l1[0] = l1acc * h;
+    info->linf[0] = amax;
   }
   for (k = 1; k <= kmax; ++k) {
     const int nk = n - k;
-    double *tmp, acc = 0, comp = 0;
+    double *tmp, l2acc = 0, l2comp = 0, l1acc = 0, l1comp = 0, amax = 0;
     tmp = prv; prv = cur; cur = tmp;
     for (i = 0; i < nk; ++i) cur[i] = (prv[i + 1] - prv[i]) / h;
-    for (i = 0; i < nk; ++i) libxs_kahan_sum(cur[i] * cur[i], &acc, &comp);
-    info->norms[k] = sqrt(acc * h);
+    for (i = 0; i < nk; ++i) {
+      const double a = cur[i] < 0 ? -cur[i] : cur[i];
+      libxs_kahan_sum(cur[i] * cur[i], &l2acc, &l2comp);
+      libxs_kahan_sum(a, &l1acc, &l1comp);
+      if (a > amax) amax = a;
+    }
+    info->l2[k] = sqrt(l2acc * h);
+    info->l1[k] = l1acc * h;
+    info->linf[k] = amax;
   }
 }
 
@@ -1213,7 +1227,7 @@ LIBXS_API int libxs_fprint(libxs_fprint_t* info,
         ndims - 1, shape, stride, order);
       for (k = 0; k <= child.order; ++k) {
         if (0 < k) wk /= k;
-        libxs_kahan_sum(wk * child.norms[k] * child.norms[k], &snorm, &scomp);
+        libxs_kahan_sum(wk * child.l2[k] * child.l2[k], &snorm, &scomp);
       }
       scalars[j] = sqrt(snorm);
     }
@@ -1246,7 +1260,7 @@ LIBXS_API double libxs_fprint_diff(
   LIBXS_ASSERT(NULL != a && NULL != b);
   kmax = LIBXS_MIN(a->order, b->order);
   for (k = 0; k <= kmax; ++k) {
-    const double d = a->norms[k] - b->norms[k];
+    const double d = a->l2[k] - b->l2[k];
     if (NULL != weights) wk = weights[k];
     else if (0 < k) wk /= k; /* 1/k! */
     libxs_kahan_sum(wk * d * d, &acc, &comp);

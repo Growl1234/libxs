@@ -123,10 +123,14 @@ LIBXS_API int libxs_setdiff_min(
   libxs_data_t datatype, const void* a, int na,
   const void* b, int nb, double* tol);
 
-/** Foeppl polynomial fingerprint: per-derivative-order L2 norms. */
+/** Foeppl polynomial fingerprint: per-derivative-order norms. */
 LIBXS_EXTERN_C typedef struct libxs_fprint_t {
-  /** L2 norm of the k-th finite difference (k = 0..order). */
-  double norms[LIBXS_FPRINT_MAXORDER + 1];
+  /** Per-order L2 norm (k = 0..order). */
+  double l2[LIBXS_FPRINT_MAXORDER + 1];
+  /** Per-order L1 norm (sum of absolute values). */
+  double l1[LIBXS_FPRINT_MAXORDER + 1];
+  /** Per-order Linf (max absolute value). */
+  double linf[LIBXS_FPRINT_MAXORDER + 1];
   /** Derivative orders used and original data length. */
   int order, n;
 } libxs_fprint_t;
@@ -149,7 +153,7 @@ LIBXS_API int libxs_fprint(libxs_fprint_t* info,
 
 /**
  * Weighted Sobolev distance between two fingerprints:
- *   d = sqrt(sum_k weights[k] * (a->norms[k] - b->norms[k])^2).
+ *   d = sqrt(sum_k weights[k] * (a->l2[k] - b->l2[k])^2).
  * The number of orders used is min(a->order, b->order) + 1.
  * If weights is NULL, default weights w_k = 1/(k!) are used.
  */
