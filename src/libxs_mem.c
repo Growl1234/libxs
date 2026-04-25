@@ -7,9 +7,10 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 #include <libxs_mem.h>
-#include "libxs_main.h"
 #include <libxs_malloc.h>
 #include <libxs_math.h>
+
+#include "libxs_main.h"
 #include "libxs_hash.h"
 #include "libxs_diff.h"
 
@@ -23,78 +24,10 @@
 #endif
 
 #define LIBXS_MEM_SHUFFLE_COPRIME(N) libxs_coprime2(N)
-
-#if defined(LIBXS_INTRINSICS_AVX512)
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
-void internal_libxs_shuffle2_u32_avx512(
-  unsigned int* LIBXS_RESTRICT dst, const unsigned int* LIBXS_RESTRICT src,
-  size_t count, size_t stride)
-{
-  const size_t count16 = count & ~(size_t)15;
-  size_t i = 0, j = 1;
-  for (; i < count16; i += 16) {
-    LIBXS_ALIGNED(int idx[16], LIBXS_ALIGNMENT);
-    __m512i vidx, vdata;
-    int lane;
-    for (lane = 0; lane < 16; ++lane) {
-      if (count < j) j -= count;
-      idx[lane] = (int)(count - j);
-      j += stride;
-    }
-    vidx = _mm512_load_si512((__m512i*)idx);
-    vdata = _mm512_i32gather_epi32(vidx, src, 4);
-    _mm512_storeu_si512((__m512i*)(dst + i), vdata);
-  }
-  for (; i < count; ++i) {
-    if (count < j) j -= count;
-    dst[i] = src[count - j];
-    j += stride;
-  }
-}
-
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
-void internal_libxs_shuffle2_u64_avx512(
-  unsigned long long* LIBXS_RESTRICT dst, const unsigned long long* LIBXS_RESTRICT src,
-  size_t count, size_t stride)
-{
-  const size_t count8 = count & ~(size_t)7;
-  size_t i = 0, j = 1;
-  for (; i < count8; i += 8) {
-    LIBXS_ALIGNED(long long idx[8], LIBXS_ALIGNMENT);
-    __m512i vidx, vdata;
-    int lane;
-    for (lane = 0; lane < 8; ++lane) {
-      if (count < j) j -= count;
-      idx[lane] = (long long)(count - j);
-      j += stride;
-    }
-    vidx = _mm512_load_si512((__m512i*)idx);
-    vdata = _mm512_i64gather_epi64(vidx, src, 8);
-    _mm512_storeu_si512((__m512i*)(dst + i), vdata);
-  }
-  for (; i < count; ++i) {
-    if (count < j) j -= count;
-    dst[i] = src[count - j];
-    j += stride;
-  }
-}
-#endif /* LIBXS_INTRINSICS_AVX512 */
-
 #define LIBXS_MEM_SHUFFLE_MALLOC(SIZE, POOL) \
   internal_libxs_mem_shuffle_malloc(SIZE, &(POOL))
 #define LIBXS_MEM_SHUFFLE_FREE(PTR, POOL) \
   internal_libxs_mem_shuffle_free(PTR, POOL)
-
-LIBXS_API_INLINE void* internal_libxs_mem_shuffle_malloc(size_t size, int* pool) {
-  void* p = libxs_malloc(internal_libxs_default_pool, size, LIBXS_MALLOC_AUTO);
-  if (NULL != p) { *pool = 1; return p; }
-  *pool = 0; return malloc(size);
-}
-
-LIBXS_API_INLINE void internal_libxs_mem_shuffle_free(void* ptr, int pool) {
-  if (0 != pool) libxs_free(ptr); else free(ptr);
-}
-
 #define LIBXS_MEM_SHUFFLE(INOUT, ELEMSIZE, COUNT, SHUFFLE, NREPEAT) do { \
   unsigned char *const LIBXS_RESTRICT shfl_data = (unsigned char*)(INOUT); \
   const size_t shfl_count = (COUNT), shfl_stride = (SHUFFLE); \
@@ -350,6 +283,133 @@ LIBXS_APIVAR_DEFINE(void (*internal_libxs_mcopy_tile_function)(void*, const void
 LIBXS_APIVAR_DEFINE(void (*internal_libxs_tcopy_tile_function)(void*, const void*, unsigned int,
   unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int));
 #endif
+
+
+LIBXS_API_INLINE void* internal_libxs_mem_shuffle_malloc(size_t size, int* pool) {
+  void* p = libxs_malloc(internal_libxs_default_pool, size, LIBXS_MALLOC_AUTO);
+  if (NULL != p) { *pool = 1; return p; }
+  *pool = 0; return malloc(size);
+}
+
+LIBXS_API_INLINE void internal_libxs_mem_shuffle_free(void* ptr, int pool) {
+  if (0 != pool) libxs_free(ptr); else free(ptr);
+}
+
+
+#if defined(LIBXS_INTRINSICS_AVX2)
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX2)
+void internal_libxs_shuffle2_u32_avx2(
+  unsigned int* LIBXS_RESTRICT dst, const unsigned int* LIBXS_RESTRICT src,
+  size_t count, size_t stride)
+{
+  const size_t count8 = count & ~(size_t)7;
+  size_t i = 0, j = 1;
+  for (; i < count8; i += 8) {
+    LIBXS_ALIGNED(int idx[8], LIBXS_ALIGNMENT);
+    __m256i vidx, vdata;
+    int lane;
+    for (lane = 0; lane < 8; ++lane) {
+      if (count < j) j -= count;
+      idx[lane] = (int)(count - j);
+      j += stride;
+    }
+    vidx = _mm256_load_si256((__m256i*)idx);
+    vdata = _mm256_i32gather_epi32((const int*)src, vidx, 4);
+    _mm256_storeu_si256((__m256i*)(dst + i), vdata);
+  }
+  for (; i < count; ++i) {
+    if (count < j) j -= count;
+    dst[i] = src[count - j];
+    j += stride;
+  }
+}
+
+
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX2)
+void internal_libxs_shuffle2_u64_avx2(
+  unsigned long long* LIBXS_RESTRICT dst, const unsigned long long* LIBXS_RESTRICT src,
+  size_t count, size_t stride)
+{
+  const size_t count4 = count & ~(size_t)3;
+  size_t i = 0, j = 1;
+  for (; i < count4; i += 4) {
+    LIBXS_ALIGNED(long long idx[4], LIBXS_ALIGNMENT);
+    __m256i vidx, vdata;
+    int lane;
+    for (lane = 0; lane < 4; ++lane) {
+      if (count < j) j -= count;
+      idx[lane] = (long long)(count - j);
+      j += stride;
+    }
+    vidx = _mm256_load_si256((__m256i*)idx);
+    vdata = _mm256_i64gather_epi64((const long long*)src, vidx, 8);
+    _mm256_storeu_si256((__m256i*)(dst + i), vdata);
+  }
+  for (; i < count; ++i) {
+    if (count < j) j -= count;
+    dst[i] = src[count - j];
+    j += stride;
+  }
+}
+#endif /* LIBXS_INTRINSICS_AVX2 */
+
+
+#if defined(LIBXS_INTRINSICS_AVX512)
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
+void internal_libxs_shuffle2_u32_avx512(
+  unsigned int* LIBXS_RESTRICT dst, const unsigned int* LIBXS_RESTRICT src,
+  size_t count, size_t stride)
+{
+  const size_t count16 = count & ~(size_t)15;
+  size_t i = 0, j = 1;
+  for (; i < count16; i += 16) {
+    LIBXS_ALIGNED(int idx[16], LIBXS_ALIGNMENT);
+    __m512i vidx, vdata;
+    int lane;
+    for (lane = 0; lane < 16; ++lane) {
+      if (count < j) j -= count;
+      idx[lane] = (int)(count - j);
+      j += stride;
+    }
+    vidx = _mm512_load_si512((__m512i*)idx);
+    vdata = _mm512_i32gather_epi32(vidx, src, 4);
+    _mm512_storeu_si512((__m512i*)(dst + i), vdata);
+  }
+  for (; i < count; ++i) {
+    if (count < j) j -= count;
+    dst[i] = src[count - j];
+    j += stride;
+  }
+}
+
+
+LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512)
+void internal_libxs_shuffle2_u64_avx512(
+  unsigned long long* LIBXS_RESTRICT dst, const unsigned long long* LIBXS_RESTRICT src,
+  size_t count, size_t stride)
+{
+  const size_t count8 = count & ~(size_t)7;
+  size_t i = 0, j = 1;
+  for (; i < count8; i += 8) {
+    LIBXS_ALIGNED(long long idx[8], LIBXS_ALIGNMENT);
+    __m512i vidx, vdata;
+    int lane;
+    for (lane = 0; lane < 8; ++lane) {
+      if (count < j) j -= count;
+      idx[lane] = (long long)(count - j);
+      j += stride;
+    }
+    vidx = _mm512_load_si512((__m512i*)idx);
+    vdata = _mm512_i64gather_epi64(vidx, src, 8);
+    _mm512_storeu_si512((__m512i*)(dst + i), vdata);
+  }
+  for (; i < count; ++i) {
+    if (count < j) j -= count;
+    dst[i] = src[count - j];
+    j += stride;
+  }
+}
+#endif /* LIBXS_INTRINSICS_AVX512 */
 
 
 LIBXS_API size_t libxs_offset(size_t ndims, const size_t offset[], const size_t shape[], size_t* size)
@@ -1176,26 +1236,56 @@ LIBXS_API int libxs_shuffle2(void* dst, const void* src, size_t elemsize, size_t
     const size_t s = (NULL == shuffle ? LIBXS_MEM_SHUFFLE_COPRIME(count) : *shuffle);
     size_t i = 0, j = 1;
     if (NULL == nrepeat || 1 == *nrepeat) {
-#if defined(LIBXS_INTRINSICS_AVX512)
+#if defined(LIBXS_INTRINSICS_AVX512) || defined(LIBXS_INTRINSICS_AVX2)
       if (4 == elemsize && count <= 0x7FFFFFFFU) {
-# if (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH)
+# if defined(LIBXS_INTRINSICS_AVX512)
+#   if (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH)
         internal_libxs_shuffle2_u32_avx512((unsigned int*)out, (const unsigned int*)inp, count, s);
         i = size;
-# elif (LIBXS_X86_AVX512 <= LIBXS_MAX_STATIC_TARGET_ARCH)
+#   elif (LIBXS_X86_AVX512 <= LIBXS_MAX_STATIC_TARGET_ARCH)
         if (LIBXS_X86_AVX512 <= libxs_cpuid(NULL)) {
           internal_libxs_shuffle2_u32_avx512((unsigned int*)out, (const unsigned int*)inp, count, s);
           i = size;
         }
+#   endif
+# endif
+# if defined(LIBXS_INTRINSICS_AVX2)
+        if (i < size) {
+#   if (LIBXS_X86_AVX2 <= LIBXS_STATIC_TARGET_ARCH)
+          internal_libxs_shuffle2_u32_avx2((unsigned int*)out, (const unsigned int*)inp, count, s);
+          i = size;
+#   elif (LIBXS_X86_AVX2 <= LIBXS_MAX_STATIC_TARGET_ARCH)
+          if (LIBXS_X86_AVX2 <= libxs_cpuid(NULL)) {
+            internal_libxs_shuffle2_u32_avx2((unsigned int*)out, (const unsigned int*)inp, count, s);
+            i = size;
+          }
+#   endif
+        }
 # endif
       }
       else if (8 == elemsize) {
-# if (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH)
+# if defined(LIBXS_INTRINSICS_AVX512)
+#   if (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH)
         internal_libxs_shuffle2_u64_avx512((unsigned long long*)out, (const unsigned long long*)inp, count, s);
         i = size;
-# elif (LIBXS_X86_AVX512 <= LIBXS_MAX_STATIC_TARGET_ARCH)
+#   elif (LIBXS_X86_AVX512 <= LIBXS_MAX_STATIC_TARGET_ARCH)
         if (LIBXS_X86_AVX512 <= libxs_cpuid(NULL)) {
           internal_libxs_shuffle2_u64_avx512((unsigned long long*)out, (const unsigned long long*)inp, count, s);
           i = size;
+        }
+#   endif
+# endif
+# if defined(LIBXS_INTRINSICS_AVX2)
+        if (i < size) {
+#   if (LIBXS_X86_AVX2 <= LIBXS_STATIC_TARGET_ARCH)
+          internal_libxs_shuffle2_u64_avx2((unsigned long long*)out, (const unsigned long long*)inp, count, s);
+          i = size;
+#   elif (LIBXS_X86_AVX2 <= LIBXS_MAX_STATIC_TARGET_ARCH)
+          if (LIBXS_X86_AVX2 <= libxs_cpuid(NULL)) {
+            internal_libxs_shuffle2_u64_avx2((unsigned long long*)out, (const unsigned long long*)inp, count, s);
+            i = size;
+          }
+#   endif
         }
 # endif
       }
