@@ -133,7 +133,7 @@ int main(int argc, char* argv[])
         NULL/*ldref*/, &ldc);
       libxs_matdiff_combine(&check_diff, &d);
     }
-    printf("checksum=%f\n", check_diff.l1_ref + check_diff.l1_tst);
+    printf("checksum=%.6e\n", check_diff.l1_ref + check_diff.l1_tst);
   }
 
   libxs_gemm_release(&config);

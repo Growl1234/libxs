@@ -172,7 +172,7 @@ int main(int argc, char* argv[])
         c_ptrs[pidx], NULL/*ldref*/, ldc_array + ng - 1);
       libxs_matdiff_combine(&check_diff, &d);
     }
-    printf("checksum=%f\n", check_diff.l1_ref + check_diff.l1_tst);
+    printf("checksum=%.6e\n", check_diff.l1_ref + check_diff.l1_tst);
   }
 
   for (g = 0; g < ng; ++g) libxs_gemm_release(configs + g);
