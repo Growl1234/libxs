@@ -56,10 +56,10 @@ LIBXS_API_INLINE void zgemm_block_construct_a(const GEMM_REAL_TYPE* LIBXS_RESTRI
     for (i = 0; i < a_rows; ++i) {
       const GEMM_REAL_TYPE re = aj[2 * i];
       const GEMM_REAL_TYPE im = aj[2 * i + 1];
-      left[i] = re;                                /* Q1: Ar */
-      left[a_rows + i] = ta ? -im : im;            /* Q3: ta ? -Ai : Ai */
-      right[i] = ta ? im : -im;                    /* Q2: ta ? Ai : -Ai */
-      right[a_rows + i] = re;                      /* Q4: Ar */
+      left[i] = re; /* Q1: Ar */
+      left[a_rows + i] = ta ? -im : im; /* Q3: ta ? -Ai : Ai */
+      right[i] = ta ? im : -im; /* Q2: ta ? Ai : -Ai */
+      right[a_rows + i] = re; /* Q4: Ar */
     }
   }
 }
@@ -85,7 +85,7 @@ LIBXS_API_INLINE void zgemm_block_construct_b(const GEMM_REAL_TYPE* LIBXS_RESTRI
       const GEMM_REAL_TYPE* bj = b + (size_t)j * ldb * 2;
       GEMM_REAL_TYPE* hj = b_hat + (size_t)j * ldb_hat;
       for (i = 0; i < b_rows; ++i) {
-        hj[i] = bj[2 * i];                       /* top: Br */
+        hj[i] = bj[2 * i]; /* top: Br */
         hj[b_rows + i] = sign_im * bj[2 * i + 1]; /* bottom: Bi (negated for 'C') */
       }
     }
@@ -98,8 +98,8 @@ LIBXS_API_INLINE void zgemm_block_construct_b(const GEMM_REAL_TYPE* LIBXS_RESTRI
       GEMM_REAL_TYPE* left = b_hat + (size_t)j * ldb_hat;
       GEMM_REAL_TYPE* right = b_hat + (size_t)(b_cols + j) * ldb_hat;
       for (i = 0; i < b_rows; ++i) {
-        left[i] = bj[2 * i];                  /* Br (left half) */
-        right[i] = sign_im * bj[2 * i + 1];   /* Bi (right half, negated for 'C') */
+        left[i] = bj[2 * i]; /* Br (left half) */
+        right[i] = sign_im * bj[2 * i + 1]; /* Bi (right half, negated for 'C') */
       }
     }
   }
@@ -115,8 +115,8 @@ LIBXS_API_INLINE void zgemm_block_construct_b(const GEMM_REAL_TYPE* LIBXS_RESTRI
  *   Rows m..2m-1  = Im(A*B)
  */
 LIBXS_API_INLINE void zgemm_block_finalize(GEMM_REAL_TYPE* LIBXS_RESTRICT c, GEMM_INT_TYPE ldc,
-  const GEMM_REAL_TYPE* LIBXS_RESTRICT c_hat, GEMM_INT_TYPE m, GEMM_INT_TYPE n,
-  GEMM_REAL_TYPE ar, GEMM_REAL_TYPE ai, GEMM_REAL_TYPE br, GEMM_REAL_TYPE bi)
+  const GEMM_REAL_TYPE* LIBXS_RESTRICT c_hat, GEMM_INT_TYPE m, GEMM_INT_TYPE n, GEMM_REAL_TYPE ar, GEMM_REAL_TYPE ai,
+  GEMM_REAL_TYPE br, GEMM_REAL_TYPE bi)
 {
   const GEMM_INT_TYPE ldc_hat = 2 * m;
   GEMM_INT_TYPE i, j;
@@ -197,16 +197,15 @@ OZAKI_API_INTERN void gemm_complex(GEMM_ARGDECL)
 
     /* Workspace: A_hat (2*a_rows x 2*a_cols), B_hat, C_hat (2*M x N) */
     const size_t sz_a_hat = (size_t)(2 * a_rows) * (2 * a_cols);
-    const size_t sz_b_hat = tb
-      ? (size_t)b_rows * (2 * b_cols)
-      : (size_t)(2 * b_rows) * b_cols;
+    const size_t sz_b_hat = tb ? (size_t)b_rows * (2 * b_cols) : (size_t)(2 * b_rows) * b_cols;
     const size_t sz_c_hat = (size_t)(2 * M) * N;
     GEMM_REAL_TYPE* workspace = (GEMM_REAL_TYPE*)libxs_malloc(
       gemm_pool, sizeof(GEMM_REAL_TYPE) * (sz_a_hat + sz_b_hat + sz_c_hat), 0 /*auto*/);
 
     if (NULL == workspace) {
-      fprintf(stderr, "ERROR: " LIBXS_STRINGIFY(LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm_block))
-        " allocation failed (m=%i, n=%i, k=%i), fallback to BLAS\n",
+      fprintf(stderr,
+        "ERROR: " LIBXS_STRINGIFY(
+          LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm_block)) " allocation failed (m=%i, n=%i, k=%i), fallback to BLAS\n",
         (int)M, (int)N, (int)K);
       if (NULL != zgemm_original) {
         zgemm_original(GEMM_ARGPASS);
@@ -235,8 +234,7 @@ OZAKI_API_INTERN void gemm_complex(GEMM_ARGDECL)
       zgemm_block_construct_b(b, *ldb, b_hat, b_rows, b_cols, tb, cb);
 
       /* 3. Single real GEMM: C_hat = op(A_hat) * op(B_hat) */
-      GEMM(transa, transb, &m_hat, &N, &k_hat, &one, a_hat, &lda_hat,
-        b_hat, &ldb_hat, &zero, c_hat, &ldc_hat);
+      GEMM(transa, transb, &m_hat, &N, &k_hat, &one, a_hat, &lda_hat, b_hat, &ldb_hat, &zero, c_hat, &ldc_hat);
 
       /* 4. Apply complex alpha/beta and write to interleaved C */
       zgemm_block_finalize(c, *ldc, c_hat, M, N, ar, ai, br, bi);
@@ -250,8 +248,7 @@ OZAKI_API_INTERN void gemm_complex(GEMM_ARGDECL)
 /**
  * Complex GEMM diff: save C, run block-embedding, reference ZGEMM, matdiff with C64/C32.
  */
-LIBXS_API_INLINE void gemm_complex_diff(GEMM_ARGDECL,
-  libxs_matdiff_t* diff)
+LIBXS_API_INLINE void gemm_complex_diff(GEMM_ARGDECL, libxs_matdiff_t* diff)
 {
   GEMM_REAL_TYPE* c_ref = NULL;
   size_t c_size = 0;

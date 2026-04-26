@@ -98,7 +98,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
   }
 
 #if defined(_OPENMP)
-#  pragma omp parallel
+# pragma omp parallel
 #endif
   {
     GEMM_INT_TYPE row, col, ib, jb, mi, nj, kb_grp;
@@ -112,7 +112,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
     /* Phase 3: scale C by beta (once, before K-group loop).
      * Per BLAS spec, beta=0 must zero C unconditionally (NaN/Inf safe). */
 #if defined(_OPENMP)
-#  pragma omp for schedule(static)
+# pragma omp for schedule(static)
 #endif
     for (jb = 0; jb < N; ++jb) {
       GEMM_REAL_TYPE* const cj = c + jb * ldcv;
@@ -130,7 +130,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
 
       /* Phase 1: preprocess rows of A for this K-group */
 #if defined(_OPENMP)
-#  pragma omp for schedule(static) nowait
+# pragma omp for schedule(static) nowait
 #endif
       for (row = 0; row < M; ++row) {
         int16_t row_max_exp = 0;
@@ -167,7 +167,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
 
       /* Phase 2: preprocess columns of B for this K-group */
 #if defined(_OPENMP)
-#  pragma omp for schedule(static)
+# pragma omp for schedule(static)
 #endif
       for (col = 0; col < N; ++col) {
         int16_t col_max_exp = 0;
@@ -208,14 +208,14 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
        * skipping them reduces the GEMM pair count quadratically. */
       /* Reset adaptive slice bounds (single ensures visibility + barrier) */
 #if defined(_OPENMP)
-#  pragma omp single
+# pragma omp single
 #endif
       {
         sma = -1;
         smb = -1;
       }
 #if defined(_OPENMP)
-#  pragma omp for reduction(max : sma) schedule(static) nowait
+# pragma omp for reduction(max : sma) schedule(static) nowait
 #endif
       for (row = 0; row < M; ++row) {
         int s;
@@ -231,7 +231,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
         }
       }
 #if defined(_OPENMP)
-#  pragma omp for reduction(max : smb) schedule(static)
+# pragma omp for reduction(max : smb) schedule(static)
 #endif
       for (col = 0; col < N; ++col) {
         int s;
@@ -248,19 +248,19 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
       }
       /* barrier from smb reduction ensures all threads see the update */
 #if defined(_OPENMP)
-#  pragma omp single
+# pragma omp single
 #endif
       eff_cutoff = (sma >= 0 && smb >= 0) ? LIBXS_MIN(cutoff, sma + smb) : -1;
 
       /* Phase 2b: compute FP exponent scale factors */
 #if defined(_OPENMP)
-#  pragma omp for schedule(static) nowait
+# pragma omp for schedule(static) nowait
 #endif
       for (row = 0; row < M; ++row) {
         expa_fp[row] = libxs_pow2((int)expa_raw[row] - OZ_BIAS_PLUS_MANT);
       }
 #if defined(_OPENMP)
-#  pragma omp for schedule(static)
+# pragma omp for schedule(static)
 #endif
       for (col = 0; col < N; ++col) {
         expb_fp[col] = libxs_pow2((int)expb_raw[col] - OZ_BIAS_PLUS_MANT);
@@ -272,7 +272,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
        * of a read-modify-write per pair.  Also eliminates per-pair
        * omp-for barriers (implicit barrier at end of tile loop suffices). */
 #if defined(_OPENMP)
-#  pragma omp for LIBXS_OPENMP_COLLAPSE(2) schedule(static)
+# pragma omp for LIBXS_OPENMP_COLLAPSE(2) schedule(static)
 #endif
       for (jb = 0; jb < N; jb += BLOCK_N) {
         for (ib = 0; ib < M; ib += BLOCK_M) {

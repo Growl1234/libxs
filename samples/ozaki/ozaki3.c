@@ -53,8 +53,7 @@ LIBXS_API_INLINE void oz3_split_digits(uint64_t mantissa, int sign, int ndig, in
 
 LIBXS_API_INLINE void gemm_oz3_diff(const char* transa, const char* transb, const GEMM_INT_TYPE* m, const GEMM_INT_TYPE* n,
   const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda, const GEMM_REAL_TYPE* b,
-  const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc,
-  libxs_matdiff_t* diff)
+  const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc, libxs_matdiff_t* diff)
 {
   int8_t slice_low_bit[MAX_NSLICES];
   double pow2_low[MAX_NSLICES];
@@ -96,7 +95,8 @@ LIBXS_API_INLINE void gemm_oz3_diff(const char* transa, const char* transb, cons
   expb_raw = (int16_t*)libxs_malloc(gemm_pool, (size_t)N * sizeof(int16_t), 0);
   expa_fp = (double*)libxs_malloc(gemm_pool, (size_t)M * sizeof(double), 0);
   expb_fp = (double*)libxs_malloc(gemm_pool, (size_t)N * sizeof(double), 0);
-  { const size_t diag_len = (size_t)LIBXS_MAX(LIBXS_MAX(M, N), K_grp_pad);
+  {
+    const size_t diag_len = (size_t)LIBXS_MAX(LIBXS_MAX(M, N), K_grp_pad);
     diag_diff = (int16_t*)libxs_malloc(gemm_pool, diag_len * sizeof(int16_t), 0);
   }
   if (NULL != diff) {
@@ -224,7 +224,11 @@ LIBXS_API_INLINE void gemm_oz3_diff(const char* transa, const char* transb, cons
         int32_t decay_k[OZ3_ORDER_MAX], decay_m[OZ3_ORDER_MAX], decay_n[OZ3_ORDER_MAX];
         int ss, dd;
         GEMM_INT_TYPE kk;
-        for (dd = 0; dd < sbp_order; ++dd) { decay_k[dd] = 0; decay_m[dd] = 0; decay_n[dd] = 0; }
+        for (dd = 0; dd < sbp_order; ++dd) {
+          decay_k[dd] = 0;
+          decay_m[dd] = 0;
+          decay_n[dd] = 0;
+        }
 
         /* Delta along K: B[slice][col][k+1] - B[slice][col][k] */
         for (ss = 0; ss < nslices; ++ss) {
@@ -236,7 +240,8 @@ LIBXS_API_INLINE void gemm_oz3_diff(const char* transa, const char* transb, cons
               int32_t dmax = 0;
               for (kk = 0; kk < len; ++kk) {
                 diag_diff[kk] = (int16_t)(diag_diff[kk + 1] - diag_diff[kk]);
-                { const int32_t av = (int32_t)(diag_diff[kk] < 0 ? -diag_diff[kk] : diag_diff[kk]);
+                {
+                  const int32_t av = (int32_t)(diag_diff[kk] < 0 ? -diag_diff[kk] : diag_diff[kk]);
                   if (av > dmax) dmax = av;
                 }
               }
@@ -257,7 +262,8 @@ LIBXS_API_INLINE void gemm_oz3_diff(const char* transa, const char* transb, cons
                 int32_t dmax = 0;
                 for (ri = 0; ri < len; ++ri) {
                   diag_diff[ri] = (int16_t)(diag_diff[ri + 1] - diag_diff[ri]);
-                  { const int32_t av = (int32_t)(diag_diff[ri] < 0 ? -diag_diff[ri] : diag_diff[ri]);
+                  {
+                    const int32_t av = (int32_t)(diag_diff[ri] < 0 ? -diag_diff[ri] : diag_diff[ri]);
                     if (av > dmax) dmax = av;
                   }
                 }
@@ -279,7 +285,8 @@ LIBXS_API_INLINE void gemm_oz3_diff(const char* transa, const char* transb, cons
                 int32_t dmax = 0;
                 for (ci = 0; ci < len; ++ci) {
                   diag_diff[ci] = (int16_t)(diag_diff[ci + 1] - diag_diff[ci]);
-                  { const int32_t av = (int32_t)(diag_diff[ci] < 0 ? -diag_diff[ci] : diag_diff[ci]);
+                  {
+                    const int32_t av = (int32_t)(diag_diff[ci] < 0 ? -diag_diff[ci] : diag_diff[ci]);
                     if (av > dmax) dmax = av;
                   }
                 }
@@ -331,13 +338,11 @@ LIBXS_API_INLINE void gemm_oz3_diff(const char* transa, const char* transb, cons
               const double pair_scale = (*alpha) * pow2_low[slice_a] * pow2_low[slice_b];
               const int do_mirror = (slice_a != slice_b);
 
-              ozaki_gemm_s8s8s32('N', 'T', iblk, jblk, K_grp_pad,
-                a_slices + (long)slice_a * M * K_grp_pad + (long)ib * K_grp_pad, K_grp_pad,
-                b_slices + (long)slice_b * N * K_grp_pad + (long)jb * K_grp_pad, K_grp_pad, 0, c_acc, jblk);
+              ozaki_gemm_s8s8s32('N', 'T', iblk, jblk, K_grp_pad, a_slices + (long)slice_a * M * K_grp_pad + (long)ib * K_grp_pad,
+                K_grp_pad, b_slices + (long)slice_b * N * K_grp_pad + (long)jb * K_grp_pad, K_grp_pad, 0, c_acc, jblk);
               if (do_mirror) {
-                ozaki_gemm_s8s8s32('N', 'T', iblk, jblk, K_grp_pad,
-                  a_slices + (long)slice_b * M * K_grp_pad + (long)ib * K_grp_pad, K_grp_pad,
-                  b_slices + (long)slice_a * N * K_grp_pad + (long)jb * K_grp_pad, K_grp_pad, 1, c_acc, jblk);
+                ozaki_gemm_s8s8s32('N', 'T', iblk, jblk, K_grp_pad, a_slices + (long)slice_b * M * K_grp_pad + (long)ib * K_grp_pad,
+                  K_grp_pad, b_slices + (long)slice_a * N * K_grp_pad + (long)jb * K_grp_pad, K_grp_pad, 1, c_acc, jblk);
               }
 
               for (mi = 0; mi < iblk; ++mi) {

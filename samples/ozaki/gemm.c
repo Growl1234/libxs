@@ -214,9 +214,8 @@ int main(int argc, char* argv[])
       duration = libxs_timer_duration(start, libxs_timer_tick()) / nrepeat;
       printf("BLAS GEMM:  %.1f ms (%.1f GFLOPS/s)\n", 1E3 * duration, gflops / duration);
       {
-        const libxs_data_t dt = (0 != complex_input)
-          ? (GEMM_IS_DOUBLE ? LIBXS_DATATYPE_C64 : LIBXS_DATATYPE_C32)
-          : LIBXS_DATATYPE(GEMM_REAL_TYPE);
+        const libxs_data_t dt = (0 != complex_input) ? (GEMM_IS_DOUBLE ? LIBXS_DATATYPE_C64 : LIBXS_DATATYPE_C32)
+                                                     : LIBXS_DATATYPE(GEMM_REAL_TYPE);
         result = libxs_matdiff(&diff, dt, m, n, c_ref, c, &ldc, &ldc);
       }
       if (EXIT_SUCCESS == result) {
@@ -225,11 +224,9 @@ int main(int argc, char* argv[])
       }
     }
     else { /* fallback: checksum only (no reference GEMM available) */
-      const libxs_data_t dt = (0 != complex_input)
-        ? (GEMM_IS_DOUBLE ? LIBXS_DATATYPE_C64 : LIBXS_DATATYPE_C32)
-        : LIBXS_DATATYPE(GEMM_REAL_TYPE);
-      result = libxs_matdiff(
-        &diff, dt, m, n, NULL /*ref*/, c /*tst*/, NULL /*ldref*/, &ldc);
+      const libxs_data_t dt = (0 != complex_input) ? (GEMM_IS_DOUBLE ? LIBXS_DATATYPE_C64 : LIBXS_DATATYPE_C32)
+                                                   : LIBXS_DATATYPE(GEMM_REAL_TYPE);
+      result = libxs_matdiff(&diff, dt, m, n, NULL /*ref*/, c /*tst*/, NULL /*ldref*/, &ldc);
       if (EXIT_SUCCESS == result) {
         printf("l1_tst=%f ncalls=%i\n", diff.l1_tst, nrepeat);
       }

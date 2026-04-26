@@ -38,10 +38,10 @@
 #define GEMM_IS_DOUBLE LIBXS_CONCATENATE(GEMM_ISDOUBLE_, GEMM_REAL_TYPE)
 /* Print labels for real and complex GEMM */
 #if GEMM_IS_DOUBLE
-# define GEMM_LABEL  "DGEMM"
+# define GEMM_LABEL "DGEMM"
 # define ZGEMM_LABEL "ZGEMM"
 #else
-# define GEMM_LABEL  "SGEMM"
+# define GEMM_LABEL "SGEMM"
 # define ZGEMM_LABEL "CGEMM"
 #endif
 /* GEMM symbol (dgemm_ for double, sgemm_ for float) */

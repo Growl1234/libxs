@@ -154,8 +154,8 @@ LIBXS_API_INLINE double oz2_horner_grouped(const unsigned int v[], int nprimes);
  * Barrett for the Garner product reduction.
  */
 LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void oz2_reconstruct_batch_avx512(
-  unsigned int batch_res[OZ2_BATCH][OZ2_NPRIMES_MAX], uint8_t garner_inv[OZ2_NPRIMES_MAX][OZ2_NPRIMES_MAX], int nprimes,
-  int bsz, double result[OZ2_BATCH])
+  unsigned int batch_res[OZ2_BATCH][OZ2_NPRIMES_MAX], uint8_t garner_inv[OZ2_NPRIMES_MAX][OZ2_NPRIMES_MAX], int nprimes, int bsz,
+  double result[OZ2_BATCH])
 {
   /* Transposed layout: vt[prime_idx][OZ2_BATCH] for contiguous SIMD loads */
   unsigned int vt[OZ2_NPRIMES_MAX][OZ2_BATCH];
@@ -326,8 +326,7 @@ LIBXS_API_INLINE void oz2_reconstruct_batch(unsigned int batch_res[OZ2_BATCH][OZ
 
 LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, const GEMM_INT_TYPE* m, const GEMM_INT_TYPE* n,
   const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda, const GEMM_REAL_TYPE* b,
-  const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc,
-  libxs_matdiff_t* diff)
+  const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc, libxs_matdiff_t* diff)
 {
   uint8_t garner_inv[OZ2_NPRIMES_MAX][OZ2_NPRIMES_MAX];
   /* Max K per int32 accumulation pass: K_CHUNK * max_residue^2 < 2^31.
@@ -520,8 +519,8 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
           /* Fused GEMM + mod-reduce: inline VNNI panel per prime, Barrett-
            * reduce accumulators in-register, accumulate into tile_res.
            * Eliminates partial[] buffer and per-prime function call overhead. */
-#if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH \
-    || LIBXS_X86_AVX512 <= LIBXS_MAX_STATIC_TARGET_ARCH)
+#if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && \
+  (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH || LIBXS_X86_AVX512 <= LIBXS_MAX_STATIC_TARGET_ARCH)
           if (BLOCK_N == jblk && LIBXS_X86_AVX512 <= ozaki_target_arch) {
             LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NPRIMES_MAX, OZ2_NPRIMES_DEFAULT)
             for (pidx = 0; pidx < nprimes; ++pidx) {
@@ -531,13 +530,13 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
               const oz2_res_t* const a_prime = a_res + (long)pidx * M * K_grp_pad + (long)ib * K_grp_pad;
               const oz2_res_t* const b_prime = b_res + (long)pidx * N * K_grp_pad + (long)jb * K_grp_pad;
               for (kb = 0; kb < K_grp_pad; kb += K_CHUNK) {
-                const GEMM_INT_TYPE chunk_k = ((GEMM_INT_TYPE)K_CHUNK < K_grp_pad - kb)
-                  ? (GEMM_INT_TYPE)K_CHUNK : (K_grp_pad - kb);
+                const GEMM_INT_TYPE chunk_k = ((GEMM_INT_TYPE)K_CHUNK < K_grp_pad - kb) ? (GEMM_INT_TYPE)K_CHUNK : (K_grp_pad - kb);
                 __m512i acc[BLOCK_M];
                 GEMM_INT_TYPE kk;
                 for (mi = 0; mi < iblk; ++mi) acc[mi] = _mm512_setzero_si512();
-#if defined(OZAKI_I8) && (OZAKI_I8)
-                { const __m512i bias = _mm512_set1_epi32((int32_t)0x80808080);
+# if defined(OZAKI_I8) && (OZAKI_I8)
+                {
+                  const __m512i bias = _mm512_set1_epi32((int32_t)0x80808080);
                   const __m512i ones = _mm512_set1_epi32(0x01010101);
                   __m512i bsum = _mm512_setzero_si512();
                   for (kk = kb; kk < kb + chunk_k; kk += BLOCK_K) {
@@ -546,8 +545,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
                     for (bk = 0; bk < BLOCK_K; bk += 4) {
                       int rf_nj;
                       for (rf_nj = 0; rf_nj < BLOCK_N; ++rf_nj) {
-                        memcpy(bv + (bk >> 2) * BLOCK_N + rf_nj,
-                               (const char*)b_prime + (long)rf_nj * K_grp_pad + kk + bk, 4);
+                        memcpy(bv + (bk >> 2) * BLOCK_N + rf_nj, (const char*)b_prime + (long)rf_nj * K_grp_pad + kk + bk, 4);
                       }
                     }
                     for (bk = 0; bk < BLOCK_K; bk += 4) {
@@ -561,29 +559,33 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
                       }
                     }
                   }
-                  { const __m512i correction = _mm512_mullo_epi32(_mm512_set1_epi32(128), bsum);
+                  {
+                    const __m512i correction = _mm512_mullo_epi32(_mm512_set1_epi32(128), bsum);
                     for (mi = 0; mi < iblk; ++mi) acc[mi] = _mm512_sub_epi32(acc[mi], correction);
                   }
                 }
                 for (mi = 0; mi < iblk; ++mi) {
                   const __mmask16 neg = _mm512_cmpgt_epi32_mask(_mm512_setzero_si512(), acc[mi]);
                   __m512i vr = libxs_mod_u32x16(_mm512_abs_epi32(acc[mi]), pi, rcp_i);
-                  { const __mmask16 nz = _mm512_cmpgt_epu32_mask(vr, _mm512_setzero_si512());
+                  {
+                    const __mmask16 nz = _mm512_cmpgt_epu32_mask(vr, _mm512_setzero_si512());
                     vr = _mm512_mask_sub_epi32(vr, (__mmask16)(neg & nz), vpi, vr);
                   }
-                  { LIBXS_ALIGNED(unsigned int tmp[BLOCK_N], LIBXS_ALIGNMENT);
+                  {
+                    LIBXS_ALIGNED(unsigned int tmp[BLOCK_N], LIBXS_ALIGNMENT);
                     __m512i vacc;
                     int nj2;
                     for (nj2 = 0; nj2 < BLOCK_N; ++nj2) tmp[nj2] = tile_res[mi * BLOCK_N + nj2][pidx];
                     vacc = _mm512_add_epi32(_mm512_loadu_si512((__m512i*)tmp), vr);
-                    { const __mmask16 ge = _mm512_cmpge_epu32_mask(vacc, vpi);
+                    {
+                      const __mmask16 ge = _mm512_cmpge_epu32_mask(vacc, vpi);
                       vacc = _mm512_mask_sub_epi32(vacc, ge, vacc, vpi);
                     }
                     _mm512_storeu_si512((__m512i*)tmp, vacc);
                     for (nj2 = 0; nj2 < BLOCK_N; ++nj2) tile_res[mi * BLOCK_N + nj2][pidx] = (uint8_t)tmp[nj2];
                   }
                 }
-#else /* u8 */
+# else /* u8 */
                 for (kk = kb; kk < kb + chunk_k; kk += BLOCK_K) {
                   LIBXS_ALIGNED(int32_t bv[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
                   int bk;
@@ -599,8 +601,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
                     const __m512i vb = _mm512_load_si512((__m512i*)(bv + (bk >> 2) * BLOCK_N));
                     LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
                     for (mi = 0; mi < iblk; ++mi) {
-                      const __m512i va = _mm512_set1_epi32(
-                        *(const int32_t*)(a_prime + (long)mi * K_grp_pad + kk + bk));
+                      const __m512i va = _mm512_set1_epi32(*(const int32_t*)(a_prime + (long)mi * K_grp_pad + kk + bk));
                       acc[mi] = _mm512_dpbusd_epi32(acc[mi], va, vb);
                     }
                   }
@@ -610,21 +611,22 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
                   for (kk = kb; kk < kb + chunk_k; ++kk) {
                     asum += (int32_t)a_prime[mi * K_grp_pad + kk];
                   }
-                  { const __m512i vr = libxs_mod_u32x16(
-                      _mm512_add_epi32(acc[mi], _mm512_set1_epi32(128 * asum)), pi, rcp_i);
+                  {
+                    const __m512i vr = libxs_mod_u32x16(_mm512_add_epi32(acc[mi], _mm512_set1_epi32(128 * asum)), pi, rcp_i);
                     LIBXS_ALIGNED(unsigned int tmp[BLOCK_N], LIBXS_ALIGNMENT);
                     __m512i vacc;
                     int nj2;
                     for (nj2 = 0; nj2 < BLOCK_N; ++nj2) tmp[nj2] = tile_res[mi * BLOCK_N + nj2][pidx];
                     vacc = _mm512_add_epi32(_mm512_loadu_si512((__m512i*)tmp), vr);
-                    { const __mmask16 ge = _mm512_cmpge_epu32_mask(vacc, vpi);
+                    {
+                      const __mmask16 ge = _mm512_cmpge_epu32_mask(vacc, vpi);
                       vacc = _mm512_mask_sub_epi32(vacc, ge, vacc, vpi);
                     }
                     _mm512_storeu_si512((__m512i*)tmp, vacc);
                     for (nj2 = 0; nj2 < BLOCK_N; ++nj2) tile_res[mi * BLOCK_N + nj2][pidx] = tmp[nj2];
                   }
                 }
-#endif
+# endif
               }
             }
           }

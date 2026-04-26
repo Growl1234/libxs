@@ -114,8 +114,7 @@ OZAKI_API_INTERN void gemm_signal_handler(int sig)
  */
 LIBXS_API_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb, const GEMM_INT_TYPE* m, const GEMM_INT_TYPE* n,
   const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda, const GEMM_REAL_TYPE* b,
-  const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc,
-  libxs_matdiff_t* diff)
+  const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc, libxs_matdiff_t* diff)
 {
   GEMM_REAL_TYPE* c_ref = NULL;
   size_t c_size = 0;
@@ -232,7 +231,7 @@ OZAKI_API_INTERN void gemm_init(void)
           }
         }
         { /* Profiling: create histogram if requested */
-          const char *const env_prof = getenv("OZAKI_PROFILE");
+          const char* const env_prof = getenv("OZAKI_PROFILE");
           ozaki_profile = (NULL == env_prof ? 0 : atoi(env_prof));
           if (0 != ozaki_profile) {
             const libxs_hist_update_t update[] = {libxs_hist_update_avg};
@@ -246,9 +245,8 @@ OZAKI_API_INTERN void gemm_init(void)
           const int ocl_tm = (NULL != ozaki_tm_env ? atoi(ozaki_tm_env) : 0);
           const int ocl_tn = (NULL != ozaki_tn_env ? atoi(ozaki_tn_env) : 0);
           const int ocl_groups = (NULL != ozaki_groups_env ? atoi(ozaki_groups_env) : 0);
-          ozaki_ocl_handle = ozaki_ocl_create(
-            GEMM_IS_DOUBLE, ozaki, ozaki_verbose, ocl_tm, ocl_tn, ozaki_n, ozaki_flags, ozaki_trim, ocl_groups, ozaki_maxk,
-            0 != ozaki_profile);
+          ozaki_ocl_handle = ozaki_ocl_create(GEMM_IS_DOUBLE, ozaki, ozaki_verbose, ocl_tm, ocl_tn, ozaki_n, ozaki_flags,
+            ozaki_trim, ocl_groups, ozaki_maxk, 0 != ozaki_profile);
         }
 #endif
         atexit(gemm_atexit);
