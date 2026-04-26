@@ -36,10 +36,14 @@
   if (0 == libxs_matrng_espan_) { \
     OMP(parallel for private(libxs_matrng_i_, libxs_matrng_j_)) \
     for (libxs_matrng_i_ = 0; libxs_matrng_i_ < libxs_matrng_ncols_; ++libxs_matrng_i_) { \
-      for (libxs_matrng_j_ = 0; libxs_matrng_j_ < libxs_matrng_ld_; ++libxs_matrng_j_) { \
+      for (libxs_matrng_j_ = 0; libxs_matrng_j_ < libxs_matrng_nrows_; ++libxs_matrng_j_) { \
         const INT_TYPE libxs_matrng_k_ = libxs_matrng_i_ * libxs_matrng_ld_ + libxs_matrng_j_; \
         ((REAL_TYPE*)(DST))[libxs_matrng_k_] = libxs_matrng_inv_ * \
           ((REAL_TYPE)(libxs_matrng_shuffle_ * libxs_matrng_k_ % libxs_matrng_maxval_) - libxs_matrng_maxval2_); \
+      } \
+      for (; libxs_matrng_j_ < libxs_matrng_ld_; ++libxs_matrng_j_) { \
+        const INT_TYPE libxs_matrng_k_ = libxs_matrng_i_ * libxs_matrng_ld_ + libxs_matrng_j_; \
+        ((REAL_TYPE*)(DST))[libxs_matrng_k_] = 0; \
       } \
     } \
   } \

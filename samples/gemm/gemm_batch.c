@@ -148,7 +148,7 @@ int main(int argc, char* argv[])
       int ci, cj;
       for (ci = 0; ci < n && EXIT_SUCCESS == result; ++ci) {
         for (cj = m; cj < ldc; ++cj) {
-          if (0.5 != c_data[(size_t)ci * ldc + cj]) {
+          if (0 != c_data[(size_t)ci * ldc + cj]) {
             fprintf(stderr, "FAILED: C ld-padding overwritten"
               " (col=%d row=%d)\n", ci, cj);
             result = EXIT_FAILURE;

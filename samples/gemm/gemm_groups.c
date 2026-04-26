@@ -146,7 +146,7 @@ int main(int argc, char* argv[])
           int ci, cj;
           for (ci = 0; ci < n_array[g] && EXIT_SUCCESS == result; ++ci) {
             for (cj = m_array[g]; cj < ldc_array[g]; ++cj) {
-              if (0.5 != cm[(size_t)ci * ldc_array[g] + cj]) {
+              if (0 != cm[(size_t)ci * ldc_array[g] + cj]) {
                 fprintf(stderr, "FAILED: C ld-padding overwritten"
                   " (group=%d col=%d row=%d)\n", g, ci, cj);
                 result = EXIT_FAILURE;
