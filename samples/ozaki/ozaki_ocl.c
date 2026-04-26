@@ -24,8 +24,8 @@ typedef struct ozaki_ocl_handle_t {
 } ozaki_ocl_handle_t;
 
 
-void* ozaki_ocl_create(
-  int use_double, int kind, int verbosity, int tm, int tn, int ndecomp, int ozflags, int oztrim, int ozgroups, int maxk, int profiling)
+void* ozaki_ocl_create(int use_double, int kind, int verbosity, int tm, int tn, int ndecomp, int ozflags, int oztrim, int ozgroups,
+  int maxk, int profiling)
 {
   ozaki_ocl_handle_t* h = NULL;
   int ndevices = 0;
@@ -37,7 +37,9 @@ void* ozaki_ocl_create(
     h = (ozaki_ocl_handle_t*)calloc(1, sizeof(*h));
   }
   if (NULL != h) {
-    if (EXIT_SUCCESS != ozaki_init(&h->ctx, tm, tn, use_double, kind, verbosity, ndecomp, ozflags, oztrim, ozgroups, maxk, profiling)) {
+    if (EXIT_SUCCESS !=
+        ozaki_init(&h->ctx, tm, tn, use_double, kind, verbosity, ndecomp, ozflags, oztrim, ozgroups, maxk, profiling))
+    {
       free(h);
       h = NULL;
     }
