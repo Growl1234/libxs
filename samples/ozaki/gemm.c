@@ -23,7 +23,9 @@ int main(int argc, char* argv[])
 {
   const char* const nrepeat_env = getenv("NREPEAT");
   const char* const env_check = getenv("CHECK");
+  const char* const env_evil = getenv("EVIL");
   const double check = (NULL == env_check || 0 == *env_check) ? 0 : atof(env_check);
+  const int evil = (NULL != env_evil && 0 != *env_evil) ? atoi(env_evil) : 0;
   const int nrep = (NULL == nrepeat_env ? 3 : atoi(nrepeat_env));
   const int nrepeat = (0 < nrep ? nrep : 1);
   GEMM_INT_TYPE m = (1 < argc ? atoi(argv[1]) : 257);
@@ -160,7 +162,7 @@ int main(int argc, char* argv[])
       result = gemm_mhd_read(argv[1], NULL, NULL, NULL, NULL, NULL, NULL, NULL, a);
     }
     else {
-      LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, 0, a, a_rows, a_cols, lda, scale);
+      LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, evil, a, a_rows, a_cols, lda, scale);
     }
   }
 
@@ -169,7 +171,7 @@ int main(int argc, char* argv[])
       result = gemm_mhd_read(argv[2], NULL, NULL, NULL, NULL, NULL, NULL, NULL, b);
     }
     else {
-      LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, 0, b, b_rows, b_cols, ldb, scale);
+      LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, -evil, b, b_rows, b_cols, ldb, scale);
     }
   }
 
