@@ -814,7 +814,7 @@ LIBXS_API_INTERN int internal_libxs_mhd_write_png(const char filename[],
   const size_t deflate_size = raw_size + 5 * nblocks;
   const size_t zlib_size = 2 + deflate_size + 4; /* header + deflate + adler32 */
   size_t y, zlib_remain, block_remain;
-  uint32_t idat_crc, adler;
+  uint32_t idat_crc = 0, adler;
   unsigned char buf[16];
   char minmax[2*(LIBXS_MHD_MAX_ELEMSIZE)] = { 0 };
   libxs_mhd_element_handler_info_t png_info;
