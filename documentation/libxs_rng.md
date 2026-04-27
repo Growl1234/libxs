@@ -46,13 +46,6 @@ LIBXS_MATRNG(int, double, +espan, a, m, k, lda, 1.0);
 LIBXS_MATRNG(int, double, -espan, b, k, n, ldb, 1.0);
 ```
 
-In the Ozaki sample driver (samples/ozaki/gemm.c), the EVIL
-environment variable feeds ESPAN:
-
-```
-EVIL=512 ./gemm.x 1024
-```
-
 ## Functions
 
 ```C
