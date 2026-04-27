@@ -350,11 +350,17 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
               const double pair_scale = (*alpha) * pow2_low[slice_a] * pow2_low[slice_b];
               const int do_mirror = (0 != (ozaki_flags & OZ1_SYMMETRIZE)) && (slice_a != slice_b);
 
-              ozaki_gemm_s8s8s32('N', 'T', iblk, jblk, K_grp_pad, a_slices + (long)slice_a * M * K_grp_pad + (long)ib * K_grp_pad,
-                K_grp_pad, b_slices + (long)slice_b * N * K_grp_pad + (long)jb * K_grp_pad, K_grp_pad, 0, c_acc, jblk);
               if (do_mirror) {
-                ozaki_gemm_s8s8s32('N', 'T', iblk, jblk, K_grp_pad, a_slices + (long)slice_b * M * K_grp_pad + (long)ib * K_grp_pad,
-                  K_grp_pad, b_slices + (long)slice_a * N * K_grp_pad + (long)jb * K_grp_pad, K_grp_pad, 1, c_acc, jblk);
+                ozaki_gemm_s8s8s32_fused(iblk, jblk, K_grp_pad,
+                  a_slices + (long)slice_a * M * K_grp_pad + (long)ib * K_grp_pad, K_grp_pad,
+                  b_slices + (long)slice_b * N * K_grp_pad + (long)jb * K_grp_pad, K_grp_pad,
+                  a_slices + (long)slice_b * M * K_grp_pad + (long)ib * K_grp_pad, K_grp_pad,
+                  b_slices + (long)slice_a * N * K_grp_pad + (long)jb * K_grp_pad, K_grp_pad,
+                  0, c_acc, jblk);
+              }
+              else {
+                ozaki_gemm_s8s8s32('N', 'T', iblk, jblk, K_grp_pad, a_slices + (long)slice_a * M * K_grp_pad + (long)ib * K_grp_pad,
+                  K_grp_pad, b_slices + (long)slice_b * N * K_grp_pad + (long)jb * K_grp_pad, K_grp_pad, 0, c_acc, jblk);
               }
 
               for (mi = 0; mi < iblk; ++mi) {
