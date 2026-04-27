@@ -791,14 +791,22 @@ LIBXS_API_INLINE int internal_libxs_mhd_png_chunk(FILE* file,
 
 
 LIBXS_API_INTERN int internal_libxs_mhd_write_png(const char filename[],
-  const void* data, size_t width, size_t height, size_t ncomponents,
-  libxs_data_t type_data)
+  const void* data, size_t width, size_t height, size_t pitch_row,
+  size_t ncomponents, libxs_data_t type_data,
+  const libxs_mhd_write_info_t* write_info, const void* src_minmax)
 {
+  const libxs_mhd_element_handler_info_t *const handler_info =
+    (NULL != write_info ? write_info->handler_info : NULL);
+  const libxs_mhd_element_handler_t handler =
+    (NULL != write_info ? write_info->handler : NULL);
+  const libxs_data_t elemtype =
+    (NULL != handler_info ? handler_info->type : type_data);
   unsigned char color_type;
   FILE* file;
   int result = EXIT_SUCCESS;
   const size_t typesize_data = LIBXS_TYPESIZE(type_data);
   const size_t raw_row = ncomponents * width;
+  const size_t src_stride = ncomponents * pitch_row * typesize_data;
   const size_t scanline = 1 + raw_row; /* filter byte + pixel data */
   const size_t raw_size = scanline * height;
   /* deflate stored-block framing: 5-byte header per 65535-byte block */
@@ -841,12 +849,43 @@ LIBXS_API_INTERN int internal_libxs_mhd_write_png(const char filename[],
   /* scan min/max for element conversion to U8 */
   png_info.type = LIBXS_DATATYPE_U8;
   png_info.hint = LIBXS_MHD_ELEMENT_CONVERSION_DEFAULT;
-  if (LIBXS_DATATYPE_U8 != type_data) {
-    const size_t nelements = width * height * ncomponents;
-    LIBXS_MEMCPY(minmax, data, typesize_data);
-    LIBXS_MEMCPY(minmax + (LIBXS_MHD_MAX_ELEMSIZE), data, typesize_data);
-    result = internal_libxs_mhd_minmax(data, nelements, type_data,
-      minmax, minmax + (LIBXS_MHD_MAX_ELEMSIZE));
+  if (LIBXS_DATATYPE_U8 != elemtype) {
+    const size_t typesize_elem = LIBXS_TYPESIZE(elemtype);
+    if (NULL == handler && NULL != src_minmax) {
+      LIBXS_MEMCPY(minmax, src_minmax, typesize_data);
+      LIBXS_MEMCPY(minmax + (LIBXS_MHD_MAX_ELEMSIZE),
+        (const char*)src_minmax + (LIBXS_MHD_MAX_ELEMSIZE), typesize_data);
+    }
+    else if (NULL == handler) {
+      LIBXS_MEMCPY(minmax, data, typesize_data);
+      LIBXS_MEMCPY(minmax + (LIBXS_MHD_MAX_ELEMSIZE), data, typesize_data);
+      for (y = 0; y < height && EXIT_SUCCESS == result; ++y) {
+        result = internal_libxs_mhd_minmax(
+          (const unsigned char*)data + y * src_stride,
+          width * ncomponents, type_data,
+          minmax, minmax + (LIBXS_MHD_MAX_ELEMSIZE));
+      }
+    }
+    else { /* handler: scan min/max on handler output */
+      char first[LIBXS_MHD_MAX_ELEMSIZE];
+      result = handler(first, handler_info, type_data, data, NULL, NULL);
+      if (EXIT_SUCCESS == result) {
+        LIBXS_MEMCPY(minmax, first, typesize_elem);
+        LIBXS_MEMCPY(minmax + (LIBXS_MHD_MAX_ELEMSIZE), first, typesize_elem);
+        for (y = 0; y < height && EXIT_SUCCESS == result; ++y) {
+          size_t c;
+          for (c = 0; c < width * ncomponents && EXIT_SUCCESS == result; ++c) {
+            const char* elem = (const char*)data + y * src_stride + c * typesize_data;
+            char tmp[LIBXS_MHD_MAX_ELEMSIZE];
+            result = handler(tmp, handler_info, type_data, elem, NULL, NULL);
+            if (EXIT_SUCCESS == result) {
+              result = internal_libxs_mhd_minmax(tmp, 1, elemtype,
+                minmax, minmax + (LIBXS_MHD_MAX_ELEMSIZE));
+            }
+          }
+        }
+      }
+    }
   }
 
   /* IDAT: manual zlib/deflate stored-block framing */
@@ -896,13 +935,28 @@ LIBXS_API_INTERN int internal_libxs_mhd_write_png(const char filename[],
       else {
         /* pixel component */
         c = x - 1;
-        if (LIBXS_DATATYPE_U8 == type_data) {
-          pixel = src[y * raw_row + c];
+        if (LIBXS_DATATYPE_U8 == elemtype && NULL == handler) {
+          pixel = src[y * src_stride + c];
         }
         else {
-          const char* elem = (const char*)src + (y * raw_row + c) * typesize_data;
-          libxs_mhd_element_conversion(&pixel, &png_info, type_data, elem,
-            minmax, minmax + (LIBXS_MHD_MAX_ELEMSIZE));
+          const char* elem = (const char*)src + y * src_stride + c * typesize_data;
+          if (NULL != handler) {
+            char tmp[LIBXS_MHD_MAX_ELEMSIZE];
+            result = handler(tmp, handler_info, type_data, elem, NULL, NULL);
+            if (EXIT_SUCCESS == result) {
+              if (LIBXS_DATATYPE_U8 == elemtype) {
+                pixel = *(unsigned char*)tmp;
+              }
+              else {
+                libxs_mhd_element_conversion(&pixel, &png_info, elemtype, tmp,
+                  minmax, minmax + (LIBXS_MHD_MAX_ELEMSIZE));
+              }
+            }
+          }
+          else {
+            libxs_mhd_element_conversion(&pixel, &png_info, type_data, elem,
+              minmax, minmax + (LIBXS_MHD_MAX_ELEMSIZE));
+          }
         }
         if (1 != fwrite(&pixel, 1, 1, file)) { result = EXIT_FAILURE; break; }
         idat_crc = libxs_crc32_iso3309(idat_crc, &pixel, 1);
@@ -953,6 +1007,8 @@ LIBXS_API int libxs_mhd_write(const char filename[], const size_t offset[], cons
     NULL != size && 0 != ndims && 0 != ncomponents && NULL != data && NULL != elemname && 0 < typesize)
     ? fopen(filename, "wb")
     : NULL;
+  char minmax[2*(LIBXS_MHD_MAX_ELEMSIZE)] = { 0 };
+  int minmax_valid = 0;
   int result = EXIT_SUCCESS;
   if (NULL != file) {
     const size_t typesize_data = LIBXS_TYPESIZE(type_data);
@@ -997,7 +1053,6 @@ LIBXS_API int libxs_mhd_write(const char filename[], const size_t offset[], cons
       const size_t offset1 = libxs_offset(ndims, offset, shape, &pitch1);
       const char *const input = ((const char*)data) + offset1 * ncomponents * typesize_data;
       const long file_position = ftell(file); /* determine the header size */
-      char minmax[2*(LIBXS_MHD_MAX_ELEMSIZE)] = { 0 };
       LIBXS_EXPECT(0 == libxs_offset(ndims, NULL, size, &size1));
       result = ((0 <= file_position && (offset1 + size1) <= pitch1) ? EXIT_SUCCESS : EXIT_FAILURE);
       if (EXIT_SUCCESS == result && (NULL != handler /* slow-path */
@@ -1007,6 +1062,7 @@ LIBXS_API int libxs_mhd_write(const char filename[], const size_t offset[], cons
         LIBXS_MEMCPY(minmax + (LIBXS_MHD_MAX_ELEMSIZE), data, typesize_data); /* initial condition */
         result = internal_libxs_mhd_write(file, input, size, shape, ndims, ncomponents, type_data, typesize_data,
           handler_info, handler, minmax, minmax + (LIBXS_MHD_MAX_ELEMSIZE), 1/*search min-max*/);
+        if (EXIT_SUCCESS == result) minmax_valid = 1;
       }
       if (EXIT_SUCCESS == result) {
         if (NULL != info) info->header_size = file_position;
@@ -1031,12 +1087,17 @@ LIBXS_API int libxs_mhd_write(const char filename[], const size_t offset[], cons
     const size_t len = strlen(filename);
     char png_name[LIBXS_MHD_MAX_STRLENGTH];
     if (len < sizeof(png_name) - 4) {
+      const size_t *const shape = (NULL != pitch ? pitch : size);
+      const size_t typesize_data0 = LIBXS_TYPESIZE(type_data);
+      const size_t offset1 = libxs_offset(ndims, offset, shape, NULL);
+      const char *const png_data = ((const char*)data) + offset1 * ncomponents * typesize_data0;
       const char *const dot = strrchr(filename, '.');
       const size_t base = (NULL != dot ? (size_t)(dot - filename) : len);
       memcpy(png_name, filename, base);
       memcpy(png_name + base, ".png", 5);
-      internal_libxs_mhd_write_png(png_name, data,
-        size[0], size[1], ncomponents, type_data);
+      internal_libxs_mhd_write_png(png_name, png_data,
+        size[0], size[1], shape[0], ncomponents, type_data, write_info,
+        0 != minmax_valid ? minmax : NULL);
     }
     else result = EXIT_FAILURE;
   }
