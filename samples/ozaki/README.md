@@ -102,6 +102,48 @@ documented in the LIBXSTREAM Ozaki README.
 |------------|-----------|----------------------------------------------------------------------------|
 | CHECK      | 0         | Validate vs BLAS: 0=off, negative=auto-threshold, positive=custom          |
 | NREPEAT    | 3         | Number of GEMM calls (first call is warmup when >1)                        |
+| EVIL       | 0         | Adversarial exponent-span test (see below)                                 |
+| OZAKI_DECAY| 0         | Forward-difference decay diagnostic (0=off, nonzero=on)                    |
+
+### Adversarial Input (EVIL)
+
+The EVIL variable initializes A and B with controlled exponent
+structure for stress-testing accuracy and adaptive slice reduction.
+The magnitude sets the exponent span in bits; the sign selects
+the distribution:
+
+  EVIL=N  (N>0)   Per-column.  Column j of A is scaled by
+                  2^(N*j/(ncols-1)), column j of B by the
+                  inverse.  Product A*B is well-conditioned.
+                  Uniform exponents within each column.
+
+  EVIL=-N (N>0)   Per-element.  Each element gets a pseudorandom
+                  exponent in [0,N] via coprime shuffle, with
+                  opposite sign for B.  Every row of A spans the
+                  full exponent range -- worst case for row-wise
+                  alignment and adaptive cutoff.
+
+  EVIL=0          Default shuffle mode (no exponent structure).
+
+The per-column mode (EVIL>0) matches the NVIDIA emulation grading
+test (diagonal scaling with D and D^-1).  The per-element mode
+(EVIL<0) is adversarial for the adaptive slice-pair reduction:
+it forces all slices to be populated in every row.
+
+### Decay Diagnostic (OZAKI_DECAY)
+
+When nonzero, reports the forward-difference decay of int8 slice
+buffers along K, M, and N axes (first K-group only, single-
+threaded).  Uses libxs_fprint per-axis mode internally.  Output
+goes to stderr:
+
+  OZ1[MxNxK] Delta-K: d1=... d2=... ...
+  OZ1[MxNxK] Delta-M: d1=... d2=... ...
+  OZ1[MxNxK] Delta-N: d1=... d2=... ...
+
+Decaying values indicate exploitable smoothness; growing values
+(~2x per order) indicate unstructured data where data-independent
+schemes (Ozaki-1, Ozaki-2) are well-matched.
 
 ## Profiling
 
@@ -132,4 +174,8 @@ OZAKI_TRIM=4 ./dgemm-wrap.x 256             # drop 4 least significant diagonals
 OZAKI=2 ./dgemm-wrap.x 256                  # CRT scheme (u8 default)
 OZAKI=2 OZAKI_GROUPS=4 ./dgemm-wrap.x 4096  # CRT with K-grouping
 OZAKI_FLAGS=0 ./dgemm-wrap.x 256            # full S^2 square, no symmetrize
+EVIL=512 ./dgemm-wrap.x 1024               # accuracy grading (wide exponent span)
+EVIL=1 OZAKI_PROFILE=1 ./dgemm-wrap.x 1024 # narrow span (shows pair savings)
+EVIL=-52 ./dgemm-wrap.x 1024               # per-element span (worst for cutoff)
+OZAKI_DECAY=1 ./dgemm-wrap.x 256           # forward-difference decay diagnostic
 ```

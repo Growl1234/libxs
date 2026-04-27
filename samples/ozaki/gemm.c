@@ -25,7 +25,9 @@ int main(int argc, char* argv[])
   const char* const env_check = getenv("CHECK");
   const char* const env_evil = getenv("EVIL");
   const double check = (NULL == env_check || 0 == *env_check) ? 0 : atof(env_check);
-  const int evil = (NULL != env_evil && 0 != *env_evil) ? atoi(env_evil) : 0;
+  const int evil_raw = (NULL != env_evil && 0 != *env_evil) ? atoi(env_evil) : 0;
+  const int evil = evil_raw < 0 ? -evil_raw : evil_raw;
+  const int evil_perelement = (evil_raw < 0);
   const int nrep = (NULL == nrepeat_env ? 3 : atoi(nrepeat_env));
   const int nrepeat = (0 < nrep ? nrep : 1);
   GEMM_INT_TYPE m = (1 < argc ? atoi(argv[1]) : 257);
@@ -161,6 +163,21 @@ int main(int argc, char* argv[])
     if (0x1 & file_input) {
       result = gemm_mhd_read(argv[1], NULL, NULL, NULL, NULL, NULL, NULL, NULL, a);
     }
+    else if (0 != evil && 0 != evil_perelement) {
+      const int abs_evil = evil < 0 ? -evil : evil;
+      const int sign_evil = evil < 0 ? -1 : 1;
+      const size_t nelem = (size_t)lda * (size_t)a_cols;
+      const size_t coprime = libxs_coprime2(nelem);
+      GEMM_INT_TYPE ci, ri;
+      LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, 0, a, a_rows, a_cols, lda, scale);
+      for (ci = 0; ci < a_cols; ++ci) {
+        for (ri = 0; ri < a_rows; ++ri) {
+          const size_t idx = (size_t)ci * lda + ri;
+          const int e = sign_evil * (int)(abs_evil * (coprime * idx % nelem) / nelem);
+          a[idx] = (GEMM_REAL_TYPE)ldexp((double)a[idx], e);
+        }
+      }
+    }
     else {
       LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, evil, a, a_rows, a_cols, lda, scale);
     }
@@ -169,6 +186,21 @@ int main(int argc, char* argv[])
   if (EXIT_SUCCESS == result) { /* Initialize B-matrix */
     if (0x2 & file_input) {
       result = gemm_mhd_read(argv[2], NULL, NULL, NULL, NULL, NULL, NULL, NULL, b);
+    }
+    else if (0 != evil && 0 != evil_perelement) {
+      const int abs_evil = evil < 0 ? -evil : evil;
+      const int sign_evil = evil < 0 ? 1 : -1;
+      const size_t nelem = (size_t)ldb * (size_t)b_cols;
+      const size_t coprime = libxs_coprime2(nelem);
+      GEMM_INT_TYPE ci, ri;
+      LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, 0, b, b_rows, b_cols, ldb, scale);
+      for (ci = 0; ci < b_cols; ++ci) {
+        for (ri = 0; ri < b_rows; ++ri) {
+          const size_t idx = (size_t)ci * ldb + ri;
+          const int e = sign_evil * (int)(abs_evil * (coprime * idx % nelem) / nelem);
+          b[idx] = (GEMM_REAL_TYPE)ldexp((double)b[idx], e);
+        }
+      }
     }
     else {
       LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, -evil, b, b_rows, b_cols, ldb, scale);
