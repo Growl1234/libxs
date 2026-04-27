@@ -218,13 +218,13 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
 # pragma omp for reduction(max : sma) schedule(static) nowait
 #endif
       for (row = 0; row < M; ++row) {
-        int s;
-        for (s = nslices - 1; s > sma; --s) {
-          const int8_t* sl = a_slices + (long)s * M * K_grp_pad + (long)row * K_grp_pad;
+        int si;
+        for (si = nslices - 1; si > sma; --si) {
+          const int8_t* sl = a_slices + (long)si * M * K_grp_pad + (long)row * K_grp_pad;
           GEMM_INT_TYPE kk;
           for (kk = 0; kk < K_len; ++kk) {
             if (0 != sl[kk]) {
-              sma = s;
+              sma = si;
               break;
             }
           }
@@ -234,13 +234,13 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
 # pragma omp for reduction(max : smb) schedule(static)
 #endif
       for (col = 0; col < N; ++col) {
-        int s;
-        for (s = nslices - 1; s > smb; --s) {
-          const int8_t* sl = b_slices + (long)s * N * K_grp_pad + (long)col * K_grp_pad;
+        int si;
+        for (si = nslices - 1; si > smb; --si) {
+          const int8_t* sl = b_slices + (long)si * N * K_grp_pad + (long)col * K_grp_pad;
           GEMM_INT_TYPE kk;
           for (kk = 0; kk < K_len; ++kk) {
             if (0 != sl[kk]) {
-              smb = s;
+              smb = si;
               break;
             }
           }
