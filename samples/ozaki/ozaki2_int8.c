@@ -388,6 +388,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
     tid = omp_get_thread_num();
 #endif
     GEMM_PROFILE_START(tid);
+    GEMM_PROFILE_PAIRS(nprimes);
 
     /* Phase 3: scale C by beta (once, before K-group loop).
      * Per BLAS spec, beta=0 must zero C unconditionally (NaN/Inf safe). */

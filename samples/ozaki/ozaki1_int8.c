@@ -239,7 +239,10 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
 #if defined(_OPENMP)
 # pragma omp single
 #endif
-      eff_cutoff = (sma >= 0 && smb >= 0) ? LIBXS_MIN(cutoff, sma + smb) : -1;
+      {
+        eff_cutoff = (sma >= 0 && smb >= 0) ? LIBXS_MIN(cutoff, sma + smb) : -1;
+        GEMM_PROFILE_PAIRS(ozaki_count_pairs(nslices, eff_cutoff, ozaki_flags));
+      }
 
       /* Forward-difference decay diagnostic (first K-group, verbose only).
        * Uses libxs_fprint (1D) on int8 slice buffers to report per-axis Linf

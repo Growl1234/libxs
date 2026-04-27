@@ -55,28 +55,21 @@ OZAKI_API_INTERN void gemm_atexit(void)
     }
     if (NULL != ozaki_hist) {
       const char* const kind = GEMM_IS_DOUBLE ? "DP" : "SP";
-      double gflops = 0;
-      int ngemms = 0; /* number of int8 GEMMs per FP GEMM */
-      libxs_hist_get_median(NULL /*lock*/, ozaki_hist, &gflops);
-      if (1 == ozaki) { /* Scheme 1: slice pairs */
-        const int cutoff = 2 * (ozaki_n - 1) - ozaki_trim;
-        int sa, sb;
-        for (sa = 0; sa < ozaki_n && sa <= cutoff; ++sa) {
-          const int sb_start = (0 != (ozaki_flags & OZ1_TRIANGULAR)) ? sa : 0;
-          const int sb_end = LIBXS_MIN(ozaki_n, cutoff + 1 - sa);
-          for (sb = sb_start; sb < sb_end; ++sb) {
-            ++ngemms;
-            if (0 != (ozaki_flags & OZ1_SYMMETRIZE) && sa != sb) ++ngemms;
-          }
-        }
+      double median[2] = {0, 0};
+      int ngemms_static;
+      libxs_hist_get_median(NULL /*lock*/, ozaki_hist, median);
+      ngemms_static = (1 == ozaki)
+        ? ozaki_count_pairs(ozaki_n, 2 * (ozaki_n - 1) - ozaki_trim, ozaki_flags)
+        : ozaki_n;
+      fprintf(stderr, "OZAKI PROF: %.0f %s-GFLOPS/s", median[0], kind);
+      if (0 < ngemms_static) {
+        const double tops = median[0] * ngemms_static * 1E-3;
+        fprintf(stderr, " (%.1f INT8-TOPS/s, %dx)", tops, ngemms_static);
       }
-      else { /* Scheme 2: one int8 GEMM per prime */
-        ngemms = ozaki_n;
-      }
-      fprintf(stderr, "OZAKI PROF: %.0f %s-GFLOPS/s", gflops, kind);
-      if (0 < ngemms) {
-        const double tops = gflops * ngemms * 1E-3;
-        fprintf(stderr, " (%.1f INT8-TOPS/s, %dx)", tops, ngemms);
+      if (0 < median[1] && median[1] < ngemms_static) {
+        fprintf(stderr, " pairs=%.0f/%d (%.0f%% saved)",
+          median[1], ngemms_static,
+          100.0 * (1.0 - median[1] / ngemms_static));
       }
       fprintf(stderr, "\n");
       libxs_hist_destroy(ozaki_hist);
@@ -228,8 +221,8 @@ OZAKI_API_INTERN void gemm_init(void)
           const char* const env_prof = getenv("OZAKI_PROFILE");
           ozaki_profile = (NULL == env_prof ? 0 : atoi(env_prof));
           if (0 != ozaki_profile) {
-            const libxs_hist_update_t update[] = {libxs_hist_update_avg};
-            ozaki_hist = libxs_hist_create(3, 1, update);
+            const libxs_hist_update_t update[] = {libxs_hist_update_avg, libxs_hist_update_avg};
+            ozaki_hist = libxs_hist_create(3, 2, update);
             if (NULL == ozaki_hist) ozaki_profile = 0;
           }
         }

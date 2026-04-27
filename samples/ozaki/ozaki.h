@@ -89,15 +89,20 @@
  * K-group loop interleaves them, so we always measure total time.
  * GEMM_PROFILE_START(TID): record start tick on master thread.
  * GEMM_PROFILE_END(TID, M, N, K): compute duration, push GFLOPS to histogram. */
-#define GEMM_PROFILE_DECL libxs_timer_tick_t gemm_profile_start_ = 0
+#define GEMM_PROFILE_DECL \
+  libxs_timer_tick_t gemm_profile_start_ = 0; \
+  int gemm_profile_pairs_ = 0
 #define GEMM_PROFILE_START(TID) \
   if (0 == (TID) && 0 != ozaki_profile) gemm_profile_start_ = libxs_timer_tick()
+#define GEMM_PROFILE_PAIRS(NPAIRS) \
+  gemm_profile_pairs_ += (NPAIRS)
 #define GEMM_PROFILE_END(TID, M, N, K) \
   if (0 == (TID) && 0 != ozaki_profile) { \
     const double duration = libxs_timer_duration(gemm_profile_start_, libxs_timer_tick()); \
     if (0 < duration) { \
-      const double gflops = 2.0 * (M) * (N) * (K) / (duration * 1E9); \
-      libxs_hist_push(NULL, ozaki_hist, &gflops); \
+      const double vals[2] = {2.0 * (M) * (N) * (K) / (duration * 1E9), \
+        (double)gemm_profile_pairs_}; \
+      libxs_hist_push(NULL, ozaki_hist, vals); \
     } \
   }
 
@@ -260,6 +265,22 @@ OZAKI_APIVAR_PRIVATE(libxs_hist_t* ozaki_hist);
 OZAKI_APIVAR_PRIVATE(int gemm_threshold);
 
 OZAKI_API_INTERN void gemm_init(void);
+
+LIBXS_API_INLINE int ozaki_count_pairs(int nslices, int co, int flags)
+{
+  int sa, n = 0;
+  for (sa = 0; sa < nslices && sa <= co; ++sa) {
+    const int sb_start = (0 != (flags & OZ1_TRIANGULAR)) ? sa : 0;
+    const int sb_end = nslices < (co + 1 - sa) ? nslices : (co + 1 - sa);
+    int sb;
+    for (sb = sb_start; sb < sb_end; ++sb) {
+      ++n;
+      if (0 != (flags & OZ1_SYMMETRIZE) && sa != sb) ++n;
+    }
+  }
+  return n;
+}
+
 LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t ncomponents, libxs_matdiff_t* diff);
 
 extern LIBXS_TLS int gemm_nozaki; /* not precision-prefixed: bypass must cover all precisions */
