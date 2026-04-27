@@ -696,17 +696,18 @@
           TYPE(C_PTR), INTENT(IN), OPTIONAL :: ref, tst
           TYPE(libxs_matdiff_t), INTENT(OUT) :: info
           INTEGER(C_INT) :: nn, rc
-          TYPE(C_PTR) :: rr, tt
+          INTEGER(C_INT), TARGET :: lr, lt
+          TYPE(C_PTR) :: rr, tt, plr, plt
           INTERFACE
             FUNCTION internal_matdiff(info,                             &
      &      datatype, m, n, ref, tst, ldref, ldtst)                     &
      &      RESULT(res) BIND(C, NAME="libxs_matdiff")
               IMPORT :: libxs_matdiff_t, C_PTR, C_INT
-              INTEGER(C_INT), INTENT(IN), VALUE         :: datatype
-              INTEGER(C_INT), INTENT(IN), VALUE         :: m, n
-              TYPE(C_PTR), INTENT(IN), VALUE            :: ref, tst
-              INTEGER(C_INT), INTENT(IN)                :: ldref, ldtst
-              TYPE(libxs_matdiff_t), INTENT(OUT)     :: info
+              INTEGER(C_INT), INTENT(IN), VALUE :: datatype
+              INTEGER(C_INT), INTENT(IN), VALUE :: m, n
+              TYPE(C_PTR), INTENT(IN), VALUE :: ref, tst
+              TYPE(C_PTR), INTENT(IN), VALUE :: ldref, ldtst
+              TYPE(libxs_matdiff_t), INTENT(OUT) :: info
               INTEGER(C_INT) :: res
             END FUNCTION
           END INTERFACE
@@ -715,8 +716,14 @@
           ELSE; rr = C_NULL_PTR; END IF
           IF (PRESENT(tst)) THEN; tt = tst
           ELSE; tt = C_NULL_PTR; END IF
+          IF (PRESENT(ldref)) THEN
+            lr = ldref; plr = C_LOC(lr)
+          ELSE; plr = C_NULL_PTR; END IF
+          IF (PRESENT(ldtst)) THEN
+            lt = ldtst; plt = C_LOC(lt)
+          ELSE; plt = C_NULL_PTR; END IF
           rc = internal_matdiff(info, datatype, m, nn,                  &
-     &      rr, tt, ldref, ldtst)
+     &      rr, tt, plr, plt)
         END SUBROUTINE
 
         !> Calculates a hash value for the given array and seed.
