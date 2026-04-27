@@ -90,6 +90,12 @@ LIBXS_API unsigned int libxs_hash8(unsigned int data);
 LIBXS_API unsigned int libxs_hash16(unsigned int data);
 LIBXS_API unsigned int libxs_hash32(unsigned long long data);
 
+/** Calculate a CRC32 value (ISO 3309 polynomial) for the given buffer and seed. */
+LIBXS_API unsigned int libxs_hash_iso3309(const void* data, unsigned int size, unsigned int seed);
+
+/** Calculate an Adler-32 checksum for the given buffer and seed. */
+LIBXS_API unsigned int libxs_adler32(const void* data, unsigned int size, unsigned int seed);
+
 /** Calculate a 64-bit hash for the given character string; accepts NULL-string. */
 LIBXS_API unsigned long long libxs_hash_string(const char string[]);
 

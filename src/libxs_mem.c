@@ -927,6 +927,18 @@ LIBXS_API unsigned int libxs_hash(const void* data, unsigned int size, unsigned 
 }
 
 
+LIBXS_API unsigned int libxs_hash_iso3309(const void* data, unsigned int size, unsigned int seed)
+{
+  return libxs_crc32_iso3309(seed, data, size);
+}
+
+
+LIBXS_API unsigned int libxs_adler32(const void* data, unsigned int size, unsigned int seed)
+{
+  return internal_libxs_adler32(seed, data, size);
+}
+
+
 LIBXS_API unsigned int libxs_hash8(unsigned int data)
 {
   const unsigned int hash = libxs_hash16(data);

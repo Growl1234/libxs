@@ -47,4 +47,10 @@ LIBXS_API_INTERN unsigned int libxs_crc32_u512(unsigned int seed, const void* va
 /** Calculate the CRC32 for a given quantity (size) of raw data according to the seed. */
 LIBXS_API_INTERN unsigned int libxs_crc32(unsigned int seed, const void* data, size_t size);
 
+/** CRC32 using the ISO 3309 polynomial (used by PNG, gzip, etc.). SW-only. */
+LIBXS_API_INTERN unsigned int libxs_crc32_iso3309(unsigned int seed, const void* data, size_t size);
+
+/** Adler-32 checksum (used by zlib). */
+LIBXS_API_INTERN unsigned int internal_libxs_adler32(unsigned int seed, const void* data, size_t size);
+
 #endif /*LIBXS_HASH_H*/

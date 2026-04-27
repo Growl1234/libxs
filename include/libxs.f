@@ -49,6 +49,7 @@
         PUBLIC :: libxs_malloc_pool, libxs_malloc_xpool
         PUBLIC :: libxs_malloc_arg, libxs_free_pool
         PUBLIC :: libxs_hash, libxs_hash_string
+        PUBLIC :: libxs_hash_iso3309, libxs_adler32
         PUBLIC :: libxs_diff
         PUBLIC :: libxs_matdiff, libxs_matdiff_reduce
         PUBLIC :: libxs_matdiff_clear, libxs_matdiff_epsilon
@@ -345,6 +346,26 @@
             INTEGER(C_INT), INTENT(IN), VALUE :: size
             INTEGER(C_INT), INTENT(IN), VALUE :: seed
             INTEGER(C_INT) :: libxs_hash_c
+          END FUNCTION
+
+          !> CRC-32 (ISO 3309 polynomial) for the given data.
+          PURE FUNCTION libxs_hash_iso3309(data, size, seed)            &
+     &    BIND(C)
+            IMPORT :: C_INT, C_PTR
+            TYPE(C_PTR), INTENT(IN), VALUE :: data
+            INTEGER(C_INT), INTENT(IN), VALUE :: size
+            INTEGER(C_INT), INTENT(IN), VALUE :: seed
+            INTEGER(C_INT) :: libxs_hash_iso3309
+          END FUNCTION
+
+          !> Adler-32 checksum for the given data.
+          PURE FUNCTION libxs_adler32(data, size, seed)                 &
+     &    BIND(C)
+            IMPORT :: C_INT, C_PTR
+            TYPE(C_PTR), INTENT(IN), VALUE :: data
+            INTEGER(C_INT), INTENT(IN), VALUE :: size
+            INTEGER(C_INT), INTENT(IN), VALUE :: seed
+            INTEGER(C_INT) :: libxs_adler32
           END FUNCTION
 
           !> Compare two memory regions (binds to libxs_memcmp).

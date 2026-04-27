@@ -131,6 +131,43 @@ int main(void)
     result = EXIT_FAILURE;
   }
 
+  /* CRC-32 ISO 3309: standard check value for "123456789" */
+  a = 0xCBF43926;
+  h1 = libxs_hash_iso3309("123456789", 9, 0xFFFFFFFF);
+  b = h1 ^ 0xFFFFFFFF;
+  if (a != b) {
+    FPRINTF(stderr, "ERROR line #%i: %llu != %llu\n", __LINE__, a, b);
+    result = EXIT_FAILURE;
+  }
+
+  /* CRC-32 ISO 3309: byte-at-a-time must agree with bulk */
+  h2 = 0xFFFFFFFF;
+  for (i = 0; i < 9; ++i) {
+    h2 = libxs_hash_iso3309("123456789" + i, 1, h2);
+  }
+  a = h1;
+  b = h2;
+  if (a != b) {
+    FPRINTF(stderr, "ERROR line #%i: %llu != %llu\n", __LINE__, a, b);
+    result = EXIT_FAILURE;
+  }
+
+  /* Adler-32: standard check value for "123456789" */
+  a = 0x091E01DE;
+  b = libxs_adler32("123456789", 9, 1);
+  if (a != b) {
+    FPRINTF(stderr, "ERROR line #%i: %llu != %llu\n", __LINE__, a, b);
+    result = EXIT_FAILURE;
+  }
+
+  /* Adler-32: empty data returns seed unchanged */
+  a = 1;
+  b = libxs_adler32("", 0, 1);
+  if (a != b) {
+    FPRINTF(stderr, "ERROR line #%i: %llu != %llu\n", __LINE__, a, b);
+    result = EXIT_FAILURE;
+  }
+
   free(data);
 
   return result;
