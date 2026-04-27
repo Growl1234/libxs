@@ -95,6 +95,20 @@ unsigned int libxs_hash32(unsigned long long data);
 Produce a 32-bit hash from a buffer (with seed) or from an 8/16/32-bit key directly. NULL buffer is accepted (returns seed).
 
 ```C
+unsigned int libxs_hash_iso3309(const void* data, unsigned int size,
+  unsigned int seed);
+```
+
+CRC-32 using the ISO 3309 polynomial (the variant used by PNG, gzip, and similar formats). Software-only, no hardware acceleration. Pre-condition and post-XOR with 0xFFFFFFFF are the caller's responsibility. NULL buffer is accepted.
+
+```C
+unsigned int libxs_adler32(const void* data, unsigned int size,
+  unsigned int seed);
+```
+
+Adler-32 checksum (the variant used by zlib). The standard initial seed is 1. NULL buffer is accepted.
+
+```C
 unsigned long long libxs_hash_string(const char string[]);
 ```
 
