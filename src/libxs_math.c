@@ -1177,17 +1177,20 @@ LIBXS_API int libxs_fprint(libxs_fprint_t* info,
     /* Per-axis mode: fingerprint along 'axis', max-reduce over others. */
     const size_t typesize = LIBXS_TYPESIZE((int)datatype);
     const size_t n_axis = shape[axis];
-    const size_t s_axis = (NULL != stride) ? stride[axis] : (size_t)(
-      0 == axis ? 1 : shape[0] /* only correct for ndims==2; general case below */);
+    size_t s_axis;
     size_t ngrid = 1;
-    int d, pool = 0;
-    double *buf;
+    int d;
+    if (NULL != stride) {
+      s_axis = stride[axis];
+    }
+    else {
+      s_axis = 1;
+      for (d = 0; d < axis; ++d) s_axis *= shape[d];
+    }
     if (1 > (int)n_axis) return EXIT_SUCCESS;
     for (d = 0; d < ndims; ++d) {
       if (d != axis) ngrid *= shape[d];
     }
-    buf = (double*)LIBXS_MATH_MALLOC(2 * n_axis * sizeof(double), pool);
-    if (NULL == buf) return EXIT_FAILURE;
     { /* Iterate over all positions in the non-axis grid. */
       size_t gi;
       int first = 1;
@@ -1223,7 +1226,6 @@ LIBXS_API int libxs_fprint(libxs_fprint_t* info,
         }
       }
     }
-    LIBXS_MATH_FREE(buf, pool);
   }
   else if (1 == ndims) {
     const size_t s = (NULL != stride ? stride[0] : 1);
