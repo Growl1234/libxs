@@ -1,6 +1,7 @@
 LIBXS_ILOG2
 LIBXS_INTRINSICS_BITSCANFWD32_SW
 LIBXS_INTRINSICS_BITSCANFWD64_SW
+libxs_adler32
 libxs_aligned
 libxs_barrett_pow18
 libxs_barrett_pow36
@@ -46,6 +47,7 @@ libxs_hash_char
 libxs_hash_i32
 libxs_hash_i64
 libxs_hash_i8
+libxs_hash_iso3309
 libxs_hash_string
 libxs_hash_xchar
 libxs_hash_xi32
