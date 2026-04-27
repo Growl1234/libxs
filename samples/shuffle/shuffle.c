@@ -58,6 +58,7 @@ size_t uint_bsort_asc(void* inout, size_t elemsize, size_t count);
 size_t uint_msort_inversions(void* inout, size_t elemsize, size_t count);
 #endif
 
+static const void* mhd_element_hash_base;
 static int mhd_element_hash(void* dst,
   const libxs_mhd_element_handler_info_t* dst_info, libxs_data_t src_type,
   const void* src, const void* src_min, const void* src_max);
@@ -177,6 +178,7 @@ int main(int argc, char* argv[])
         }
         if (i == repeat && 0 == random) {
           if (0 <= elemtype) {
+            mhd_element_hash_base = data2;
             result = libxs_mhd_write("shuffle_rng.mhd", NULL, shape, NULL,
               &mhd_write_info, data2, &mhd_winfo);
           }
@@ -209,6 +211,7 @@ int main(int argc, char* argv[])
         }
         if (i == repeat && 0 == random) {
           if (0 <= elemtype) {
+            mhd_element_hash_base = data2;
             result = libxs_mhd_write("shuffle_ds1.mhd", NULL, shape, NULL,
               &mhd_write_info, data2, &mhd_winfo);
           }
@@ -240,6 +243,7 @@ int main(int argc, char* argv[])
         }
         if (i == repeat && 0 == random) {
           if (0 <= elemtype) {
+            mhd_element_hash_base = data2;
             result = libxs_mhd_write("shuffle_ds2.mhd", NULL, shape, NULL,
               &mhd_write_info, data2, &mhd_winfo);
           }
@@ -507,9 +511,15 @@ static int mhd_element_hash(void* dst,
   const void* src, const void* src_min, const void* src_max)
 {
   unsigned int v = 0;
-  const size_t n = LIBXS_MIN(LIBXS_TYPESIZE(src_type), sizeof(v));
+  const size_t typesize = LIBXS_TYPESIZE(src_type);
+  const size_t n = LIBXS_MIN(typesize, sizeof(v));
   LIBXS_UNUSED(dst_info); LIBXS_UNUSED(src_min); LIBXS_UNUSED(src_max);
   LIBXS_MEMCPY(&v, src, n);
+  if (NULL != mhd_element_hash_base) {
+    const unsigned int i = (unsigned int)(
+      ((const char*)src - (const char*)mhd_element_hash_base) / typesize);
+    v = libxs_hash32(((unsigned long long)libxs_hash32(v) << 32) | i);
+  }
   *(unsigned char*)dst = (unsigned char)(libxs_hash32(v) & 0xFF);
   return EXIT_SUCCESS;
 }
