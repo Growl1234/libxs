@@ -267,6 +267,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
             if (fp.linf[dd] > fp_k.linf[dd]) fp_k.linf[dd] = fp.linf[dd];
           }
           fp_k.order = LIBXS_MAX(fp_k.order, fp.order);
+          fp_k.n = LIBXS_MAX(fp_k.n, fp.n);
 
           libxs_fprint(&fp, LIBXS_DATATYPE_I8, a_slices + (long)ss * M * K_grp_pad,
             2, ashp, astr, forder, 0 /*axis=M*/);
@@ -274,6 +275,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
             if (fp.linf[dd] > fp_m.linf[dd]) fp_m.linf[dd] = fp.linf[dd];
           }
           fp_m.order = LIBXS_MAX(fp_m.order, fp.order);
+          fp_m.n = LIBXS_MAX(fp_m.n, fp.n);
 
           libxs_fprint(&fp, LIBXS_DATATYPE_I8, b_slices + (long)ss * N * K_grp_pad,
             2, bshp, bstr, forder, 0 /*axis=N*/);
@@ -281,14 +283,20 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
             if (fp.linf[dd] > fp_n.linf[dd]) fp_n.linf[dd] = fp.linf[dd];
           }
           fp_n.order = LIBXS_MAX(fp_n.order, fp.order);
+          fp_n.n = LIBXS_MAX(fp_n.n, fp.n);
         }
         fprintf(stderr, "OZ1[%dx%dx%d] Delta-K:", (int)M, (int)N, (int)K_len);
-        for (dd = 1; dd <= fp_k.order; ++dd) fprintf(stderr, " d%d=%.6g", dd, fp_k.linf[dd]);
+        for (dd = 1; dd <= fp_k.order; ++dd)
+          fprintf(stderr, " d%d=%.0f", dd, libxs_fprint_raw(&fp_k, dd, fp_k.linf[dd]));
         fprintf(stderr, "\nOZ1[%dx%dx%d] Delta-M:", (int)M, (int)N, (int)K_len);
-        if (M > 1) { for (dd = 1; dd <= fp_m.order; ++dd) fprintf(stderr, " d%d=%.6g", dd, fp_m.linf[dd]); }
+        if (M > 1) { for (dd = 1; dd <= fp_m.order; ++dd)
+          fprintf(stderr, " d%d=%.0f", dd, libxs_fprint_raw(&fp_m, dd, fp_m.linf[dd]));
+        }
         else fprintf(stderr, " (M<=1, skipped)");
         fprintf(stderr, "\nOZ1[%dx%dx%d] Delta-N:", (int)M, (int)N, (int)K_len);
-        if (N > 1) { for (dd = 1; dd <= fp_n.order; ++dd) fprintf(stderr, " d%d=%.6g", dd, fp_n.linf[dd]); }
+        if (N > 1) { for (dd = 1; dd <= fp_n.order; ++dd)
+          fprintf(stderr, " d%d=%.0f", dd, libxs_fprint_raw(&fp_n, dd, fp_n.linf[dd]));
+        }
         else fprintf(stderr, " (N<=1, skipped)");
         fprintf(stderr, "\n");
       }
