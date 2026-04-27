@@ -2,7 +2,7 @@
 
 Header: `libxs_mhd.h`
 
-Read and write image data in the MetaImage (MHD/MHA) format. Files are compatible with ITK-SNAP, ParaView, and similar tools.
+Read and write image data in the MetaImage (MHD/MHA) format. Files are compatible with ITK, ITK-SNAP, 3D Slicer, ParaView, and similar tools.
 
 ## Types
 
@@ -124,3 +124,5 @@ int libxs_mhd_write(const char filename[],
 ```
 
 Write image data in the extended MHD format. `info->header_size` is updated on output. Pass NULL for `write_info` when no conversion or extension is needed.
+
+When the environment variable `LIBXS_MHD_PNG` is set and the image is two-dimensional, an uncompressed PNG file is written alongside the MHD output (same base name, `.png` extension). Supported channel counts are 1 (grayscale), 3 (RGB), and 4 (RGBA) at 8-bit depth. Source data of any element type is converted to unsigned 8-bit using the built-in element conversion with automatic min/max scaling.
