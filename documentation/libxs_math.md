@@ -136,9 +136,19 @@ Three norm families are computed per derivative order k = 0..order:
 | `linf[k]` | Linf | Maximum absolute value (worst-case decay) |
 
 All three are normalized to the unit interval (h = 1/(n-1)).
-To recover raw (unnormalized) values, multiply by pow(n-1, k).
 The `order` field records how many derivative orders were used;
-`n` is the extent of the outermost dimension.
+`n` is the extent of the fingerprinted dimension.
+
+To recover raw (unnormalized) finite-difference magnitudes, use
+the inline helper:
+
+```C
+double libxs_fprint_raw(const libxs_fprint_t* info,
+  int k, double value);
+```
+
+This divides by (n-1)^k, undoing the unit-interval scaling.
+For k == 0, the value is returned unchanged.
 
 The L2 norms serve comparison via the Sobolev distance.
 The Linf norms serve as a decay diagnostic: decaying linf[k]
