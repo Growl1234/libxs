@@ -892,7 +892,7 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
   }
 
   if (0 < ozaki_verbose) {
-    fprintf(stderr, GEMM_LABEL "[%i.%i]: ", gemm_diff.r, rid);
+    fprintf(stderr, GEMM_LABEL "[%i|%i]: ", gemm_diff.r, rid);
     print_gemm(stderr, 2 /*compact*/, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
   }
 
@@ -927,7 +927,7 @@ LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t nc
     if (0 == (call_diff.r % nth)) {
       if (0 <= ozaki_stat) print_diff(stderr, label, 0 /*detail*/, &call_diff);
       else {
-        fprintf(stderr, "%s[%i.%i]: ", label, call_diff.r, libxs_rid());
+        fprintf(stderr, "%s[%i|%i]: ", label, call_diff.r, libxs_rid());
         print_gemm(stderr, LIBXS_ABS(ozaki_stat), transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
       }
     }
