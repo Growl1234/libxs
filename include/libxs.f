@@ -39,9 +39,12 @@
 
         !> Public API: types and procedures.
         PUBLIC :: libxs_matdiff_t
+        PUBLIC :: libxs_fprint_t, libxs_timer_info_t
         PUBLIC :: libxs_registry_info_t
         PUBLIC :: libxs_init, libxs_finalize
         PUBLIC :: libxs_timer_tick, libxs_timer_duration
+        PUBLIC :: libxs_timer_info
+        PUBLIC :: libxs_get_verbosity, libxs_set_verbosity
         PUBLIC :: libxs_malloc, libxs_free
         PUBLIC :: libxs_malloc_pool, libxs_malloc_xpool
         PUBLIC :: libxs_malloc_arg, libxs_free_pool
@@ -49,6 +52,8 @@
         PUBLIC :: libxs_diff
         PUBLIC :: libxs_matdiff, libxs_matdiff_reduce
         PUBLIC :: libxs_matdiff_clear, libxs_matdiff_epsilon
+        PUBLIC :: libxs_matdiff_combine
+        PUBLIC :: libxs_fprint, libxs_fprint_diff
         PUBLIC :: libxs_registry_create
         PUBLIC :: libxs_registry_destroy
         PUBLIC :: libxs_registry_lock
@@ -62,6 +67,7 @@
         PUBLIC :: libxs_memcmp
         PUBLIC :: libxs_matcopy, libxs_matcopy_task
         PUBLIC :: libxs_otrans, libxs_otrans_task
+        PUBLIC :: libxs_itrans, libxs_itrans_task
         PUBLIC :: libxs_typesize
         PUBLIC :: libxs_cpuid_t
         PUBLIC :: libxs_cpuid, libxs_cpuid_name
@@ -160,6 +166,24 @@
         TYPE, BIND(C) :: libxs_cpuid_t
           CHARACTER(C_CHAR) :: model(256)
           INTEGER(C_INT) :: constant_tsc
+        END TYPE
+
+        !> Maximum derivative order for fingerprints.
+        INTEGER(C_INT), PARAMETER ::                                    &
+     &    LIBXS_FPRINT_MAXORDER = 8
+        PUBLIC :: LIBXS_FPRINT_MAXORDER
+
+        !> Foeppl polynomial fingerprint.
+        TYPE, BIND(C) :: libxs_fprint_t
+          REAL(C_DOUBLE) :: l2(LIBXS_FPRINT_MAXORDER + 1)
+          REAL(C_DOUBLE) :: l1(LIBXS_FPRINT_MAXORDER + 1)
+          REAL(C_DOUBLE) :: linf(LIBXS_FPRINT_MAXORDER + 1)
+          INTEGER(C_INT) :: order, n
+        END TYPE
+
+        !> Timer properties.
+        TYPE, BIND(C) :: libxs_timer_info_t
+          INTEGER(C_INT) :: tsc
         END TYPE
 
         !> GEMM shape: problem geometry, transpose flags,
@@ -571,6 +595,81 @@
             TYPE(libxs_gemm_config_t), INTENT(IN) :: config
           END SUBROUTINE
 
+          !> Combine two single-matrix diffs into a meta-diff.
+          FUNCTION libxs_matdiff_combine(output, input)                 &
+     &    BIND(C)
+            IMPORT :: libxs_matdiff_t, C_INT
+            TYPE(libxs_matdiff_t), INTENT(INOUT) :: output
+            TYPE(libxs_matdiff_t), INTENT(IN)    :: input
+            INTEGER(C_INT) :: libxs_matdiff_combine
+          END FUNCTION
+
+          !> Query the verbosity level.
+          FUNCTION libxs_get_verbosity() BIND(C)
+            IMPORT :: C_INT
+            INTEGER(C_INT) :: libxs_get_verbosity
+          END FUNCTION
+
+          !> Set the verbosity level.
+          SUBROUTINE libxs_set_verbosity(level) BIND(C)
+            IMPORT :: C_INT
+            INTEGER(C_INT), INTENT(IN), VALUE :: level
+          END SUBROUTINE
+
+          !> Query timer properties.
+          FUNCTION libxs_timer_info(info) BIND(C)
+            IMPORT :: libxs_timer_info_t, C_INT
+            TYPE(libxs_timer_info_t), INTENT(OUT) :: info
+            INTEGER(C_INT) :: libxs_timer_info
+          END FUNCTION
+
+          !> Fingerprint (internal, use libxs_fprint wrapper).
+          FUNCTION internal_fprint(info,                                &
+     &    datatype, data, ndims, shape, stride,                         &
+     &    order, axis) BIND(C, NAME="libxs_fprint")
+            IMPORT :: libxs_fprint_t, C_PTR, C_INT, C_SIZE_T
+            TYPE(libxs_fprint_t), INTENT(OUT)   :: info
+            INTEGER(C_INT), INTENT(IN), VALUE   :: datatype
+            TYPE(C_PTR), INTENT(IN), VALUE      :: data
+            INTEGER(C_INT), INTENT(IN), VALUE   :: ndims
+            INTEGER(C_SIZE_T), INTENT(IN)       :: shape(*)
+            INTEGER(C_SIZE_T), INTENT(IN)       :: stride(*)
+            INTEGER(C_INT), INTENT(IN), VALUE   :: order
+            INTEGER(C_INT), INTENT(IN), VALUE   :: axis
+            INTEGER(C_INT) :: internal_fprint
+          END FUNCTION
+
+          !> Fingerprint distance (internal).
+          FUNCTION internal_fprint_diff(a, b, weights)                  &
+     &    BIND(C, NAME="libxs_fprint_diff")
+            IMPORT :: libxs_fprint_t, C_PTR, C_DOUBLE
+            TYPE(libxs_fprint_t), INTENT(IN)  :: a, b
+            TYPE(C_PTR), INTENT(IN), VALUE    :: weights
+            REAL(C_DOUBLE) :: internal_fprint_diff
+          END FUNCTION
+
+          !> In-place transpose (internal).
+          SUBROUTINE internal_itrans(inout, typesize,                   &
+     &    m, n, ldi, ldo, scratch)                                      &
+     &    BIND(C, NAME="libxs_itrans")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: inout, scratch
+            INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &      m, n, ldi, ldo
+          END SUBROUTINE
+
+          !> In-place transpose: task variant (internal).
+          SUBROUTINE internal_itrans_task(inout, typesize,              &
+     &    m, n, ldi, ldo, scratch, tid, ntasks)                         &
+     &    BIND(C, NAME="libxs_itrans_task")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: inout, scratch
+            INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &      m, n, ldi, ldo, tid, ntasks
+          END SUBROUTINE
+
         END INTERFACE
 
         !> Allocate memory (flags=0: automatic).
@@ -724,6 +823,86 @@
           ELSE; plt = C_NULL_PTR; END IF
           rc = internal_matdiff(info, datatype, m, nn,                  &
      &      rr, tt, plr, plt)
+        END SUBROUTINE
+
+        !> Foeppl polynomial fingerprint.
+        !> order defaults to LIBXS_FPRINT_MAXORDER.
+        !> axis defaults to -1 (hierarchical).
+        FUNCTION libxs_fprint(info, datatype, data,                     &
+     &  ndims, shape, stride, order, axis)
+          TYPE(libxs_fprint_t), INTENT(OUT) :: info
+          INTEGER(C_INT), INTENT(IN) :: datatype
+          TYPE(C_PTR), INTENT(IN) :: data
+          INTEGER(C_INT), INTENT(IN) :: ndims
+          INTEGER(C_SIZE_T), INTENT(IN) :: shape(ndims)
+          INTEGER(C_SIZE_T), INTENT(IN) :: stride(ndims)
+          INTEGER(C_INT), INTENT(IN), OPTIONAL :: order, axis
+          INTEGER(C_INT) :: libxs_fprint
+          INTEGER(C_INT) :: oo, aa
+          IF (PRESENT(order)) THEN
+            oo = order
+          ELSE; oo = LIBXS_FPRINT_MAXORDER; END IF
+          IF (PRESENT(axis)) THEN
+            aa = axis
+          ELSE; aa = -1; END IF
+          libxs_fprint = internal_fprint(info, datatype, data,          &
+     &      ndims, shape, stride, oo, aa)
+        END FUNCTION
+
+        !> Weighted Sobolev distance between two fingerprints.
+        !> If weights is absent, default weights are used.
+        FUNCTION libxs_fprint_diff(a, b, weights)
+          TYPE(libxs_fprint_t), INTENT(IN) :: a, b
+          REAL(C_DOUBLE), INTENT(IN), OPTIONAL, TARGET ::               &
+     &      weights(*)
+          REAL(C_DOUBLE) :: libxs_fprint_diff
+          IF (PRESENT(weights)) THEN
+            libxs_fprint_diff = internal_fprint_diff(                   &
+     &        a, b, C_LOC(weights))
+          ELSE
+            libxs_fprint_diff = internal_fprint_diff(                   &
+     &        a, b, C_NULL_PTR)
+          END IF
+        END FUNCTION
+
+        !> In-place matrix transpose.
+        !> ldo defaults to n. scratch defaults to NULL
+        !> (auto-allocate internally).
+        SUBROUTINE libxs_itrans(inout, typesize,                        &
+     &  m, n, ldi, ldo, scratch)
+          TYPE(C_PTR), INTENT(IN) :: inout
+          INTEGER(C_INT), INTENT(IN) :: typesize
+          INTEGER(C_INT), INTENT(IN) :: m, n, ldi
+          INTEGER(C_INT), INTENT(IN), OPTIONAL :: ldo
+          TYPE(C_PTR), INTENT(IN), OPTIONAL :: scratch
+          INTEGER(C_INT) :: lo
+          TYPE(C_PTR) :: ss
+          IF (PRESENT(ldo)) THEN; lo = ldo
+          ELSE; lo = n; END IF
+          IF (PRESENT(scratch)) THEN; ss = scratch
+          ELSE; ss = C_NULL_PTR; END IF
+          CALL internal_itrans(inout, typesize,                         &
+     &      m, n, ldi, lo, ss)
+        END SUBROUTINE
+
+        !> In-place transpose: task variant.
+        !> ldo defaults to n. scratch defaults to NULL.
+        SUBROUTINE libxs_itrans_task(inout, typesize,                   &
+     &  m, n, ldi, ldo, scratch, tid, ntasks)
+          TYPE(C_PTR), INTENT(IN) :: inout
+          INTEGER(C_INT), INTENT(IN) :: typesize
+          INTEGER(C_INT), INTENT(IN) ::                                 &
+     &      m, n, ldi, tid, ntasks
+          INTEGER(C_INT), INTENT(IN), OPTIONAL :: ldo
+          TYPE(C_PTR), INTENT(IN), OPTIONAL :: scratch
+          INTEGER(C_INT) :: lo
+          TYPE(C_PTR) :: ss
+          IF (PRESENT(ldo)) THEN; lo = ldo
+          ELSE; lo = n; END IF
+          IF (PRESENT(scratch)) THEN; ss = scratch
+          ELSE; ss = C_NULL_PTR; END IF
+          CALL internal_itrans_task(inout, typesize,                    &
+     &      m, n, ldi, lo, ss, tid, ntasks)
         END SUBROUTINE
 
         !> Calculates a hash value for the given array and seed.
