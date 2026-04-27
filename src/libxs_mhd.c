@@ -8,11 +8,16 @@
 ******************************************************************************/
 #include <libxs_mhd.h>
 #include <libxs_mem.h>
+#include "libxs_hash.h"
 
 #include <ctype.h>
 
 #if !defined(LIBXS_MHD_MAX_LINELENGTH)
 # define LIBXS_MHD_MAX_LINELENGTH 1024
+#endif
+
+#if !defined(LIBXS_MHD_MAX_STRLENGTH)
+# define LIBXS_MHD_MAX_STRLENGTH 128
 #endif
 
 #if !defined(LIBXS_MHD_MAX_ELEMSIZE)
@@ -757,6 +762,179 @@ LIBXS_API_INTERN int internal_libxs_mhd_write(FILE* file, const void* data, cons
 }
 
 
+LIBXS_API_INLINE void internal_libxs_mhd_png_u32be(unsigned char buf[4], uint32_t v)
+{
+  buf[0] = (unsigned char)(v >> 24); buf[1] = (unsigned char)(v >> 16);
+  buf[2] = (unsigned char)(v >> 8);  buf[3] = (unsigned char)v;
+}
+
+
+LIBXS_API_INLINE int internal_libxs_mhd_png_chunk(FILE* file,
+  const char type[4], const void* payload, size_t length)
+{
+  unsigned char head[8];
+  uint32_t crc;
+  internal_libxs_mhd_png_u32be(head, (uint32_t)length);
+  head[4] = (unsigned char)type[0]; head[5] = (unsigned char)type[1];
+  head[6] = (unsigned char)type[2]; head[7] = (unsigned char)type[3];
+  if (8 != fwrite(head, 1, 8, file)) return EXIT_FAILURE;
+  crc = libxs_crc32_iso3309(~(uint32_t)0, head + 4, 4);
+  if (0 < length) {
+    if (length != fwrite(payload, 1, length, file)) return EXIT_FAILURE;
+    crc = libxs_crc32_iso3309(crc, payload, length);
+  }
+  crc = ~crc;
+  internal_libxs_mhd_png_u32be(head, crc);
+  if (4 != fwrite(head, 1, 4, file)) return EXIT_FAILURE;
+  return EXIT_SUCCESS;
+}
+
+
+LIBXS_API_INTERN int internal_libxs_mhd_write_png(const char filename[],
+  const void* data, size_t width, size_t height, size_t ncomponents,
+  libxs_data_t type_data)
+{
+  unsigned char color_type;
+  FILE* file;
+  int result = EXIT_SUCCESS;
+  const size_t typesize_data = LIBXS_TYPESIZE(type_data);
+  const size_t raw_row = ncomponents * width;
+  const size_t scanline = 1 + raw_row; /* filter byte + pixel data */
+  const size_t raw_size = scanline * height;
+  /* deflate stored-block framing: 5-byte header per 65535-byte block */
+  const size_t nblocks = (raw_size + 65534) / 65535;
+  const size_t deflate_size = raw_size + 5 * nblocks;
+  const size_t zlib_size = 2 + deflate_size + 4; /* header + deflate + adler32 */
+  size_t y, zlib_remain, block_remain;
+  uint32_t idat_crc, adler;
+  unsigned char buf[16];
+  char minmax[2*(LIBXS_MHD_MAX_ELEMSIZE)] = { 0 };
+  libxs_mhd_element_handler_info_t png_info;
+  const unsigned char* src;
+
+  switch (ncomponents) {
+    case 1: color_type = 0; break; /* grayscale */
+    case 3: color_type = 2; break; /* RGB */
+    case 4: color_type = 6; break; /* RGBA */
+    default: return EXIT_FAILURE;
+  }
+
+  file = fopen(filename, "wb");
+  if (NULL == file) return EXIT_FAILURE;
+
+  { /* PNG signature */
+    static const unsigned char sig[8] = {137,80,78,71,13,10,26,10};
+    if (8 != fwrite(sig, 1, 8, file)) { fclose(file); return EXIT_FAILURE; }
+  }
+
+  /* IHDR */
+  internal_libxs_mhd_png_u32be(buf + 0, (uint32_t)width);
+  internal_libxs_mhd_png_u32be(buf + 4, (uint32_t)height);
+  buf[8] = 8; /* bit depth */
+  buf[9] = color_type;
+  buf[10] = 0; /* compression */
+  buf[11] = 0; /* filter */
+  buf[12] = 0; /* interlace */
+  result = internal_libxs_mhd_png_chunk(file, "IHDR", buf, 13);
+  if (EXIT_SUCCESS != result) { fclose(file); return result; }
+
+  /* scan min/max for element conversion to U8 */
+  png_info.type = LIBXS_DATATYPE_U8;
+  png_info.hint = LIBXS_MHD_ELEMENT_CONVERSION_DEFAULT;
+  if (LIBXS_DATATYPE_U8 != type_data) {
+    const size_t nelements = width * height * ncomponents;
+    LIBXS_MEMCPY(minmax, data, typesize_data);
+    LIBXS_MEMCPY(minmax + (LIBXS_MHD_MAX_ELEMSIZE), data, typesize_data);
+    result = internal_libxs_mhd_minmax(data, nelements, type_data,
+      minmax, minmax + (LIBXS_MHD_MAX_ELEMSIZE));
+  }
+
+  /* IDAT: manual zlib/deflate stored-block framing */
+  if (EXIT_SUCCESS == result) {
+    /* IDAT chunk header: length + "IDAT" */
+    internal_libxs_mhd_png_u32be(buf, (uint32_t)zlib_size);
+    buf[4] = 'I'; buf[5] = 'D'; buf[6] = 'A'; buf[7] = 'T';
+    if (8 != fwrite(buf, 1, 8, file)) result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS == result) {
+    idat_crc = libxs_crc32_iso3309(~(uint32_t)0, buf + 4, 4);
+    /* zlib header: CMF=0x78 (deflate, 32K window), FLG=0x01 (no dict, check bits) */
+    buf[0] = 0x78; buf[1] = 0x01;
+    if (2 != fwrite(buf, 1, 2, file)) result = EXIT_FAILURE;
+    idat_crc = libxs_crc32_iso3309(idat_crc, buf, 2);
+  }
+
+  /* write deflate stored blocks containing scanlines */
+  src = (const unsigned char*)data;
+  adler = 1;
+  zlib_remain = raw_size;
+  block_remain = 0;
+  for (y = 0; y < height && EXIT_SUCCESS == result; ++y) {
+    unsigned char filter = 0, pixel;
+    size_t x, c;
+    /* emit filter byte + row pixels, splitting across stored blocks as needed */
+    for (x = 0; x <= raw_row && EXIT_SUCCESS == result; ++x) {
+      if (0 == block_remain) {
+        /* start a new deflate stored block */
+        size_t blen = (zlib_remain <= 65535) ? zlib_remain : 65535;
+        buf[0] = (zlib_remain <= 65535) ? 1 : 0; /* BFINAL */
+        buf[1] = (unsigned char)(blen & 0xFF);
+        buf[2] = (unsigned char)((blen >> 8) & 0xFF);
+        buf[3] = (unsigned char)(~blen & 0xFF);
+        buf[4] = (unsigned char)((~blen >> 8) & 0xFF);
+        if (5 != fwrite(buf, 1, 5, file)) { result = EXIT_FAILURE; break; }
+        idat_crc = libxs_crc32_iso3309(idat_crc, buf, 5);
+        block_remain = blen;
+      }
+      if (0 == x) {
+        /* filter byte (None=0) */
+        if (1 != fwrite(&filter, 1, 1, file)) { result = EXIT_FAILURE; break; }
+        idat_crc = libxs_crc32_iso3309(idat_crc, &filter, 1);
+        adler = internal_libxs_adler32(adler, &filter, 1);
+        --block_remain; --zlib_remain;
+      }
+      else {
+        /* pixel component */
+        c = x - 1;
+        if (LIBXS_DATATYPE_U8 == type_data) {
+          pixel = src[y * raw_row + c];
+        }
+        else {
+          const char* elem = (const char*)src + (y * raw_row + c) * typesize_data;
+          libxs_mhd_element_conversion(&pixel, &png_info, type_data, elem,
+            minmax, minmax + (LIBXS_MHD_MAX_ELEMSIZE));
+        }
+        if (1 != fwrite(&pixel, 1, 1, file)) { result = EXIT_FAILURE; break; }
+        idat_crc = libxs_crc32_iso3309(idat_crc, &pixel, 1);
+        adler = internal_libxs_adler32(adler, &pixel, 1);
+        --block_remain; --zlib_remain;
+      }
+    }
+  }
+
+  /* Adler-32 checksum (big-endian) */
+  if (EXIT_SUCCESS == result) {
+    internal_libxs_mhd_png_u32be(buf, adler);
+    if (4 != fwrite(buf, 1, 4, file)) result = EXIT_FAILURE;
+    idat_crc = libxs_crc32_iso3309(idat_crc, buf, 4);
+  }
+  /* IDAT CRC */
+  if (EXIT_SUCCESS == result) {
+    idat_crc = ~idat_crc;
+    internal_libxs_mhd_png_u32be(buf, idat_crc);
+    if (4 != fwrite(buf, 1, 4, file)) result = EXIT_FAILURE;
+  }
+
+  /* IEND */
+  if (EXIT_SUCCESS == result) {
+    result = internal_libxs_mhd_png_chunk(file, "IEND", NULL, 0);
+  }
+
+  if (0 != fclose(file) && EXIT_SUCCESS == result) result = EXIT_FAILURE;
+  return result;
+}
+
+
 LIBXS_API int libxs_mhd_write(const char filename[], const size_t offset[], const size_t size[], const size_t pitch[],
   libxs_mhd_info_t* info, const void* data, const libxs_mhd_write_info_t* write_info)
 {
@@ -848,6 +1026,19 @@ LIBXS_API int libxs_mhd_write(const char filename[], const size_t offset[], cons
   }
   else {
     result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS == result && 2 == ndims && NULL != getenv("LIBXS_MHD_PNG")) {
+    const size_t len = strlen(filename);
+    char png_name[LIBXS_MHD_MAX_STRLENGTH];
+    if (len < sizeof(png_name) - 4) {
+      const char *const dot = strrchr(filename, '.');
+      const size_t base = (NULL != dot ? (size_t)(dot - filename) : len);
+      memcpy(png_name, filename, base);
+      memcpy(png_name + base, ".png", 5);
+      internal_libxs_mhd_write_png(png_name, data,
+        size[0], size[1], ncomponents, type_data);
+    }
+    else result = EXIT_FAILURE;
   }
   return result;
 }
