@@ -166,6 +166,25 @@ LIBXS_API double libxs_fprint_diff(
   const libxs_fprint_t* a, const libxs_fprint_t* b,
   const double weights[]);
 
+/**
+ * Recover unnormalized (raw) value from a fingerprint norm at order k.
+ * The fingerprint stores norms of derivatives scaled to the unit
+ * interval: internally each difference divides by h = 1/(n-1),
+ * so the stored value at order k is (n-1)^k times the raw
+ * finite difference.  This helper undoes that scaling.
+ * For k == 0, returns the value unchanged.
+ */
+LIBXS_API_INLINE double libxs_fprint_raw(
+  const libxs_fprint_t* info, int k, double value)
+{
+  if (0 < k && 1 < info->n) {
+    const double h = 1.0 / (info->n - 1);
+    int i;
+    for (i = 0; i < k; ++i) value *= h;
+  }
+  return value;
+}
+
 /** Greatest common divisor (corner case: the GCD of 0 and 0 is 1). */
 LIBXS_API size_t libxs_gcd(size_t a, size_t b);
 /** Least common multiple. */
