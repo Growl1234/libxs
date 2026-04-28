@@ -357,17 +357,24 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
        * Tiles outermost (single omp for): C stays in a local buffer
        * across all slice pairs -- one load + one store per tile instead
        * of a read-modify-write per pair.  Also eliminates per-pair
-       * omp-for barriers (implicit barrier at end of tile loop suffices). */
+       * omp-for barriers (implicit barrier at end of tile loop suffices).
+       * AMX 2x1: step by 2*BLOCK_M to enable B-tile reuse across two
+       * row blocks; VNNI fallback processes two BLOCK_M chunks. */
+#if defined(LIBXS_INTRINSICS_AMX) && 16 == BLOCK_M && 16 == BLOCK_N
+# define BLOCK_M2 (2 * BLOCK_M)
+#else
+# define BLOCK_M2 BLOCK_M
+#endif
 #if defined(_OPENMP)
 # pragma omp for LIBXS_OPENMP_COLLAPSE(2) OZAKI_OMP_SCHEDULE
 #endif
       for (jb = 0; jb < N; jb += BLOCK_N) {
-        for (ib = 0; ib < M; ib += BLOCK_M) {
-          const GEMM_INT_TYPE iblk = LIBXS_MIN(BLOCK_M, M - ib);
+        for (ib = 0; ib < M; ib += BLOCK_M2) {
+          const GEMM_INT_TYPE iblk = LIBXS_MIN(BLOCK_M2, M - ib);
           const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
           GEMM_REAL_TYPE* const cb = c + jb * ldcv + ib;
-          LIBXS_ALIGNED(GEMM_REAL_TYPE c_local[BLOCK_M * BLOCK_N], LIBXS_ALIGNMENT);
-          LIBXS_ALIGNED(int32_t c_acc[BLOCK_M * BLOCK_N], LIBXS_ALIGNMENT);
+          LIBXS_ALIGNED(GEMM_REAL_TYPE c_local[BLOCK_M2 * BLOCK_N], LIBXS_ALIGNMENT);
+          LIBXS_ALIGNED(int32_t c_acc[BLOCK_M2 * BLOCK_N], LIBXS_ALIGNMENT);
 
           /* Load current C tile into contiguous local buffer */
           for (nj = 0; nj < jblk; ++nj) {
@@ -438,6 +445,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
           }
         }
       }
+#undef BLOCK_M2
     } /* end K-group loop */
 
     GEMM_PROFILE_END(tid, M, N, K);
