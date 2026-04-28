@@ -542,7 +542,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
                   __m512i bsum = _mm512_setzero_si512();
                   {
                     const __m512i vidx = OZAKI_GATHER_VIDX(K_grp_pad);
-                    for (kk = kb; kk < kb + chunk_k; kk += BLOCK_K) {
+                    for (kk = kb; kk - kb < chunk_k; kk += BLOCK_K) {
                       LIBXS_ALIGNED(int32_t bv[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
                       int bk;
                       OZAKI_REFORMAT_B_IMPL(vidx, b_prime, kk, BLOCK_N, bv, BLOCK_K);
@@ -587,7 +587,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
 # else /* u8 */
                 {
                   const __m512i vidx = OZAKI_GATHER_VIDX(K_grp_pad);
-                  for (kk = kb; kk < kb + chunk_k; kk += BLOCK_K) {
+                  for (kk = kb; kk - kb < chunk_k; kk += BLOCK_K) {
                     LIBXS_ALIGNED(int32_t bv[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
                     int bk;
                     OZAKI_REFORMAT_B_XOR_IMPL(vidx, b_prime, kk, BLOCK_N, bv, BLOCK_K);
@@ -603,7 +603,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
                 }
                 for (mi = 0; mi < iblk; ++mi) {
                   int32_t asum = 0;
-                  for (kk = kb; kk < kb + chunk_k; ++kk) {
+                  for (kk = kb; kk - kb < chunk_k; ++kk) {
                     asum += (int32_t)a_prime[mi * K_grp_pad + kk];
                   }
                   {
