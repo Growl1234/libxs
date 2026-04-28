@@ -540,23 +540,21 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
                   const __m512i bias = _mm512_set1_epi32((int32_t)0x80808080);
                   const __m512i ones = _mm512_set1_epi32(0x01010101);
                   __m512i bsum = _mm512_setzero_si512();
-                  for (kk = kb; kk < kb + chunk_k; kk += BLOCK_K) {
-                    LIBXS_ALIGNED(int32_t bv[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
-                    int bk;
-                    for (bk = 0; bk < BLOCK_K; bk += 4) {
-                      int rf_nj;
-                      for (rf_nj = 0; rf_nj < BLOCK_N; ++rf_nj) {
-                        memcpy(bv + (bk >> 2) * BLOCK_N + rf_nj, (const char*)b_prime + (long)rf_nj * K_grp_pad + kk + bk, 4);
-                      }
-                    }
-                    for (bk = 0; bk < BLOCK_K; bk += 4) {
-                      const __m512i vb = _mm512_load_si512((__m512i*)(bv + (bk >> 2) * BLOCK_N));
-                      bsum = _mm512_dpbusd_epi32(bsum, ones, vb);
-                      LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
-                      for (mi = 0; mi < iblk; ++mi) {
-                        const __m512i va = _mm512_xor_si512(
-                          _mm512_set1_epi32(*(const int32_t*)(a_prime + (long)mi * K_grp_pad + kk + bk)), bias);
-                        acc[mi] = _mm512_dpbusd_epi32(acc[mi], va, vb);
+                  {
+                    const __m512i vidx = OZAKI_GATHER_VIDX(K_grp_pad);
+                    for (kk = kb; kk < kb + chunk_k; kk += BLOCK_K) {
+                      LIBXS_ALIGNED(int32_t bv[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
+                      int bk;
+                      OZAKI_REFORMAT_B_IMPL(vidx, b_prime, kk, BLOCK_N, bv, BLOCK_K);
+                      for (bk = 0; bk < BLOCK_K; bk += 4) {
+                        const __m512i vb = _mm512_load_si512((__m512i*)(bv + (bk >> 2) * BLOCK_N));
+                        bsum = _mm512_dpbusd_epi32(bsum, ones, vb);
+                        LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
+                        for (mi = 0; mi < iblk; ++mi) {
+                          const __m512i va = _mm512_xor_si512(
+                            _mm512_set1_epi32(*(const int32_t*)(a_prime + (long)mi * K_grp_pad + kk + bk)), bias);
+                          acc[mi] = _mm512_dpbusd_epi32(acc[mi], va, vb);
+                        }
                       }
                     }
                   }
@@ -587,23 +585,19 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
                   }
                 }
 # else /* u8 */
-                for (kk = kb; kk < kb + chunk_k; kk += BLOCK_K) {
-                  LIBXS_ALIGNED(int32_t bv[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
-                  int bk;
-                  for (bk = 0; bk < BLOCK_K; bk += 4) {
-                    int rf_nj;
-                    for (rf_nj = 0; rf_nj < BLOCK_N; ++rf_nj) {
-                      int32_t bt;
-                      memcpy(&bt, (const char*)b_prime + (long)rf_nj * K_grp_pad + kk + bk, 4);
-                      bv[(bk >> 2) * BLOCK_N + rf_nj] = bt ^ (int32_t)0x80808080;
-                    }
-                  }
-                  for (bk = 0; bk < BLOCK_K; bk += 4) {
-                    const __m512i vb = _mm512_load_si512((__m512i*)(bv + (bk >> 2) * BLOCK_N));
-                    LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
-                    for (mi = 0; mi < iblk; ++mi) {
-                      const __m512i va = _mm512_set1_epi32(*(const int32_t*)(a_prime + (long)mi * K_grp_pad + kk + bk));
-                      acc[mi] = _mm512_dpbusd_epi32(acc[mi], va, vb);
+                {
+                  const __m512i vidx = OZAKI_GATHER_VIDX(K_grp_pad);
+                  for (kk = kb; kk < kb + chunk_k; kk += BLOCK_K) {
+                    LIBXS_ALIGNED(int32_t bv[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
+                    int bk;
+                    OZAKI_REFORMAT_B_XOR_IMPL(vidx, b_prime, kk, BLOCK_N, bv, BLOCK_K);
+                    for (bk = 0; bk < BLOCK_K; bk += 4) {
+                      const __m512i vb = _mm512_load_si512((__m512i*)(bv + (bk >> 2) * BLOCK_N));
+                      LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
+                      for (mi = 0; mi < iblk; ++mi) {
+                        const __m512i va = _mm512_set1_epi32(*(const int32_t*)(a_prime + (long)mi * K_grp_pad + kk + bk));
+                        acc[mi] = _mm512_dpbusd_epi32(acc[mi], va, vb);
+                      }
                     }
                   }
                 }

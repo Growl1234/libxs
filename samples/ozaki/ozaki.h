@@ -200,25 +200,52 @@
   }
 
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
-# define OZAKI_PANEL_REFORMAT_B(B, LDB, KB, N, BUF) \
+# define OZAKI_GATHER_VIDX(LDB) \
+    _mm512_mullo_epi32( \
+      _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15), \
+      _mm512_set1_epi32((int)(LDB)))
+
+# define OZAKI_REFORMAT_B_IMPL(VIDX, B, KB, N, BUF, KCHUNK) \
     do { \
-      int rf_kk, rf_nj; \
-      for (rf_kk = 0; rf_kk < BLOCK_K; rf_kk += 4) { \
-        for (rf_nj = 0; rf_nj < (N); ++rf_nj) { \
-          memcpy((BUF) + (rf_kk >> 2) * (N) + rf_nj, (const char*)(B) + (long)rf_nj * (LDB) + (KB) + rf_kk, 4); \
-        } \
+      int rf_kk_; \
+      for (rf_kk_ = 0; rf_kk_ < (KCHUNK); rf_kk_ += 4) { \
+        _mm512_store_si512((__m512i*)((BUF) + (rf_kk_ >> 2) * (N)), \
+          _mm512_i32gather_epi32(VIDX, (const char*)(B) + (KB) + rf_kk_, 1)); \
       } \
     } while (0)
 
-# define OZAKI_PANEL_REFORMAT_B_XOR(B, LDB, KB, N, BUF) \
+# define OZAKI_REFORMAT_B_XOR_IMPL(VIDX, B, KB, N, BUF, KCHUNK) \
     do { \
-      int rf_kk, rf_nj; \
-      for (rf_kk = 0; rf_kk < BLOCK_K; rf_kk += 4) { \
-        for (rf_nj = 0; rf_nj < (N); ++rf_nj) { \
-          int32_t rf_tmp; \
-          memcpy(&rf_tmp, (const char*)(B) + (long)rf_nj * (LDB) + (KB) + rf_kk, 4); \
-          (BUF)[(rf_kk >> 2) * (N) + rf_nj] = rf_tmp ^ (int32_t)0x80808080; \
-        } \
+      const __m512i rf_xor_ = _mm512_set1_epi32((int32_t)0x80808080); \
+      int rf_kk_; \
+      for (rf_kk_ = 0; rf_kk_ < (KCHUNK); rf_kk_ += 4) { \
+        _mm512_store_si512((__m512i*)((BUF) + (rf_kk_ >> 2) * (N)), \
+          _mm512_xor_si512(_mm512_i32gather_epi32(VIDX, (const char*)(B) + (KB) + rf_kk_, 1), rf_xor_)); \
+      } \
+    } while (0)
+
+# define OZAKI_REFORMAT_B_BSUM_IMPL(VIDX, B, KB, N, BUF, KCHUNK, ONES, BSUM) \
+    do { \
+      int rf_kk_; \
+      for (rf_kk_ = 0; rf_kk_ < (KCHUNK); rf_kk_ += 4) { \
+        const __m512i rf_vb_ = _mm512_i32gather_epi32(VIDX, (const char*)(B) + (KB) + rf_kk_, 1); \
+        _mm512_store_si512((__m512i*)((BUF) + (rf_kk_ >> 2) * (N)), rf_vb_); \
+        (BSUM) = _mm512_dpbusd_epi32(BSUM, ONES, rf_vb_); \
+      } \
+    } while (0)
+
+# define OZAKI_PANEL_REFORMAT_B(B, LDB, KB, N, BUF) \
+    OZAKI_REFORMAT_B_IMPL(OZAKI_GATHER_VIDX(LDB), B, KB, N, BUF, BLOCK_K)
+# define OZAKI_PANEL_REFORMAT_B_XOR(B, LDB, KB, N, BUF) \
+    OZAKI_REFORMAT_B_XOR_IMPL(OZAKI_GATHER_VIDX(LDB), B, KB, N, BUF, BLOCK_K)
+
+# define OZAKI_BIAS_A(A, LDA, KB, M, BUF) \
+    do { \
+      const __m512i rf_abias_ = _mm512_set1_epi8((char)0x80); \
+      GEMM_INT_TYPE rf_mi_; \
+      for (rf_mi_ = 0; rf_mi_ < (M); ++rf_mi_) { \
+        _mm512_store_si512((__m512i*)((BUF) + rf_mi_ * 64), \
+          _mm512_xor_si512(_mm512_loadu_si512((const __m512i*)((A) + rf_mi_ * (LDA) + (KB))), rf_abias_)); \
       } \
     } while (0)
 #endif
@@ -672,26 +699,20 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_u8_amx(
     _tile_loadconfig(&cfg);
     if (0 == beta) _tile_zero(OZAKI_AMX_TILE_C);
     else _tile_loadd(OZAKI_AMX_TILE_C, c_buf, c_stride);
-    for (kb = 0; kb < (K & ~(GEMM_INT_TYPE)63); kb += 64) {
-      int qi;
-      for (qi = 0; qi < 16; ++qi) {
-        int nj;
-        for (nj = 0; nj < BLOCK_N; ++nj) {
-          int32_t tmp;
-          memcpy(&tmp, b + (long)nj * ldb + kb + qi * 4, 4);
-          b_tile[qi * BLOCK_N + nj] = tmp ^ (int32_t)0x80808080;
-        }
+    {
+      const __m512i vidx = OZAKI_GATHER_VIDX(ldb);
+      for (kb = 0; kb < (K & ~(GEMM_INT_TYPE)63); kb += 64) {
+        OZAKI_REFORMAT_B_XOR_IMPL(vidx, b, kb, BLOCK_N, b_tile, 64);
+        _tile_loadd(OZAKI_AMX_TILE_A, a + kb, (int)lda);
+        _tile_loadd(OZAKI_AMX_TILE_B, b_tile, c_stride);
+        _tile_dpbusd(OZAKI_AMX_TILE_C, OZAKI_AMX_TILE_A, OZAKI_AMX_TILE_B);
       }
-      _tile_loadd(OZAKI_AMX_TILE_A, a + kb, (int)lda);
-      _tile_loadd(OZAKI_AMX_TILE_B, b_tile, c_stride);
-      _tile_dpbusd(OZAKI_AMX_TILE_C, OZAKI_AMX_TILE_A, OZAKI_AMX_TILE_B);
     }
     _tile_stored(OZAKI_AMX_TILE_C, c_buf, c_stride);
     _tile_release();
   }
 
   if (kb < K) {
-    const __m512i bxor = _mm512_set1_epi32((int32_t)0x80808080);
     for (mi = 0; mi < M; ++mi) {
       __m512i acc = (0 == kb && 0 == beta) ? _mm512_setzero_si512() : _mm512_loadu_si512((__m512i*)(c_buf + mi * BLOCK_N));
       {
@@ -747,23 +768,15 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx(
     _tile_loadconfig(&cfg);
     if (0 == beta) _tile_zero(OZAKI_AMX_TILE_C);
     else _tile_loadd(OZAKI_AMX_TILE_C, c_buf, c_stride);
-    for (kb = 0; kb < (K & ~(GEMM_INT_TYPE)63); kb += 64) {
-      int qi;
-      GEMM_INT_TYPE ki;
-      for (qi = 0; qi < 16; ++qi) {
-        int nj;
-        for (nj = 0; nj < BLOCK_N; ++nj) {
-          memcpy(b_tile + qi * BLOCK_N + nj, b + (long)nj * ldb + kb + qi * 4, 4);
-        }
+    {
+      const __m512i vidx = OZAKI_GATHER_VIDX(ldb);
+      for (kb = 0; kb < (K & ~(GEMM_INT_TYPE)63); kb += 64) {
+        OZAKI_REFORMAT_B_IMPL(vidx, b, kb, BLOCK_N, b_tile, 64);
+        OZAKI_BIAS_A(a, lda, kb, M, a_biased);
+        _tile_loadd(OZAKI_AMX_TILE_A, a_biased, 64);
+        _tile_loadd(OZAKI_AMX_TILE_B, b_tile, c_stride);
+        _tile_dpbusd(OZAKI_AMX_TILE_C, OZAKI_AMX_TILE_A, OZAKI_AMX_TILE_B);
       }
-      for (mi = 0; mi < M; ++mi) {
-        for (ki = 0; ki < 64; ++ki) {
-          a_biased[mi * 64 + ki] = (uint8_t)((unsigned char)a[mi * lda + kb + ki] ^ 0x80u);
-        }
-      }
-      _tile_loadd(OZAKI_AMX_TILE_A, a_biased, 64);
-      _tile_loadd(OZAKI_AMX_TILE_B, b_tile, c_stride);
-      _tile_dpbusd(OZAKI_AMX_TILE_C, OZAKI_AMX_TILE_A, OZAKI_AMX_TILE_B);
     }
     _tile_stored(OZAKI_AMX_TILE_C, c_buf, c_stride);
     _tile_release();
@@ -832,28 +845,19 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_u8_amx_
     _tile_loadconfig(&cfg);
     if (0 == beta) _tile_zero(OZAKI_AMX_TILE_C);
     else _tile_loadd(OZAKI_AMX_TILE_C, c_buf, c_stride);
-    for (kb = 0; kb < (K & ~(GEMM_INT_TYPE)63); kb += 64) {
-      int qi, nj;
-      for (qi = 0; qi < 16; ++qi) {
-        for (nj = 0; nj < BLOCK_N; ++nj) {
-          int32_t tmp;
-          memcpy(&tmp, b1 + (long)nj * ldb1 + kb + qi * 4, 4);
-          b_tile[qi * BLOCK_N + nj] = tmp ^ (int32_t)0x80808080;
-        }
+    {
+      const __m512i vidx1 = OZAKI_GATHER_VIDX(ldb1);
+      const __m512i vidx2 = OZAKI_GATHER_VIDX(ldb2);
+      for (kb = 0; kb < (K & ~(GEMM_INT_TYPE)63); kb += 64) {
+        OZAKI_REFORMAT_B_XOR_IMPL(vidx1, b1, kb, BLOCK_N, b_tile, 64);
+        _tile_loadd(OZAKI_AMX_TILE_A, a1 + kb, (int)lda1);
+        _tile_loadd(OZAKI_AMX_TILE_B, b_tile, c_stride);
+        _tile_dpbusd(OZAKI_AMX_TILE_C, OZAKI_AMX_TILE_A, OZAKI_AMX_TILE_B);
+        OZAKI_REFORMAT_B_XOR_IMPL(vidx2, b2, kb, BLOCK_N, b_tile, 64);
+        _tile_loadd(OZAKI_AMX_TILE_A, a2 + kb, (int)lda2);
+        _tile_loadd(OZAKI_AMX_TILE_B, b_tile, c_stride);
+        _tile_dpbusd(OZAKI_AMX_TILE_C, OZAKI_AMX_TILE_A, OZAKI_AMX_TILE_B);
       }
-      _tile_loadd(OZAKI_AMX_TILE_A, a1 + kb, (int)lda1);
-      _tile_loadd(OZAKI_AMX_TILE_B, b_tile, c_stride);
-      _tile_dpbusd(OZAKI_AMX_TILE_C, OZAKI_AMX_TILE_A, OZAKI_AMX_TILE_B);
-      for (qi = 0; qi < 16; ++qi) {
-        for (nj = 0; nj < BLOCK_N; ++nj) {
-          int32_t tmp;
-          memcpy(&tmp, b2 + (long)nj * ldb2 + kb + qi * 4, 4);
-          b_tile[qi * BLOCK_N + nj] = tmp ^ (int32_t)0x80808080;
-        }
-      }
-      _tile_loadd(OZAKI_AMX_TILE_A, a2 + kb, (int)lda2);
-      _tile_loadd(OZAKI_AMX_TILE_B, b_tile, c_stride);
-      _tile_dpbusd(OZAKI_AMX_TILE_C, OZAKI_AMX_TILE_A, OZAKI_AMX_TILE_B);
     }
     _tile_stored(OZAKI_AMX_TILE_C, c_buf, c_stride);
     _tile_release();
@@ -926,41 +930,21 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx_
     _tile_loadconfig(&cfg);
     if (0 == beta) _tile_zero(OZAKI_AMX_TILE_C);
     else _tile_loadd(OZAKI_AMX_TILE_C, c_buf, c_stride);
-    for (kb = 0; kb < (K & ~(GEMM_INT_TYPE)63); kb += 64) {
-      int qi, nj;
-      GEMM_INT_TYPE ki;
-      for (qi = 0; qi < 16; ++qi) {
-        for (nj = 0; nj < BLOCK_N; ++nj) {
-          memcpy(b_tile + qi * BLOCK_N + nj, b1 + (long)nj * ldb1 + kb + qi * 4, 4);
-        }
+    {
+      const __m512i vidx1 = OZAKI_GATHER_VIDX(ldb1);
+      const __m512i vidx2 = OZAKI_GATHER_VIDX(ldb2);
+      for (kb = 0; kb < (K & ~(GEMM_INT_TYPE)63); kb += 64) {
+        OZAKI_REFORMAT_B_BSUM_IMPL(vidx1, b1, kb, BLOCK_N, b_tile, 64, ones, bsum1);
+        OZAKI_BIAS_A(a1, lda1, kb, M, a_biased);
+        _tile_loadd(OZAKI_AMX_TILE_A, a_biased, 64);
+        _tile_loadd(OZAKI_AMX_TILE_B, b_tile, c_stride);
+        _tile_dpbusd(OZAKI_AMX_TILE_C, OZAKI_AMX_TILE_A, OZAKI_AMX_TILE_B);
+        OZAKI_REFORMAT_B_BSUM_IMPL(vidx2, b2, kb, BLOCK_N, b_tile, 64, ones, bsum2);
+        OZAKI_BIAS_A(a2, lda2, kb, M, a_biased);
+        _tile_loadd(OZAKI_AMX_TILE_A, a_biased, 64);
+        _tile_loadd(OZAKI_AMX_TILE_B, b_tile, c_stride);
+        _tile_dpbusd(OZAKI_AMX_TILE_C, OZAKI_AMX_TILE_A, OZAKI_AMX_TILE_B);
       }
-      for (qi = 0; qi < 16; ++qi) {
-        bsum1 = _mm512_dpbusd_epi32(bsum1, ones, _mm512_loadu_si512((__m512i*)(b_tile + qi * BLOCK_N)));
-      }
-      for (mi = 0; mi < M; ++mi) {
-        for (ki = 0; ki < 64; ++ki) {
-          a_biased[mi * 64 + ki] = (uint8_t)((unsigned char)a1[mi * lda1 + kb + ki] ^ 0x80u);
-        }
-      }
-      _tile_loadd(OZAKI_AMX_TILE_A, a_biased, 64);
-      _tile_loadd(OZAKI_AMX_TILE_B, b_tile, c_stride);
-      _tile_dpbusd(OZAKI_AMX_TILE_C, OZAKI_AMX_TILE_A, OZAKI_AMX_TILE_B);
-      for (qi = 0; qi < 16; ++qi) {
-        for (nj = 0; nj < BLOCK_N; ++nj) {
-          memcpy(b_tile + qi * BLOCK_N + nj, b2 + (long)nj * ldb2 + kb + qi * 4, 4);
-        }
-      }
-      for (qi = 0; qi < 16; ++qi) {
-        bsum2 = _mm512_dpbusd_epi32(bsum2, ones, _mm512_loadu_si512((__m512i*)(b_tile + qi * BLOCK_N)));
-      }
-      for (mi = 0; mi < M; ++mi) {
-        for (ki = 0; ki < 64; ++ki) {
-          a_biased[mi * 64 + ki] = (uint8_t)((unsigned char)a2[mi * lda2 + kb + ki] ^ 0x80u);
-        }
-      }
-      _tile_loadd(OZAKI_AMX_TILE_A, a_biased, 64);
-      _tile_loadd(OZAKI_AMX_TILE_B, b_tile, c_stride);
-      _tile_dpbusd(OZAKI_AMX_TILE_C, OZAKI_AMX_TILE_A, OZAKI_AMX_TILE_B);
     }
     _tile_stored(OZAKI_AMX_TILE_C, c_buf, c_stride);
     _tile_release();
