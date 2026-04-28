@@ -45,17 +45,6 @@ static void split_digits(uint64_t mantissa, int sign, int8_t digits[MAX_NSLICES]
   }
 }
 
-static void split_digits_biased(uint64_t mantissa, int sign, uint8_t digits[MAX_NSLICES])
-{
-  int8_t tmp[MAX_NSLICES];
-  int s;
-  split_digits(mantissa, sign, tmp);
-  LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
-  for (s = 0; s < ozaki_n; ++s) {
-    digits[s] = (uint8_t)(tmp[s] ^ (int8_t)OZ1_BIASED_ZERO);
-  }
-}
-
 
 LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, const GEMM_INT_TYPE* m, const GEMM_INT_TYPE* n,
   const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda, const GEMM_REAL_TYPE* b,
@@ -74,10 +63,9 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
   const GEMM_INT_TYPE K_grp_size = (0 < ozaki_maxk ? (GEMM_INT_TYPE)ozaki_maxk : K);
   const GEMM_INT_TYPE K_grp_max = LIBXS_MIN(K_grp_size, K);
   const GEMM_INT_TYPE K_grp_pad = ((K_grp_max + BLOCK_K - 1) / BLOCK_K) * BLOCK_K;
-  uint8_t* a_slices = NULL;
+  int8_t* a_slices = NULL;
   int8_t* b_slices = NULL;
   int32_t* b_packed = NULL;
-  int32_t* b_colsum = NULL;
   int16_t* expa_raw = NULL;
   int16_t* expb_raw = NULL;
   double* expa_fp = NULL;
@@ -98,13 +86,12 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
     pow2_low[s] = libxs_pow2((int)slice_low_bit[s]);
   }
 
-  a_slices = (uint8_t*)libxs_malloc(gemm_pool, (size_t)nslices * M * K_grp_pad, 0);
+  a_slices = (int8_t*)libxs_malloc(gemm_pool, (size_t)nslices * M * K_grp_pad, 0);
   b_slices = (int8_t*)libxs_malloc(gemm_pool, (size_t)nslices * N * K_grp_pad, 0);
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
   {
     const GEMM_INT_TYPE N_blocks = (N + BLOCK_N - 1) / BLOCK_N;
     b_packed = (int32_t*)libxs_malloc(gemm_pool, (size_t)nslices * N_blocks * (K_grp_pad / 4) * BLOCK_N * sizeof(int32_t), 0);
-    b_colsum = (int32_t*)libxs_malloc(gemm_pool, (size_t)nslices * N_blocks * BLOCK_N * sizeof(int32_t), 0);
   }
 #endif
   expa_raw = (int16_t*)libxs_malloc(gemm_pool, (size_t)M * sizeof(int16_t), 0);
@@ -158,7 +145,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
         int ss;
         /* Zero this row's slice buffers */
         for (ss = 0; ss < nslices; ++ss) {
-          memset(a_slices + (long)ss * M * K_grp_pad + (long)row * K_grp_pad, OZ1_BIASED_ZERO, (size_t)K_grp_pad);
+          memset(a_slices + (long)ss * M * K_grp_pad + (long)row * K_grp_pad, 0, (size_t)K_grp_pad);
         }
         for (kk = kb_grp; kk < kb_grp + K_len; ++kk) {
           int16_t e;
@@ -175,8 +162,8 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
           if (0 != mt) {
             int delta = (int)row_max_exp - (int)e;
             uint64_t aligned = (delta < 64) ? (mt >> delta) : 0;
-            uint8_t tmp[MAX_NSLICES];
-            split_digits_biased(aligned, sign, tmp);
+            int8_t tmp[MAX_NSLICES];
+            split_digits(aligned, sign, tmp);
             LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
             for (ss = 0; ss < nslices; ++ss) {
               a_slices[(long)ss * M * K_grp_pad + (long)row * K_grp_pad + (kk - kb_grp)] = tmp[ss];
@@ -235,10 +222,10 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
       for (row = 0; row < M; ++row) {
         int si;
         for (si = nslices - 1; si >= 0; --si) {
-          const uint8_t* sl = a_slices + (long)si * M * K_grp_pad + (long)row * K_grp_pad;
+          const int8_t* sl = a_slices + (long)si * M * K_grp_pad + (long)row * K_grp_pad;
           GEMM_INT_TYPE kk;
           for (kk = 0; kk < K_len; ++kk) {
-            if (OZ1_BIASED_ZERO != sl[kk]) { sma = LIBXS_MAX(sma, si); si = 0; break; }
+            if (0 != sl[kk]) { sma = LIBXS_MAX(sma, si); si = 0; break; }
           }
         }
       }
@@ -292,7 +279,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
           fp_k.order = LIBXS_MAX(fp_k.order, fp.order);
           fp_k.n = LIBXS_MAX(fp_k.n, fp.n);
 
-          libxs_fprint(&fp, LIBXS_DATATYPE_U8, a_slices + (long)ss * M * K_grp_pad,
+          libxs_fprint(&fp, LIBXS_DATATYPE_I8, a_slices + (long)ss * M * K_grp_pad,
             2, ashp, astr, forder, 0 /*axis=M*/);
           for (dd = 0; dd <= fp.order; ++dd) {
             if (fp.linf[dd] > fp_m.linf[dd]) fp_m.linf[dd] = fp.linf[dd];
@@ -349,27 +336,17 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
         for (jb = 0; jb < N; jb += BLOCK_N) {
           for (slice_a = 0; slice_a < nslices; ++slice_a) {
             const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
-            const long blk_idx = (long)slice_a * N_blocks + (long)(jb / BLOCK_N);
-            int32_t* const dst = b_packed + blk_idx * bp_stride;
-            int32_t* const csum = b_colsum + blk_idx * BLOCK_N;
+            int32_t* const dst = b_packed + (long)slice_a * N_blocks * bp_stride + (long)(jb / BLOCK_N) * bp_stride;
             if (jblk == BLOCK_N) {
               const __m512i vidx = OZAKI_GATHER_VIDX(K_grp_pad);
-              const int8_t* const bsrc = b_slices + (long)slice_a * N * K_grp_pad + (long)jb * K_grp_pad;
               GEMM_INT_TYPE kb;
-              int nj2;
               for (kb = 0; kb < K_grp_pad; kb += BLOCK_K) {
-                OZAKI_REFORMAT_B_IMPL(vidx, bsrc, kb, BLOCK_N, dst + (kb / 4) * BLOCK_N, BLOCK_K);
-              }
-              for (nj2 = 0; nj2 < BLOCK_N; ++nj2) {
-                int32_t s = 0;
-                GEMM_INT_TYPE kk;
-                for (kk = 0; kk < K_grp_pad; ++kk) s += (int32_t)bsrc[(long)nj2 * K_grp_pad + kk];
-                csum[nj2] = s;
+                OZAKI_REFORMAT_B_IMPL(vidx, b_slices + (long)slice_a * N * K_grp_pad + (long)jb * K_grp_pad,
+                  kb, BLOCK_N, dst + (kb / 4) * BLOCK_N, BLOCK_K);
               }
             }
             else {
               memset(dst, 0, (size_t)bp_stride * sizeof(int32_t));
-              memset(csum, 0, (size_t)BLOCK_N * sizeof(int32_t));
             }
           }
         }
@@ -380,24 +357,17 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
        * Tiles outermost (single omp for): C stays in a local buffer
        * across all slice pairs -- one load + one store per tile instead
        * of a read-modify-write per pair.  Also eliminates per-pair
-       * omp-for barriers (implicit barrier at end of tile loop suffices).
-       * AMX 2x1: step by 2*BLOCK_M to enable B-tile reuse across two
-       * row blocks; VNNI fallback processes two BLOCK_M chunks. */
-#if defined(LIBXS_INTRINSICS_AMX) && 16 == BLOCK_M && 16 == BLOCK_N
-# define BLOCK_M2 (2 * BLOCK_M)
-#else
-# define BLOCK_M2 BLOCK_M
-#endif
+       * omp-for barriers (implicit barrier at end of tile loop suffices). */
 #if defined(_OPENMP)
 # pragma omp for LIBXS_OPENMP_COLLAPSE(2) OZAKI_OMP_SCHEDULE
 #endif
       for (jb = 0; jb < N; jb += BLOCK_N) {
-        for (ib = 0; ib < M; ib += BLOCK_M2) {
-          const GEMM_INT_TYPE iblk = LIBXS_MIN(BLOCK_M2, M - ib);
+        for (ib = 0; ib < M; ib += BLOCK_M) {
+          const GEMM_INT_TYPE iblk = LIBXS_MIN(BLOCK_M, M - ib);
           const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
           GEMM_REAL_TYPE* const cb = c + jb * ldcv + ib;
-          LIBXS_ALIGNED(GEMM_REAL_TYPE c_local[BLOCK_M2 * BLOCK_N], LIBXS_ALIGNMENT);
-          LIBXS_ALIGNED(int32_t c_acc[BLOCK_M2 * BLOCK_N], LIBXS_ALIGNMENT);
+          LIBXS_ALIGNED(GEMM_REAL_TYPE c_local[BLOCK_M * BLOCK_N], LIBXS_ALIGNMENT);
+          LIBXS_ALIGNED(int32_t c_acc[BLOCK_M * BLOCK_N], LIBXS_ALIGNMENT);
 
           /* Load current C tile into contiguous local buffer */
           for (nj = 0; nj < jblk; ++nj) {
@@ -422,34 +392,22 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
                 const GEMM_INT_TYPE bps = (K_grp_pad / 4) * BLOCK_N;
                 const int32_t* const bp_sb = b_packed + (long)slice_b * N_blks * bps + (long)(jb / BLOCK_N) * bps;
                 const int32_t* const bp_sa = b_packed + (long)slice_a * N_blks * bps + (long)(jb / BLOCK_N) * bps;
-                const int32_t* const cs_sb = b_colsum + ((long)slice_b * N_blks + (long)(jb / BLOCK_N)) * BLOCK_N;
-                const int32_t* const cs_sa = b_colsum + ((long)slice_a * N_blks + (long)(jb / BLOCK_N)) * BLOCK_N;
                 if (do_mirror) {
-                  ozaki_gemm_u8s8s32_packed_fused(iblk, K_grp_pad,
+                  ozaki_gemm_s8s8s32_packed_fused(iblk, K_grp_pad,
                     a_slices + (long)slice_a * M * K_grp_pad + (long)ib * K_grp_pad, K_grp_pad, bp_sb,
                     a_slices + (long)slice_b * M * K_grp_pad + (long)ib * K_grp_pad, K_grp_pad, bp_sa,
                     c_acc, BLOCK_N);
-                  for (mi = 0; mi < iblk; ++mi) {
-                    for (nj = 0; nj < BLOCK_N; ++nj) {
-                      c_acc[mi * BLOCK_N + nj] -= 128 * (cs_sb[nj] + cs_sa[nj]);
-                    }
-                  }
                 }
                 else {
-                  ozaki_gemm_u8s8s32_packed(iblk, K_grp_pad,
+                  ozaki_gemm_s8s8s32_packed(iblk, K_grp_pad,
                     a_slices + (long)slice_a * M * K_grp_pad + (long)ib * K_grp_pad, K_grp_pad, bp_sb,
                     c_acc, BLOCK_N);
-                  for (mi = 0; mi < iblk; ++mi) {
-                    for (nj = 0; nj < BLOCK_N; ++nj) {
-                      c_acc[mi * BLOCK_N + nj] -= 128 * cs_sb[nj];
-                    }
-                  }
                 }
               }
               else
 #endif
               if (do_mirror) {
-                ozaki_gemm_u8s8s32_fused(iblk, jblk, K_grp_pad,
+                ozaki_gemm_s8s8s32_fused(iblk, jblk, K_grp_pad,
                   a_slices + (long)slice_a * M * K_grp_pad + (long)ib * K_grp_pad, K_grp_pad,
                   b_slices + (long)slice_b * N * K_grp_pad + (long)jb * K_grp_pad, K_grp_pad,
                   a_slices + (long)slice_b * M * K_grp_pad + (long)ib * K_grp_pad, K_grp_pad,
@@ -457,7 +415,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
                   0, c_acc, jblk);
               }
               else {
-                ozaki_gemm_u8s8s32('N', 'T', iblk, jblk, K_grp_pad, a_slices + (long)slice_a * M * K_grp_pad + (long)ib * K_grp_pad,
+                ozaki_gemm_s8s8s32('N', 'T', iblk, jblk, K_grp_pad, a_slices + (long)slice_a * M * K_grp_pad + (long)ib * K_grp_pad,
                   K_grp_pad, b_slices + (long)slice_b * N * K_grp_pad + (long)jb * K_grp_pad, K_grp_pad, 0, c_acc, jblk);
               }
 
@@ -480,7 +438,6 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
           }
         }
       }
-#undef BLOCK_M2
     } /* end K-group loop */
 
     GEMM_PROFILE_END(tid, M, N, K);
@@ -493,7 +450,6 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
   libxs_free(a_slices);
   libxs_free(b_slices);
   libxs_free(b_packed);
-  libxs_free(b_colsum);
   libxs_free(expa_raw);
   libxs_free(expb_raw);
   libxs_free(expa_fp);
