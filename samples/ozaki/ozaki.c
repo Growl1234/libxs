@@ -209,13 +209,14 @@ OZAKI_API_INTERN void gemm_init(void)
           if (0 == ozaki_verbose) ozaki_verbose = 1;
           ozaki_rsq = atof(ozaki_rsq_env);
         }
-        if (0 != ozaki_amx) {
-          ozaki_target_arch = libxs_cpuid(NULL);
-          if (LIBXS_X86_AVX512_AMX <= ozaki_target_arch) {
-            if (EXIT_SUCCESS != libxs_cpuid_amx_enable()) {
-              ozaki_target_arch = LIBXS_X86_AVX512;
-            }
+        ozaki_target_arch = libxs_cpuid(NULL);
+        if (0 != ozaki_amx && LIBXS_X86_AVX512_AMX <= ozaki_target_arch) {
+          if (EXIT_SUCCESS != libxs_cpuid_amx_enable()) {
+            ozaki_target_arch = LIBXS_MIN(ozaki_target_arch, LIBXS_X86_AVX512_AMX - 1);
           }
+        }
+        else if (0 == ozaki_amx && LIBXS_X86_AVX512_AMX <= ozaki_target_arch) {
+          ozaki_target_arch = LIBXS_X86_AVX512_AMX - 1;
         }
         { /* Profiling: create histogram if requested */
           const char* const env_prof = getenv("OZAKI_PROFILE");
