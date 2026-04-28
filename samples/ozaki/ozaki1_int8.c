@@ -65,6 +65,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
   const GEMM_INT_TYPE K_grp_pad = ((K_grp_max + BLOCK_K - 1) / BLOCK_K) * BLOCK_K;
   int8_t* a_slices = NULL;
   int8_t* b_slices = NULL;
+  int32_t* b_packed = NULL;
   int16_t* expa_raw = NULL;
   int16_t* expb_raw = NULL;
   double* expa_fp = NULL;
@@ -87,6 +88,12 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
 
   a_slices = (int8_t*)libxs_malloc(gemm_pool, (size_t)nslices * M * K_grp_pad, 0);
   b_slices = (int8_t*)libxs_malloc(gemm_pool, (size_t)nslices * N * K_grp_pad, 0);
+#if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
+  {
+    const GEMM_INT_TYPE N_blocks = (N + BLOCK_N - 1) / BLOCK_N;
+    b_packed = (int32_t*)libxs_malloc(gemm_pool, (size_t)nslices * N_blocks * (K_grp_pad / 4) * BLOCK_N * sizeof(int32_t), 0);
+  }
+#endif
   expa_raw = (int16_t*)libxs_malloc(gemm_pool, (size_t)M * sizeof(int16_t), 0);
   expb_raw = (int16_t*)libxs_malloc(gemm_pool, (size_t)N * sizeof(int16_t), 0);
   expa_fp = (double*)libxs_malloc(gemm_pool, (size_t)M * sizeof(double), 0);
@@ -318,6 +325,34 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
         expb_fp[col] = libxs_pow2((int)expb_raw[col] - OZ_BIAS_PLUS_MANT);
       }
 
+      /* Phase 3: reformat B slices into VNNI layout for panel kernels. */
+#if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
+      if (NULL != b_packed) {
+        const GEMM_INT_TYPE N_blocks = (N + BLOCK_N - 1) / BLOCK_N;
+        const GEMM_INT_TYPE bp_stride = (K_grp_pad / 4) * BLOCK_N;
+#if defined(_OPENMP)
+# pragma omp for LIBXS_OPENMP_COLLAPSE(2) OZAKI_OMP_SCHEDULE
+#endif
+        for (jb = 0; jb < N; jb += BLOCK_N) {
+          for (slice_a = 0; slice_a < nslices; ++slice_a) {
+            const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
+            int32_t* const dst = b_packed + (long)slice_a * N_blocks * bp_stride + (long)(jb / BLOCK_N) * bp_stride;
+            if (jblk == BLOCK_N) {
+              const __m512i vidx = OZAKI_GATHER_VIDX(K_grp_pad);
+              GEMM_INT_TYPE kb;
+              for (kb = 0; kb < K_grp_pad; kb += BLOCK_K) {
+                OZAKI_REFORMAT_B_IMPL(vidx, b_slices + (long)slice_a * N * K_grp_pad + (long)jb * K_grp_pad,
+                  kb, BLOCK_N, dst + (kb / 4) * BLOCK_N, BLOCK_K);
+              }
+            }
+            else {
+              memset(dst, 0, (size_t)bp_stride * sizeof(int32_t));
+            }
+          }
+        }
+      }
+#endif
+
       /* Phase 4: tile-first GEMM + accumulate for this K-group.
        * Tiles outermost (single omp for): C stays in a local buffer
        * across all slice pairs -- one load + one store per tile instead
@@ -350,6 +385,27 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
               const double pair_scale = (*alpha) * pow2_low[slice_a] * pow2_low[slice_b];
               const int do_mirror = (0 != (ozaki_flags & OZ1_SYMMETRIZE)) && (slice_a != slice_b);
 
+
+#if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
+              if (NULL != b_packed && BLOCK_N == jblk) {
+                const GEMM_INT_TYPE N_blks = (N + BLOCK_N - 1) / BLOCK_N;
+                const GEMM_INT_TYPE bps = (K_grp_pad / 4) * BLOCK_N;
+                const int32_t* const bp_sb = b_packed + (long)slice_b * N_blks * bps + (long)(jb / BLOCK_N) * bps;
+                const int32_t* const bp_sa = b_packed + (long)slice_a * N_blks * bps + (long)(jb / BLOCK_N) * bps;
+                if (do_mirror) {
+                  ozaki_gemm_s8s8s32_packed_fused(iblk, K_grp_pad,
+                    a_slices + (long)slice_a * M * K_grp_pad + (long)ib * K_grp_pad, K_grp_pad, bp_sb,
+                    a_slices + (long)slice_b * M * K_grp_pad + (long)ib * K_grp_pad, K_grp_pad, bp_sa,
+                    c_acc, BLOCK_N);
+                }
+                else {
+                  ozaki_gemm_s8s8s32_packed(iblk, K_grp_pad,
+                    a_slices + (long)slice_a * M * K_grp_pad + (long)ib * K_grp_pad, K_grp_pad, bp_sb,
+                    c_acc, BLOCK_N);
+                }
+              }
+              else
+#endif
               if (do_mirror) {
                 ozaki_gemm_s8s8s32_fused(iblk, jblk, K_grp_pad,
                   a_slices + (long)slice_a * M * K_grp_pad + (long)ib * K_grp_pad, K_grp_pad,
@@ -393,6 +449,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
   }
   libxs_free(a_slices);
   libxs_free(b_slices);
+  libxs_free(b_packed);
   libxs_free(expa_raw);
   libxs_free(expb_raw);
   libxs_free(expa_fp);
