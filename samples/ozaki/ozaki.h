@@ -930,7 +930,8 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx_
 #endif /* LIBXS_INTRINSICS_AMX && BLOCK_M==16 && BLOCK_N==16 */
 
 
-/* Dispatch helpers: select BSSD/BUUD (native int8) vs VNNI (base AVX-512). */
+/* Dispatch helpers: select BSSD/BUUD (native int8) vs VNNI (base AVX-512).
+ * Arguments are statement blocks (may contain do{}while(0) macros). */
 #if (LIBXS_X86_AVX512_INT8 <= LIBXS_STATIC_TARGET_ARCH) || (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
 # define OZAKI_DISPATCH_I8(BSSD_CALL, VNNI_CALL) \
     if (LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) { BSSD_CALL; } else { VNNI_CALL; }
@@ -952,17 +953,11 @@ LIBXS_API_INLINE void ozaki_gemm_u8u8s32(char transa, char transb, GEMM_INT_TYPE
     for (kb = 0; kb < K; kb += BLOCK_K) {
       LIBXS_ALIGNED(int32_t bp[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
       const int b1 = (kb == 0) ? beta : 1;
-# if (LIBXS_X86_AVX512_INT8 <= LIBXS_STATIC_TARGET_ARCH) || (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
-      if (LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) {
+      OZAKI_DISPATCH_U8(
         OZAKI_REFORMAT_B_IMPL(rf_vidx, b, kb, BLOCK_N, bp, BLOCK_K);
-        ozaki_panel_u8_buud(M, N, BLOCK_K, a + kb, lda, bp, BLOCK_N, b1, c, ldc);
-      }
-      else
-# endif
-      {
+        ozaki_panel_u8_buud(M, N, BLOCK_K, a + kb, lda, bp, BLOCK_N, b1, c, ldc),
         OZAKI_REFORMAT_B_XOR_IMPL(rf_vidx, b, kb, BLOCK_N, bp, BLOCK_K);
-        ozaki_panel_u8_vnni(M, N, BLOCK_K, a + kb, lda, bp, BLOCK_N, b1, c, ldc);
-      }
+        ozaki_panel_u8_vnni(M, N, BLOCK_K, a + kb, lda, bp, BLOCK_N, b1, c, ldc))
     }
     return;
   }
@@ -987,15 +982,9 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32(char transa, char transb, GEMM_INT_TYPE
       LIBXS_ALIGNED(int32_t bp[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
       const int b1 = (kb == 0) ? beta : 1;
       OZAKI_REFORMAT_B_IMPL(rf_vidx, b, kb, BLOCK_N, bp, BLOCK_K);
-#   if (LIBXS_X86_AVX512_INT8 <= LIBXS_STATIC_TARGET_ARCH) || (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
-      if (LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) {
-        ozaki_panel_i8_bssd(M, N, BLOCK_K, a + kb, lda, bp, BLOCK_N, b1, c, ldc);
-      }
-      else
-#   endif
-      {
-        ozaki_panel_i8_vnni(M, N, BLOCK_K, a + kb, lda, bp, BLOCK_N, b1, c, ldc);
-      }
+      OZAKI_DISPATCH_I8(
+        ozaki_panel_i8_bssd(M, N, BLOCK_K, a + kb, lda, bp, BLOCK_N, b1, c, ldc),
+        ozaki_panel_i8_vnni(M, N, BLOCK_K, a + kb, lda, bp, BLOCK_N, b1, c, ldc))
     }
     return;
   }
@@ -1019,21 +1008,15 @@ LIBXS_API_INLINE void ozaki_gemm_u8u8s32_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N,
       LIBXS_ALIGNED(int32_t bp1[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
       LIBXS_ALIGNED(int32_t bp2[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
       const int bt = (kb == 0) ? beta : 1;
-# if (LIBXS_X86_AVX512_INT8 <= LIBXS_STATIC_TARGET_ARCH) || (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
-      if (LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) {
+      OZAKI_DISPATCH_U8(
         OZAKI_REFORMAT_B_IMPL(rf_vidx1, b1, kb, BLOCK_N, bp1, BLOCK_K);
         OZAKI_REFORMAT_B_IMPL(rf_vidx2, b2, kb, BLOCK_N, bp2, BLOCK_K);
         ozaki_panel_u8_buud_fused(M, N, BLOCK_K, a1 + kb, lda1, bp1, BLOCK_N,
-          a2 + kb, lda2, bp2, BLOCK_N, bt, c, ldc);
-      }
-      else
-# endif
-      {
+          a2 + kb, lda2, bp2, BLOCK_N, bt, c, ldc),
         OZAKI_REFORMAT_B_XOR_IMPL(rf_vidx1, b1, kb, BLOCK_N, bp1, BLOCK_K);
         OZAKI_REFORMAT_B_XOR_IMPL(rf_vidx2, b2, kb, BLOCK_N, bp2, BLOCK_K);
         ozaki_panel_u8_vnni_fused(M, N, BLOCK_K, a1 + kb, lda1, bp1, BLOCK_N,
-          a2 + kb, lda2, bp2, BLOCK_N, bt, c, ldc);
-      }
+          a2 + kb, lda2, bp2, BLOCK_N, bt, c, ldc))
     }
     return;
   }
@@ -1060,17 +1043,11 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N,
       const int bt = (kb == 0) ? beta : 1;
       OZAKI_REFORMAT_B_IMPL(rf_vidx1, b1, kb, BLOCK_N, bp1, BLOCK_K);
       OZAKI_REFORMAT_B_IMPL(rf_vidx2, b2, kb, BLOCK_N, bp2, BLOCK_K);
-#   if (LIBXS_X86_AVX512_INT8 <= LIBXS_STATIC_TARGET_ARCH) || (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
-      if (LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) {
+      OZAKI_DISPATCH_I8(
         ozaki_panel_i8_bssd_fused(M, N, BLOCK_K, a1 + kb, lda1, bp1, BLOCK_N,
-          a2 + kb, lda2, bp2, BLOCK_N, bt, c, ldc);
-      }
-      else
-#   endif
-      {
+          a2 + kb, lda2, bp2, BLOCK_N, bt, c, ldc),
         ozaki_panel_i8_vnni_fused(M, N, BLOCK_K, a1 + kb, lda1, bp1, BLOCK_N,
-          a2 + kb, lda2, bp2, BLOCK_N, bt, c, ldc);
-      }
+          a2 + kb, lda2, bp2, BLOCK_N, bt, c, ldc))
     }
     return;
   }
@@ -1097,13 +1074,9 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32_packed(GEMM_INT_TYPE M, GEMM_INT_TYPE K
   }
 #   endif
 # endif
-# if (LIBXS_X86_AVX512_INT8 <= LIBXS_STATIC_TARGET_ARCH) || (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
-  if (LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) {
-    ozaki_panel_i8_bssd(M, BLOCK_N, K, a, lda, b, BLOCK_N, 0, c, ldc);
-    return;
-  }
-# endif
-  ozaki_panel_i8_vnni(M, BLOCK_N, K, a, lda, b, BLOCK_N, 0, c, ldc);
+  OZAKI_DISPATCH_I8(
+    ozaki_panel_i8_bssd(M, BLOCK_N, K, a, lda, b, BLOCK_N, 0, c, ldc),
+    ozaki_panel_i8_vnni(M, BLOCK_N, K, a, lda, b, BLOCK_N, 0, c, ldc))
 #endif
 }
 
@@ -1125,13 +1098,9 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32_packed_fused(GEMM_INT_TYPE M, GEMM_INT_
   }
 #   endif
 # endif
-# if (LIBXS_X86_AVX512_INT8 <= LIBXS_STATIC_TARGET_ARCH) || (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
-  if (LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) {
-    ozaki_panel_i8_bssd_fused(M, BLOCK_N, K, a1, lda1, b1, BLOCK_N, a2, lda2, b2, BLOCK_N, 0, c, ldc);
-    return;
-  }
-# endif
-  ozaki_panel_i8_vnni_fused(M, BLOCK_N, K, a1, lda1, b1, BLOCK_N, a2, lda2, b2, BLOCK_N, 0, c, ldc);
+  OZAKI_DISPATCH_I8(
+    ozaki_panel_i8_bssd_fused(M, BLOCK_N, K, a1, lda1, b1, BLOCK_N, a2, lda2, b2, BLOCK_N, 0, c, ldc),
+    ozaki_panel_i8_vnni_fused(M, BLOCK_N, K, a1, lda1, b1, BLOCK_N, a2, lda2, b2, BLOCK_N, 0, c, ldc))
 #endif
 }
 
