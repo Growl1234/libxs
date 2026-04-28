@@ -713,25 +713,23 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_u8_amx(
   }
 
   if (kb < K) {
-    for (mi = 0; mi < M; ++mi) {
-      __m512i acc = (0 == kb && 0 == beta) ? _mm512_setzero_si512() : _mm512_loadu_si512((__m512i*)(c_buf + mi * BLOCK_N));
-      {
-        GEMM_INT_TYPE kk;
-        for (kk = kb; kk < K; kk += 4) {
-          int32_t bq[BLOCK_N];
-          int nj;
-          for (nj = 0; nj < BLOCK_N; ++nj) {
-            int32_t t;
-            memcpy(&t, b + (long)nj * ldb + kk, 4);
-            bq[nj] = t ^ (int32_t)0x80808080;
-          }
-          {
-            const __m512i va = _mm512_set1_epi32(*(const int32_t*)(a + (long)mi * lda + kk));
-            acc = _mm512_dpbusd_epi32(acc, va, _mm512_loadu_si512((__m512i*)bq));
-          }
+    const __m512i vidx_tail = OZAKI_GATHER_VIDX(ldb);
+    if (0 == kb && 0 == beta) {
+      for (mi = 0; mi < M; ++mi) memset(c_buf + mi * BLOCK_N, 0, BLOCK_N * sizeof(int32_t));
+    }
+    for (; kb < K; kb += BLOCK_K) {
+      LIBXS_ALIGNED(int32_t b_vnni[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
+      int kk;
+      OZAKI_REFORMAT_B_XOR_IMPL(vidx_tail, b, kb, BLOCK_N, b_vnni, BLOCK_K);
+      for (kk = 0; kk < BLOCK_K; kk += 4) {
+        const __m512i vb = _mm512_load_si512((__m512i*)(b_vnni + (kk >> 2) * BLOCK_N));
+        LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
+        for (mi = 0; mi < M; ++mi) {
+          const __m512i va = _mm512_set1_epi32(*(const int32_t*)(a + (long)mi * lda + kb + kk));
+          _mm512_store_si512((__m512i*)(c_buf + mi * BLOCK_N),
+            _mm512_dpbusd_epi32(_mm512_load_si512((__m512i*)(c_buf + mi * BLOCK_N)), va, vb));
         }
       }
-      _mm512_storeu_si512((__m512i*)(c_buf + mi * BLOCK_N), acc);
     }
   }
 
@@ -756,6 +754,8 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx(
   LIBXS_ALIGNED(int32_t b_tile[16 * BLOCK_N], LIBXS_ALIGNMENT);
   LIBXS_ALIGNED(uint8_t a_biased[BLOCK_M * 64], LIBXS_ALIGNMENT);
   const int c_stride = BLOCK_N * (int)sizeof(int32_t);
+  const __m512i ones = _mm512_set1_epi32(0x01010101);
+  __m512i bsum = _mm512_setzero_si512();
   GEMM_INT_TYPE mi, kb;
   LIBXS_ASSERT(M <= BLOCK_M && N == BLOCK_N);
 
@@ -771,7 +771,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx(
     {
       const __m512i vidx = OZAKI_GATHER_VIDX(ldb);
       for (kb = 0; kb < (K & ~(GEMM_INT_TYPE)63); kb += 64) {
-        OZAKI_REFORMAT_B_IMPL(vidx, b, kb, BLOCK_N, b_tile, 64);
+        OZAKI_REFORMAT_B_BSUM_IMPL(vidx, b, kb, BLOCK_N, b_tile, 64, ones, bsum);
         OZAKI_BIAS_A(a, lda, kb, M, a_biased);
         _tile_loadd(OZAKI_AMX_TILE_A, a_biased, 64);
         _tile_loadd(OZAKI_AMX_TILE_B, b_tile, c_stride);
@@ -783,42 +783,34 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx(
   }
 
   if (kb < K) {
+    const __m512i vidx_tail = OZAKI_GATHER_VIDX(ldb);
     const __m512i bias = _mm512_set1_epi32((int32_t)0x80808080);
-    for (mi = 0; mi < M; ++mi) {
-      __m512i acc = (0 == kb && 0 == beta) ? _mm512_setzero_si512() : _mm512_loadu_si512((__m512i*)(c_buf + mi * BLOCK_N));
-      {
-        GEMM_INT_TYPE kk;
-        for (kk = kb; kk < K; kk += 4) {
-          int32_t bq[BLOCK_N];
-          int nj;
-          for (nj = 0; nj < BLOCK_N; ++nj) memcpy(bq + nj, b + (long)nj * ldb + kk, 4);
-          {
-            const __m512i va = _mm512_xor_si512(_mm512_set1_epi32(*(const int32_t*)(a + (long)mi * lda + kk)), bias);
-            acc = _mm512_dpbusd_epi32(acc, va, _mm512_loadu_si512((__m512i*)bq));
-          }
+    if (0 == kb && 0 == beta) {
+      for (mi = 0; mi < M; ++mi) memset(c_buf + mi * BLOCK_N, 0, BLOCK_N * sizeof(int32_t));
+    }
+    for (; kb < K; kb += BLOCK_K) {
+      LIBXS_ALIGNED(int32_t b_vnni[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
+      int kk;
+      OZAKI_REFORMAT_B_BSUM_IMPL(vidx_tail, b, kb, BLOCK_N, b_vnni, BLOCK_K, ones, bsum);
+      for (kk = 0; kk < BLOCK_K; kk += 4) {
+        const __m512i vb = _mm512_load_si512((__m512i*)(b_vnni + (kk >> 2) * BLOCK_N));
+        LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
+        for (mi = 0; mi < M; ++mi) {
+          const __m512i va = _mm512_xor_si512(
+            _mm512_set1_epi32(*(const int32_t*)(a + (long)mi * lda + kb + kk)), bias);
+          _mm512_store_si512((__m512i*)(c_buf + mi * BLOCK_N),
+            _mm512_dpbusd_epi32(_mm512_load_si512((__m512i*)(c_buf + mi * BLOCK_N)), va, vb));
         }
       }
-      _mm512_storeu_si512((__m512i*)(c_buf + mi * BLOCK_N), acc);
     }
   }
 
   {
-    __m512i bsum = _mm512_setzero_si512();
-    const __m512i ones = _mm512_set1_epi32(0x01010101);
-    GEMM_INT_TYPE kk;
-    for (kk = 0; kk < K; kk += 4) {
-      int32_t bq[BLOCK_N];
-      int nj;
-      for (nj = 0; nj < BLOCK_N; ++nj) memcpy(bq + nj, b + (long)nj * ldb + kk, 4);
-      bsum = _mm512_dpbusd_epi32(bsum, ones, _mm512_loadu_si512((__m512i*)bq));
-    }
-    {
-      const __m512i correction = _mm512_mullo_epi32(_mm512_set1_epi32(128), bsum);
-      for (mi = 0; mi < M; ++mi) {
-        __m512i vacc = _mm512_loadu_si512((__m512i*)(c_buf + mi * BLOCK_N));
-        vacc = _mm512_sub_epi32(vacc, correction);
-        _mm512_storeu_si512((__m512i*)(c + mi * ldc), vacc);
-      }
+    const __m512i correction = _mm512_mullo_epi32(_mm512_set1_epi32(128), bsum);
+    for (mi = 0; mi < M; ++mi) {
+      __m512i vacc = _mm512_loadu_si512((__m512i*)(c_buf + mi * BLOCK_N));
+      vacc = _mm512_sub_epi32(vacc, correction);
+      _mm512_storeu_si512((__m512i*)(c + mi * ldc), vacc);
     }
   }
 }
@@ -864,30 +856,28 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_u8_amx_
   }
 
   if (kb < K) {
-    for (mi = 0; mi < M; ++mi) {
-      __m512i acc = (0 == kb && 0 == beta) ? _mm512_setzero_si512() : _mm512_loadu_si512((__m512i*)(c_buf + mi * BLOCK_N));
-      {
-        GEMM_INT_TYPE kk;
-        for (kk = kb; kk < K; kk += 4) {
-          int32_t bq[BLOCK_N];
-          int nj;
-          for (nj = 0; nj < BLOCK_N; ++nj) {
-            int32_t t;
-            memcpy(&t, b1 + (long)nj * ldb1 + kk, 4);
-            bq[nj] = t ^ (int32_t)0x80808080;
-          }
-          acc = _mm512_dpbusd_epi32(acc, _mm512_set1_epi32(*(const int32_t*)(a1 + (long)mi * lda1 + kk)),
-            _mm512_loadu_si512((__m512i*)bq));
-          for (nj = 0; nj < BLOCK_N; ++nj) {
-            int32_t t;
-            memcpy(&t, b2 + (long)nj * ldb2 + kk, 4);
-            bq[nj] = t ^ (int32_t)0x80808080;
-          }
-          acc = _mm512_dpbusd_epi32(acc, _mm512_set1_epi32(*(const int32_t*)(a2 + (long)mi * lda2 + kk)),
-            _mm512_loadu_si512((__m512i*)bq));
+    const __m512i vidx1_tail = OZAKI_GATHER_VIDX(ldb1);
+    const __m512i vidx2_tail = OZAKI_GATHER_VIDX(ldb2);
+    if (0 == kb && 0 == beta) {
+      for (mi = 0; mi < M; ++mi) memset(c_buf + mi * BLOCK_N, 0, BLOCK_N * sizeof(int32_t));
+    }
+    for (; kb < K; kb += BLOCK_K) {
+      LIBXS_ALIGNED(int32_t b1_vnni[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
+      LIBXS_ALIGNED(int32_t b2_vnni[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
+      int kk;
+      OZAKI_REFORMAT_B_XOR_IMPL(vidx1_tail, b1, kb, BLOCK_N, b1_vnni, BLOCK_K);
+      OZAKI_REFORMAT_B_XOR_IMPL(vidx2_tail, b2, kb, BLOCK_N, b2_vnni, BLOCK_K);
+      for (kk = 0; kk < BLOCK_K; kk += 4) {
+        const __m512i vb1 = _mm512_load_si512((__m512i*)(b1_vnni + (kk >> 2) * BLOCK_N));
+        const __m512i vb2 = _mm512_load_si512((__m512i*)(b2_vnni + (kk >> 2) * BLOCK_N));
+        LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
+        for (mi = 0; mi < M; ++mi) {
+          __m512i acc = _mm512_load_si512((__m512i*)(c_buf + mi * BLOCK_N));
+          acc = _mm512_dpbusd_epi32(acc, _mm512_set1_epi32(*(const int32_t*)(a1 + (long)mi * lda1 + kb + kk)), vb1);
+          acc = _mm512_dpbusd_epi32(acc, _mm512_set1_epi32(*(const int32_t*)(a2 + (long)mi * lda2 + kb + kk)), vb2);
+          _mm512_store_si512((__m512i*)(c_buf + mi * BLOCK_N), acc);
         }
       }
-      _mm512_storeu_si512((__m512i*)(c_buf + mi * BLOCK_N), acc);
     }
   }
 
@@ -951,31 +941,31 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx_
   }
 
   if (kb < K) {
+    const __m512i vidx1_tail = OZAKI_GATHER_VIDX(ldb1);
+    const __m512i vidx2_tail = OZAKI_GATHER_VIDX(ldb2);
     const __m512i bias = _mm512_set1_epi32((int32_t)0x80808080);
-    for (mi = 0; mi < M; ++mi) {
-      __m512i acc = (0 == kb && 0 == beta) ? _mm512_setzero_si512() : _mm512_loadu_si512((__m512i*)(c_buf + mi * BLOCK_N));
-      {
-        GEMM_INT_TYPE kk;
-        for (kk = kb; kk < K; kk += 4) {
-          int32_t bq[BLOCK_N];
-          int nj;
-          for (nj = 0; nj < BLOCK_N; ++nj) memcpy(bq + nj, b1 + (long)nj * ldb1 + kk, 4);
-          {
-            const __m512i vb = _mm512_loadu_si512((__m512i*)bq);
-            if (0 == mi) bsum1 = _mm512_dpbusd_epi32(bsum1, ones, vb);
-            acc = _mm512_dpbusd_epi32(acc, _mm512_xor_si512(
-              _mm512_set1_epi32(*(const int32_t*)(a1 + (long)mi * lda1 + kk)), bias), vb);
-          }
-          for (nj = 0; nj < BLOCK_N; ++nj) memcpy(bq + nj, b2 + (long)nj * ldb2 + kk, 4);
-          {
-            const __m512i vb = _mm512_loadu_si512((__m512i*)bq);
-            if (0 == mi) bsum2 = _mm512_dpbusd_epi32(bsum2, ones, vb);
-            acc = _mm512_dpbusd_epi32(acc, _mm512_xor_si512(
-              _mm512_set1_epi32(*(const int32_t*)(a2 + (long)mi * lda2 + kk)), bias), vb);
-          }
+    if (0 == kb && 0 == beta) {
+      for (mi = 0; mi < M; ++mi) memset(c_buf + mi * BLOCK_N, 0, BLOCK_N * sizeof(int32_t));
+    }
+    for (; kb < K; kb += BLOCK_K) {
+      LIBXS_ALIGNED(int32_t b1_vnni[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
+      LIBXS_ALIGNED(int32_t b2_vnni[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
+      int kk;
+      OZAKI_REFORMAT_B_BSUM_IMPL(vidx1_tail, b1, kb, BLOCK_N, b1_vnni, BLOCK_K, ones, bsum1);
+      OZAKI_REFORMAT_B_BSUM_IMPL(vidx2_tail, b2, kb, BLOCK_N, b2_vnni, BLOCK_K, ones, bsum2);
+      for (kk = 0; kk < BLOCK_K; kk += 4) {
+        const __m512i vb1 = _mm512_load_si512((__m512i*)(b1_vnni + (kk >> 2) * BLOCK_N));
+        const __m512i vb2 = _mm512_load_si512((__m512i*)(b2_vnni + (kk >> 2) * BLOCK_N));
+        LIBXS_PRAGMA_LOOP_COUNT(1, BLOCK_M, BLOCK_M)
+        for (mi = 0; mi < M; ++mi) {
+          __m512i acc = _mm512_load_si512((__m512i*)(c_buf + mi * BLOCK_N));
+          acc = _mm512_dpbusd_epi32(acc, _mm512_xor_si512(
+            _mm512_set1_epi32(*(const int32_t*)(a1 + (long)mi * lda1 + kb + kk)), bias), vb1);
+          acc = _mm512_dpbusd_epi32(acc, _mm512_xor_si512(
+            _mm512_set1_epi32(*(const int32_t*)(a2 + (long)mi * lda2 + kb + kk)), bias), vb2);
+          _mm512_store_si512((__m512i*)(c_buf + mi * BLOCK_N), acc);
         }
       }
-      _mm512_storeu_si512((__m512i*)(c_buf + mi * BLOCK_N), acc);
     }
   }
 
