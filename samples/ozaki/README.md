@@ -109,7 +109,7 @@ LIBXSTREAM Ozaki README.
 | CHECK      | 0         | Validate vs BLAS: 0=off, negative=auto-threshold, positive=custom  |
 | NREPEAT    | 3         | Number of GEMM calls (first call is warmup when >1)                |
 | EVIL       | 0         | Adversarial exponent-span test (see below)                         |
-| OZAKI_DECAY| 0         | Forward-difference decay diagnostic (0=off, nonzero=on)            |
+| OZAKI_DECAY| 0         | Decay diagnostic + K-permutation (0-4, see below)                  |
 
 ### Adversarial Input (EVIL)
 
@@ -136,7 +136,24 @@ test (diagonal scaling with D and D^-1).  The per-element mode
 (EVIL<0) is adversarial for the adaptive slice-pair reduction:
 it forces all slices to be populated in every row.
 
-### Decay Diagnostic (OZAKI_DECAY)
+### Decay Diagnostic and K-Permutation (OZAKI_DECAY)
+
+Controls K-dimension row reordering for smoothness and the
+forward-difference decay diagnostic.  Values map to libxs_sort_t:
+
+| Value | Behavior                                                     |
+|-------|--------------------------------------------------------------|
+| 0     | Off (default). No permutation, no diagnostic.                |
+| 1     | Identity permutation. Measure decay on original ordering.    |
+| 2     | Sort B rows by L1-norm, apply same K-permutation to A.       |
+| 3     | Sort B rows by mean value, apply same K-permutation to A.    |
+| 4     | Greedy nearest-neighbor chain on B rows (O(K^2*N)).          |
+
+Values 2-4 compute a K-permutation from B (via libxs_sort_smooth)
+before Ozaki-1 slicing.  Both A and B are sliced using the
+permuted K-order.  Since C = A*B = (A*P^T)*(P*B) for any
+permutation matrix P, the result is mathematically identical --
+only the int8 digit structure along K changes.
 
 When nonzero, reports the forward-difference decay of int8 slice
 buffers along K, M, and N axes (first K-group only, single-
@@ -183,5 +200,7 @@ OZAKI=3 ./dgemm-wrap.x 4096                 # adaptive scheme selection
 EVIL=512 ./dgemm-wrap.x 1024                # accuracy grading (wide exponent span)
 EVIL=1 OZAKI_PROFILE=1 ./dgemm-wrap.x 1024  # narrow span (shows pair savings)
 EVIL=-52 ./dgemm-wrap.x 1024                # per-element span (worst for cutoff)
-OZAKI_DECAY=1 OZAKI=1 ./dgemm-wrap.x 256    # forward-difference decay diagnostic
+OZAKI_DECAY=1 OZAKI=1 ./dgemm-wrap.x 256    # decay diagnostic (no reorder)
+OZAKI_DECAY=2 OZAKI=1 ./dgemm-wrap.x 256    # sort by norm + decay diagnostic
+OZAKI_DECAY=4 OZAKI=1 ./dgemm-wrap.x 256    # greedy NN + decay diagnostic
 ```

@@ -65,6 +65,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
   const GEMM_INT_TYPE K_grp_pad = ((K_grp_max + BLOCK_K - 1) / BLOCK_K) * BLOCK_K;
   int8_t* a_slices = NULL;
   int8_t* b_slices = NULL;
+  int* k_perm = NULL;
   int32_t* b_packed = NULL;
   int16_t* expa_raw = NULL;
   int16_t* expb_raw = NULL;
@@ -88,6 +89,9 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
 
   a_slices = (int8_t*)libxs_malloc(gemm_pool, (size_t)nslices * M * K_grp_pad, 0);
   b_slices = (int8_t*)libxs_malloc(gemm_pool, (size_t)nslices * N * K_grp_pad, 0);
+  if (LIBXS_SORT_IDENTITY < ozaki_decay) {
+    k_perm = (int*)libxs_malloc(gemm_pool, (size_t)K_grp_max * sizeof(int), 0);
+  }
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
   {
     const GEMM_INT_TYPE N_blocks = (N + BLOCK_N - 1) / BLOCK_N;
@@ -135,6 +139,17 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
     for (kb_grp = 0; kb_grp < K; kb_grp += K_grp_size) {
       const GEMM_INT_TYPE K_len = LIBXS_MIN(K_grp_size, K - kb_grp);
 
+      /* Compute K-permutation for smoothness (single-threaded).
+       * B is K_len rows x N cols in column-major (non-transposed). */
+      if (NULL != k_perm) {
+#if defined(_OPENMP)
+# pragma omp single
+#endif
+        libxs_sort_smooth((libxs_sort_t)ozaki_decay, (int)K_len, (int)N,
+          b + (0 == tb ? kb_grp : (size_t)kb_grp * (*ldb)),
+          (int)*ldb, LIBXS_DATATYPE(GEMM_REAL_TYPE), k_perm);
+      }
+
       /* Phase 1: preprocess rows of A for this K-group */
 #if defined(_OPENMP)
 # pragma omp for OZAKI_OMP_SCHEDULE nowait
@@ -143,22 +158,23 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
         int16_t row_max_exp = 0;
         GEMM_INT_TYPE kk;
         int ss;
-        /* Zero this row's slice buffers */
         for (ss = 0; ss < nslices; ++ss) {
           memset(a_slices + (long)ss * M * K_grp_pad + (long)row * K_grp_pad, 0, (size_t)K_grp_pad);
         }
-        for (kk = kb_grp; kk < kb_grp + K_len; ++kk) {
+        for (kk = 0; kk < K_len; ++kk) {
+          const GEMM_INT_TYPE ksrc = kb_grp + (NULL != k_perm ? k_perm[kk] : kk);
           int16_t e;
           uint64_t mt;
-          ozaki_extract_ieee(a[LIBXS_INDEX(ta, *lda, row, kk)], &e, &mt);
+          ozaki_extract_ieee(a[LIBXS_INDEX(ta, *lda, row, ksrc)], &e, &mt);
           if (e > row_max_exp) row_max_exp = e;
         }
         expa_raw[row] = row_max_exp;
-        for (kk = kb_grp; kk < kb_grp + K_len; ++kk) {
+        for (kk = 0; kk < K_len; ++kk) {
+          const GEMM_INT_TYPE ksrc = kb_grp + (NULL != k_perm ? k_perm[kk] : kk);
           int16_t e;
           uint64_t mt;
           int sign;
-          sign = ozaki_extract_ieee(a[LIBXS_INDEX(ta, *lda, row, kk)], &e, &mt);
+          sign = ozaki_extract_ieee(a[LIBXS_INDEX(ta, *lda, row, ksrc)], &e, &mt);
           if (0 != mt) {
             int delta = (int)row_max_exp - (int)e;
             uint64_t aligned = (delta < 64) ? (mt >> delta) : 0;
@@ -166,7 +182,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
             split_digits(aligned, sign, tmp);
             LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
             for (ss = 0; ss < nslices; ++ss) {
-              a_slices[(long)ss * M * K_grp_pad + (long)row * K_grp_pad + (kk - kb_grp)] = tmp[ss];
+              a_slices[(long)ss * M * K_grp_pad + (long)row * K_grp_pad + kk] = tmp[ss];
             }
           }
         }
@@ -180,22 +196,23 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
         int16_t col_max_exp = 0;
         GEMM_INT_TYPE kk;
         int ss;
-        /* Zero this column's slice buffers */
         for (ss = 0; ss < nslices; ++ss) {
           memset(b_slices + (long)ss * N * K_grp_pad + (long)col * K_grp_pad, 0, (size_t)K_grp_pad);
         }
-        for (kk = kb_grp; kk < kb_grp + K_len; ++kk) {
+        for (kk = 0; kk < K_len; ++kk) {
+          const GEMM_INT_TYPE ksrc = kb_grp + (NULL != k_perm ? k_perm[kk] : kk);
           int16_t e;
           uint64_t mt;
-          ozaki_extract_ieee(b[LIBXS_INDEX(tb, *ldb, kk, col)], &e, &mt);
+          ozaki_extract_ieee(b[LIBXS_INDEX(tb, *ldb, ksrc, col)], &e, &mt);
           if (e > col_max_exp) col_max_exp = e;
         }
         expb_raw[col] = col_max_exp;
-        for (kk = kb_grp; kk < kb_grp + K_len; ++kk) {
+        for (kk = 0; kk < K_len; ++kk) {
+          const GEMM_INT_TYPE ksrc = kb_grp + (NULL != k_perm ? k_perm[kk] : kk);
           int16_t e;
           uint64_t mt;
           int sign;
-          sign = ozaki_extract_ieee(b[LIBXS_INDEX(tb, *ldb, kk, col)], &e, &mt);
+          sign = ozaki_extract_ieee(b[LIBXS_INDEX(tb, *ldb, ksrc, col)], &e, &mt);
           if (0 != mt) {
             int delta = (int)col_max_exp - (int)e;
             uint64_t aligned = (delta < 64) ? (mt >> delta) : 0;
@@ -203,7 +220,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
             split_digits(aligned, sign, tmp);
             LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
             for (ss = 0; ss < nslices; ++ss) {
-              b_slices[(long)ss * N * K_grp_pad + (long)col * K_grp_pad + (kk - kb_grp)] = tmp[ss];
+              b_slices[(long)ss * N * K_grp_pad + (long)col * K_grp_pad + kk] = tmp[ss];
             }
           }
         }
@@ -447,6 +464,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
   if (NULL != c_ref) {
     ozaki_diff_reference(GEMM_ARGPASS, c_ref, c_size, diff);
   }
+  libxs_free(k_perm);
   libxs_free(a_slices);
   libxs_free(b_slices);
   libxs_free(b_packed);
