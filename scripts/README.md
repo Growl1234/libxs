@@ -6,7 +6,7 @@
 
 **tool_version.sh** -- Extract version from Git tags. Generates `libxs_version.h`.
 
-**tool_pkgconfig.pc.in** -- Template for the installed `.pc` file.
+**libxs.pc.in** -- Template for the installed `.pc` file.
 
 ## Code Quality
 
@@ -17,6 +17,10 @@
 **tool_clangformat.sh** -- Run clang-format and shellcheck.
 
 **tool_normalize.sh** -- Strip trailing whitespace, fix line endings.
+
+## Documentation
+
+**md2pptx.py** -- Convert Markdown to PowerPoint. Splits on `---` rules or `##` headings (auto-detected). Requires `python-pptx` and `lxml`.
 
 ## Development
 

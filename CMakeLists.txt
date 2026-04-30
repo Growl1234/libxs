@@ -108,6 +108,14 @@ endif()
 
 # Pkg-config file
 if(NOT LIBXS_HEADER_ONLY)
+  set(PREFIX "${CMAKE_INSTALL_PREFIX}")
+  set(INCLUDEDIR "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
+  set(LIBDIR "\${prefix}/${CMAKE_INSTALL_LIBDIR}")
+  set(PROJECT "libxs")
+  set(DESCRIPTION "Specialized tensor operations")
+  set(URL "https://github.com/hfp/libxs/")
+  set(VERSION "${PROJECT_VERSION}")
+  set(LINKNAME "xs")
   set(LIBS_PRIVATE "")
   if(NOT LIBXS_SHARED)
     set(LIBS_PRIVATE "Libs.private: -lpthread -ldl")
@@ -120,7 +128,7 @@ if(NOT LIBXS_HEADER_ONLY)
   endif()
 
   configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/tool_pkgconfig.pc.in"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/libxs.pc.in"
     "${CMAKE_CURRENT_BINARY_DIR}/libxs.pc"
     @ONLY
   )
