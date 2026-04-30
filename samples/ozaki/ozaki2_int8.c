@@ -154,26 +154,28 @@ LIBXS_API_INLINE unsigned int oz2_hier_l1_garner(const unsigned int group_residu
   const int hi = (lo + HIER_GS <= nprimes) ? (lo + HIER_GS) : nprimes;
   const int gsz = hi - lo;
   unsigned int v[HIER_GS];
-  uint64_t hval;
+  uint64_t hval = 0;
   int li, lj;
 
-  for (li = 0; li < gsz; ++li) {
-    unsigned int u = group_residues[li];
-    const unsigned int pi = oz2_moduli[lo + li];
-    for (lj = 0; lj < li; ++lj) {
-      unsigned int vj = v[lj];
-      if (vj >= pi) vj -= pi;
-      if (vj >= pi) vj -= pi;
-      { const unsigned int diff = (u >= vj) ? (u - vj) : (pi + u - vj);
-        u = oz2_mod(diff * (unsigned int)garner_inv[lo + lj][lo + li], lo + li);
+  if (gsz >= 1) {
+    for (li = 0; li < gsz; ++li) {
+      unsigned int u = group_residues[li];
+      const unsigned int pi = oz2_moduli[lo + li];
+      for (lj = 0; lj < li; ++lj) {
+        unsigned int vj = v[lj];
+        if (vj >= pi) vj -= pi;
+        if (vj >= pi) vj -= pi;
+        { const unsigned int diff = (u >= vj) ? (u - vj) : (pi + u - vj);
+          u = oz2_mod(diff * (unsigned int)garner_inv[lo + lj][lo + li], lo + li);
+        }
       }
+      v[li] = u;
     }
-    v[li] = u;
-  }
 
-  hval = (uint64_t)v[gsz - 1];
-  for (li = gsz - 2; li >= 0; --li) {
-    hval = hval * (uint64_t)oz2_moduli[lo + li] + (uint64_t)v[li];
+    hval = (uint64_t)v[gsz - 1];
+    for (li = gsz - 2; li >= 0; --li) {
+      hval = hval * (uint64_t)oz2_moduli[lo + li] + (uint64_t)v[li];
+    }
   }
   return (uint32_t)hval;
 }
