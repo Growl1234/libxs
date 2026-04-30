@@ -110,7 +110,7 @@ mpirun -np 4 env LD_PRELOAD=/path/to/libwrap.so ./app
 
 ---
 
-## Validate: Always Check Accuracy First
+## Validate and Check Accuracy
 
 Before production, enable statistics and set a quality threshold:
 
@@ -123,7 +123,7 @@ Run your workload and check the exit summary.
 
 ---
 
-## Reading the Statistics Output
+## Reading the Statistics
 
 ```text
 DGEMM[3|410814]: linf=7.81597e-14 linf_rel=2.23531e-15 l2_rel=6.0263e-13 eps=5.20675e-16 rsq=1
@@ -143,7 +143,7 @@ The RSQ is the important number. Investigate if below 0.99.
 
 ---
 
-## Monitoring Long-Running Jobs
+## Monitoring Jobs
 
 For HPC jobs that run hours or days, track accuracy over time:
 
@@ -158,10 +158,10 @@ or insufficient decomposition depth.
 
 ---
 
-## Debugging Accuracy Problems
+## Debugging Accuracy
 
 When `OZAKI_RSQ` or `OZAKI_EPS` thresholds are exceeded,
-A and B matrices are dumped as MHD files (viewers available).
+A and B matrices are dumped as MHD or PNG files (viewers available).
 
 Reproduce the problem offline:
 
@@ -169,11 +169,8 @@ Reproduce the problem offline:
 ./dgemm-wrap.x gemm-292284-0-500-a.mhd gemm-292284-0-500-b.mhd
 ```
 
-Try increasing accuracy:
-
-- More primes: `OZAKI_N=20` (Scheme 2, default 16)
-- Switch scheme: `OZAKI=1` (mantissa slicing)
-- More slices: `OZAKI_N=12` (Scheme 1, default 8)
+- Dump specific GEMM call using `OZAKI_DUMP`.
+- Try to increase the accuracy; see [Details](https://libxs.readthedocs.io/samples/libxs_ozaki/).
 
 ---
 
@@ -201,7 +198,7 @@ export OZAKI_N=12           # more slices/primes (more accurate)
 ```
 
 The `OZAKI_THRESHOLD` controls minimum arithmetic intensity.
-GEMMs below the threshold fall through to the original BLAS unchanged.
+GEMMs below the threshold fall through to the original BLAS.
 
 ---
 
@@ -232,7 +229,7 @@ export OZAKI_CACHE=2        # B-matrix
 export OZAKI_CACHE=3        # A and B
 ```
 
-The content is finger-printed but can still cause wrong results!
+The content is finger-printed, but can still cause wrong results!
 
 ---
 
