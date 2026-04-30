@@ -188,6 +188,10 @@ OZAKI_API_INTERN void gemm_init(void)
         ozaki_exit = (NULL == ozaki_exit_env ? 1 /*default*/ : atoi(ozaki_exit_env));
         ozaki_idx = (NULL == ozaki_idx_env ? 0 : atoi(ozaki_idx_env));
         ozaki_decay = (NULL != ozaki_decay_env && 0 != *ozaki_decay_env) ? atoi(ozaki_decay_env) : 0;
+        if (0 != ozaki_decay) {
+          if (1 != ozaki && NULL == ozaki_env) ozaki = 1;
+          if (0 == ozaki_verbose && NULL == ozaki_verbose_env) ozaki_verbose = 1;
+        }
         if (2 == ozaki || 3 == ozaki) { /* Scheme 2 (or adaptive): CRT primes */
           ozaki_n = LIBXS_CLMP(NULL == ozaki_n_env ? OZ2_NPRIMES_DEFAULT : atoi(ozaki_n_env), 1, OZ2_NPRIMES_MAX);
         }
