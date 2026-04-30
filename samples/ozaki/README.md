@@ -147,11 +147,11 @@ forward-difference decay diagnostic.  Values map to libxs_sort_t:
 | 1     | Identity permutation. Measure decay on original ordering.    |
 | 2     | Sort B rows by L1-norm, apply same K-permutation to A.       |
 | 3     | Sort B rows by mean value, apply same K-permutation to A.    |
-| 4     | Greedy nearest-neighbor chain on B rows (O(K^2*N)).          |
+| 4     | Greedy nearest-neighbor chain on B rows (O(K^2\*N)).         |
 
 Values 2-4 compute a K-permutation from B (via libxs_sort_smooth)
 before Ozaki-1 slicing.  Both A and B are sliced using the
-permuted K-order.  Since C = A*B = (A*P^T)*(P*B) for any
+permuted K-order.  Since C = A\*B = (A\*P^T)\*(P\*B) for any
 permutation matrix P, the result is mathematically identical --
 only the int8 digit structure along K changes.
 
