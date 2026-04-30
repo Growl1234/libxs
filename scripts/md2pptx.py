@@ -5,9 +5,19 @@
 # For information on the license, see the LICENSE file.                       #
 # SPDX-License-Identifier: BSD-3-Clause                                       #
 ###############################################################################
+"""Convert Markdown to PowerPoint.
+
+Supports two splitting modes:
+  --split=rule   Split on horizontal rules (---).
+  --split=heading Split on ## headings.
+
+Auto-detection (default): if the input contains a \\n---\\n
+separator, rule mode is used; otherwise heading mode is assumed.
+"""
 import argparse
 import os
 import re
+import shutil
 import subprocess
 
 from lxml import etree
@@ -15,18 +25,15 @@ from pptx import Presentation
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
-# Slide dimensions (16:9 widescreen, 1920x1080 equivalent)
-SLIDE_WIDTH = Inches(40 / 3)  # 13+1/3"
+SLIDE_WIDTH = Inches(40 / 3)  # 16:9 widescreen
 SLIDE_HEIGHT = Inches(7.5)
 
-# Fonts
 CODE_FONT = "Courier New"
 CODE_SIZE = Pt(20)
 TABLE_SIZE = Pt(12)
 BODY_SIZE = Pt(18)
 INLINE_CODE_SCALE = 0.85
 
-# Layout
 MARGIN = Inches(0.5)
 TITLE_TOP = Inches(0.5)
 TITLE_BOX = Inches(1.25)
@@ -39,27 +46,29 @@ TEXT_LINE_HEIGHT = Inches(0.4)
 BLOCK_SPACING = Inches(0.6)
 
 
-# Inline markdown parsing
-#
+# ---------------------------------------------------------------------------
+# Inline markdown
+# ---------------------------------------------------------------------------
 def _typographic(text):
-    """Replace ASCII sequences with typographic equivalents."""
-    text = text.replace("---", "\u2014")  # em dash
-    text = text.replace("--", "\u2013")  # en dash
-    text = re.sub(r"\\([*_`\\])", r"\1", text)  # unescape markdown
+    text = text.replace("---", "—")
+    text = text.replace("--", "–")
+    text = re.sub(r"\\([\\`*_{}[\]()#+\-.!|~])", r"\1", text)
     return text
 
 
 def parse_inline(text):
-    """Parse **bold** and `code` into [(text, style), ...]."""
+    """Parse **bold**, *italic*, and `code` into [(text, style), ...]."""
     result = []
     pos = 0
-    for m in re.finditer(r"\*\*(.+?)\*\*|`(.+?)`", text):
+    for m in re.finditer(r"\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`", text):
         if m.start() > pos:
             result.append((_typographic(text[pos : m.start()]), "normal"))
         if m.group(1) is not None:
             result.append((_typographic(m.group(1)), "bold"))
+        elif m.group(2) is not None:
+            result.append((_typographic(m.group(2)), "italic"))
         else:
-            result.append((m.group(2), "code"))
+            result.append((m.group(3), "code"))
         pos = m.end()
     if pos < len(text):
         result.append((_typographic(text[pos:]), "normal"))
@@ -67,7 +76,6 @@ def parse_inline(text):
 
 
 def add_runs(para, text, font_size=None, code=False):
-    """Add inline-formatted runs to a paragraph."""
     if code:
         run = para.add_run()
         run.text = text
@@ -83,13 +91,14 @@ def add_runs(para, text, font_size=None, code=False):
             run.font.size = font_size
         if style == "bold":
             run.font.bold = True
+        elif style == "italic":
+            run.font.italic = True
         elif style == "code":
             run.font.name = CODE_FONT
             run.font.size = Pt(int(base / Pt(1) * INLINE_CODE_SCALE))
 
 
 def no_bullet(para):
-    """Suppress bullet formatting on a placeholder paragraph."""
     pPr = para._p.get_or_add_pPr()
     pPr.set("indent", "0")
     pPr.set("marL", "0")
@@ -99,17 +108,33 @@ def no_bullet(para):
     etree.SubElement(pPr, qn("a:buNone"))
 
 
+# ---------------------------------------------------------------------------
 # Markdown parsing
-#
-def parse_markdown(path):
-    """Split markdown on --- separators and parse each slide."""
+# ---------------------------------------------------------------------------
+def parse_markdown(path, split):
     with open(path) as f:
         raw = f.read()
-    return [
-        s
-        for s in (_parse_slide(part.strip()) for part in re.split(r"\n---\n", raw))
-        if s
-    ]
+    if split == "auto":
+        split = "rule" if "\n---\n" in raw else "heading"
+    if split == "rule":
+        parts = re.split(r"\n---\n", raw)
+    else:
+        parts = _split_on_headings(raw)
+    return [s for s in (_parse_slide(p.strip()) for p in parts) if s]
+
+
+def _split_on_headings(raw):
+    """Split on # or ## headings, keeping each heading with its body."""
+    parts = []
+    cur = []
+    for line in raw.split("\n"):
+        if re.match(r"^##? (?!#)", line) and cur:
+            parts.append("\n".join(cur))
+            cur = []
+        cur.append(line)
+    if cur:
+        parts.append("\n".join(cur))
+    return parts
 
 
 def _skip_blank(lines, i):
@@ -125,7 +150,6 @@ def _parse_slide(text):
     slide = {"title": "", "subtitle": "", "is_title": False, "blocks": []}
     i = _skip_blank(lines, 0)
 
-    # Detect title slide (# heading, not ##)
     if i < len(lines) and re.match(r"^# (?!#)", lines[i]):
         slide["title"] = lines[i][2:].strip()
         slide["is_title"] = True
@@ -137,13 +161,11 @@ def _parse_slide(text):
         slide["title"] = lines[i][3:].strip()
         i += 1
 
-    # Parse body into blocks
     cur = None
     in_code = False
     while i < len(lines):
         line = lines[i]
 
-        # Code fence toggle
         if line.strip().startswith("```"):
             if in_code:
                 slide["blocks"].append(cur)
@@ -162,7 +184,6 @@ def _parse_slide(text):
             i += 1
             continue
 
-        # Table row
         if line.strip().startswith("|") and "|" in line.strip()[1:]:
             if cur and cur["type"] != "table":
                 slide["blocks"].append(cur)
@@ -175,7 +196,6 @@ def _parse_slide(text):
             i += 1
             continue
 
-        # Sub-heading (### within a slide)
         if line.startswith("### "):
             if cur:
                 slide["blocks"].append(cur)
@@ -184,7 +204,6 @@ def _parse_slide(text):
             i += 1
             continue
 
-        # Bullet item (-, *, or \*)
         m_bullet = re.match(r"^\s*(?:\\?[-*])\s+(.*)$", line)
         if m_bullet:
             if cur and cur["type"] != "bullets":
@@ -196,7 +215,6 @@ def _parse_slide(text):
             i += 1
             continue
 
-        # Empty line flushes current block
         if not line.strip():
             if cur:
                 slide["blocks"].append(cur)
@@ -204,7 +222,6 @@ def _parse_slide(text):
             i += 1
             continue
 
-        # Regular text (including numbered lists)
         if cur and cur["type"] == "text":
             cur["lines"].append(line.strip())
         else:
@@ -218,21 +235,26 @@ def _parse_slide(text):
     return slide
 
 
+# ---------------------------------------------------------------------------
 # Presentation building
-#
+# ---------------------------------------------------------------------------
+def _find_layout(prs, name):
+    for layout in prs.slide_layouts:
+        if layout.name == name:
+            return layout
+    return None
+
+
 def build_presentation(slides):
     prs = Presentation()
     prs.slide_width = SLIDE_WIDTH
     prs.slide_height = SLIDE_HEIGHT
-    # Resize placeholders to match slide dimensions
     for layout in prs.slide_layouts:
         for ph in layout.placeholders:
-            idx = ph.placeholder_format.idx
-            if idx <= 1:
+            if ph.placeholder_format.idx <= 1:
                 ph.left = MARGIN
                 ph.width = CONTENT_WIDTH
-        # Adjust vertical positions for non-title-slide layouts
-        if layout != prs.slide_layouts[0]:
+        if layout.name != "Title Slide":
             for ph in layout.placeholders:
                 idx = ph.placeholder_format.idx
                 if idx == 0:
@@ -252,7 +274,8 @@ def build_presentation(slides):
 
 
 def _title_slide(prs, data):
-    slide = prs.slides.add_slide(prs.slide_layouts[0])
+    layout = _find_layout(prs, "Title Slide") or prs.slide_layouts[0]
+    slide = prs.slides.add_slide(layout)
     slide.placeholders[0].text = data["title"]
     tf = slide.placeholders[1].text_frame
     if data["subtitle"]:
@@ -265,7 +288,8 @@ def _title_slide(prs, data):
 
 
 def _content_slide(prs, data):
-    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    layout = _find_layout(prs, "Title and Content") or prs.slide_layouts[1]
+    slide = prs.slides.add_slide(layout)
     slide.placeholders[0].text = data["title"]
     tf = slide.placeholders[1].text_frame
     tf.clear()
@@ -273,8 +297,8 @@ def _content_slide(prs, data):
 
 
 def _table_slide(prs, data):
-    """Slide containing a table: Title Only layout with manual shapes."""
-    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    layout = _find_layout(prs, "Title Only") or prs.slide_layouts[5]
+    slide = prs.slides.add_slide(layout)
     slide.placeholders[0].text = data["title"]
     left = MARGIN
     top = BODY_TOP
@@ -299,7 +323,6 @@ def _table_slide(prs, data):
 
 
 def _render_blocks(tf, blocks, placeholder=False):
-    """Render block list into a text frame."""
     first = True
     for block in blocks:
         btype = block["type"]
@@ -327,7 +350,7 @@ def _render_blocks(tf, blocks, placeholder=False):
                 p = tf.paragraphs[0] if first else tf.add_paragraph()
                 first = False
                 if not placeholder:
-                    item = "\u2022 " + item
+                    item = "• " + item
                 add_runs(p, item)
                 p.line_spacing = 1.0
 
@@ -343,7 +366,6 @@ def _render_blocks(tf, blocks, placeholder=False):
 
 
 def _add_table(slide, rows, left, top, width):
-    """Add a table shape and return the new vertical position."""
     if not rows:
         return top
     n_rows, n_cols = len(rows), len(rows[0])
@@ -362,10 +384,10 @@ def _add_table(slide, rows, left, top, width):
     return top + TABLE_ROW_HEIGHT * n_rows + BLOCK_SPACING
 
 
+# ---------------------------------------------------------------------------
 # Post-processing
-#
+# ---------------------------------------------------------------------------
 def autofit(pptx_path):
-    """Add normAutofit to every text frame that lacks an autofit setting."""
     prs = Presentation(pptx_path)
     for slide in prs.slides:
         for shape in slide.shapes:
@@ -384,61 +406,74 @@ def autofit(pptx_path):
 
 
 def resave(pptx_path):
-    """Toggle auto-fit on each shape via PowerPoint COM to force reflow."""
-    winpath = subprocess.check_output(
-        ["wslpath", "-w", os.path.abspath(pptx_path)],
-        text=True,
-    ).strip()
-    # ppAutoSizeNone=0, ppAutoSizeTextToFitShape=2
-    subprocess.check_call(
-        [
-            "powershell.exe",
-            "-NoProfile",
-            "-Command",
-            (
-                f"$pp = New-Object -ComObject PowerPoint.Application;"
-                f'$pres = $pp.Presentations.Open("{winpath}");'
-                f"foreach ($slide in $pres.Slides) {{"
-                f"  foreach ($shape in $slide.Shapes) {{"
-                f"    if ($shape.HasTextFrame) {{"
-                f"      $shape.TextFrame2.AutoSize = 0;"
-                f"      $shape.TextFrame2.AutoSize = 2"
-                f"    }}"
-                f"  }}"
-                f"}}"
-                f"$pres.Save();"
-                f"$pres.Close();"
-                f"$pp.Quit();"
-                f"[System.Runtime.InteropServices.Marshal]"
-                f"::ReleaseComObject($pp) | Out-Null"
-            ),
-        ]
-    )
+    """Reflow text via PowerPoint COM (WSL/Windows only)."""
+    if not shutil.which("powershell.exe"):
+        return
+    try:
+        winpath = subprocess.check_output(
+            ["wslpath", "-w", os.path.abspath(pptx_path)], text=True
+        ).strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return
+    try:
+        subprocess.check_call(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                (
+                    f"$pp = New-Object -ComObject PowerPoint.Application;"
+                    f'$pres = $pp.Presentations.Open("{winpath}");'
+                    f"foreach ($slide in $pres.Slides) {{"
+                    f"  foreach ($shape in $slide.Shapes) {{"
+                    f"    if ($shape.HasTextFrame) {{"
+                    f"      $shape.TextFrame2.AutoSize = 0;"
+                    f"      $shape.TextFrame2.AutoSize = 2"
+                    f"    }}"
+                    f"  }}"
+                    f"}}"
+                    f"$pres.Save();"
+                    f"$pres.Close();"
+                    f"$pp.Quit();"
+                    f"[System.Runtime.InteropServices.Marshal]"
+                    f"::ReleaseComObject($pp) | Out-Null"
+                ),
+            ]
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
 
 
+# ---------------------------------------------------------------------------
 # Main
-#
+# ---------------------------------------------------------------------------
 def main():
-    here = os.path.dirname(os.path.abspath(__file__))
-    default_in = os.path.join(here, "index.md")
-
     ap = argparse.ArgumentParser(description="Markdown to PowerPoint")
-    ap.add_argument("input", nargs="?", default=default_in, help="input .md")
+    ap.add_argument("input", help="input .md file")
     ap.add_argument("output", nargs="?", default=None, help="output .pptx")
-    ap.add_argument("-in", dest="src", default=None, help="input .md")
-    ap.add_argument("-out", dest="dst", default=None, help="output .pptx")
+    ap.add_argument(
+        "--split",
+        choices=["auto", "rule", "heading"],
+        default="auto",
+        help="slide splitting mode (default: auto)",
+    )
+    ap.add_argument(
+        "--no-resave",
+        action="store_true",
+        help="skip PowerPoint COM reflow step",
+    )
     args = ap.parse_args()
 
-    source = args.src or args.input
-    output = args.dst or args.output
+    output = args.output
     if output is None:
-        output = os.path.splitext(source)[0] + ".pptx"
+        output = os.path.splitext(args.input)[0] + ".pptx"
 
-    slides = parse_markdown(source)
+    slides = parse_markdown(args.input, args.split)
     prs = build_presentation(slides)
     prs.save(output)
     autofit(output)
-    resave(output)
+    if not args.no_resave:
+        resave(output)
 
 
 if __name__ == "__main__":
