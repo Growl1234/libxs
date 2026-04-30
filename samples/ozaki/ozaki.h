@@ -12,6 +12,7 @@
 #include <libxs_malloc.h>
 #include <libxs_timer.h>
 #include <libxs_sync.h>
+#include <libxs_perm.h>
 #include <libxs_mhd.h>
 #include <libxs_mem.h>
 #if defined(__DNNL)
