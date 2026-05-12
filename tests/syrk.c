@@ -101,7 +101,7 @@ int main(void)
   LIBXS_MATRNG(int, ELEMTYPE, 0, c, N, N, N, 0.5);
   memcpy(cref, c, sizeof(c));
   ref_syr2k(N, K, alpha, a, N, b, N, beta, cref, N);
-  libxs_syr2k(cfg, 'U', alpha, beta, a, b, c);
+  libxs_syr2k(cfg, 'U', alpha, beta, a, b, c, N);
 
   if (EXIT_SUCCESS != check_upper("syr2k", c, N, cref, N, N, EPSILON(ELEMTYPE))) {
     result = EXIT_FAILURE;
@@ -114,7 +114,7 @@ int main(void)
   LIBXS_MATRNG(int, ELEMTYPE, 0, c, N, N, N, 0.3);
   memcpy(cref, c, sizeof(c));
   ref_syrk(N, K, alpha, a, N, beta, cref, N);
-  libxs_syrk(cfg, 'U', alpha, beta, a, c);
+  libxs_syrk(cfg, 'U', alpha, beta, a, c, N);
 
   if (EXIT_SUCCESS != check_upper("syrk", c, N, cref, N, N, EPSILON(ELEMTYPE))) {
     result = EXIT_FAILURE;
@@ -127,7 +127,7 @@ int main(void)
 
   cfg = libxs_syr2k_dispatch(LIBXS_DATATYPE(ELEMTYPE),
     N, K, N, N, N, NULL);
-  libxs_syr2k(cfg, 'U', 1.0, 0.0, a, b, c);
+  libxs_syr2k(cfg, 'U', 1.0, 0.0, a, b, c, N);
 
   if (EXIT_SUCCESS != check_upper("syr2k-beta0", c, N, cref, N, N, EPSILON(ELEMTYPE))) {
     result = EXIT_FAILURE;
@@ -146,7 +146,7 @@ int main(void)
 
     cfg = libxs_syr2k_dispatch(LIBXS_DATATYPE(ELEMTYPE),
       N, K, lda, ldb, ldc, NULL);
-    libxs_syr2k(cfg, 'U', alpha, beta, abig, bbig, cbig);
+    libxs_syr2k(cfg, 'U', alpha, beta, abig, bbig, cbig, ldc);
 
     if (EXIT_SUCCESS != check_upper("syr2k-ld", cbig, ldc, crefbig, ldc, N, EPSILON(ELEMTYPE))) {
       result = EXIT_FAILURE;
