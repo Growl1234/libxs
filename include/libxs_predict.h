@@ -31,6 +31,8 @@ LIBXS_EXTERN_C typedef struct libxs_predict_info_t {
   int noutputs;
   /** Cluster index assigned to the query (-1 if blended). */
   int cluster;
+  /** Distance to assigned cluster centroid relative to cluster radius (0..inf). */
+  double distance;
 } libxs_predict_info_t;
 
 /** Model statistics returned by libxs_predict_query. */

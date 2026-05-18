@@ -768,7 +768,11 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
           }
         }
       }
-      if (NULL != info) info->cluster = best_c;
+      if (NULL != info) {
+        info->cluster = best_c;
+        info->distance = (cl->dmax > 0.0)
+          ? sqrt(best_dist) / cl->dmax : 0.0;
+      }
     }
     else {
       typedef struct { double dist; int idx; } dc_t;
@@ -831,7 +835,12 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
           }
         }
       }
-      if (NULL != info) info->cluster = -1;
+      if (NULL != info) {
+        const internal_libxs_predict_cluster_t* cl0 = &model->clusters[dists[0].idx];
+        info->cluster = -1;
+        info->distance = (cl0->dmax > 0.0)
+          ? dists[0].dist / cl0->dmax : 0.0;
+      }
       if (dists != dc_buf) free(dists);
     }
     if (NULL != outputs) {
@@ -1240,13 +1249,20 @@ LIBXS_API int libxs_predict_load_csv(libxs_predict_t* model,
       if (0 < len && '\n' == line[len - 1]) line[--len] = '\0';
       if (0 < len && '\r' == line[len - 1]) line[--len] = '\0';
       sep = internal_libxs_predict_detect_delims(line);
-      for (i = 0; i < ninputs && 0 != resolved; ++i) {
-        idx[i] = internal_libxs_predict_resolve_col(inputs[i], line, sep);
-        if (0 > idx[i]) resolved = 0;
-      }
-      for (i = 0; i < noutputs && 0 != resolved; ++i) {
-        idx[ninputs + i] = internal_libxs_predict_resolve_col(outputs[i], line, sep);
-        if (0 > idx[ninputs + i]) resolved = 0;
+      { int ncols = 1, nextra = 0;
+        const char* cp = line;
+        while ('\0' != *cp) { if (NULL != strchr(sep, *cp)) ++ncols; ++cp; }
+        for (i = 0; i < ninputs && 0 != resolved; ++i) {
+          idx[i] = internal_libxs_predict_resolve_col(inputs[i], line, sep);
+          if (0 > idx[i]) resolved = 0;
+        }
+        for (i = 0; i < noutputs && 0 != resolved; ++i) {
+          idx[ninputs + i] = internal_libxs_predict_resolve_col(outputs[i], line, sep);
+          if (0 > idx[ninputs + i]) {
+            idx[ninputs + i] = ncols + nextra;
+            ++nextra;
+          }
+        }
       }
       if (0 == resolved) {
         rewind(file);
@@ -1268,6 +1284,9 @@ LIBXS_API int libxs_predict_load_csv(libxs_predict_t* model,
       }
     }
     while (NULL != fgets(line, (int)sizeof(line), file)) {
+      { size_t len = strlen(line);
+        while (0 < len && ('\n' == line[len - 1] || '\r' == line[len - 1])) line[--len] = '\0';
+      }
       if (0 != internal_libxs_predict_parse_row(line, sep, idx, ninputs, inp)
         && 0 != internal_libxs_predict_parse_row(line, sep, idx + ninputs, noutputs, outp))
       {
