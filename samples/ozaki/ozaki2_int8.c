@@ -210,7 +210,7 @@ LIBXS_API_INLINE int oz2_hier_l2_garner(const unsigned int gval[], unsigned int 
 
 LIBXS_API_INLINE double oz2_hier_horner(const unsigned int d[], const uint32_t* gprod, int ngroups)
 {
-  const int nsuper = (ngroups + HIER_L2_HORNER_GROUP - 1) / HIER_L2_HORNER_GROUP;
+  const int nsuper = LIBXS_UPDIV(ngroups, HIER_L2_HORNER_GROUP);
   double result;
   int sg, i;
 
@@ -242,7 +242,7 @@ LIBXS_API_INLINE void oz2_reconstruct_batch(unsigned int batch_res[OZ2_BATCH][OZ
   const uint32_t* l2_garner_inv, const uint32_t* gprod, const uint64_t* l2_barrett,
   int nprimes, int bsz, double result[OZ2_BATCH])
 {
-  const int ngroups = (nprimes + HIER_GS - 1) / HIER_GS;
+  const int ngroups = LIBXS_UPDIV(nprimes, HIER_GS);
   int bi, g;
 
   for (bi = 0; bi < bsz; ++bi) {
@@ -282,7 +282,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void oz2_reconstruct_batch_a
   const uint32_t* l2_garner_inv, const uint32_t* gprod, const uint64_t* l2_barrett,
   int nprimes, int bsz, double result[OZ2_BATCH])
 {
-  const int ngroups = (nprimes + HIER_GS - 1) / HIER_GS;
+  const int ngroups = LIBXS_UPDIV(nprimes, HIER_GS);
   unsigned int gval_all[OZ2_BATCH][HIER_NGROUPS_MAX];
   int g, bi;
 
@@ -380,7 +380,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
   int oztrim_bits = 0;
   const GEMM_INT_TYPE K_grp_size = (0 < ozaki_maxk ? (GEMM_INT_TYPE)ozaki_maxk : K);
   const GEMM_INT_TYPE K_grp_max = LIBXS_MIN(K_grp_size, K);
-  const GEMM_INT_TYPE K_grp_pad = ((K_grp_max + BLOCK_K - 1) / BLOCK_K) * BLOCK_K;
+  const GEMM_INT_TYPE K_grp_pad = LIBXS_UP(K_grp_max, BLOCK_K);
   oz2_res_t* a_res = NULL;
   oz2_res_t* b_res = NULL;
   int16_t* expa_raw = NULL;
@@ -420,7 +420,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
       garner_inv[i][j] = (uint8_t)libxs_mod_inverse_u32(oz2_moduli[i] % oz2_moduli[j], oz2_moduli[j]);
     }
   }
-  { const int ngroups = (nprimes + HIER_GS - 1) / HIER_GS;
+  { const int ngroups = LIBXS_UPDIV(nprimes, HIER_GS);
     for (i = 0; i < ngroups; ++i) {
       const int lo = i * HIER_GS;
       const int hi = (lo + HIER_GS <= nprimes) ? (lo + HIER_GS) : nprimes;

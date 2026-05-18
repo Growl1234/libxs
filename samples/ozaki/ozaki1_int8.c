@@ -63,7 +63,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
   int eff_cutoff = cutoff, sma = -1, smb = -1;
   const GEMM_INT_TYPE K_grp_size = (0 < ozaki_maxk ? (GEMM_INT_TYPE)ozaki_maxk : K);
   const GEMM_INT_TYPE K_grp_max = LIBXS_MIN(K_grp_size, K);
-  const GEMM_INT_TYPE K_grp_pad = ((K_grp_max + BLOCK_K - 1) / BLOCK_K) * BLOCK_K;
+  const GEMM_INT_TYPE K_grp_pad = LIBXS_UP(K_grp_max, BLOCK_K);
   int8_t* a_slices = NULL;
   int8_t* b_slices = NULL;
   int* k_perm = NULL;
@@ -95,7 +95,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
   }
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
   {
-    const GEMM_INT_TYPE N_blocks = (N + BLOCK_N - 1) / BLOCK_N;
+    const GEMM_INT_TYPE N_blocks = LIBXS_UPDIV(N, BLOCK_N);
     b_packed = (int32_t*)libxs_malloc(gemm_pool, (size_t)nslices * N_blocks * (K_grp_pad / 4) * BLOCK_N * sizeof(int32_t), 0);
   }
 #endif
@@ -346,7 +346,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
       /* Phase 3: reformat B slices into VNNI layout for panel kernels. */
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
       if (NULL != b_packed) {
-        const GEMM_INT_TYPE N_blocks = (N + BLOCK_N - 1) / BLOCK_N;
+        const GEMM_INT_TYPE N_blocks = LIBXS_UPDIV(N, BLOCK_N);
         const GEMM_INT_TYPE bp_stride = (K_grp_pad / 4) * BLOCK_N;
 #if defined(_OPENMP)
 # pragma omp for LIBXS_OPENMP_COLLAPSE(2) OZAKI_OMP_SCHEDULE
@@ -406,7 +406,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
 
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
               if (NULL != b_packed && BLOCK_N == jblk) {
-                const GEMM_INT_TYPE N_blks = (N + BLOCK_N - 1) / BLOCK_N;
+                const GEMM_INT_TYPE N_blks = LIBXS_UPDIV(N, BLOCK_N);
                 const GEMM_INT_TYPE bps = (K_grp_pad / 4) * BLOCK_N;
                 const int32_t* const bp_sb = b_packed + (long)slice_b * N_blks * bps + (long)(jb / BLOCK_N) * bps;
                 const int32_t* const bp_sa = b_packed + (long)slice_a * N_blks * bps + (long)(jb / BLOCK_N) * bps;

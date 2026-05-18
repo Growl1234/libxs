@@ -704,7 +704,7 @@ LIBXS_API int libxs_predict_build_task(libxs_lock_t* lock,
     while (0 == model->phase) { /* spin-wait for tid==0 */ }
     result = (0 != model->built) ? EXIT_SUCCESS : EXIT_FAILURE;
   }
-  (void)lock; (void)ntasks;
+  LIBXS_UNUSED(lock); LIBXS_UNUSED(ntasks);
   return result;
 }
 

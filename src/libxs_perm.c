@@ -150,21 +150,21 @@ LIBXS_API_INLINE void internal_libxs_sort_heap(
 
 LIBXS_API int libxs_cmp_f64(const void* a, const void* b, void* ctx) {
   const double va = *(const double*)a, vb = *(const double*)b;
-  (void)ctx;
+  LIBXS_UNUSED(ctx);
   return (va > vb) - (va < vb);
 }
 
 
 LIBXS_API int libxs_cmp_f32(const void* a, const void* b, void* ctx) {
   const float va = *(const float*)a, vb = *(const float*)b;
-  (void)ctx;
+  LIBXS_UNUSED(ctx);
   return (va > vb) - (va < vb);
 }
 
 
 LIBXS_API int libxs_cmp_i32(const void* a, const void* b, void* ctx) {
   const int va = *(const int*)a, vb = *(const int*)b;
-  (void)ctx;
+  LIBXS_UNUSED(ctx);
   return (va > vb) - (va < vb);
 }
 
@@ -172,7 +172,7 @@ LIBXS_API int libxs_cmp_i32(const void* a, const void* b, void* ctx) {
 LIBXS_API int libxs_cmp_u32(const void* a, const void* b, void* ctx) {
   const unsigned int va = *(const unsigned int*)a;
   const unsigned int vb = *(const unsigned int*)b;
-  (void)ctx;
+  LIBXS_UNUSED(ctx);
   return (va > vb) - (va < vb);
 }
 
