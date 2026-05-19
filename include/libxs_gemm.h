@@ -11,6 +11,7 @@
 #define LIBXS_GEMM_H
 
 #include "libxs.h"
+#include "libxs_mem.h"
 #include "libxs_reg.h"
 
 #if (defined(__MKL) || defined(MKL_DIRECT_CALL_SEQ) || defined(MKL_DIRECT_CALL)) \
@@ -253,7 +254,7 @@ LIBXS_API_INLINE libxs_gemm_config_t* libxs_gemm_dispatch(
 {
   libxs_gemm_shape_t shape;
   libxs_gemm_backend_t be;
-  memset(&shape, 0, sizeof(shape));
+  LIBXS_MEMZERO(&shape);
   shape.datatype = datatype;
   shape.transa = transa; shape.transb = transb;
   shape.m = m; shape.n = n; shape.k = k;
@@ -266,19 +267,19 @@ LIBXS_API_INLINE libxs_gemm_config_t* libxs_gemm_dispatch(
     shape.alpha = (NULL != alpha ? (double)*(const float*)alpha : 1.0);
     shape.beta  = (NULL != beta  ? (double)*(const float*)beta  : 0.0);
   }
-  memset(&be, 0, sizeof(be));
+  LIBXS_MEMZERO(&be);
 #if defined(mkl_jit_create_dgemm)
-  be.jit_create_dgemm = (libxs_jit_create_dgemm_t)mkl_jit_create_dgemm;
-  be.jit_get_dgemm = (libxs_jit_get_dgemm_t)mkl_jit_get_dgemm_ptr;
-  be.jit_create_sgemm = (libxs_jit_create_sgemm_t)mkl_jit_create_sgemm;
-  be.jit_get_sgemm = (libxs_jit_get_sgemm_t)mkl_jit_get_sgemm_ptr;
+  LIBXS_VALUE_ASSIGN(be.jit_create_dgemm, mkl_jit_create_dgemm);
+  LIBXS_VALUE_ASSIGN(be.jit_get_dgemm, mkl_jit_get_dgemm_ptr);
+  LIBXS_VALUE_ASSIGN(be.jit_create_sgemm, mkl_jit_create_sgemm);
+  LIBXS_VALUE_ASSIGN(be.jit_get_sgemm, mkl_jit_get_sgemm_ptr);
 #endif
 #if defined(LIBXSMM_H)
-  be.xgemm_dispatch = (libxs_xgemm_dispatch_t)libxsmm_dispatch_gemm;
+  LIBXS_VALUE_ASSIGN(be.xgemm_dispatch, libxsmm_dispatch_gemm);
 #endif
 #if defined(__MKL) || defined(MKL_H)
-  be.dgemm_blas = (libxs_gemm_dblas_t)dgemm;
-  be.sgemm_blas = (libxs_gemm_sblas_t)sgemm;
+  LIBXS_VALUE_ASSIGN(be.dgemm_blas, dgemm);
+  LIBXS_VALUE_ASSIGN(be.sgemm_blas, sgemm);
 #elif defined(__BLAS)
   { extern void LIBXS_FSYMBOL(dgemm)(
       const char*, const char*,
@@ -316,7 +317,7 @@ LIBXS_API_INLINE void libxs_gemm_call(
   }
   else {
     libxs_gemm_param_t xparam;
-    memset(&xparam, 0, sizeof(xparam));
+    LIBXS_MEMZERO(&xparam);
     xparam.a[0] = a;
     xparam.b[0] = b;
     xparam.c[0] = c;
