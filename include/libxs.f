@@ -69,6 +69,7 @@
         PUBLIC :: libxs_memcmp
         PUBLIC :: libxs_matcopy, libxs_matcopy_task
         PUBLIC :: libxs_otrans, libxs_otrans_task
+
         PUBLIC :: libxs_itrans, libxs_itrans_task
         PUBLIC :: libxs_typesize
         PUBLIC :: libxs_cpuid_t
@@ -86,16 +87,6 @@
         PUBLIC :: libxs_gemm_index, libxs_gemm_index_task
         PUBLIC :: libxs_syr2k_dispatch, libxs_syrk_dispatch
         PUBLIC :: libxs_syr2k, libxs_syrk
-
-        INTERFACE libxs_syr2k
-          MODULE PROCEDURE libxs_syr2k_config
-          MODULE PROCEDURE libxs_syr2k_direct
-        END INTERFACE
-
-        INTERFACE libxs_syrk
-          MODULE PROCEDURE libxs_syrk_config
-          MODULE PROCEDURE libxs_syrk_direct
-        END INTERFACE
 
         !> Re-exported from ISO_C_BINDING for convenience.
         PUBLIC :: C_DOUBLE, C_FLOAT, C_INT, C_LONG_LONG
@@ -241,6 +232,36 @@
           INTEGER(C_INT) :: flags      = LIBXS_GEMM_FLAGS_DEFAULT
           TYPE(libxs_gemm_shape_t) :: shape
         END TYPE
+
+        INTERFACE libxs_matcopy
+          MODULE PROCEDURE libxs_matcopy_cptr
+          MODULE PROCEDURE libxs_matcopy_array
+        END INTERFACE
+
+        INTERFACE libxs_matcopy_task
+          MODULE PROCEDURE libxs_matcopy_task_cptr
+          MODULE PROCEDURE libxs_matcopy_task_array
+        END INTERFACE
+
+        INTERFACE libxs_otrans
+          MODULE PROCEDURE libxs_otrans_cptr
+          MODULE PROCEDURE libxs_otrans_array
+        END INTERFACE
+
+        INTERFACE libxs_otrans_task
+          MODULE PROCEDURE libxs_otrans_task_cptr
+          MODULE PROCEDURE libxs_otrans_task_array
+        END INTERFACE
+
+        INTERFACE libxs_syr2k
+          MODULE PROCEDURE libxs_syr2k_config
+          MODULE PROCEDURE libxs_syr2k_direct
+        END INTERFACE
+
+        INTERFACE libxs_syrk
+          MODULE PROCEDURE libxs_syrk_config
+          MODULE PROCEDURE libxs_syrk_direct
+        END INTERFACE
 
         INTERFACE
           !> Returns the detected ISA level for the current
@@ -531,7 +552,7 @@
             INTEGER(C_INT) :: libxs_registry_info
           END FUNCTION
 
-          !> Copy a matrix (internal, use libxs_matcopy wrapper).
+          !> Copy a matrix (internal, C_PTR variant).
           PURE SUBROUTINE internal_matcopy(outm, inm,                   &
      &    typesize, m, n, ldi, ldo)                                     &
      &    BIND(C, NAME="libxs_matcopy")
@@ -542,7 +563,19 @@
      &      m, n, ldi, ldo
           END SUBROUTINE
 
-          !> Copy a matrix: task variant (internal).
+          !> Copy a matrix (internal, array variant).
+          PURE SUBROUTINE internal_matcopy_arr(outm, inm,               &
+     &    typesize, m, n, ldi, ldo)                                     &
+     &    BIND(C, NAME="libxs_matcopy")
+            IMPORT :: C_INT
+            TYPE(*), INTENT(INOUT) :: outm(*)
+            TYPE(*), INTENT(IN) :: inm(*)
+            INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &      m, n, ldi, ldo
+          END SUBROUTINE
+
+          !> Copy a matrix: task variant (internal, C_PTR).
           PURE SUBROUTINE internal_matcopy_task(outm, inm,              &
      &    typesize, m, n, ldi, ldo, tid, ntasks)                        &
      &    BIND(C, NAME="libxs_matcopy_task")
@@ -553,7 +586,19 @@
      &      m, n, ldi, ldo, tid, ntasks
           END SUBROUTINE
 
-          !> Out-of-place transpose (internal).
+          !> Copy a matrix: task variant (internal, array).
+          PURE SUBROUTINE internal_matcopy_task_arr(outm, inm,          &
+     &    typesize, m, n, ldi, ldo, tid, ntasks)                        &
+     &    BIND(C, NAME="libxs_matcopy_task")
+            IMPORT :: C_INT
+            TYPE(*), INTENT(INOUT) :: outm(*)
+            TYPE(*), INTENT(IN) :: inm(*)
+            INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &      m, n, ldi, ldo, tid, ntasks
+          END SUBROUTINE
+
+          !> Out-of-place transpose (internal, C_PTR).
           PURE SUBROUTINE internal_otrans(outm, inm,                    &
      &    typesize, m, n, ldi, ldo)                                     &
      &    BIND(C, NAME="libxs_otrans")
@@ -564,12 +609,36 @@
      &      m, n, ldi, ldo
           END SUBROUTINE
 
-          !> Out-of-place transpose: task variant (internal).
+          !> Out-of-place transpose (internal, array).
+          PURE SUBROUTINE internal_otrans_arr(outm, inm,                &
+     &    typesize, m, n, ldi, ldo)                                     &
+     &    BIND(C, NAME="libxs_otrans")
+            IMPORT :: C_INT
+            TYPE(*), INTENT(INOUT) :: outm(*)
+            TYPE(*), INTENT(IN) :: inm(*)
+            INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &      m, n, ldi, ldo
+          END SUBROUTINE
+
+          !> Out-of-place transpose: task variant (internal, C_PTR).
           PURE SUBROUTINE internal_otrans_task(outm, inm,               &
      &    typesize, m, n, ldi, ldo, tid, ntasks)                        &
      &    BIND(C, NAME="libxs_otrans_task")
             IMPORT :: C_PTR, C_INT
             TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
+            INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &      m, n, ldi, ldo, tid, ntasks
+          END SUBROUTINE
+
+          !> Out-of-place transpose: task variant (internal, array).
+          PURE SUBROUTINE internal_otrans_task_arr(outm, inm,           &
+     &    typesize, m, n, ldi, ldo, tid, ntasks)                        &
+     &    BIND(C, NAME="libxs_otrans_task")
+            IMPORT :: C_INT
+            TYPE(*), INTENT(INOUT) :: outm(*)
+            TYPE(*), INTENT(IN) :: inm(*)
             INTEGER(C_INT), INTENT(IN), VALUE :: typesize
             INTEGER(C_INT), INTENT(IN), VALUE ::                        &
      &      m, n, ldi, ldo, tid, ntasks
@@ -797,7 +866,7 @@
 
         !> Copy a matrix (or zero if source is NULL).
         !> ldo defaults to m (tightly packed output).
-        PURE SUBROUTINE libxs_matcopy(outm, inm, typesize,              &
+        PURE SUBROUTINE libxs_matcopy_cptr(outm, inm, typesize,         &
      &  m, n, ldi, ldo)
           TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
           INTEGER(C_INT), INTENT(IN), VALUE :: typesize
@@ -812,9 +881,27 @@
           END IF
         END SUBROUTINE
 
+        !> Copy a matrix given array elements (no C_LOC needed).
+        !> ldo defaults to m (tightly packed output).
+        PURE SUBROUTINE libxs_matcopy_array(outm, inm, typesize,        &
+     &  m, n, ldi, ldo)
+          TYPE(*), INTENT(INOUT) :: outm(*)
+          TYPE(*), INTENT(IN) :: inm(*)
+          INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+          INTEGER(C_INT), INTENT(IN), VALUE :: m, n, ldi
+          INTEGER(C_INT), INTENT(IN), VALUE, OPTIONAL :: ldo
+          IF (PRESENT(ldo)) THEN
+            CALL internal_matcopy_arr(outm, inm, typesize,              &
+     &        m, n, ldi, ldo)
+          ELSE
+            CALL internal_matcopy_arr(outm, inm, typesize,              &
+     &        m, n, ldi, m)
+          END IF
+        END SUBROUTINE
+
         !> Copy a matrix: task variant for external threading.
         !> ldo defaults to m (tightly packed output).
-        PURE SUBROUTINE libxs_matcopy_task(outm, inm,                   &
+        PURE SUBROUTINE libxs_matcopy_task_cptr(outm, inm,              &
      &  typesize, m, n, ldi, ldo, tid, ntasks)
           TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
           INTEGER(C_INT), INTENT(IN), VALUE :: typesize
@@ -830,9 +917,28 @@
           END IF
         END SUBROUTINE
 
+        !> Copy a matrix: task variant with array elements.
+        !> ldo defaults to m (tightly packed output).
+        PURE SUBROUTINE libxs_matcopy_task_array(outm, inm,             &
+     &  typesize, m, n, ldi, ldo, tid, ntasks)
+          TYPE(*), INTENT(INOUT) :: outm(*)
+          TYPE(*), INTENT(IN) :: inm(*)
+          INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+          INTEGER(C_INT), INTENT(IN), VALUE ::                          &
+     &      m, n, ldi, tid, ntasks
+          INTEGER(C_INT), INTENT(IN), VALUE, OPTIONAL :: ldo
+          IF (PRESENT(ldo)) THEN
+            CALL internal_matcopy_task_arr(outm, inm, typesize,         &
+     &        m, n, ldi, ldo, tid, ntasks)
+          ELSE
+            CALL internal_matcopy_task_arr(outm, inm, typesize,         &
+     &        m, n, ldi, m, tid, ntasks)
+          END IF
+        END SUBROUTINE
+
         !> Out-of-place matrix transpose.
         !> ldo defaults to n (tightly packed transposed output).
-        PURE SUBROUTINE libxs_otrans(outm, inm, typesize,               &
+        PURE SUBROUTINE libxs_otrans_cptr(outm, inm, typesize,          &
      &  m, n, ldi, ldo)
           TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
           INTEGER(C_INT), INTENT(IN), VALUE :: typesize
@@ -847,9 +953,27 @@
           END IF
         END SUBROUTINE
 
+        !> Out-of-place transpose given array elements.
+        !> ldo defaults to n (tightly packed transposed output).
+        PURE SUBROUTINE libxs_otrans_array(outm, inm, typesize,         &
+     &  m, n, ldi, ldo)
+          TYPE(*), INTENT(INOUT) :: outm(*)
+          TYPE(*), INTENT(IN) :: inm(*)
+          INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+          INTEGER(C_INT), INTENT(IN), VALUE :: m, n, ldi
+          INTEGER(C_INT), INTENT(IN), VALUE, OPTIONAL :: ldo
+          IF (PRESENT(ldo)) THEN
+            CALL internal_otrans_arr(outm, inm, typesize,               &
+     &        m, n, ldi, ldo)
+          ELSE
+            CALL internal_otrans_arr(outm, inm, typesize,               &
+     &        m, n, ldi, n)
+          END IF
+        END SUBROUTINE
+
         !> Out-of-place transpose: task variant.
         !> ldo defaults to n (tightly packed transposed output).
-        PURE SUBROUTINE libxs_otrans_task(outm, inm,                    &
+        PURE SUBROUTINE libxs_otrans_task_cptr(outm, inm,               &
      &  typesize, m, n, ldi, ldo, tid, ntasks)
           TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
           INTEGER(C_INT), INTENT(IN), VALUE :: typesize
@@ -861,6 +985,25 @@
      &        m, n, ldi, ldo, tid, ntasks)
           ELSE
             CALL internal_otrans_task(outm, inm, typesize,              &
+     &        m, n, ldi, n, tid, ntasks)
+          END IF
+        END SUBROUTINE
+
+        !> Out-of-place transpose: task variant with array elements.
+        !> ldo defaults to n (tightly packed transposed output).
+        PURE SUBROUTINE libxs_otrans_task_array(outm, inm,              &
+     &  typesize, m, n, ldi, ldo, tid, ntasks)
+          TYPE(*), INTENT(INOUT) :: outm(*)
+          TYPE(*), INTENT(IN) :: inm(*)
+          INTEGER(C_INT), INTENT(IN), VALUE :: typesize
+          INTEGER(C_INT), INTENT(IN), VALUE ::                          &
+     &      m, n, ldi, tid, ntasks
+          INTEGER(C_INT), INTENT(IN), VALUE, OPTIONAL :: ldo
+          IF (PRESENT(ldo)) THEN
+            CALL internal_otrans_task_arr(outm, inm, typesize,          &
+     &        m, n, ldi, ldo, tid, ntasks)
+          ELSE
+            CALL internal_otrans_task_arr(outm, inm, typesize,          &
      &        m, n, ldi, n, tid, ntasks)
           END IF
         END SUBROUTINE
