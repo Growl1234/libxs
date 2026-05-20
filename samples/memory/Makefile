@@ -56,7 +56,9 @@ FTNOBJS := $(FXXOBJS) $(F77OBJS) $(F90OBJS)
 MCMOBJS := $(filter-out $(BLDDIR)/memcmp%,$(FTNOBJS))
 MCPOBJS := $(filter-out $(BLDDIR)/matcpy%,$(FTNOBJS))
 MCPOBJS := $(filter-out $(BLDDIR)/memory%,$(MCPOBJS))
-XFILES := $(OUTDIR)/memcmp.x $(OUTDIR)/memcmpf.x $(OUTDIR)/matcpyf.x
+MCOBJS := $(filter-out $(BLDDIR)/itrans%,$(OBJECTS))
+ITOBJS := $(filter $(BLDDIR)/itrans%,$(OBJECTS))
+XFILES := $(OUTDIR)/memcmp.x $(OUTDIR)/itrans.x $(OUTDIR)/memcmpf.x $(OUTDIR)/matcpyf.x
 
 .PHONY: all
 all: $(XFILES)
@@ -80,8 +82,11 @@ else
 .PHONY: $(OUTDIR)/matcpyf.x
 endif
 
-$(OUTDIR)/memcmp.x: $(OUTDIR)/.make $(OBJECTS) $(XLIB)
-	$(LD) -o $@ $(OBJECTS) $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+$(OUTDIR)/memcmp.x: $(OUTDIR)/.make $(MCOBJS) $(XLIB)
+	$(LD) -o $@ $(MCOBJS) $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+
+$(OUTDIR)/itrans.x: $(OUTDIR)/.make $(ITOBJS) $(XLIB)
+	$(LD) -o $@ $(ITOBJS) $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
 $(BLDDIR)/%-cpp.o: $(SRCDIR)/%.cpp .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc
 	$(CXX) $(DFLAGS) $(IFLAGS) $(CXXFLAGS) $(CTARGET) -c $< -o $@

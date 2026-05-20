@@ -30,7 +30,7 @@ export LIBXS_GEMM_WRAP=${LIBXS_GEMM_WRAP:-0}
 # good-enough pattern to match main functions, and to include translation unit in test set
 if [ ! "$*" ]; then
   TESTS="$(cd "${HERE}" && ${GREP} -l "main[[:space:]]*(.*)" ./*.c 2>/dev/null) \
-    gemm.sh memcmp.sh ozaki.sh scratch.sh wrap.sh"
+    gemm.sh matcpy.sh memcmp.sh ozaki.sh scratch.sh syrk.sh transpose.sh wrap.sh"
   if [ "${SORT}" ]; then
     TESTS=$(${TR} <<<"${TESTS}" -s " " "\n" | ${SORT})
   fi
