@@ -162,31 +162,38 @@ LIBXS_API_INTERN void internal_libxs_gemm_init(void)
 #if defined(LIBXS_INTERCEPT_DYNAMIC)
     const char *const env = getenv("LIBXS_SYRK_BLAS");
     const int syrk_blas = (NULL == env ? 1/*default*/ : atoi(env));
-    union { const void* pin; libxs_gemm_dblas_t pout; } wd;
-    union { const void* pin; libxs_gemm_sblas_t pout; } ws;
+    void* dl;
     dlerror();
-    wd.pin = dlsym(LIBXS_RTLD_NEXT, LIBXS_STRINGIFY(LIBXS_FSYMBOL(dgemm)));
-    if (NULL == dlerror() && NULL != wd.pout) internal_libxs_dgemm_blas = wd.pout;
+    dl = dlsym(LIBXS_RTLD_NEXT, LIBXS_STRINGIFY(LIBXS_FSYMBOL(dgemm)));
+    if (NULL == dlerror() && NULL != dl) {
+      LIBXS_FPTR_FROM_VPTR(libxs_gemm_dblas_t, internal_libxs_dgemm_blas, dl);
+    }
     dlerror();
-    ws.pin = dlsym(LIBXS_RTLD_NEXT, LIBXS_STRINGIFY(LIBXS_FSYMBOL(sgemm)));
-    if (NULL == dlerror() && NULL != ws.pout) internal_libxs_sgemm_blas = ws.pout;
+    dl = dlsym(LIBXS_RTLD_NEXT, LIBXS_STRINGIFY(LIBXS_FSYMBOL(sgemm)));
+    if (NULL == dlerror() && NULL != dl) {
+      LIBXS_FPTR_FROM_VPTR(libxs_gemm_sblas_t, internal_libxs_sgemm_blas, dl);
+    }
     if (0 != syrk_blas) {
-      union { const void* pin; internal_libxs_dsyrk_t pout; } wdk;
-      union { const void* pin; internal_libxs_ssyrk_t pout; } wsk;
-      union { const void* pin; internal_libxs_dsyr2k_t pout; } wd2k;
-      union { const void* pin; internal_libxs_ssyr2k_t pout; } ws2k;
       dlerror();
-      wdk.pin = dlsym(LIBXS_RTLD_NEXT, LIBXS_STRINGIFY(LIBXS_FSYMBOL(dsyrk)));
-      if (NULL == dlerror() && NULL != wdk.pout) internal_libxs_dsyrk_blas = wdk.pout;
+      dl = dlsym(LIBXS_RTLD_NEXT, LIBXS_STRINGIFY(LIBXS_FSYMBOL(dsyrk)));
+      if (NULL == dlerror() && NULL != dl) {
+        LIBXS_FPTR_FROM_VPTR(internal_libxs_dsyrk_t, internal_libxs_dsyrk_blas, dl);
+      }
       dlerror();
-      wsk.pin = dlsym(LIBXS_RTLD_NEXT, LIBXS_STRINGIFY(LIBXS_FSYMBOL(ssyrk)));
-      if (NULL == dlerror() && NULL != wsk.pout) internal_libxs_ssyrk_blas = wsk.pout;
+      dl = dlsym(LIBXS_RTLD_NEXT, LIBXS_STRINGIFY(LIBXS_FSYMBOL(ssyrk)));
+      if (NULL == dlerror() && NULL != dl) {
+        LIBXS_FPTR_FROM_VPTR(internal_libxs_ssyrk_t, internal_libxs_ssyrk_blas, dl);
+      }
       dlerror();
-      wd2k.pin = dlsym(LIBXS_RTLD_NEXT, LIBXS_STRINGIFY(LIBXS_FSYMBOL(dsyr2k)));
-      if (NULL == dlerror() && NULL != wd2k.pout) internal_libxs_dsyr2k_blas = wd2k.pout;
+      dl = dlsym(LIBXS_RTLD_NEXT, LIBXS_STRINGIFY(LIBXS_FSYMBOL(dsyr2k)));
+      if (NULL == dlerror() && NULL != dl) {
+        LIBXS_FPTR_FROM_VPTR(internal_libxs_dsyr2k_t, internal_libxs_dsyr2k_blas, dl);
+      }
       dlerror();
-      ws2k.pin = dlsym(LIBXS_RTLD_NEXT, LIBXS_STRINGIFY(LIBXS_FSYMBOL(ssyr2k)));
-      if (NULL == dlerror() && NULL != ws2k.pout) internal_libxs_ssyr2k_blas = ws2k.pout;
+      dl = dlsym(LIBXS_RTLD_NEXT, LIBXS_STRINGIFY(LIBXS_FSYMBOL(ssyr2k)));
+      if (NULL == dlerror() && NULL != dl) {
+        LIBXS_FPTR_FROM_VPTR(internal_libxs_ssyr2k_t, internal_libxs_ssyr2k_blas, dl);
+      }
     }
 #endif
     internal_libxs_gemm_bm = (NULL == gemm_bm_env ? LIBXS_GEMM_BM : atoi(gemm_bm_env));
