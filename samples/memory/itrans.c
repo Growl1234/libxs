@@ -35,63 +35,71 @@ int main(int argc, char* argv[])
   int result = EXIT_SUCCESS;
   int i, j;
 
-  if (0 >= m || 0 >= n) return EXIT_SUCCESS;
-
   libxs_init();
-  mat = (ELEM_TYPE*)malloc(size_max * sizeof(ELEM_TYPE));
-  ref = (ELEM_TYPE*)malloc(size_in * sizeof(ELEM_TYPE));
-  scratch = (m != n || ldi != ldo)
-    ? (ELEM_TYPE*)malloc(scratch_size * sizeof(ELEM_TYPE)) : NULL;
-  if (NULL == mat || NULL == ref) {
-    free(scratch); free(ref); free(mat);
-    libxs_finalize();
-    return EXIT_FAILURE;
-  }
 
-  /* initialize: A(i,j) stored column-major with leading dim ldi */
-  for (j = 0; j < n; ++j) {
-    for (i = 0; i < ldi; ++i) {
-      const ELEM_TYPE value = (ELEM_TYPE)((size_t)ldi * j + i + 1);
-      mat[(size_t)ldi * j + i] = value;
-      if (i < m) ref[(size_t)ldi * j + i] = value;
-    }
+  if (0 >= m || 0 >= n) {
+    libxs_itrans(NULL, sizeof(ELEM_TYPE), m, n, ldi, ldo, NULL);
   }
+  else {
+    mat = (ELEM_TYPE*)malloc(size_max * sizeof(ELEM_TYPE));
+    ref = (ELEM_TYPE*)malloc(size_in * sizeof(ELEM_TYPE));
+    scratch = (m != n || ldi != ldo)
+      ? (ELEM_TYPE*)malloc(scratch_size * sizeof(ELEM_TYPE)) : NULL;
 
-  /* serial itrans */
-  libxs_itrans(mat, sizeof(ELEM_TYPE), m, n, ldi, ldo, scratch);
-  result = check_itrans(mat, ref, m, n, ldi, ldo);
-  if (EXIT_SUCCESS != result) {
-    fprintf(stderr, "  (serial itrans, m=%i n=%i ldi=%i ldo=%i)\n", m, n, ldi, ldo);
-    free(scratch); free(ref); free(mat);
-    libxs_finalize();
-    return result;
-  }
+    if (NULL != mat && NULL != ref) {
+      /* initialize: A(i,j) stored column-major with leading dim ldi */
+      for (j = 0; j < n; ++j) {
+        for (i = 0; i < ldi; ++i) {
+          const ELEM_TYPE value = (ELEM_TYPE)((size_t)ldi * j + i + 1);
+          mat[(size_t)ldi * j + i] = value;
+          if (i < m) ref[(size_t)ldi * j + i] = value;
+        }
+      }
 
-  /* re-initialize for task variant */
-  for (j = 0; j < n; ++j) {
-    for (i = 0; i < ldi; ++i) {
-      mat[(size_t)ldi * j + i] = (ELEM_TYPE)((size_t)ldi * j + i + 1);
-    }
-  }
+      /* serial itrans */
+      libxs_itrans(mat, sizeof(ELEM_TYPE), m, n, ldi, ldo, scratch);
+      result = check_itrans(mat, ref, m, n, ldi, ldo);
+      if (EXIT_SUCCESS != result) {
+        fprintf(stderr, "  (serial itrans, m=%i n=%i ldi=%i ldo=%i)\n",
+          m, n, ldi, ldo);
+      }
 
-  /* parallel itrans_task */
+      if (EXIT_SUCCESS == result) {
+        /* re-initialize for task variant */
+        for (j = 0; j < n; ++j) {
+          for (i = 0; i < ldi; ++i) {
+            mat[(size_t)ldi * j + i] =
+              (ELEM_TYPE)((size_t)ldi * j + i + 1);
+          }
+        }
+
+        /* parallel itrans_task */
 #if defined(_OPENMP)
-# pragma omp parallel default(none) shared(mat, scratch, m, n, ldi, ldo)
-  {
-    libxs_itrans_task(mat, sizeof(ELEM_TYPE), m, n, ldi, ldo, scratch,
-      omp_get_thread_num(), omp_get_num_threads());
-  }
+#       pragma omp parallel default(none) shared(mat, scratch, m, n, ldi, ldo)
+        {
+          libxs_itrans_task(mat, sizeof(ELEM_TYPE), m, n, ldi, ldo,
+            scratch, omp_get_thread_num(), omp_get_num_threads());
+        }
 #else
-  libxs_itrans_task(mat, sizeof(ELEM_TYPE), m, n, ldi, ldo, scratch, 0, 1);
+        libxs_itrans_task(mat, sizeof(ELEM_TYPE), m, n, ldi, ldo,
+          scratch, 0, 1);
 #endif
-  result = check_itrans(mat, ref, m, n, ldi, ldo);
-  if (EXIT_SUCCESS != result) {
-    fprintf(stderr, "  (task itrans, m=%i n=%i ldi=%i ldo=%i)\n", m, n, ldi, ldo);
+        result = check_itrans(mat, ref, m, n, ldi, ldo);
+        if (EXIT_SUCCESS != result) {
+          fprintf(stderr, "  (task itrans, m=%i n=%i ldi=%i ldo=%i)\n",
+            m, n, ldi, ldo);
+        }
+      }
+    }
+    else {
+      result = EXIT_FAILURE;
+    }
+
+    free(scratch);
+    free(ref);
+    free(mat);
   }
 
-  free(scratch);
-  free(ref);
-  free(mat);
   libxs_finalize();
   return result;
 }

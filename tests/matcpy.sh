@@ -46,7 +46,12 @@ run_check 64 32 64 64 1
 run_check 100 200 128 128 1
 run_check 13 7 16 16 1
 
-# degenerate shapes
+# degenerate shapes (vectors)
 run_check 1 1 1 1 1
 run_check 1 64 1 1 1
 run_check 64 1 64 64 1
+
+# null shapes (m=0 or n=0)
+run_check 0 0 256 256 1
+run_check 0 64 256 256 1
+run_check 64 0 256 256 1
