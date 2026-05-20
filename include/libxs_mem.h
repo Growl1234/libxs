@@ -49,6 +49,22 @@
 
 /** Assigns SRC to DST (must be L-values). Can be used to cast const-qualifiers. */
 #define LIBXS_VALUE_ASSIGN(DST, SRC) LIBXS_ASSIGN(&(DST), &(SRC))
+/** Assign function pointer via union (avoids object/function pointer cast). */
+#define LIBXS_FPTR_ASSIGN(DST_TYPE, DST, SRC) do { \
+  union { DST_TYPE d; void (*s)(void); } libxs_fptr_u_; \
+  LIBXS_ASSERT(sizeof(DST) == sizeof(void(*)(void))); \
+  LIBXS_ASSERT(sizeof(libxs_fptr_u_.s) == sizeof(libxs_fptr_u_.d)); \
+  libxs_fptr_u_.s = (void(*)(void))(SRC); \
+  (DST) = libxs_fptr_u_.d; \
+} while(0)
+/** Assign void-pointer to function-pointer DST via union (dlsym pattern). */
+#define LIBXS_FPTR_FROM_VPTR(DST_TYPE, DST, VPTR) do { \
+  union { DST_TYPE fn; void* vp; } libxs_fptr_u_; \
+  LIBXS_ASSERT(sizeof(DST) == sizeof(void*)); \
+  LIBXS_ASSERT(sizeof(libxs_fptr_u_.fn) == sizeof(libxs_fptr_u_.vp)); \
+  libxs_fptr_u_.vp = (VPTR); \
+  (DST) = libxs_fptr_u_.fn; \
+} while(0)
 /** Swap two arbitrary-sized values (must be L-values) */
 #define LIBXS_VALUE_SWAP(A, B) do { \
   LIBXS_ASSERT(sizeof(A) == sizeof(B)); \

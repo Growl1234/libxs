@@ -269,17 +269,17 @@ LIBXS_API_INLINE libxs_gemm_config_t* libxs_gemm_dispatch(
   }
   LIBXS_MEMZERO(&be);
 #if defined(mkl_jit_create_dgemm)
-  LIBXS_VALUE_ASSIGN(be.jit_create_dgemm, mkl_jit_create_dgemm);
-  LIBXS_VALUE_ASSIGN(be.jit_get_dgemm, mkl_jit_get_dgemm_ptr);
-  LIBXS_VALUE_ASSIGN(be.jit_create_sgemm, mkl_jit_create_sgemm);
-  LIBXS_VALUE_ASSIGN(be.jit_get_sgemm, mkl_jit_get_sgemm_ptr);
+  LIBXS_FPTR_ASSIGN(libxs_jit_create_dgemm_t, be.jit_create_dgemm, mkl_jit_create_dgemm);
+  LIBXS_FPTR_ASSIGN(libxs_jit_get_dgemm_t, be.jit_get_dgemm, mkl_jit_get_dgemm_ptr);
+  LIBXS_FPTR_ASSIGN(libxs_jit_create_sgemm_t, be.jit_create_sgemm, mkl_jit_create_sgemm);
+  LIBXS_FPTR_ASSIGN(libxs_jit_get_sgemm_t, be.jit_get_sgemm, mkl_jit_get_sgemm_ptr);
 #endif
 #if defined(LIBXSMM_H)
-  LIBXS_VALUE_ASSIGN(be.xgemm_dispatch, libxsmm_dispatch_gemm);
+  LIBXS_FPTR_ASSIGN(libxs_xgemm_dispatch_t, be.xgemm_dispatch, libxsmm_dispatch_gemm);
 #endif
 #if defined(__MKL) || defined(MKL_H)
-  LIBXS_VALUE_ASSIGN(be.dgemm_blas, dgemm);
-  LIBXS_VALUE_ASSIGN(be.sgemm_blas, sgemm);
+  LIBXS_FPTR_ASSIGN(libxs_gemm_dblas_t, be.dgemm_blas, dgemm);
+  LIBXS_FPTR_ASSIGN(libxs_gemm_sblas_t, be.sgemm_blas, sgemm);
 #elif defined(__BLAS)
   { extern void LIBXS_FSYMBOL(dgemm)(
       const char*, const char*,

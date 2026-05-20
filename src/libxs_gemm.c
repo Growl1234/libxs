@@ -335,7 +335,7 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
             kernel_shape->beta, kldc))
           {
             void* fn = backend->jit_get_dgemm(jitter);
-            if (NULL != fn) LIBXS_VALUE_ASSIGN(config.dgemm_jit, fn);
+            if (NULL != fn) LIBXS_FPTR_FROM_VPTR(libxs_gemm_djit_t, config.dgemm_jit, fn);
             config.jitter = jitter;
           }
         }
@@ -350,7 +350,7 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
             (float)kernel_shape->beta, kldc))
           {
             void* fn = backend->jit_get_sgemm(jitter);
-            if (NULL != fn) LIBXS_VALUE_ASSIGN(config.sgemm_jit, fn);
+            if (NULL != fn) LIBXS_FPTR_FROM_VPTR(libxs_gemm_sjit_t, config.sgemm_jit, fn);
             config.jitter = jitter;
           }
         }
