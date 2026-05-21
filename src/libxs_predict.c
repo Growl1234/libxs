@@ -13,7 +13,6 @@
 #include <libxs_malloc.h>
 #include "libxs_main.h"
 
-
 #if !defined(LIBXS_PREDICT_MAXITER)
 #  define LIBXS_PREDICT_MAXITER 100
 #endif
@@ -252,7 +251,7 @@ LIBXS_API_INLINE double internal_libxs_predict_position(
 LIBXS_API_INLINE double internal_libxs_predict_classify(
   const internal_libxs_predict_cluster_t* cl, const double* kd_pts,
   int nc, int m, const double* inputs, int output_j, int nouts,
-  int ndistinct, int extrapolate, double* confidence)
+  int ndistinct, int extrapolate, double* confidence, double* out_variance)
 {
   const int k = cl->k_eff;
   const int ndistinct_thresh = (int)(sqrt((double)nc) + 0.5);
@@ -290,6 +289,21 @@ LIBXS_API_INLINE double internal_libxs_predict_classify(
         candidates[worst] = cl->raw_outputs[(size_t)i * nouts + output_j];
         dists[worst] = sqrt(d2);
       }
+    }
+  }
+  if (NULL != out_variance) {
+    if (0 != exact || nfound <= 1) {
+      *out_variance = 0;
+    }
+    else {
+      double mean = 0, v = 0;
+      for (i = 0; i < nfound; ++i) mean += candidates[i];
+      mean /= nfound;
+      for (i = 0; i < nfound; ++i) {
+        const double d = candidates[i] - mean;
+        v += d * d;
+      }
+      *out_variance = v / nfound;
     }
   }
   if (0 == exact && nfound > 0) {
@@ -589,7 +603,7 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model, int nclusters, int ord
     model->assignments = (int*)calloc((size_t)p, sizeof(int));
     model->clusters = (internal_libxs_predict_cluster_t*)calloc(
       (size_t)nclusters, sizeof(internal_libxs_predict_cluster_t));
-    model->eval_buf = (double*)malloc((size_t)n * 3 * sizeof(double) + (size_t)n * sizeof(int));
+    model->eval_buf = (double*)malloc((size_t)n * 4 * sizeof(double) + (size_t)n * sizeof(int));
     if (NULL == model->assignments || NULL == model->clusters || NULL == model->eval_buf) {
       result = EXIT_FAILURE;
     }
@@ -803,12 +817,12 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
     const int force_interp = (0 != (mode & LIBXS_PREDICT_INTERPOLATE)) ? 1 : 0;
     const int extrapolate = (0 != (mode & LIBXS_PREDICT_EXTRAPOLATE)) ? 1 : 0;
     double norm_buf[64], *norm_inputs = (m <= 64) ? norm_buf : (double*)malloc((size_t)m * sizeof(double));
-    double local_buf[192];
-    double *vals, *errs, *conf, best_dist;
+    double local_buf[256];
+    double *vals, *errs, *conf, *var, best_dist;
     int *rels, c, j, best_c = 0;
     if (NULL != lock) LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
     internal_libxs_predict_normalize(model, inputs, norm_inputs);
-    if (NULL == lock && NULL != outputs && n * 3 + n <= 192) {
+    if (NULL == lock && NULL != outputs && n * 4 + n <= 256) {
       vals = local_buf;
     }
     else {
@@ -816,7 +830,8 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
     }
     errs = vals + n;
     conf = errs + n;
-    rels = (int*)(conf + n);
+    var = conf + n;
+    rels = (int*)(var + n);
     if (nblend < 0) nblend = 0;
     if (nblend > model->nclusters) nblend = model->nclusters;
     best_dist = libxs_dist2(norm_inputs, model->clusters[0].centroid, m);
@@ -833,7 +848,7 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
           if (0 != use_classify) {
             vals[j] = internal_libxs_predict_classify(
               cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
-              cl->ndistinct[j], extrapolate, &conf[j]);
+              cl->ndistinct[j], extrapolate, &conf[j], &var[j]);
             errs[j] = 0;
             rels[j] = 0;
           }
@@ -850,11 +865,12 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
               ? internal_libxs_predict_local_error(model, cl, nearest, j)
               : cl->errors[j];
             conf[j] = 1.0;
+            var[j] = 0;
             rels[j] = 1;
           }
         }
       }
-      if (0 != extrapolate && model->nclusters > 1) {
+      if (model->nclusters > 1) {
         double avg_conf = 0;
         for (j = 0; j < n; ++j) avg_conf += conf[j];
         avg_conf /= n;
@@ -888,6 +904,7 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
       memset(vals, 0, (size_t)n * sizeof(double));
       memset(errs, 0, (size_t)n * sizeof(double));
       memset(conf, 0, (size_t)n * sizeof(double));
+      memset(var, 0, (size_t)n * sizeof(double));
       memset(rels, 0, (size_t)n * sizeof(int));
       { const double ref_sig = model->clusters[dists[0].idx].fprint_sig;
         for (b = 0; b < nblend; ++b) {
@@ -917,11 +934,12 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
           { const int use_classify = (0 != force_classify)
               ? 1 : ((0 != force_interp) ? 0 : cl->mode[j]);
             if (0 != use_classify) {
-              double cj_conf = 1.0;
+              double cj_conf = 1.0, cj_var = 0;
               vals[j] += cw * internal_libxs_predict_classify(
                 cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
-                cl->ndistinct[j], extrapolate, &cj_conf);
+                cl->ndistinct[j], extrapolate, &cj_conf, &cj_var);
               conf[j] += cw * cj_conf;
+              var[j] += cw * cj_var;
             }
             else {
               const double t = (0 != extrapolate)
@@ -957,6 +975,31 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
         vals[k] = 0.75 * vals[k] + 0.25 * avg;
       }
     }
+    if (0 == extrapolate) {
+      const internal_libxs_predict_cluster_t* cl = &model->clusters[best_c];
+      for (j = 0; j < n; ++j) {
+        if (var[j] > 0 && 0 != cl->mode[j]) {
+          double mean = 0, global_var = 0;
+          int k;
+          for (k = 0; k < cl->nentries; ++k) {
+            mean += cl->raw_outputs[(size_t)k * n + j];
+          }
+          mean /= cl->nentries;
+          for (k = 0; k < cl->nentries; ++k) {
+            const double d = cl->raw_outputs[(size_t)k * n + j] - mean;
+            global_var += d * d;
+          }
+          global_var /= cl->nentries;
+          if (global_var > 0) {
+            const double ratio = var[j] / global_var;
+            if (ratio > 1.5) {
+              const double alpha = LIBXS_MIN((ratio - 1.5) * 0.1, 0.3);
+              vals[j] = (1.0 - alpha) * vals[j] + alpha * mean;
+            }
+          }
+        }
+      }
+    }
     if (NULL != model->transforms) {
       for (j = 0; j < n; ++j) {
         vals[j] = internal_libxs_predict_inv(model->transforms[j], vals[j]);
@@ -969,6 +1012,7 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
       info->values = vals;
       info->error = errs;
       info->confidence = conf;
+      info->variance = var;
       info->interpolated = rels;
       info->noutputs = n;
     }
@@ -1006,6 +1050,77 @@ LIBXS_API void libxs_predict_eval_batch(
 {
   libxs_predict_eval_batch_task(model, inputs_batch, outputs_batch,
     count, nblend, 0, 1);
+}
+
+
+LIBXS_API void libxs_predict_inverse(libxs_lock_t* lock,
+  const libxs_predict_t* model,
+  const double target_outputs[], double inputs[],
+  libxs_predict_info_t* info)
+{
+  LIBXS_ASSERT(NULL != model && 0 != model->built && NULL != target_outputs && NULL != inputs);
+  {
+    const int p = model->nentries;
+    const int m = model->ninputs;
+    const int n = model->noutputs;
+    double best_score = DBL_MAX;
+    int best_i = 0, i, j;
+    if (NULL != lock) LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
+    for (i = 0; i < p; ++i) {
+      const double* eout = model->entries[i].outputs;
+      double score = 0;
+      int disqualified = 0;
+      for (j = 0; j < n && 0 == disqualified; ++j) {
+        double target = target_outputs[j];
+        double actual = eout[j];
+        if (NULL != model->transforms) {
+          target = internal_libxs_predict_fwd(model->transforms[j], target);
+        }
+        { const int c = model->assignments[i];
+          const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
+          if (0 != cl->mode[j]) {
+            if (target != actual) disqualified = 1;
+          }
+          else {
+            const double d = target - actual;
+            score += d * d;
+          }
+        }
+      }
+      if (0 == disqualified && score < best_score) {
+        best_score = score;
+        best_i = i;
+      }
+    }
+    if (best_score >= DBL_MAX) {
+      for (i = 0; i < p; ++i) {
+        const double* eout = model->entries[i].outputs;
+        double score = 0;
+        for (j = 0; j < n; ++j) {
+          double target = target_outputs[j];
+          double actual = eout[j];
+          double d;
+          if (NULL != model->transforms) {
+            target = internal_libxs_predict_fwd(model->transforms[j], target);
+          }
+          d = target - actual;
+          score += d * d;
+        }
+        if (score < best_score) { best_score = score; best_i = i; }
+      }
+    }
+    memcpy(inputs, model->entries[best_i].inputs, (size_t)m * sizeof(double));
+    if (NULL != info) {
+      info->noutputs = n;
+      info->cluster = (NULL != model->assignments) ? model->assignments[best_i] : -1;
+      info->distance = sqrt(best_score);
+      info->values = NULL;
+      info->error = NULL;
+      info->confidence = NULL;
+      info->interpolated = NULL;
+    }
+    if (NULL != lock) LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
+  }
 }
 
 

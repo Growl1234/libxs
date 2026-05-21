@@ -91,7 +91,7 @@ int main(int argc, char* argv[])
         fprintf(stdout, "Loaded %d entries from %s\n", ntotal, filename);
         if (NULL != perm) {
           trial_ctx_t ctx;
-          double best_fraction = 1.0;
+          double best_fraction = 1.0, unimodality = 0;
           int i, ntrain;
           libxs_predict_t* model;
           for (i = 0; i < ntotal; ++i) perm[i] = i;
@@ -100,36 +100,34 @@ int main(int argc, char* argv[])
           ctx.perm = perm;
           ctx.ntotal = ntotal;
           ctx.mode = mode;
-          { double unimodality = 0;
-            libxs_gss_min(trial_fraction, &ctx, 0.3, 1.0, &best_fraction, 20, &unimodality);
-            ntrain = LIBXS_MAX((int)(ntotal * best_fraction + 0.5), 1);
-            fprintf(stdout, "Optimal fraction: %.2f (%d/%d entries, unimodality=%.2f)\n",
-              best_fraction, ntrain, ntotal, unimodality);
-          }
+          libxs_gss_min(trial_fraction, &ctx, 0.3, 1.0, &best_fraction, 20, &unimodality);
+          ntrain = LIBXS_MAX((int)(ntotal * best_fraction + 0.5), 1);
+          fprintf(stdout, "Optimal fraction: %.2f (%d/%d entries, unimodality=%.2f)\n",
+            best_fraction, ntrain, ntotal, unimodality);
           model = libxs_predict_create(NINPUTS, NOUTPUTS);
           if (NULL != model) {
             double inputs[NINPUTS], outputs[NOUTPUTS];
+            int build_ok = EXIT_FAILURE;
             libxs_predict_set_mode(model, mode);
             for (i = 0; i < ntrain; ++i) {
               libxs_predict_get(source, perm[i], inputs, outputs);
               libxs_predict_push(NULL, model, inputs, outputs);
             }
-            { int build_ok = EXIT_FAILURE;
 #if defined(_OPENMP)
-#             pragma omp parallel
-              { const int br = libxs_predict_build_task(NULL, model, 0, order_arg,
-                  omp_get_thread_num(), omp_get_num_threads());
-                if (0 == omp_get_thread_num()) build_ok = br;
-              }
+#           pragma omp parallel
+            { const int br = libxs_predict_build_task(NULL, model, 0, order_arg,
+                omp_get_thread_num(), omp_get_num_threads());
+              if (0 == omp_get_thread_num()) build_ok = br;
+            }
 #else
-              build_ok = libxs_predict_build_task(NULL, model, 0, order_arg, 0, 1);
+            build_ok = libxs_predict_build_task(NULL, model, 0, order_arg, 0, 1);
 #endif
             if (EXIT_SUCCESS == build_ok) {
-            { libxs_predict_query_t qi = {0};
-              libxs_predict_query(model, &qi);
-              fprintf(stdout, "Built: %d clusters, %.1fx compression, order=%d (%d iter)\n",
-                qi.nclusters, qi.compression, qi.order, qi.iterations);
-            }
+              { libxs_predict_query_t qi = {0};
+                libxs_predict_query(model, &qi);
+                fprintf(stdout, "Built: %d clusters, %.1fx compression, order=%d (%d iter)\n",
+                  qi.nclusters, qi.compression, qi.order, qi.iterations);
+              }
               { const int nval = LIBXS_MAX((int)(ntotal * eval_fraction + 0.5), 1);
                 libxs_predict_t* val_model = libxs_predict_create(NINPUTS, NOUTPUTS);
                 if (NULL != val_model) {
@@ -163,7 +161,6 @@ int main(int argc, char* argv[])
                   free(buffer);
                 }
               }
-            }
             }
             libxs_predict_destroy(model);
           }

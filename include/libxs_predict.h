@@ -40,6 +40,8 @@ LIBXS_EXTERN_C typedef struct libxs_predict_info_t {
   const double* error;
   /** Per-output confidence from kNN vote (noutputs elements, 0..1). */
   const double* confidence;
+  /** Per-output variance among k nearest neighbors (noutputs elements). */
+  const double* variance;
   /** Per-output mode used: non-zero if polynomial interpolation was applied. */
   const int* interpolated;
   /** Number of outputs. */
@@ -162,6 +164,19 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock,
   const libxs_predict_t* model,
   const double inputs[], double outputs[],
   libxs_predict_info_t* info, int nblend);
+
+/**
+ * Inverse prediction: find inputs that produce desired outputs.
+ * target_outputs: N desired output values.
+ * inputs: M values written (best-matching input parameters).
+ * info: optional (may be NULL). Confidence reflects match quality.
+ * Discrete (classify-mode) outputs are matched exactly as constraints;
+ * continuous (interpolate-mode) outputs are matched by proximity.
+ */
+LIBXS_API void libxs_predict_inverse(libxs_lock_t* lock,
+  const libxs_predict_t* model,
+  const double target_outputs[], double inputs[],
+  libxs_predict_info_t* info);
 
 /** Query model statistics after build. */
 LIBXS_API void libxs_predict_query(const libxs_predict_t* model,

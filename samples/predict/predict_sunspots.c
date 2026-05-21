@@ -11,7 +11,7 @@
 #include <libxs_math.h>
 #include <libxs_mem.h>
 
-enum { WINDOW = 12, HORIZON = 6 };
+enum { WINDOW = 12, HORIZON = 6, NINPUTS = WINDOW };
 
 static int load_sunspots(const char* filename, double** values, int* count);
 static void evaluate_forecast(const libxs_predict_t* model,
@@ -34,14 +34,14 @@ int main(int argc, char* argv[])
   }
   else if (0 < load_sunspots(filename, &series, &total)) {
     const int train_end = LIBXS_MAX((int)(total * split + 0.5), WINDOW + 1);
-    libxs_predict_t* model = libxs_predict_create(WINDOW, HORIZON);
+    libxs_predict_t* model = libxs_predict_create(NINPUTS, HORIZON);
     fprintf(stdout, "Loaded %d monthly sunspot values from %s\n", total, filename);
     fprintf(stdout, "Window=%d, Horizon=%d, Train=%d, Test=%d\n",
       WINDOW, HORIZON, train_end - WINDOW, total - train_end);
     if (NULL != model) {
-      libxs_predict_set_mode(model, LIBXS_PREDICT_EXTRAPOLATE);
-      double inputs[WINDOW], outputs[HORIZON];
+      double inputs[NINPUTS], outputs[HORIZON];
       int t;
+      libxs_predict_set_mode(model, LIBXS_PREDICT_EXTRAPOLATE);
       for (t = WINDOW; t <= train_end - HORIZON; ++t) {
         int i;
         for (i = 0; i < WINDOW; ++i) inputs[i] = series[t - WINDOW + i];
@@ -106,31 +106,37 @@ static void evaluate_forecast(const libxs_predict_t* model,
   const double* series, int total, int train_end)
 {
   double sum_err[HORIZON] = {0}, max_err[HORIZON] = {0};
+  double sum_err2[HORIZON] = {0}, max_err2[HORIZON] = {0};
   double sum_conf = 0;
   int neval = 0, t, h;
   for (t = train_end; t <= total - HORIZON; ++t) {
-    double inputs[WINDOW], outputs[HORIZON];
+    double inputs[NINPUTS], outputs[HORIZON], refined[HORIZON];
+    double canon[NINPUTS];
     libxs_predict_info_t info;
     int i;
     for (i = 0; i < WINDOW; ++i) inputs[i] = series[t - WINDOW + i];
     libxs_predict_eval(NULL, model, inputs, outputs, &info, 1);
+    libxs_predict_inverse(NULL, model, outputs, canon, NULL);
+    libxs_predict_eval(NULL, model, canon, refined, NULL, 1);
     for (h = 0; h < HORIZON; ++h) {
-      const double err = LIBXS_FABS(outputs[h] - series[t + h]);
+      double err = LIBXS_FABS(outputs[h] - series[t + h]);
+      double err2 = LIBXS_FABS(refined[h] - series[t + h]);
       sum_err[h] += err;
+      sum_err2[h] += err2;
       if (err > max_err[h]) max_err[h] = err;
+      if (err2 > max_err2[h]) max_err2[h] = err2;
     }
     sum_conf += info.confidence[0];
     ++neval;
   }
   if (0 < neval) {
     fprintf(stdout, "Forecast quality (%d test windows):\n", neval);
-    fprintf(stdout, "  step   avg-err   max-err\n");
+    fprintf(stdout, "  step   avg-err   max-err  avg-ref   max-ref\n");
     for (h = 0; h < HORIZON; ++h) {
-      fprintf(stdout, "  t+%-2d  %8.2f  %8.2f\n",
-        h + 1, sum_err[h] / neval, max_err[h]);
+      fprintf(stdout, "  t+%-2d  %8.2f  %8.2f  %8.2f  %8.2f\n",
+        h + 1, sum_err[h] / neval, max_err[h],
+        sum_err2[h] / neval, max_err2[h]);
     }
     fprintf(stdout, "  avg confidence: %.3f\n", sum_conf / neval);
-    fprintf(stdout, "  distance info: use info.distance to detect "
-      "out-of-distribution queries\n");
   }
 }

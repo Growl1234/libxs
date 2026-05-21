@@ -140,8 +140,26 @@ Predict outputs for given inputs. Output values are
 inverse-transformed if a transform was set (caller receives
 original-scale values). The nblend parameter controls
 multi-cluster blending: 1=nearest only, 0=auto. The info
-pointer (optional) receives per-output confidence, error
-bounds, and mode flags.
+pointer (optional) receives per-output confidence, variance,
+error bounds, and mode flags.
+
+When confidence is below 0.7, the framework automatically
+expands to multi-cluster blending (adaptive nblend). This
+self-correcting behavior improves predictions in uncertain
+regions without caller intervention.
+
+```C
+void libxs_predict_inverse(libxs_lock_t* lock,
+  const libxs_predict_t* model,
+  const double target_outputs[], double inputs[],
+  libxs_predict_info_t* info);
+```
+
+Inverse prediction: find inputs that produce desired outputs.
+Discrete (classify-mode) outputs are matched exactly as
+constraints; continuous (interpolate-mode) outputs are matched
+by proximity. Returns the best-matching entry's inputs.
+The info distance field gives the residual (0 = exact match).
 
 ```C
 void libxs_predict_eval_batch(
@@ -215,6 +233,7 @@ typedef struct libxs_predict_info_t {
   const double* values;
   const double* error;
   const double* confidence;
+  const double* variance;
   const int* interpolated;
   int noutputs;
   int cluster;
@@ -226,12 +245,19 @@ Populated by libxs_predict_eval when info is non-NULL.
 The error array holds per-output truncation error bounds.
 The confidence array holds per-output kNN vote fraction
 (0..1): the weighted agreement among k nearest neighbors.
+The variance array holds per-output variance among the k
+nearest neighbors -- high variance indicates disagreement
+in value (not just in vote) and triggers internal shrinkage
+toward the cluster mean for classify-mode outputs.
 The interpolated array is non-zero for outputs where
 polynomial interpolation was used. The cluster field gives
 the assigned cluster index (-1 if blended). The distance
 field gives the normalized distance to the nearest cluster
 centroid relative to its radius (0 = at centroid, >1 =
 outside training region).
+
+For inverse prediction, only cluster and distance are
+populated (distance gives the residual match quality).
 
 ```C
 typedef struct libxs_predict_query_t {

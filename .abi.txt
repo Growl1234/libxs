@@ -129,6 +129,7 @@ libxs_predict_eval
 libxs_predict_eval_batch
 libxs_predict_eval_batch_task
 libxs_predict_get
+libxs_predict_inverse
 libxs_predict_load
 libxs_predict_load_csv
 libxs_predict_lock

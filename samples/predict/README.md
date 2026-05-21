@@ -189,10 +189,21 @@ All samples share the same prediction library (libxs_predict):
 
 The fingerprint automatically determines per-output whether polynomial
 interpolation or distance-weighted kNN voting is more appropriate.
-Per-output confidence scores enable the caller to gate predictions
-and fall back to safe defaults when the model is uncertain.
+Per-output confidence and variance scores enable the caller to gate
+predictions and fall back to safe defaults when the model is uncertain.
+
+When confidence is low (<0.7), the framework automatically expands to
+multi-cluster blending, improving predictions by averaging over
+distinct regimes (e.g., -4% MAE on earthquake magnitude prediction).
 
 Timeseries samples use `LIBXS_PREDICT_EXTRAPOLATE` mode which enables
-recency weighting (recent neighbors preferred), adaptive multi-cluster
-blending on low confidence, and continuous-valued output without
-snap-to-nearest discretization.
+recency weighting (recent neighbors preferred), continuous-valued
+output without snap-to-nearest discretization, and local coherence
+smoothing across horizon steps.
+
+The sunspot sample additionally demonstrates forward-inverse-forward
+iteration: predicting outputs, finding the canonical historical window
+via `libxs_predict_inverse`, then re-predicting from that pattern.
+This reduces worst-case errors (-17% max error) at the cost of slight
+average regression -- a variance-bias tradeoff useful for applications
+where avoiding catastrophic predictions matters most.
