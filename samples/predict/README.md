@@ -1,11 +1,15 @@
 # Predict Samples
 
-Two executables demonstrating fingerprint-guided prediction:
+Four executables demonstrating fingerprint-guided prediction:
 
 - **predict_params** -- Parameter prediction from structured CSV
   (GPU kernel tuning, configuration databases).
 - **predict_sunspots** -- Timeseries forecasting via sliding-window kNN
-  (sunspot numbers, sensor data, any univariate series).
+  (monthly sunspot numbers, 1749-present).
+- **predict_earthquakes** -- Spatial prediction of earthquake magnitude
+  from location and depth (USGS catalog).
+- **predict_discharge** -- River discharge forecasting via sliding-window
+  kNN with day-of-year seasonality (USGS NWIS daily streamflow).
 
 
 ## Build
@@ -76,21 +80,90 @@ patterns were seen in training.
 
 ### Data Source
 
-Monthly mean total sunspot number from SILSO (World Data Center,
-Royal Observatory of Belgium):
-
-    https://www.sidc.be/SILSO/DATA/SN_m_tot_V2.0.csv
-
-Format: semicolon-delimited, columns: year, month, decimal_year,
-sunspot_number, std_dev, obs_count, marker.
-
-Data freely available for research with attribution:
+Monthly mean total sunspot number from
+[SILSO](https://www.sidc.be/SILSO/DATA/SN_m_tot_V2.0.csv)
+(World Data Center, Royal Observatory of Belgium).
+Semicolon-delimited: year, month, decimal_year, sunspot_number,
+std_dev, obs_count, marker.
 "Source: WDC-SILSO, Royal Observatory of Belgium, Brussels"
+
+
+## predict_earthquakes
+
+Predict earthquake magnitude from geographic location and depth.
+This is a spatial prediction problem (not timeseries): given where
+an earthquake occurs, what magnitude is expected based on historical
+patterns at nearby locations?
+
+### Usage
+
+    ./predict_earthquakes.x <usgs_csv> [train_fraction]
+
+    usgs_csv        USGS earthquake catalog CSV (comma-delimited).
+    train_fraction  Fraction of data for training (default: 0.8).
+
+### Example
+
+    ./predict_earthquakes.x predict_earthquakes.csv
+
+    Loaded 19619 earthquake events from predict_earthquakes.csv
+    Inputs: latitude, longitude, depth -> Output: magnitude
+    Train=15695, Test=3924
+    Built: 125 clusters, 83.9x compression, order=2
+    Prediction quality (3924 test events):
+      avg magnitude error: 0.272
+      max magnitude error: 2.700
+      avg confidence: 0.649
+
+### Data Source
+
+[USGS Earthquake Hazards Program](https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv&starttime=2022-04-01&endtime=2025-01-01&minmagnitude=4.5&limit=20000)
+(public domain, US Government).
+Comma-delimited: time, latitude, longitude, depth, mag, magType, ...
+
+
+## predict_discharge
+
+River discharge (streamflow) forecasting using sliding-window kNN
+with day-of-year as an additional input dimension to capture
+seasonality. Predicts the next 7 days from the previous 14 days.
+
+### Usage
+
+    ./predict_discharge.x <discharge_tsv> [train_fraction]
+
+    discharge_tsv   USGS NWIS daily discharge (tab-delimited RDB format).
+    train_fraction  Fraction of data for training (default: 0.8).
+
+### Example
+
+    ./predict_discharge.x predict_discharge.tsv
+
+    Loaded 9135 daily discharge values from predict_discharge.tsv
+    Window=14 (+day-of-year), Horizon=7, Train=7294, Test=1827
+    Built: 85 clusters, 58.9x compression, order=2
+    Forecast quality (1821 test windows):
+      step   avg-err   max-err
+      t+1      763.6   22600.0
+      t+2      895.3   28800.0
+      t+3     1015.9   29800.0
+      t+4     1091.7   27100.0
+      t+5     1162.7   27200.0
+      t+6     1249.7   27100.0
+      t+7     1353.2   27200.0
+      avg confidence: 1.000
+
+### Data Source
+
+[USGS National Water Information System](https://waterservices.usgs.gov/nwis/dv/?format=rdb&sites=09380000&parameterCd=00060&startDT=2000-01-01&endDT=2025-01-01)
+(public domain, US Government). Colorado River at Lees Ferry, site 09380000.
+Tab-delimited RDB, comment lines start with #, data columns:
+agency_cd, site_no, datetime, discharge_value, qualification_code.
 
 
 ## How It Works
 
-Both samples share the same prediction library (libxs_predict):
+All samples share the same prediction library (libxs_predict):
 
 1. **predict_params**: Each CSV row is an independent (inputs, outputs)
    pair. The model learns spatial relationships in the input space
@@ -101,6 +174,15 @@ Both samples share the same prediction library (libxs_predict):
    model finds historically similar windows and predicts the
    continuation. The kNN confidence reflects how well the current
    pattern matches training history.
+
+3. **predict_earthquakes**: Each earthquake event provides
+   (lat, lon, depth) as inputs and magnitude as output. The model
+   finds geographically similar past events and predicts expected
+   magnitude for new locations.
+
+4. **predict_discharge**: Combines temporal sliding-window (14 days)
+   with day-of-year seasonality as an extra input dimension. The
+   model captures both short-term flow dynamics and annual patterns.
 
 The fingerprint automatically determines per-output whether polynomial
 interpolation or distance-weighted kNN voting is more appropriate.

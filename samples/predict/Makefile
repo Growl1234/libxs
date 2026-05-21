@@ -34,7 +34,8 @@ CSOURCS := $(wildcard $(SRCDIR)/*.c)
 COBJCTS := $(patsubst %,$(BLDDIR)/%,$(notdir $(CSOURCS:.c=-c.o)))
 SOURCES := $(CSOURCS)
 OBJECTS := $(COBJCTS)
-XFILES := $(OUTDIR)/predict_params.x $(OUTDIR)/predict_sunspots.x
+XFILES := $(OUTDIR)/predict_params.x $(OUTDIR)/predict_sunspots.x \
+          $(OUTDIR)/predict_earthquakes.x $(OUTDIR)/predict_discharge.x
 
 .PHONY: all
 all: $(XFILES)
@@ -47,6 +48,12 @@ $(OUTDIR)/predict_params.x: $(OUTDIR)/.make $(BLDDIR)/predict_params-c.o $(XLIB)
 
 $(OUTDIR)/predict_sunspots.x: $(OUTDIR)/.make $(BLDDIR)/predict_sunspots-c.o $(XLIB)
 	$(LD) -o $@ $(BLDDIR)/predict_sunspots-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+
+$(OUTDIR)/predict_earthquakes.x: $(OUTDIR)/.make $(BLDDIR)/predict_earthquakes-c.o $(XLIB)
+	$(LD) -o $@ $(BLDDIR)/predict_earthquakes-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+
+$(OUTDIR)/predict_discharge.x: $(OUTDIR)/.make $(BLDDIR)/predict_discharge-c.o $(XLIB)
+	$(LD) -o $@ $(BLDDIR)/predict_discharge-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
 $(BLDDIR)/%-c.o: $(SRCDIR)/%.c .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc
 	$(CC) $(DFLAGS) $(IFLAGS) $(CFLAGS) $(CTARGET) -c $< -o $@
