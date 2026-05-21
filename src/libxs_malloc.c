@@ -357,7 +357,7 @@ LIBXS_API void libxs_free(void* pointer)
     if (0 == found) {
       chunk = *(void**)((uintptr_t)pointer - sizeof(void*));
     }
-    LIBXS_ASSERT(NULL != chunk);
+    LIBXS_ASSERT(NULL != chunk && NULL != chunk->pool);
     pool = chunk->pool;
     LIBXS_ASSERT(NULL != pool && NULL != pool->slots);
 #if defined(LIBXS_MALLOC_EVICT)

@@ -15,9 +15,9 @@
 
 #define LIBXS_MEM_SHUFFLE_COPRIME(N) libxs_coprime2(N)
 #define LIBXS_MEM_SHUFFLE_MALLOC(SIZE, POOL) \
-  internal_libxs_perm_shuffle_malloc(SIZE, &(POOL))
+  internal_libxs_scratch_malloc(SIZE, &(POOL))
 #define LIBXS_MEM_SHUFFLE_FREE(PTR, POOL) \
-  internal_libxs_perm_shuffle_free(PTR, POOL)
+  internal_libxs_scratch_free(PTR, POOL)
 #define LIBXS_MEM_SHUFFLE(INOUT, ELEMSIZE, COUNT, SHUFFLE, NREPEAT) do { \
   unsigned char *const LIBXS_RESTRICT shfl_data = (unsigned char*)(INOUT); \
   const size_t shfl_count = (COUNT), shfl_stride = (SHUFFLE); \
@@ -67,27 +67,6 @@
 } while(0)
 
 
-LIBXS_API_INLINE void* internal_libxs_perm_shuffle_malloc(size_t size, int* pool) {
-  void* p = libxs_malloc(internal_libxs_default_pool, size, LIBXS_MALLOC_AUTO);
-  if (NULL != p) { *pool = 1; return p; }
-  *pool = 0; return malloc(size);
-}
-
-LIBXS_API_INLINE void internal_libxs_perm_shuffle_free(void* ptr, int pool) {
-  if (0 != pool) libxs_free(ptr); else free(ptr);
-}
-
-
-LIBXS_API_INLINE void* internal_libxs_sort_malloc(size_t size, int* pool) {
-  void* p = libxs_malloc(internal_libxs_default_pool, size, LIBXS_MALLOC_AUTO);
-  if (NULL != p) { *pool = 1; return p; }
-  *pool = 0; return malloc(size);
-}
-
-
-LIBXS_API_INLINE void internal_libxs_sort_free(void* ptr, int pool) {
-  if (0 != pool) libxs_free(ptr); else free(ptr);
-}
 
 
 LIBXS_API_INLINE void internal_libxs_sort_swap(
@@ -308,7 +287,7 @@ LIBXS_API void libxs_sort(void* base, int n, size_t size,
   {
     const void* src = (NULL != ctx) ? ctx : base;
     int pool = 0;
-    void* scratch = internal_libxs_sort_malloc((size_t)n * size, &pool);
+    void* scratch = internal_libxs_scratch_malloc((size_t)n * size, &pool);
     if (NULL != scratch) {
       if (cmp == libxs_cmp_f64) {
         internal_libxs_sort_radix_f64(
@@ -326,7 +305,7 @@ LIBXS_API void libxs_sort(void* base, int n, size_t size,
         internal_libxs_sort_radix_u32(
           (unsigned int*)base, (const unsigned int*)src, n, scratch);
       }
-      internal_libxs_sort_free(scratch, pool);
+      internal_libxs_scratch_free(scratch, pool);
     }
     else {
       if (NULL != ctx) memcpy(base, ctx, (size_t)n * size);
@@ -762,7 +741,7 @@ LIBXS_API int libxs_sort_smooth(libxs_sort_t method, int m, int n,
     char* visited = NULL;
 
     if (LIBXS_SORT_IDENTITY != method) {
-      scores = (double*)internal_libxs_sort_malloc(
+      scores = (double*)internal_libxs_scratch_malloc(
         scores_size + visited_size, &pool);
       if (NULL == scores) return EXIT_FAILURE;
       if (0 != visited_size) visited = (char*)(scores + m);
@@ -838,7 +817,7 @@ LIBXS_API int libxs_sort_smooth(libxs_sort_t method, int m, int n,
       }
     }
 
-    internal_libxs_sort_free(scores, pool);
+    internal_libxs_scratch_free(scores, pool);
   }
   return result;
 }

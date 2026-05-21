@@ -87,6 +87,26 @@ LIBXS_APIVAR_PRIVATE_DEF(unsigned int libxs_ninit);
 LIBXS_APIVAR_PRIVATE_DEF(int libxs_stdio_handle);
 
 
+LIBXS_API_INTERN void* internal_libxs_scratch_malloc(size_t size, int* pool)
+{
+  void* result = libxs_malloc(internal_libxs_default_pool, size, LIBXS_MALLOC_AUTO);
+  if (NULL != result) {
+    *pool = 1;
+  }
+  else {
+    *pool = 0;
+    result = malloc(size);
+  }
+  return result;
+}
+
+
+LIBXS_API_INTERN void internal_libxs_scratch_free(void* ptr, int pool)
+{
+  if (0 != pool) libxs_free(ptr); else free(ptr);
+}
+
+
 LIBXS_API_INTERN LIBXS_ATTRIBUTE_NO_TRACE void internal_libxs_dump(FILE* ostream, int urgent);
 LIBXS_API_INTERN void internal_libxs_dump(FILE* ostream, int urgent)
 {

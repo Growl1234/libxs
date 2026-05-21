@@ -61,7 +61,7 @@
       int pool_kd = 0;
       const size_t kdsz = (size_t)m * 2 * sizeof(double)
         + (size_t)m * sizeof(int) + (size_t)m;
-      double* pts = (double*)internal_libxs_sort_malloc(kdsz, &pool_kd);
+      double* pts = (double*)internal_libxs_scratch_malloc(kdsz, &pool_kd);
       if (NULL != pts) {
         int* idx = (int*)(pts + 2 * m);
         unsigned char* used = (unsigned char*)(idx + m);
@@ -82,7 +82,7 @@
           perm[ii] = (0 <= hit) ? hit : 0;
           if (0 <= hit) used[hit] = 1;
         }
-        internal_libxs_sort_free(pts, pool_kd);
+        internal_libxs_scratch_free(pts, pool_kd);
         use_kd = 1;
       }
     }

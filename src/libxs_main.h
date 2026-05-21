@@ -65,6 +65,9 @@
 #endif
 
 
+LIBXS_API_INTERN void* internal_libxs_scratch_malloc(size_t size, int* pool);
+LIBXS_API_INTERN void internal_libxs_scratch_free(void* ptr, int pool);
+
 LIBXS_API_INTERN void internal_libxs_memory_init(int target_arch);
 LIBXS_API_INTERN void internal_libxs_memory_finalize(void);
 
@@ -101,21 +104,19 @@ LIBXS_API_INTERN int internal_libxs_print_cmdline(void* buffer, size_t buffer_si
 
 /** Global lock; create an own lock for an independent domain. */
 LIBXS_APIVAR_PRIVATE(LIBXS_LOCK_TYPE(LIBXS_LOCK) libxs_lock_global);
+/** Default memory pool (created by libxs_init, NULL otherwise). */
+LIBXS_APIVAR_PRIVATE(struct libxs_malloc_pool_t* internal_libxs_default_pool);
+/** Counts the maximum number of thread that have been active. */
+LIBXS_APIVAR_PRIVATE(unsigned int libxs_thread_count);
 /** Initialization counter that can be used to check whether the library is initialized (!=0) or not (==0). */
 LIBXS_APIVAR_PRIVATE(unsigned int libxs_ninit);
+/** Number of seconds per RDTSC-cycle (zero or negative if RDTSC invalid). */
+LIBXS_APIVAR_PRIVATE(double libxs_timer_scale);
 /** Used for system/user specific locking (I/O). */
 LIBXS_APIVAR_PRIVATE(int libxs_stdio_handle);
 /** Verbosity level (0: quiet, 1: errors, 2: warnings, 3: info, neg.: all). */
 LIBXS_APIVAR_PRIVATE(int libxs_verbosity);
 /** Security-enhanced environment. */
 LIBXS_APIVAR_PRIVATE(int libxs_se);
-
-/** Default memory pool (created by libxs_init, NULL otherwise). */
-LIBXS_APIVAR_PRIVATE(struct libxs_malloc_pool_t* internal_libxs_default_pool);
-
-/** Number of seconds per RDTSC-cycle (zero or negative if RDTSC invalid). */
-LIBXS_APIVAR_PRIVATE(double libxs_timer_scale);
-/** Counts the maximum number of thread that have been active. */
-LIBXS_APIVAR_PRIVATE(unsigned int libxs_thread_count);
 
 #endif /*LIBXS_MAIN_H*/

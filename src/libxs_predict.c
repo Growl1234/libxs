@@ -26,6 +26,9 @@
 #  define LIBXS_PREDICT_KNN 32
 #endif
 
+#define LIBXS_PREDICT_MALLOC(SIZE, POOL) internal_libxs_scratch_malloc(SIZE, &(POOL))
+#define LIBXS_PREDICT_FREE(PTR, POOL) internal_libxs_scratch_free(PTR, POOL)
+
 
 typedef struct internal_libxs_predict_entry_t {
   double* inputs;
@@ -515,6 +518,8 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_apply(
     }
   }
   else {
+    LIBXS_ASSERT_MSG(LIBXS_PREDICT_PCA != model->decompose,
+      "PCA decomposition not implemented");
     memcpy(out, raw, (size_t)(w * s) * sizeof(double));
   }
 }
@@ -533,8 +538,29 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_inverse(
     }
   }
   else {
+    LIBXS_ASSERT_MSG(LIBXS_PREDICT_PCA != model->decompose,
+      "PCA decomposition not implemented");
     memcpy(raw, modes, (size_t)(w * s) * sizeof(double));
   }
+}
+
+
+LIBXS_API_INLINE int internal_libxs_predict_grow(libxs_predict_t* model)
+{
+  int result = EXIT_SUCCESS;
+  if (model->nentries >= model->capacity) {
+    const int newcap = (0 < model->capacity) ? (model->capacity * 2) : 64;
+    internal_libxs_predict_entry_t* ne = (internal_libxs_predict_entry_t*)realloc(
+      model->entries, (size_t)newcap * sizeof(internal_libxs_predict_entry_t));
+    if (NULL != ne) {
+      memset(ne + model->capacity, 0,
+        (size_t)(newcap - model->capacity) * sizeof(internal_libxs_predict_entry_t));
+      model->entries = ne;
+      model->capacity = newcap;
+    }
+    else result = EXIT_FAILURE;
+  }
+  return result;
 }
 
 
@@ -545,8 +571,8 @@ LIBXS_API_INLINE void internal_libxs_predict_ts_expand(libxs_predict_t* model)
   const int h = model->noutputs;
   const int m = model->ninputs;
   const int nwindows = model->nts - w - h + 1;
-  double raw_buf[256];
-  double* raw = (m <= 256) ? raw_buf : (double*)malloc((size_t)m * sizeof(double));
+  int raw_pool = 0;
+  double* raw = (double*)LIBXS_PREDICT_MALLOC((size_t)m * sizeof(double), raw_pool);
   int t;
   if (NULL == raw) return;
   for (t = 0; t < nwindows; ++t) {
@@ -568,18 +594,7 @@ LIBXS_API_INLINE void internal_libxs_predict_ts_expand(libxs_predict_t* model)
       for (i = 0; i < h; ++i) {
         outputs[i] = model->ts_buf[(t + w + i) * s + model->target];
       }
-      if (model->nentries >= model->capacity) {
-        const int newcap = (0 < model->capacity) ? (model->capacity * 2) : 64;
-        internal_libxs_predict_entry_t* ne = (internal_libxs_predict_entry_t*)realloc(
-          model->entries, (size_t)newcap * sizeof(internal_libxs_predict_entry_t));
-        if (NULL != ne) {
-          memset(ne + model->capacity, 0,
-            (size_t)(newcap - model->capacity) * sizeof(internal_libxs_predict_entry_t));
-          model->entries = ne;
-          model->capacity = newcap;
-        }
-      }
-      if (model->nentries < model->capacity) {
+      if (EXIT_SUCCESS == internal_libxs_predict_grow(model)) {
         internal_libxs_predict_entry_t* e = &model->entries[model->nentries];
         e->inputs = inputs;
         if (NULL != model->transforms) {
@@ -601,7 +616,7 @@ LIBXS_API_INLINE void internal_libxs_predict_ts_expand(libxs_predict_t* model)
       free(outputs);
     }
   }
-  if (raw != raw_buf) free(raw);
+  LIBXS_PREDICT_FREE(raw, raw_pool);
 }
 
 
@@ -636,18 +651,7 @@ LIBXS_API int libxs_predict_push(
   else {
     const int m = model->ninputs, n = model->noutputs;
     if (NULL != lock) LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
-    if (model->nentries >= model->capacity) {
-      const int newcap = (0 < model->capacity) ? (model->capacity * 2) : 64;
-      internal_libxs_predict_entry_t* ne = (internal_libxs_predict_entry_t*)realloc(
-        model->entries, (size_t)newcap * sizeof(internal_libxs_predict_entry_t));
-      if (NULL != ne) {
-        memset(ne + model->capacity, 0,
-          (size_t)(newcap - model->capacity) * sizeof(internal_libxs_predict_entry_t));
-        model->entries = ne;
-        model->capacity = newcap;
-      }
-      else result = EXIT_FAILURE;
-    }
+    result = internal_libxs_predict_grow(model);
     if (EXIT_SUCCESS == result) {
       internal_libxs_predict_entry_t* e = &model->entries[model->nentries];
       e->inputs = (double*)malloc((size_t)m * sizeof(double));
@@ -874,9 +878,8 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model, int nclusters, int ord
           int ndistinct = 0, d;
           double prev;
           double* seq = cl->raw_outputs + j;
-          double buf_local[256];
-          double* buf = (nc <= 256) ? buf_local
-            : (double*)malloc((size_t)nc * sizeof(double));
+          int buf_pool = 0;
+          double* buf = (double*)LIBXS_PREDICT_MALLOC((size_t)nc * sizeof(double), buf_pool);
           libxs_fprint_t fp;
           if (NULL == buf) { result = EXIT_FAILURE; continue; }
           for (k = 0; k < nc; ++k) buf[k] = cl->raw_outputs[(size_t)k * n + j];
@@ -926,7 +929,7 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model, int nclusters, int ord
               cl->errors[j] = emax;
             }
           }
-          if (buf != buf_local) free(buf);
+          LIBXS_PREDICT_FREE(buf, buf_pool);
         }
         { int nclassify = 0;
           double sig_sum = 0;
@@ -982,13 +985,14 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
     const int force_classify = (0 != (mode & LIBXS_PREDICT_CLASSIFY)) ? 1 : 0;
     const int force_interp = (0 != (mode & LIBXS_PREDICT_INTERPOLATE)) ? 1 : 0;
     const int extrapolate = (0 != (mode & LIBXS_PREDICT_EXTRAPOLATE)) ? 1 : 0;
-    double decomp_buf[128], *decomp_inputs = NULL;
-    double norm_buf[64], *norm_inputs = (m <= 64) ? norm_buf : (double*)malloc((size_t)m * sizeof(double));
+    int norm_pool = 0, decomp_pool = 0;
+    double* decomp_inputs = NULL;
+    double* norm_inputs = (double*)LIBXS_PREDICT_MALLOC((size_t)m * sizeof(double), norm_pool);
     double local_buf[256];
     double *vals, *errs, *conf, *var, best_dist;
     int *rels, c, j, best_c = 0;
     if (LIBXS_PREDICT_RAW != model->decompose && model->nseries >= 2) {
-      decomp_inputs = (m <= 128) ? decomp_buf : (double*)malloc((size_t)m * sizeof(double));
+      decomp_inputs = (double*)LIBXS_PREDICT_MALLOC((size_t)m * sizeof(double), decomp_pool);
       internal_libxs_predict_decompose_apply(model, inputs, decomp_inputs);
       inputs = decomp_inputs;
     }
@@ -1056,9 +1060,9 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
     }
     if (nblend > 1) {
       typedef struct { double dist; int idx; } dc_t;
-      dc_t dc_buf[64];
-      dc_t* dists = (model->nclusters <= 64)
-        ? dc_buf : (dc_t*)malloc((size_t)model->nclusters * sizeof(dc_t));
+      int dc_pool = 0;
+      dc_t* dists = (dc_t*)LIBXS_PREDICT_MALLOC(
+        (size_t)model->nclusters * sizeof(dc_t), dc_pool);
       double wsum = 0;
       int b;
       LIBXS_ASSERT(NULL != dists);
@@ -1138,7 +1142,7 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
         info->distance = (cl0->dmax > 0.0)
           ? dists[0].dist / cl0->dmax : 0.0;
       }
-      if (dists != dc_buf) free(dists);
+      LIBXS_PREDICT_FREE(dists, dc_pool);
     }
     if (0 != extrapolate && n > 2) {
       int k;
@@ -1188,8 +1192,8 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
       info->interpolated = rels;
       info->noutputs = n;
     }
-    if (norm_inputs != norm_buf) free(norm_inputs);
-    if (NULL != decomp_inputs && decomp_inputs != decomp_buf) free(decomp_inputs);
+    LIBXS_PREDICT_FREE(norm_inputs, norm_pool);
+    if (NULL != decomp_inputs) LIBXS_PREDICT_FREE(decomp_inputs, decomp_pool);
     if (NULL != lock) LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
   }
 }
@@ -1283,10 +1287,11 @@ LIBXS_API void libxs_predict_inverse(libxs_lock_t* lock,
       }
     }
     if (LIBXS_PREDICT_RAW != model->decompose && model->nseries >= 2) {
-      double raw_buf[128], *raw = (m <= 128) ? raw_buf : (double*)malloc((size_t)m * sizeof(double));
+      int inv_pool = 0;
+      double* raw = (double*)LIBXS_PREDICT_MALLOC((size_t)m * sizeof(double), inv_pool);
       internal_libxs_predict_decompose_inverse(model, model->entries[best_i].inputs, raw);
       memcpy(inputs, raw, (size_t)m * sizeof(double));
-      if (raw != raw_buf) free(raw);
+      LIBXS_PREDICT_FREE(raw, inv_pool);
     }
     else {
       memcpy(inputs, model->entries[best_i].inputs, (size_t)m * sizeof(double));
