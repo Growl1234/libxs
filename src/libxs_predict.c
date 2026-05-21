@@ -48,6 +48,7 @@ typedef struct internal_libxs_predict_cluster_t {
   double dmax;
   int nentries;
   int maxorder;
+  int k_eff;
 } internal_libxs_predict_cluster_t;
 
 typedef struct internal_libxs_predict_order_ctx_t {
@@ -249,7 +250,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify(
   int nc, int m, const double* inputs, int output_j, int nouts,
   int ndistinct, double* confidence)
 {
-  const int k = LIBXS_MIN(LIBXS_MAX(5, nc / 3), LIBXS_PREDICT_KNN);
+  const int k = cl->k_eff;
   const int ndistinct_thresh = (int)(sqrt((double)nc) + 0.5);
   double candidates[LIBXS_PREDICT_KNN];
   double dists[LIBXS_PREDICT_KNN];
@@ -657,6 +658,12 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model, int nclusters, int ord
           }
           if (buf != buf_local) free(buf);
         }
+        { int nclassify = 0;
+          for (j = 0; j < n; ++j) nclassify += cl->mode[j];
+          cl->k_eff = (nclassify > n / 2)
+            ? LIBXS_MIN(LIBXS_MAX(5, nc / 3), LIBXS_PREDICT_KNN)
+            : LIBXS_MIN(LIBXS_MAX(3, (int)(sqrt((double)nc) + 0.5)), LIBXS_PREDICT_KNN);
+        }
       }
     }
     if (EXIT_SUCCESS == result) {
@@ -927,7 +934,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
       required += (size_t)model->ninputs * sizeof(double);
       required += sizeof(double);
-      required += sizeof(uint16_t) + sizeof(uint8_t);
+      required += sizeof(uint16_t) + 2 * sizeof(uint8_t);
       required += (size_t)model->noutputs * 3;
       required += (size_t)model->noutputs * sizeof(uint16_t);
       required += (size_t)model->noutputs * sizeof(double);
@@ -964,6 +971,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
         WRITE_F64(cl->dmax);
         WRITE_U16(cl->nentries);
         WRITE_U8(cl->maxorder);
+        WRITE_U8(cl->k_eff);
         for (j = 0; j < model->noutputs; ++j) WRITE_U8(cl->order[j]);
         for (j = 0; j < model->noutputs; ++j) WRITE_U8(cl->interpolated[j]);
         for (j = 0; j < model->noutputs; ++j) WRITE_U8(cl->mode[j]);
@@ -1070,6 +1078,11 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         if (EXIT_SUCCESS == ok) {
           ok = internal_libxs_predict_read(&src, end, &mo, 1);
           if (EXIT_SUCCESS == ok) cl->maxorder = (int)mo;
+        }
+        if (EXIT_SUCCESS == ok) {
+          uint8_t ke = 0;
+          ok = internal_libxs_predict_read(&src, end, &ke, 1);
+          if (EXIT_SUCCESS == ok) cl->k_eff = (int)ke;
         }
         for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
           uint8_t v = 0;
