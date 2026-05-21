@@ -82,6 +82,15 @@ LIBXS_API libxs_lock_t* libxs_predict_lock(libxs_predict_t* model);
 LIBXS_API void libxs_predict_set_mode(libxs_predict_t* model, int mode);
 
 /**
+ * Set per-dimension input weights for distance computation.
+ * weights: ninputs values (NULL resets to uniform weighting).
+ * Larger weight = dimension contributes more to distance.
+ * Must be called before libxs_predict_build.
+ */
+LIBXS_API void libxs_predict_set_weights(libxs_predict_t* model,
+  const double weights[]);
+
+/**
  * Push one training entry (incremental).
  * inputs:  M values (input parameters).
  * outputs: N values (output parameters).
