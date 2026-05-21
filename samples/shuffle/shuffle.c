@@ -81,6 +81,8 @@ int main(int argc, char* argv[])
     ? 0 : atoi(getenv("STATS")));
   const double bias = (NULL == getenv("BIAS")
     ? 0.0 : atof(getenv("BIAS")));
+  const size_t offset = (NULL == getenv("OFFSET")
+    ? 0 : (size_t)atol(getenv("OFFSET")));
   const size_t elsize = (0 >= insize ? 4 : insize);
   const size_t m = (0 < niters ? niters : 1);
   const size_t n = (0 >= nelems
@@ -150,10 +152,11 @@ int main(int argc, char* argv[])
       printf("Unsupported type for writing MHD-file!\n");
     }
 
-    if (0 != bias || 0 != stats || 0 != random) {
+    if (0 != bias || 0 != offset || 0 != stats || 0 != random) {
       printf("---------------------------------------\n");
-      printf("N=%llu coprime=%llu bias=%.2f\n",
-        (unsigned long long)n, (unsigned long long)coprime, bias);
+      printf("N=%llu coprime=%llu bias=%.2f offset=%llu\n",
+        (unsigned long long)n, (unsigned long long)coprime, bias,
+        (unsigned long long)offset);
     }
 
     for (i = 0; i <= repeat && EXIT_SUCCESS == result; ++i) {
@@ -195,7 +198,7 @@ int main(int argc, char* argv[])
       if (EXIT_SUCCESS == result) { /* benchmark in-place shuffle (DS1) */
         memcpy(data2, data1, nbytes);
         start = libxs_timer_tick();
-        libxs_shuffle(data2, elsize, n, &coprime, 0, &m);
+        libxs_shuffle(data2, elsize, n, &coprime, offset, &m);
         d0 = libxs_timer_duration(start, libxs_timer_tick()) / mm;
         if (0 < i) {
           if (0 != stats) {
@@ -227,7 +230,7 @@ int main(int argc, char* argv[])
       if (EXIT_SUCCESS == result) { /* benchmark out-of-place shuffle (DS2) */
         memset(data2, 0, nbytes); /* equalize page state (cf. DS1 memcpy) */
         start = libxs_timer_tick();
-        libxs_shuffle2(data2, data1, elsize, n, &coprime, 0, &m);
+        libxs_shuffle2(data2, data1, elsize, n, &coprime, offset, &m);
         d0 = libxs_timer_duration(start, libxs_timer_tick()) / mm;
         if (0 < i) {
           if (0 != stats) {
@@ -328,9 +331,9 @@ int main(int argc, char* argv[])
       shuffle(data2, elsize, n);
       libxs_fprint(&fp_rng, fptype, data2, 1, &fpshape, NULL, 4, -1);
       memcpy(data2, data1, nbytes);
-      libxs_shuffle(data2, elsize, n, &coprime, 0, NULL);
+      libxs_shuffle(data2, elsize, n, &coprime, offset, NULL);
       libxs_fprint(&fp_ds1, fptype, data2, 1, &fpshape, NULL, 4, -1);
-      libxs_shuffle2(data2, data1, elsize, n, &coprime, 0, NULL);
+      libxs_shuffle2(data2, data1, elsize, n, &coprime, offset, NULL);
       libxs_fprint(&fp_ds2, fptype, data2, 1, &fpshape, NULL, 4, -1);
       printf("---------------------------------------\n");
       printf("Fingerprint distance (Sobolev, order 4)\n");
@@ -344,15 +347,16 @@ int main(int argc, char* argv[])
       const size_t vmask = (elsize < sizeof(size_t)
         ? (((size_t)1 << (8 * elsize)) - 1) : ~(size_t)0);
       size_t errors = 0;
-      libxs_shuffle2(data2, data1, elsize, n, &coprime, 0, NULL);
-      libxs_unshuffle2(data1, data2, elsize, n, &coprime, 0, NULL);
+      libxs_shuffle2(data2, data1, elsize, n, &coprime, offset, NULL);
+      libxs_unshuffle2(data1, data2, elsize, n, &coprime, offset, NULL);
       for (j = 0; j < n && 0 == errors; ++j) {
         size_t v = 0;
         LIBXS_MEMCPY(&v, (const char*)data1 + elsize * j,
           LIBXS_MIN(elsize, sizeof(size_t)));
         if (v != (j & vmask)) ++errors;
       }
-      printf("Round-trip (shuffle2+unshuffle2): %s\n",
+      printf("---------------------------------------\n");
+      printf("Round-trip (shuffle+unshuffle): %s\n",
         0 == errors ? "PASS" : "FAIL");
       for (j = 0; j < n; ++j) {
         LIBXS_MEMCPY((char*)data1 + elsize * j, &j,
@@ -367,7 +371,7 @@ int main(int argc, char* argv[])
           LIBXS_MIN(elsize, sizeof(size_t)));
         if (v != (j & vmask)) ++errors;
       }
-      printf("Round-trip (affine+unaffine, B=42): %s\n",
+      printf("Round-trip (affine+unaff,b=42): %s\n",
         0 == errors ? "PASS" : "FAIL");
       for (j = 0; j < n; ++j) {
         LIBXS_MEMCPY((char*)data1 + elsize * j, &j,
