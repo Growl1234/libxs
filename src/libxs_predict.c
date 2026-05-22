@@ -11,6 +11,7 @@
 #include <libxs_perm.h>
 #include <libxs_str.h>
 #include <libxs_malloc.h>
+#include <libxs_gemm.h>
 #include "libxs_main.h"
 
 #if !defined(LIBXS_PREDICT_MAXITER)
@@ -511,14 +512,12 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_apply(
 {
   const int m = model->ninputs;
   if (LIBXS_PREDICT_PCA == model->decompose && NULL != model->decompose_mat) {
-    int i, j;
-    for (i = 0; i < m; ++i) {
-      double sum = 0;
-      for (j = 0; j < m; ++j) {
-        sum += model->decompose_mat[i * m + j] * raw[j];
-      }
-      out[i] = sum;
-    }
+    const double alpha = 1.0, beta = 0.0;
+    const libxs_gemm_config_t *const gemm = libxs_gemm_dispatch(
+      LIBXS_DATATYPE_F64, 'N', 'N', m, 1, m, m, m, m,
+      &alpha, &beta, NULL);
+    libxs_gemm_call(gemm, model->decompose_mat, raw, out);
+    libxs_gemm_release(gemm);
   }
   else if (LIBXS_PREDICT_SPREAD == model->decompose
     && model->nseries >= 2 && model->window > 0)
@@ -541,14 +540,12 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_inverse(
 {
   const int m = model->ninputs;
   if (LIBXS_PREDICT_PCA == model->decompose && NULL != model->decompose_mat) {
-    int i, j;
-    for (i = 0; i < m; ++i) {
-      double sum = 0;
-      for (j = 0; j < m; ++j) {
-        sum += model->decompose_mat[j * m + i] * modes[j];
-      }
-      raw[i] = sum;
-    }
+    const double alpha = 1.0, beta = 0.0;
+    const libxs_gemm_config_t *const gemm = libxs_gemm_dispatch(
+      LIBXS_DATATYPE_F64, 'T', 'N', m, 1, m, m, m, m,
+      &alpha, &beta, NULL);
+    libxs_gemm_call(gemm, model->decompose_mat, modes, raw);
+    libxs_gemm_release(gemm);
   }
   else if (LIBXS_PREDICT_SPREAD == model->decompose
     && model->nseries >= 2 && model->window > 0)
@@ -684,22 +681,29 @@ LIBXS_API_INLINE void internal_libxs_predict_pca_build(libxs_predict_t* model)
           for (j = 0; j < m; ++j) model->weights[j] = (j < npc) ? 1.0 : 0.0;
         }
       }
-      { int tmp_pool = 0;
-        double* tmp = (double*)LIBXS_PREDICT_MALLOC((size_t)m * sizeof(double), tmp_pool);
-        if (NULL != tmp) {
+      { int xmat_pool = 0, ymat_pool = 0;
+        double* xmat = (double*)LIBXS_PREDICT_MALLOC(
+          (size_t)p * (size_t)m * sizeof(double), xmat_pool);
+        double* ymat = (double*)LIBXS_PREDICT_MALLOC(
+          (size_t)p * (size_t)m * sizeof(double), ymat_pool);
+        if (NULL != xmat && NULL != ymat) {
+          const double alpha = 1.0, beta = 0.0;
+          const libxs_gemm_config_t *const gemm = libxs_gemm_dispatch(
+            LIBXS_DATATYPE_F64, 'N', 'N', m, p, m, m, m, m,
+            &alpha, &beta, NULL);
           for (i = 0; i < p; ++i) {
-            double* inp = model->entries[i].inputs;
-            memcpy(tmp, inp, (size_t)m * sizeof(double));
-            for (j = 0; j < m; ++j) {
-              double sum = 0;
-              for (k = 0; k < m; ++k) {
-                sum += model->decompose_mat[j * m + k] * tmp[k];
-              }
-              inp[j] = sum;
-            }
+            memcpy(xmat + (size_t)i * m, model->entries[i].inputs,
+              (size_t)m * sizeof(double));
           }
-          LIBXS_PREDICT_FREE(tmp, tmp_pool);
+          libxs_gemm_call(gemm, model->decompose_mat, xmat, ymat);
+          libxs_gemm_release(gemm);
+          for (i = 0; i < p; ++i) {
+            memcpy(model->entries[i].inputs, ymat + (size_t)i * m,
+              (size_t)m * sizeof(double));
+          }
         }
+        LIBXS_PREDICT_FREE(ymat, ymat_pool);
+        LIBXS_PREDICT_FREE(xmat, xmat_pool);
       }
     }
   }
