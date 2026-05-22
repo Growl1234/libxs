@@ -36,6 +36,9 @@
 # endif
 #endif
 
+#define LIBXS_MATH_MALLOC(SIZE, POOL) internal_libxs_scratch_malloc(SIZE, &(POOL))
+#define LIBXS_MATH_FREE(PTR, POOL) internal_libxs_scratch_free(PTR, POOL)
+
 /**
  * LIBXS_MATDIFF_DIV divides the numerator by the reference-denominator
  * unless the latter is zero in which case the fallback is returned.
@@ -132,9 +135,6 @@
 
 #define LIBXS_SETDIFF_CVT(VALUE) ((double)(VALUE))
 #define LIBXS_SETDIFF_NOP(VALUE) (VALUE)
-
-#define LIBXS_MATH_MALLOC(SIZE, POOL) internal_libxs_scratch_malloc(SIZE, &(POOL))
-#define LIBXS_MATH_FREE(PTR, POOL) internal_libxs_scratch_free(PTR, POOL)
 
 
 /** Merge-only: count matches on pre-sorted double arrays. */
