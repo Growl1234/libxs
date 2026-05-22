@@ -81,7 +81,7 @@
         PUBLIC :: libxs_gemm_backend_t
         PUBLIC :: libxs_gemm_shape_t, libxs_gemm_config_t
         PUBLIC :: LIBXS_GEMM_FLAGS_DEFAULT, LIBXS_GEMM_FLAG_NOLOCK
-        PUBLIC :: libxs_gemm_ready, libxs_gemm_call
+        PUBLIC :: libxs_gemm_call
         PUBLIC :: libxs_gemm_dispatch, libxs_gemm_release
         PUBLIC :: libxs_gemm_batch, libxs_gemm_batch_task
         PUBLIC :: libxs_gemm_index, libxs_gemm_index_task
@@ -1201,23 +1201,6 @@
      &      value_out, value_size, libxs_registry_lock(registry))
         END FUNCTION
 
-        !> Check if a dispatched GEMM config holds a usable
-        !> kernel. Returns nonzero if libxs_gemm_call would
-        !> succeed, zero otherwise.
-        PURE FUNCTION libxs_gemm_ready(config)
-          TYPE(libxs_gemm_config_t), INTENT(IN) :: config
-          INTEGER(C_INT) :: libxs_gemm_ready
-          INTERFACE
-            PURE FUNCTION internal_gemm_ready_f(config)                 &
-     &      RESULT(res) BIND(C, NAME="libxs_gemm_ready_f")
-              IMPORT :: libxs_gemm_config_t, C_INT
-              TYPE(libxs_gemm_config_t), INTENT(IN) :: config
-              INTEGER(C_INT) :: res
-            END FUNCTION
-          END INTERFACE
-          libxs_gemm_ready = internal_gemm_ready_f(config)
-        END FUNCTION
-
         !> Call the GEMM kernel dispatched into config.
         SUBROUTINE libxs_gemm_call(config, a, b, c)
           TYPE(libxs_gemm_config_t), INTENT(IN) :: config
@@ -1294,7 +1277,7 @@
           IF (C_ASSOCIATED(ptr)) THEN
             CALL C_F_POINTER(ptr, cached)
             config = cached
-            libxs_gemm_dispatch = libxs_gemm_ready(config)
+            libxs_gemm_dispatch = 1
           ELSE
             libxs_gemm_dispatch = 0
           END IF

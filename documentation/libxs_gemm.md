@@ -156,19 +156,13 @@ rc = libxs_gemm_dispatch(config, LIBXS_DATATYPE_F64,
 ## Single-Kernel Call
 
 ```C
-int libxs_gemm_ready(const libxs_gemm_config_t* config);
-```
-
-Returns nonzero if config holds a usable kernel.
-
-```C
 void libxs_gemm_call(
   const libxs_gemm_config_t* config,
   const void* a, const void* b, void* c);
 ```
 
-Call the dispatched GEMM kernel. The caller must verify
-`libxs_gemm_ready(config)` before calling this function.
+Call the dispatched GEMM kernel (JIT > XGEMM > BLAS fallback).
+The caller must ensure config is non-NULL (dispatch succeeded).
 
 ## Release
 

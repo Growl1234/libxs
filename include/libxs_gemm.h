@@ -141,13 +141,11 @@ typedef struct libxs_gemm_shape_t {
 } libxs_gemm_shape_t;
 
 /**
- * Configuration supplying GEMM kernels. Pass NULL to batch functions
- * to use the built-in default kernel (auto-vectorized, no BLAS dependency).
- * Users can supply their own kernels. Kernel selection priority:
+ * Configuration supplying GEMM kernels. Kernel selection priority:
  *   1. JIT kernel (dgemm_jit/sgemm_jit + jitter) if non-NULL,
  *   2. XGEMM kernel (xgemm) if non-NULL,
- *   3. BLAS kernel (dgemm/sgemm) if non-NULL,
- *   4. built-in default kernel.
+ *   3. BLAS kernel (dgemm_blas/sgemm_blas) -- always non-NULL after
+ *      dispatch (falls back to built-in auto-vectorized C code).
  * Only the function pointers matching the datatype need to be set.
  * By default (flags=0), _task variants synchronize C-matrix updates.
  * Set LIBXS_GEMM_FLAG_NOLOCK if no duplicate C pointers exist.
@@ -226,17 +224,6 @@ LIBXS_API void libxs_gemm_index_task(
   int tid, int ntasks);
 
 /**
- * Check whether a dispatched config holds a usable kernel.
- * Returns nonzero if libxs_gemm_call would succeed, zero otherwise.
- */
-LIBXS_API_INLINE int libxs_gemm_ready(const libxs_gemm_config_t* config) {
-  return NULL != config
-    && (  (NULL != config->dgemm_jit && NULL != config->jitter)
-       || (NULL != config->sgemm_jit && NULL != config->jitter)
-       ||  NULL != config->xgemm);
-}
-
-/**
  * Dispatch a GEMM kernel and return a pointer to the configuration.
  * On registry hit, returns pointer to cached config (zero-cost).
  * On miss, JIT-compiles (MKL JIT > LIBXSMM > fallthrough), stores
@@ -302,20 +289,23 @@ LIBXS_API_INLINE libxs_gemm_config_t* libxs_gemm_dispatch(
 
 /**
  * Call the GEMM kernel previously dispatched into config.
- * Priority: JIT > XGEMM. Caller must ensure libxs_gemm_ready()
- * returns nonzero before calling.
+ * Priority: JIT > XGEMM > BLAS (always available after dispatch).
+ * Caller must ensure config is non-NULL.
  */
 LIBXS_API_INLINE void libxs_gemm_call(
   const libxs_gemm_config_t* config,
   const void* a, const void* b, void* c)
 {
+  LIBXS_ASSERT(NULL != config);
   if (NULL != config->dgemm_jit) {
+    LIBXS_ASSERT(NULL != config->jitter);
     config->dgemm_jit(config->jitter, a, b, c);
   }
   else if (NULL != config->sgemm_jit) {
+    LIBXS_ASSERT(NULL != config->jitter);
     config->sgemm_jit(config->jitter, a, b, c);
   }
-  else {
+  else if (NULL != config->xgemm) {
     libxs_gemm_param_t xparam;
     LIBXS_MEMZERO(&xparam);
     xparam.a[0] = a;
@@ -323,6 +313,29 @@ LIBXS_API_INLINE void libxs_gemm_call(
     xparam.c[0] = c;
     config->xgemm(&xparam);
   }
+  else if (LIBXS_DATATYPE_F64 == config->shape.datatype
+    && NULL != config->dgemm_blas)
+  {
+    config->dgemm_blas(
+      &config->shape.transa, &config->shape.transb,
+      &config->shape.m, &config->shape.n, &config->shape.k,
+      &config->shape.alpha, (const double*)a, &config->shape.lda,
+      (const double*)b, &config->shape.ldb,
+      &config->shape.beta, (double*)c, &config->shape.ldc);
+  }
+  else if (LIBXS_DATATYPE_F32 == config->shape.datatype
+    && NULL != config->sgemm_blas)
+  {
+    const float falpha = (float)config->shape.alpha;
+    const float fbeta = (float)config->shape.beta;
+    config->sgemm_blas(
+      &config->shape.transa, &config->shape.transb,
+      &config->shape.m, &config->shape.n, &config->shape.k,
+      &falpha, (const float*)a, &config->shape.lda,
+      (const float*)b, &config->shape.ldb,
+      &fbeta, (float*)c, &config->shape.ldc);
+  }
+  else LIBXS_ASSERT_MSG(0, "invalid config");
 }
 
 /**

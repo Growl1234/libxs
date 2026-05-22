@@ -381,7 +381,7 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
             config.jitter = jitter;
           }
         }
-        if (0 == libxs_gemm_ready(&config)
+        if (NULL == config.dgemm_jit && NULL == config.sgemm_jit
             && NULL != backend && NULL != backend->xgemm_dispatch) {
           unsigned int xflags = 0;
           int xsmm_ok = 0;
@@ -405,10 +405,12 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
             }
           }
         }
-        if (NULL != backend) {
-          config.dgemm_blas = backend->dgemm_blas;
-          config.sgemm_blas = backend->sgemm_blas;
-        }
+        config.dgemm_blas = (NULL != backend && NULL != backend->dgemm_blas)
+          ? backend->dgemm_blas : (NULL != internal_libxs_dgemm_blas)
+          ? internal_libxs_dgemm_blas : internal_libxs_dgemm_default;
+        config.sgemm_blas = (NULL != backend && NULL != backend->sgemm_blas)
+          ? backend->sgemm_blas : (NULL != internal_libxs_sgemm_blas)
+          ? internal_libxs_sgemm_blas : internal_libxs_sgemm_default;
         if (0 != memcmp(shape, kernel_shape, sizeof(*shape))) {
           libxs_gemm_config_t kconfig;
           LIBXS_MEMZERO(&kconfig);
@@ -431,6 +433,10 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
         fallback = config;
         result = &fallback;
       }
+      LIBXS_ASSERT(LIBXS_DATATYPE_F64 != shape->datatype
+        || NULL != result->dgemm_blas);
+      LIBXS_ASSERT(LIBXS_DATATYPE_F32 != shape->datatype
+        || NULL != result->sgemm_blas);
     }
 #if defined(LIBXS_GEMM_PRINT)
     {
@@ -445,7 +451,7 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
           const int ready = (NULL != internal_libxs_dsyr2k_blas && NULL != internal_libxs_ssyr2k_blas
               && NULL != internal_libxs_dgemm_blas && NULL != internal_libxs_sgemm_blas
               && NULL != internal_libxs_dsyrk_blas && NULL != internal_libxs_ssyrk_blas)
-            ? 1 : libxs_gemm_ready(result);
+            ? 1 : (NULL != result->dgemm_jit || NULL != result->sgemm_jit || NULL != result->xgemm);
           libxs_registry_info_t info;
           LIBXS_EXPECT(EXIT_SUCCESS == libxs_registry_info(reg, &info));
           LIBXS_ASSERT((NULL != result));
@@ -804,7 +810,7 @@ LIBXS_API void libxs_syr2k_task(
         void* scratch = internal_libxs_syrk_scratch(need);
         if (NULL != scratch) {
           memset(scratch, 0, need);
-          if (0 != libxs_gemm_ready(config)) {
+          if (NULL != config->xgemm || NULL != config->dgemm_jit || NULL != config->sgemm_jit) {
             libxs_gemm_call(config, a, b, scratch);
           }
           else {
@@ -874,7 +880,7 @@ LIBXS_API void libxs_syr2k_task(
               memset(scratch, 0, clear);
               for (kb = 0; kb < k; kb += bk) {
                 const int ck = LIBXS_MIN(bk, k - kb);
-                if (full && ck == bk && 0 != libxs_gemm_ready(config)) {
+                if (full && ck == bk && (NULL != config->xgemm || NULL != config->dgemm_jit || NULL != config->sgemm_jit)) {
                   const size_t aoff = ((size_t)ib + (size_t)kb * lda) * elemsize;
                   const size_t boff = ((size_t)jb + (size_t)kb * ldb) * elemsize;
                   const size_t bioff = ((size_t)ib + (size_t)kb * ldb) * elemsize;
@@ -957,7 +963,7 @@ LIBXS_API void libxs_syrk_task(
         void* scratch = internal_libxs_syrk_scratch(need);
         if (NULL != scratch) {
           memset(scratch, 0, need);
-          if (0 != libxs_gemm_ready(config)) {
+          if (NULL != config->xgemm || NULL != config->dgemm_jit || NULL != config->sgemm_jit) {
             libxs_gemm_call(config, a, a, scratch);
           }
           else {
@@ -1021,7 +1027,7 @@ LIBXS_API void libxs_syrk_task(
               memset(scratch, 0, need);
               for (kb = 0; kb < k; kb += bk) {
                 const int ck = LIBXS_MIN(bk, k - kb);
-                if (full && ck == bk && 0 != libxs_gemm_ready(config)) {
+                if (full && ck == bk && (NULL != config->xgemm || NULL != config->dgemm_jit || NULL != config->sgemm_jit)) {
                   const size_t aoff = ((size_t)ib + (size_t)kb * lda) * elemsize;
                   const size_t ajoff = ((size_t)jb + (size_t)kb * lda) * elemsize;
                   libxs_gemm_call(config,
@@ -1065,13 +1071,6 @@ LIBXS_API void libxs_syrk(
 
 
 #if defined(LIBXS_BUILD) && !defined(LIBXS_NOFORTRAN)
-
-LIBXS_API int libxs_gemm_ready_f(const libxs_gemm_config_t*);
-LIBXS_API int libxs_gemm_ready_f(const libxs_gemm_config_t* config)
-{
-  return libxs_gemm_ready(config);
-}
-
 
 LIBXS_API void libxs_gemm_call_f(const libxs_gemm_config_t*,
   const void*, const void*, void*);
