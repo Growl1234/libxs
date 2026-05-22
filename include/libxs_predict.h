@@ -266,9 +266,11 @@ LIBXS_API libxs_predict_t* libxs_predict_load(
  * filename: path to the delimited text file.
  * delims:   string of delimiter characters (NULL = auto-detect: ;,\t space).
  *           Any character in the string acts as a field separator.
- * inputs:   array of column identifiers for input parameters.
+ * inputs:   array of column identifiers for input parameters,
+ *           or NULL for sequential columns 0..ninputs-1.
  * ninputs:  length of inputs array (must match model's ninputs).
- * outputs:  array of column identifiers for output parameters.
+ * outputs:  array of column identifiers for output parameters,
+ *           or NULL for sequential columns ninputs..ninputs+noutputs-1.
  * noutputs: length of outputs array (must match model's noutputs).
  *
  * Each identifier is matched case-insensitively against the header line.

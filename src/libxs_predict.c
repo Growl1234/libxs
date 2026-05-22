@@ -1060,14 +1060,14 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
     }
     if (nblend > 1) {
       typedef struct { double dist; int idx; } dc_t;
+      const double conf_thr = 0.7;
       int dc_pool = 0;
       dc_t* dists = (dc_t*)LIBXS_PREDICT_MALLOC(
         (size_t)model->nclusters * sizeof(dc_t), dc_pool);
-      double wsum = 0;
       int b;
       LIBXS_ASSERT(NULL != dists);
       for (c = 0; c < model->nclusters; ++c) {
-        dists[c].dist = sqrt(libxs_dist2(inputs, model->clusters[c].centroid, m));
+        dists[c].dist = sqrt(libxs_dist2(norm_inputs, model->clusters[c].centroid, m));
         dists[c].idx = c;
       }
       for (b = 0; b < nblend; ++b) {
@@ -1077,64 +1077,57 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
         }
         if (minj != b) { dc_t tmp = dists[b]; dists[b] = dists[minj]; dists[minj] = tmp; }
       }
-      memset(vals, 0, (size_t)n * sizeof(double));
-      memset(errs, 0, (size_t)n * sizeof(double));
-      memset(conf, 0, (size_t)n * sizeof(double));
-      memset(var, 0, (size_t)n * sizeof(double));
-      memset(rels, 0, (size_t)n * sizeof(int));
-      { const double ref_sig = model->clusters[dists[0].idx].fprint_sig;
-        for (b = 0; b < nblend; ++b) {
-          double w = (dists[b].dist > 0) ? (1.0 / dists[b].dist) : 1e30;
-          if (0 != extrapolate && ref_sig > 0) {
-            const double sig = model->clusters[dists[b].idx].fprint_sig;
-            const double sim = 1.0 / (1.0 + LIBXS_FABS(sig - ref_sig) / ref_sig);
-            w *= sim;
-          }
-          wsum += w;
-        }
-      }
-      if (wsum <= 0) wsum = 1.0;
-      { const double ref_sig2 = model->clusters[dists[0].idx].fprint_sig;
-      for (b = 0; b < nblend; ++b) {
-        const int ci = dists[b].idx;
-        const internal_libxs_predict_cluster_t* cl = &model->clusters[ci];
-        const double dq = dists[b].dist;
-        const int nearest = (int)internal_libxs_predict_position(model, cl, norm_inputs);
-        double cw = ((dq > 0) ? (1.0 / dq) : 1e30);
-        if (0 != extrapolate && ref_sig2 > 0) {
-          const double sim = 1.0 / (1.0 + LIBXS_FABS(cl->fprint_sig - ref_sig2) / ref_sig2);
-          cw *= sim;
-        }
-        cw /= wsum;
-        for (j = 0; j < n; ++j) {
-          { const int use_classify = (0 != force_classify)
-              ? 1 : ((0 != force_interp) ? 0 : cl->mode[j]);
+      for (j = 0; j < n; ++j) {
+        if (conf[j] >= conf_thr) continue;
+        { const internal_libxs_predict_cluster_t* cl_primary = &model->clusters[dists[0].idx];
+          const int use_classify = (0 != force_classify)
+            ? 1 : ((0 != force_interp) ? 0 : cl_primary->mode[j]);
+          double blend_val = 0, blend_conf = 0, blend_var = 0, blend_err = 0;
+          double wsum = 0;
+          int blend_rel = 0;
+          for (b = 0; b < nblend; ++b) {
+            const int ci = dists[b].idx;
+            const internal_libxs_predict_cluster_t* cl2 = &model->clusters[ci];
+            double w = (dists[b].dist > 0) ? (1.0 / dists[b].dist) : 1e30;
+            if (0 != extrapolate && cl_primary->fprint_sig > 0) {
+              const double sim = 1.0 / (1.0
+                + LIBXS_FABS(cl2->fprint_sig - cl_primary->fprint_sig)
+                / cl_primary->fprint_sig);
+              w *= sim;
+            }
             if (0 != use_classify) {
               double cj_conf = 1.0, cj_var = 0;
-              vals[j] += cw * internal_libxs_predict_classify(
-                cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
-                cl->ndistinct[j], extrapolate, &cj_conf, &cj_var);
-              conf[j] += cw * cj_conf;
-              var[j] += cw * cj_var;
+              const double v = internal_libxs_predict_classify(
+                cl2, cl2->kd_pts, cl2->nentries, m, norm_inputs, j, n,
+                cl2->ndistinct[j], extrapolate, &cj_conf, &cj_var);
+              blend_val += w * v;
+              blend_conf += w * cj_conf;
+              blend_var += w * cj_var;
             }
             else {
+              const int nearest2 = (int)internal_libxs_predict_position(model, cl2, norm_inputs);
               const double t = (0 != extrapolate)
-                ? (double)cl->nentries : (double)nearest;
-              const int d = cl->order[j];
-              const double* cj = cl->coeffs + (size_t)j * (cl->maxorder + 1);
+                ? (double)cl2->nentries : (double)nearest2;
+              const int d = cl2->order[j];
+              const double* cj = cl2->coeffs + (size_t)j * (cl2->maxorder + 1);
               double val = 0;
               int k;
               for (k = 0; k <= d; ++k) val += cj[k] * libxs_binom(t, k);
-              vals[j] += cw * val;
-              errs[j] += cw * ((NULL != info)
-                ? internal_libxs_predict_local_error(model, cl, nearest, j)
-                : cl->errors[j]);
-              conf[j] += cw;
-              rels[j] = 1;
+              blend_val += w * val;
+              blend_err += w * cl2->errors[j];
+              blend_conf += w;
+              blend_rel = 1;
             }
+            wsum += w;
+          }
+          if (wsum > 0) {
+            vals[j] = blend_val / wsum;
+            conf[j] = blend_conf / wsum;
+            var[j] = blend_var / wsum;
+            errs[j] = blend_err / wsum;
+            rels[j] = blend_rel;
           }
         }
-      }
       }
       if (NULL != info) {
         const internal_libxs_predict_cluster_t* cl0 = &model->clusters[dists[0].idx];
@@ -1700,7 +1693,6 @@ LIBXS_API int libxs_predict_load_csv(libxs_predict_t* model,
   int result = -1;
   FILE* file;
   LIBXS_ASSERT(NULL != model && NULL != filename);
-  LIBXS_ASSERT(NULL != inputs && NULL != outputs);
   LIBXS_ASSERT(ninputs == model->ninputs && noutputs == model->noutputs);
   file = fopen(filename, "r");
   if (NULL != file) {
@@ -1714,7 +1706,24 @@ LIBXS_API int libxs_predict_load_csv(libxs_predict_t* model,
     LIBXS_ASSERT(ninputs + noutputs <= 128);
     result = 0;
     while (NULL != fgets(line, (int)sizeof(line), file) && '#' == line[0]) {}
-    if (NULL == sep && '\0' != line[0]) {
+    if (NULL == inputs || NULL == outputs) {
+      for (i = 0; i < ninputs; ++i) {
+        idx[i] = (NULL != inputs) ? (int)strtol(inputs[i], NULL, 10) : i;
+      }
+      for (i = 0; i < noutputs; ++i) {
+        idx[ninputs + i] = (NULL != outputs)
+          ? (int)strtol(outputs[i], NULL, 10) : ninputs + i;
+      }
+      if (NULL == sep && '\0' != line[0]) {
+        size_t len = strlen(line);
+        if (0 < len && '\n' == line[len - 1]) line[--len] = '\0';
+        if (0 < len && '\r' == line[len - 1]) line[--len] = '\0';
+        sep = internal_libxs_predict_detect_delims(line);
+      }
+      if (NULL == sep) sep = ",";
+      resolved = 0;
+    }
+    if (0 != resolved && NULL == sep && '\0' != line[0]) {
       size_t len = strlen(line);
       if (0 < len && '\n' == line[len - 1]) line[--len] = '\0';
       if (0 < len && '\r' == line[len - 1]) line[--len] = '\0';
@@ -1737,20 +1746,22 @@ LIBXS_API int libxs_predict_load_csv(libxs_predict_t* model,
       if (0 == resolved) {
         rewind(file);
         for (i = 0; i < ninputs; ++i) {
-          idx[i] = (int)strtol(inputs[i], NULL, 10);
+          idx[i] = (NULL != inputs) ? (int)strtol(inputs[i], NULL, 10) : i;
         }
         for (i = 0; i < noutputs; ++i) {
-          idx[ninputs + i] = (int)strtol(outputs[i], NULL, 10);
+          idx[ninputs + i] = (NULL != outputs)
+            ? (int)strtol(outputs[i], NULL, 10) : ninputs + i;
         }
       }
     }
-    else {
+    else if (0 != resolved) {
       if (NULL == sep) sep = ";";
       for (i = 0; i < ninputs; ++i) {
-        idx[i] = (int)strtol(inputs[i], NULL, 10);
+        idx[i] = (NULL != inputs) ? (int)strtol(inputs[i], NULL, 10) : i;
       }
       for (i = 0; i < noutputs; ++i) {
-        idx[ninputs + i] = (int)strtol(outputs[i], NULL, 10);
+        idx[ninputs + i] = (NULL != outputs)
+          ? (int)strtol(outputs[i], NULL, 10) : ninputs + i;
       }
     }
     while (NULL != fgets(line, (int)sizeof(line), file)) {
