@@ -27,7 +27,7 @@ static void evaluate(const libxs_predict_t* model,
 
 int main(int argc, char* argv[])
 {
-  int argi = 1, mode = LIBXS_PREDICT_AUTO;
+  int argi = 1, mode = LIBXS_PREDICT_AUTO, use_rf = 0;
   int order_arg = 0;
   double eval_fraction = 0.8;
   const char *filename, *modelfile;
@@ -40,6 +40,7 @@ int main(int argc, char* argv[])
     if ('a' == argv[argi][0]) mode = LIBXS_PREDICT_AUTO;
     else if ('c' == argv[argi][0]) mode = LIBXS_PREDICT_CLASSIFY;
     else if ('i' == argv[argi][0]) mode = LIBXS_PREDICT_INTERPOLATE;
+    else if ('r' == argv[argi][0]) use_rf = 1;
     ++argi;
   }
   if (argi < argc && '-' == argv[argi][0] && '\0' != argv[argi][1]) {
@@ -83,6 +84,7 @@ int main(int argc, char* argv[])
           int i, build_ok = EXIT_FAILURE;
           double inputs[NINPUTS], outputs[NOUTPUTS];
           libxs_predict_set_mode(model, mode);
+          if (0 != use_rf) libxs_predict_set_decompose(model, LIBXS_PREDICT_RF);
           for (i = 0; i < ntotal; ++i) {
             libxs_predict_get(source, i, inputs, outputs);
             libxs_predict_push(NULL, model, inputs, outputs);
@@ -107,6 +109,7 @@ int main(int argc, char* argv[])
               if (NULL != val_model) {
                 double vi[NINPUTS], vo[NOUTPUTS];
                 libxs_predict_set_mode(val_model, mode);
+                if (0 != use_rf) libxs_predict_set_decompose(val_model, LIBXS_PREDICT_RF);
                 for (i = 0; i < nval; ++i) {
                   libxs_predict_get(source, i, vi, vo);
                   libxs_predict_push(NULL, val_model, vi, vo);

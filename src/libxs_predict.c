@@ -74,6 +74,7 @@ typedef struct internal_libxs_predict_rf_tree_t {
 
 typedef struct internal_libxs_predict_rf_t {
   internal_libxs_predict_rf_tree_t* trees;
+  int* label_offset;
   int ntrees;
   int noutputs;
 } internal_libxs_predict_rf_t;
@@ -425,8 +426,10 @@ LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
     free(model->decompose_mat);
     if (NULL != model->rf) {
       int ti;
-      for (ti = 0; ti < model->rf->ntrees; ++ti) free(model->rf->trees[ti].nodes);
+      const int total_trees = model->rf->ntrees * model->rf->noutputs;
+      for (ti = 0; ti < total_trees; ++ti) free(model->rf->trees[ti].nodes);
       free(model->rf->trees);
+      free(model->rf->label_offset);
       free(model->rf);
     }
     free(model);
@@ -916,7 +919,8 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_pair_cmp(
 LIBXS_API_INLINE int internal_libxs_predict_rf_split(
   const internal_libxs_predict_entry_t* entries,
   const int* subset, int nsub, int nfeat, int nfeatsub,
-  internal_libxs_predict_rf_node_t* node, size_t seed)
+  internal_libxs_predict_rf_node_t* node, size_t seed,
+  int output_idx, int label_off)
 {
   int result = 0;
   double best_gini = 2.0;
@@ -943,11 +947,11 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split(
     memset(right_counts, 0, sizeof(right_counts));
     nright = nsub; nleft = 0;
     for (i = 0; i < nsub; ++i) {
-      ++right_counts[LIBXS_ROUNDX(int, entries[pairs[i].idx].outputs[0]) & 127];
+      ++right_counts[(LIBXS_ROUNDX(int, entries[pairs[i].idx].outputs[output_idx]) + label_off) & 127];
     }
     memset(left_counts, 0, sizeof(left_counts));
     for (i = 0; i < nsub - 1; ++i) {
-      const int label = LIBXS_ROUNDX(int, entries[pairs[i].idx].outputs[0]) & 127;
+      const int label = (LIBXS_ROUNDX(int, entries[pairs[i].idx].outputs[output_idx]) + label_off) & 127;
       ++left_counts[label]; ++nleft;
       --right_counts[label]; --nright;
       if (pairs[i].val == pairs[i + 1].val) continue;
@@ -980,7 +984,8 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split(
 LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree(
   const internal_libxs_predict_entry_t* entries,
   int* subset, int nsub, int nfeat, int max_depth, int min_leaf,
-  internal_libxs_predict_rf_node_t* nodes, int max_nodes)
+  internal_libxs_predict_rf_node_t* nodes, int max_nodes,
+  int output_idx, int label_off)
 {
   int stack_subset[64], stack_count[64], stack_depth[64], stack_node[64];
   int sp = 0, nnodes = 0;
@@ -1002,7 +1007,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree(
     int counts[128] = {0}, best_label = 0, best_count = 0, k;
     internal_libxs_predict_rf_node_t split;
     for (k = 0; k < nc; ++k) {
-      ++counts[LIBXS_ROUNDX(int, entries[subset[si + k]].outputs[0]) & 127];
+      ++counts[(LIBXS_ROUNDX(int, entries[subset[si + k]].outputs[output_idx]) + label_off) & 127];
     }
     for (k = 0; k < 128; ++k) {
       if (counts[k] > best_count) { best_count = counts[k]; best_label = k; }
@@ -1010,7 +1015,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree(
     nodes[ni].label = best_label;
     if (depth >= max_depth || nc <= min_leaf || best_count == nc
       || 0 == internal_libxs_predict_rf_split(entries, subset + si, nc,
-        nfeat, nfeatsub, &split, (size_t)ni))
+        nfeat, nfeatsub, &split, (size_t)ni, output_idx, label_off))
     {
       nodes[ni].feature = -1;
       continue;
@@ -1075,6 +1080,7 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build(libxs_predict_t* model)
 {
   const int p = model->nentries;
   const int m = model->ninputs;
+  const int n = model->noutputs;
   const int ntrees = 100;
   const int max_depth = (int)(2.0 * log((double)p) / log(2.0));
   const int min_leaf = 5;
@@ -1086,35 +1092,46 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build(libxs_predict_t* model)
   rf = (internal_libxs_predict_rf_t*)calloc(1, sizeof(internal_libxs_predict_rf_t));
   if (NULL == rf) { LIBXS_PREDICT_FREE(bootstrap, bootstrap_pool); return; }
   rf->trees = (internal_libxs_predict_rf_tree_t*)calloc(
-    (size_t)ntrees, sizeof(internal_libxs_predict_rf_tree_t));
+    (size_t)ntrees * (size_t)n, sizeof(internal_libxs_predict_rf_tree_t));
+  rf->label_offset = (int*)malloc((size_t)n * sizeof(int));
   rf->ntrees = ntrees;
-  rf->noutputs = model->noutputs;
-  if (NULL != rf->trees) {
-    int t;
-    for (t = 0; t < ntrees; ++t) {
-      const size_t boot_n = (size_t)p * 2 + 1;
-      const size_t boot_coprime = libxs_coprime2(boot_n);
-      int nodes_pool = 0;
-      internal_libxs_predict_rf_node_t* nodes =
-        (internal_libxs_predict_rf_node_t*)LIBXS_PREDICT_MALLOC(
-          (size_t)max_nodes * sizeof(internal_libxs_predict_rf_node_t), nodes_pool);
-      int i, nn;
-      for (i = 0; i < p; ++i) {
-        bootstrap[i] = (int)(LIBXS_SHUFFLE_INDEX(
-          i, boot_n, boot_coprime, (size_t)t * 7 + 13) % (size_t)p);
+  rf->noutputs = n;
+  if (NULL != rf->trees && NULL != rf->label_offset) {
+    int oi, t;
+    for (oi = 0; oi < n; ++oi) {
+      int i, vmin = LIBXS_ROUNDX(int, model->entries[0].outputs[oi]);
+      for (i = 1; i < p; ++i) {
+        const int v = LIBXS_ROUNDX(int, model->entries[i].outputs[oi]);
+        if (v < vmin) vmin = v;
       }
-      if (NULL == nodes) continue;
-      nn = internal_libxs_predict_rf_build_tree(
-        model->entries, bootstrap, p, m, max_depth, min_leaf,
-        nodes, max_nodes);
-      rf->trees[t].nodes = (internal_libxs_predict_rf_node_t*)malloc(
-        (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
-      if (NULL != rf->trees[t].nodes) {
-        memcpy(rf->trees[t].nodes, nodes,
+      rf->label_offset[oi] = -vmin;
+    }
+    for (oi = 0; oi < n; ++oi) {
+      for (t = 0; t < ntrees; ++t) {
+        const size_t boot_n = (size_t)p * 2 + 1;
+        const size_t boot_coprime = libxs_coprime2(boot_n);
+        int nodes_pool = 0;
+        internal_libxs_predict_rf_node_t* nodes =
+          (internal_libxs_predict_rf_node_t*)LIBXS_PREDICT_MALLOC(
+            (size_t)max_nodes * sizeof(internal_libxs_predict_rf_node_t), nodes_pool);
+        int i, nn;
+        for (i = 0; i < p; ++i) {
+          bootstrap[i] = (int)(LIBXS_SHUFFLE_INDEX(
+            i, boot_n, boot_coprime, (size_t)(oi * ntrees + t) * 7 + 13) % (size_t)p);
+        }
+        if (NULL == nodes) continue;
+        nn = internal_libxs_predict_rf_build_tree(
+          model->entries, bootstrap, p, m, max_depth, min_leaf,
+          nodes, max_nodes, oi, rf->label_offset[oi]);
+        rf->trees[oi * ntrees + t].nodes = (internal_libxs_predict_rf_node_t*)malloc(
           (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
-        rf->trees[t].nnodes = nn;
+        if (NULL != rf->trees[oi * ntrees + t].nodes) {
+          memcpy(rf->trees[oi * ntrees + t].nodes, nodes,
+            (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
+          rf->trees[oi * ntrees + t].nnodes = nn;
+        }
+        LIBXS_PREDICT_FREE(nodes, nodes_pool);
       }
-      LIBXS_PREDICT_FREE(nodes, nodes_pool);
     }
   }
   LIBXS_PREDICT_FREE(bootstrap, bootstrap_pool);
@@ -1122,14 +1139,15 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build(libxs_predict_t* model)
 }
 
 
-LIBXS_API_INLINE int internal_libxs_predict_rf_eval(
-  const internal_libxs_predict_rf_t* rf,
+LIBXS_API_INLINE int internal_libxs_predict_rf_eval_output(
+  const internal_libxs_predict_rf_t* rf, int output_idx,
   const double* inputs, double* confidence)
 {
   int votes[128] = {0};
   int best_label = 0, best_count = 0, t, k;
+  const int base = output_idx * rf->ntrees;
   for (t = 0; t < rf->ntrees; ++t) {
-    const internal_libxs_predict_rf_tree_t* tree = &rf->trees[t];
+    const internal_libxs_predict_rf_tree_t* tree = &rf->trees[base + t];
     int ni = 0;
     if (NULL == tree->nodes || 0 == tree->nnodes) continue;
     while (ni >= 0 && ni < tree->nnodes && tree->nodes[ni].feature >= 0) {
@@ -1146,7 +1164,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_eval(
   if (NULL != confidence) {
     *confidence = (rf->ntrees > 0) ? (double)best_count / rf->ntrees : 0.0;
   }
-  return best_label;
+  return best_label - rf->label_offset[output_idx];
 }
 
 
@@ -1640,14 +1658,17 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
       const double d = libxs_dist2(norm_inputs, model->clusters[c].centroid, m);
       if (d < best_dist) { best_dist = d; best_c = c; }
     }
-    if (NULL != model->rf && 1 == n) {
-      double rf_conf = 0;
-      const int rf_label = internal_libxs_predict_rf_eval(model->rf, inputs, &rf_conf);
-      vals[0] = (double)rf_label;
-      conf[0] = rf_conf;
-      var[0] = 0;
-      errs[0] = 0;
-      rels[0] = 0;
+    if (NULL != model->rf) {
+      for (j = 0; j < n; ++j) {
+        double rf_conf = 0;
+        const int rf_label = internal_libxs_predict_rf_eval_output(
+          model->rf, j, inputs, &rf_conf);
+        vals[j] = (double)rf_label;
+        conf[j] = rf_conf;
+        var[j] = 0;
+        errs[j] = 0;
+        rels[j] = 0;
+      }
       if (NULL != info) {
         info->cluster = -1;
         info->distance = 0;
@@ -2080,6 +2101,16 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
         required += (size_t)(cl->order[j] + 1) * sizeof(double);
       }
     }
+    if (NULL != model->rf) {
+      const int n = model->rf->noutputs;
+      const int total_trees = model->rf->ntrees * n;
+      required += sizeof(uint16_t) + sizeof(uint16_t);
+      required += (size_t)n * sizeof(int16_t);
+      for (c = 0; c < total_trees; ++c) {
+        required += sizeof(uint16_t);
+        required += (size_t)model->rf->trees[c].nnodes * (2 + 8 + 2 + 2 + 1);
+      }
+    }
     if (NULL == buffer) {
       *size = required;
     }
@@ -2130,6 +2161,33 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
         for (j = 0; j < model->noutputs; ++j) {
           WRITE_BLK(cl->coeffs + (size_t)j * (cl->maxorder + 1),
             (size_t)(cl->order[j] + 1) * sizeof(double));
+        }
+      }
+      if (NULL != model->rf) {
+        const int total_trees = model->rf->ntrees * model->rf->noutputs;
+        WRITE_U16(model->rf->ntrees);
+        WRITE_U16(model->rf->noutputs);
+        for (j = 0; j < model->rf->noutputs; ++j) {
+          const int16_t off = (int16_t)model->rf->label_offset[j];
+          memcpy(dst, &off, 2); dst += 2;
+        }
+        for (c = 0; c < total_trees; ++c) {
+          const internal_libxs_predict_rf_tree_t* tree = &model->rf->trees[c];
+          int k;
+          WRITE_U16(tree->nnodes);
+          for (k = 0; k < tree->nnodes; ++k) {
+            const internal_libxs_predict_rf_node_t* nd = &tree->nodes[k];
+            { const int16_t f = (int16_t)nd->feature;
+              memcpy(dst, &f, 2); dst += 2;
+            }
+            WRITE_F64(nd->threshold);
+            { const int16_t l = (int16_t)nd->left;
+              const int16_t r = (int16_t)nd->right;
+              memcpy(dst, &l, 2); dst += 2;
+              memcpy(dst, &r, 2); dst += 2;
+            }
+            WRITE_U8(nd->label);
+          }
         }
       }
 #undef WRITE_U32
@@ -2316,6 +2374,70 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
             ok = internal_libxs_predict_read(&src, end,
               cl->coeffs + (size_t)j * (cl->maxorder + 1),
               (size_t)(cl->order[j] + 1) * sizeof(double));
+          }
+        }
+      }
+    }
+    if (EXIT_SUCCESS == ok && src < end && model->decompose == LIBXS_PREDICT_RF) {
+      uint16_t rf_ntrees = 0, rf_nouts = 0;
+      int j;
+      ok = internal_libxs_predict_read(&src, end, &rf_ntrees, 2);
+      if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &rf_nouts, 2);
+      if (EXIT_SUCCESS == ok && rf_ntrees > 0 && rf_nouts > 0) {
+        internal_libxs_predict_rf_t* rf = (internal_libxs_predict_rf_t*)calloc(
+          1, sizeof(internal_libxs_predict_rf_t));
+        if (NULL != rf) {
+          const int total_trees = (int)rf_ntrees * (int)rf_nouts;
+          rf->ntrees = (int)rf_ntrees;
+          rf->noutputs = (int)rf_nouts;
+          rf->label_offset = (int*)malloc((size_t)rf_nouts * sizeof(int));
+          rf->trees = (internal_libxs_predict_rf_tree_t*)calloc(
+            (size_t)total_trees, sizeof(internal_libxs_predict_rf_tree_t));
+          if (NULL != rf->label_offset && NULL != rf->trees) {
+            int ti;
+            for (j = 0; j < (int)rf_nouts && EXIT_SUCCESS == ok; ++j) {
+              int16_t off = 0;
+              ok = internal_libxs_predict_read(&src, end, &off, 2);
+              rf->label_offset[j] = (int)off;
+            }
+            for (ti = 0; ti < total_trees && EXIT_SUCCESS == ok; ++ti) {
+              uint16_t nn = 0;
+              int k;
+              ok = internal_libxs_predict_read(&src, end, &nn, 2);
+              if (EXIT_SUCCESS == ok && nn > 0) {
+                rf->trees[ti].nodes = (internal_libxs_predict_rf_node_t*)malloc(
+                  (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
+                rf->trees[ti].nnodes = (int)nn;
+                if (NULL == rf->trees[ti].nodes) ok = EXIT_FAILURE;
+                for (k = 0; k < (int)nn && EXIT_SUCCESS == ok; ++k) {
+                  int16_t f = 0, l = 0, r = 0;
+                  uint8_t lab = 0;
+                  ok = internal_libxs_predict_read(&src, end, &f, 2);
+                  if (EXIT_SUCCESS == ok) {
+                    ok = internal_libxs_predict_read(&src, end,
+                      &rf->trees[ti].nodes[k].threshold, 8);
+                  }
+                  if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &l, 2);
+                  if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &r, 2);
+                  if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &lab, 1);
+                  rf->trees[ti].nodes[k].feature = (int)f;
+                  rf->trees[ti].nodes[k].left = (int)l;
+                  rf->trees[ti].nodes[k].right = (int)r;
+                  rf->trees[ti].nodes[k].label = (int)lab;
+                }
+              }
+            }
+          }
+          else ok = EXIT_FAILURE;
+          if (EXIT_SUCCESS == ok) model->rf = rf;
+          else {
+            if (NULL != rf->trees) {
+              int ti;
+              for (ti = 0; ti < total_trees; ++ti) free(rf->trees[ti].nodes);
+              free(rf->trees);
+            }
+            free(rf->label_offset);
+            free(rf);
           }
         }
       }
