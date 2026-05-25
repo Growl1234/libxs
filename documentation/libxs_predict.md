@@ -31,18 +31,22 @@ ORable flags controlling prediction behavior:
 Example: `LIBXS_PREDICT_CLASSIFY | LIBXS_PREDICT_EXTRAPOLATE`
 forces kNN-weighted projection forward.
 
-## Cross-Series Decomposition
+## Input Decomposition and Feature Selection
 
 ```C
 typedef enum libxs_predict_decompose_t {
-  LIBXS_PREDICT_RAW    = 0,
-  LIBXS_PREDICT_SPREAD = 1,
-  LIBXS_PREDICT_PCA    = 2
+  LIBXS_PREDICT_RAW     = 0,
+  LIBXS_PREDICT_SPREAD  = 1,
+  LIBXS_PREDICT_PCA     = 2,
+  LIBXS_PREDICT_SETDIFF = 3,
+  LIBXS_PREDICT_FISHER  = 4,
+  LIBXS_PREDICT_RF      = 5
 } libxs_predict_decompose_t;
 ```
 
-Controls input space decomposition:
-- RAW (0): no decomposition (default).
+Controls input processing and prediction strategy:
+
+- RAW (0): no decomposition, standard kNN (default).
 - SPREAD: sum/diff modes for anti-correlated pairs (2 series).
   Forward: sum = (A+B)/2, diff = (A-B)/2.
   Inverse: A = sum+diff, B = sum-diff.
@@ -52,12 +56,30 @@ Controls input space decomposition:
   matrix (Jacobi iteration), stores the rotation matrix, and
   transforms all entries into PC space. Weights are auto-set
   to zero out PCs below the 95% cumulative variance threshold
-  (dimensionality reduction). Applicable to any model, not
-  just timeseries.
+  (dimensionality reduction). Applied via libxs_gemm.
+- SETDIFF: automatic feature selection using libxs_setdiff.
+  At build time, scores each input dimension by class
+  separability (per-class-pair setdiff with 5% tolerance,
+  range-normalized). Zeroes weights for features below the
+  median score. Supervised (uses output labels).
+- FISHER: automatic feature selection using Fisher's
+  discriminant ratio (between-class / within-class variance).
+  At build time, computes per-feature Fisher score, applies
+  sqrt weighting above median, zeroes below. Supervised.
+  Generally best for kNN classification.
+- RF: Random Forest classification. At build time, trains an
+  ensemble of 100 decision trees per output (bootstrap
+  sampling, sqrt(ninputs) random features per split, Gini
+  impurity). At eval time, returns majority vote across
+  trees. Per-output confidence = vote fraction. Excels on
+  high-dimensional classification (37+ features). Persisted
+  in save/load (compact on-disk format: 15 bytes/node).
 
-The decomposition is applied at build time to stored entries
-and at eval time to user queries (via libxs_gemm). Inverse
-prediction returns inputs in raw (user) space.
+PCA/SPREAD decomposition is applied at build time to stored
+entries and at eval time to user queries. Inverse prediction
+returns inputs in raw (user) space. Feature selection modes
+(SETDIFF, FISHER) only set weights at build time. RF replaces
+the kNN eval path entirely.
 
 ## Output Transforms
 
@@ -159,7 +181,7 @@ input = concatenated windows across all series, output = the
 next horizon values of the target series.
 
 set_target selects which series to predict (0-based, default 0).
-set_decompose selects cross-series decomposition (see above).
+set_decompose selects input processing mode (see above).
 
 Single-series example (sunspots):
 ```C

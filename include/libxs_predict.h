@@ -145,11 +145,13 @@ LIBXS_API void libxs_predict_set_series(libxs_predict_t* model,
 LIBXS_API void libxs_predict_set_target(libxs_predict_t* model, int target);
 
 /**
- * Set cross-series decomposition applied to input windows.
- * LIBXS_PREDICT_RAW (default): concatenate raw windows.
+ * Set input decomposition / feature selection / prediction mode.
+ * LIBXS_PREDICT_RAW (default): standard kNN, no input transform.
  * LIBXS_PREDICT_SPREAD: sum/diff modes (for anti-correlated pairs).
- * LIBXS_PREDICT_PCA: principal components across stacked series.
- * Only effective when nseries >= 2. Applied at build and eval time.
+ * LIBXS_PREDICT_PCA: principal component rotation + dim. reduction.
+ * LIBXS_PREDICT_SETDIFF: auto feature selection via setdiff scores.
+ * LIBXS_PREDICT_FISHER: auto feature selection via Fisher criterion.
+ * LIBXS_PREDICT_RF: Random Forest classification (per-output).
  */
 LIBXS_API void libxs_predict_set_decompose(libxs_predict_t* model,
   int decompose);

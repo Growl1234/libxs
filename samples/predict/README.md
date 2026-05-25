@@ -1,6 +1,6 @@
 # Predict Samples
 
-Four executables demonstrating fingerprint-guided prediction:
+Six executables demonstrating fingerprint-guided prediction:
 
 - **predict_params** -- Parameter prediction from structured CSV
   (GPU kernel tuning, configuration databases).
@@ -13,6 +13,8 @@ Four executables demonstrating fingerprint-guided prediction:
 - **predict_soi** -- Southern Oscillation Index prediction from
   anti-correlated Tahiti/Darwin sea level pressure using SPREAD
   decomposition (sum/diff modes).
+- **predict_crystal** -- Crystal system classification from composition
+  features (AFLOW ICSD, 7 classes, 60K entries).
 
 
 ## Build
@@ -197,6 +199,41 @@ Fixed-width: YEAR followed by 12 monthly sea level pressure values
 (mb above 1000 mb). Data from 1951 to present.
 
 
+## predict_crystal
+
+Crystal system prediction (7-class classification) from chemical
+composition features. Demonstrates `LIBXS_PREDICT_FISHER` for
+automatic feature weighting via Fisher's discriminant criterion,
+or `LIBXS_PREDICT_RF` for Random Forest classification.
+
+### Usage
+
+    ./predict_crystal.x <crystal_csv> [train_fraction] [order] [nclusters]
+
+    crystal_csv     CSV with composition features + crystal_system label.
+    train_fraction  Fraction of data for training (default: 0.8).
+
+### Example
+
+    ./predict_crystal.x predict_crystal.csv
+
+    Loaded 60386 entries (37 features) from predict_crystal.csv
+    Train=48309, Test=12077
+    Built: 220 clusters, 208.7x compression, order=2
+    Accuracy: 9625/12077 = 79.7%
+    Confidence-gated (>=0.9): 6167/6502 = 94.8% (coverage 53.8%)
+    Avg confidence: 0.820
+
+### Data Source
+
+[AFLOW ICSD catalog](https://aflow.org/API/aflux/) (free for academic use).
+60,386 entries with Magpie-style composition features (7 elemental
+properties x 5 statistics + 2 counts = 37 features). Crystal systems:
+triclinic(1), monoclinic(2), orthorhombic(3), tetragonal(4),
+trigonal(5), hexagonal(6), cubic(7).
+Data preparation: `prepare_crystal.py`.
+
+
 ## How It Works
 
 All samples share the same prediction library (libxs_predict):
@@ -226,6 +263,12 @@ All samples share the same prediction library (libxs_predict):
    SPREAD decomposition transforms the stacked windows into sum/diff
    modes before kNN matching, exploiting the anti-correlation structure
    that defines the Southern Oscillation Index.
+
+6. **predict_crystal**: 37 composition features predict one of 7
+   crystal systems. Uses `LIBXS_PREDICT_RF` (Random Forest) for
+   79.7% accuracy, or `LIBXS_PREDICT_FISHER` (kNN with automatic
+   feature weighting) for 70.7%. Confidence gating raises accuracy
+   to 95%+ on the reliable subset.
 
 The fingerprint automatically determines per-output whether polynomial
 interpolation or distance-weighted kNN voting is more appropriate.
