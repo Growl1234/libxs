@@ -1075,70 +1075,98 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree(
 }
 
 
+#if !defined(LIBXS_PREDICT_RF_NTREES)
+#  define LIBXS_PREDICT_RF_NTREES 100
+#endif
+
 LIBXS_API_INLINE void internal_libxs_predict_rf_build(libxs_predict_t* model)
 {
   const int p = model->nentries;
-  const int m = model->ninputs;
   const int n = model->noutputs;
-  const int ntrees = 100;
-  const int max_depth = (int)(2.0 * log((double)p) / log(2.0));
-  const int min_leaf = 5;
-  const int max_nodes = LIBXS_MIN(p / min_leaf * 2 + 1, 65536);
-  internal_libxs_predict_rf_t* rf;
-  int bootstrap_pool = 0;
-  int* bootstrap = (int*)LIBXS_PREDICT_MALLOC((size_t)p * sizeof(int), bootstrap_pool);
-  rf = (internal_libxs_predict_rf_t*)calloc(1, sizeof(internal_libxs_predict_rf_t));
-  if (NULL != bootstrap && NULL != rf) {
-  rf->trees = (internal_libxs_predict_rf_tree_t*)calloc(
-    (size_t)ntrees * (size_t)n, sizeof(internal_libxs_predict_rf_tree_t));
-  rf->label_offset = (int*)malloc((size_t)n * sizeof(int));
-  rf->ntrees = ntrees;
-  rf->noutputs = n;
-  if (NULL != rf->trees && NULL != rf->label_offset) {
-    int oi, t;
-    for (oi = 0; oi < n; ++oi) {
-      int i, vmin = LIBXS_ROUNDX(int, model->entries[0].outputs[oi]);
-      for (i = 1; i < p; ++i) {
-        const int v = LIBXS_ROUNDX(int, model->entries[i].outputs[oi]);
-        if (v < vmin) vmin = v;
+  const int ntrees = LIBXS_PREDICT_RF_NTREES;
+  internal_libxs_predict_rf_t* rf =
+    (internal_libxs_predict_rf_t*)calloc(1, sizeof(internal_libxs_predict_rf_t));
+  if (NULL != rf) {
+    rf->trees = (internal_libxs_predict_rf_tree_t*)calloc(
+      (size_t)ntrees * (size_t)n, sizeof(internal_libxs_predict_rf_tree_t));
+    rf->label_offset = (int*)malloc((size_t)n * sizeof(int));
+    rf->ntrees = ntrees;
+    rf->noutputs = n;
+    if (NULL != rf->trees && NULL != rf->label_offset) {
+      int oi, i;
+      for (oi = 0; oi < n; ++oi) {
+        int vmin = LIBXS_ROUNDX(int, model->entries[0].outputs[oi]);
+        for (i = 1; i < p; ++i) {
+          const int v = LIBXS_ROUNDX(int, model->entries[i].outputs[oi]);
+          if (v < vmin) vmin = v;
+        }
+        rf->label_offset[oi] = -vmin;
       }
-      rf->label_offset[oi] = -vmin;
+      model->rf = rf;
     }
-    for (oi = 0; oi < n; ++oi) {
-      for (t = 0; t < ntrees; ++t) {
+    else {
+      free(rf->trees);
+      free(rf->label_offset);
+      free(rf);
+    }
+  }
+}
+
+
+LIBXS_API_INLINE void internal_libxs_predict_rf_build_tasks(
+  libxs_predict_t* model, int tid, int ntasks)
+{
+  const internal_libxs_predict_rf_t* rf = model->rf;
+  if (NULL != rf) {
+    const int p = model->nentries;
+    const int m = model->ninputs;
+    const int n = rf->noutputs;
+    const int ntrees = rf->ntrees;
+    const int total_trees = ntrees * n;
+    const int max_depth = (int)(2.0 * log((double)p) / log(2.0));
+    const int min_leaf = 5;
+    const int max_nodes = LIBXS_MIN(p / min_leaf * 2 + 1, 65536);
+    const int chunk = (total_trees + ntasks - 1) / ntasks;
+    const int begin = tid * chunk;
+    const int end = LIBXS_MIN(begin + chunk, total_trees);
+    int bootstrap_pool = 0;
+    int* bootstrap = (int*)LIBXS_PREDICT_MALLOC(
+      (size_t)p * sizeof(int), bootstrap_pool);
+    if (NULL != bootstrap) {
+      int ti;
+      for (ti = begin; ti < end; ++ti) {
+        const int oi = ti / ntrees;
+        const int t = ti % ntrees;
         const size_t boot_n = (size_t)p * 2 + 1;
         const size_t boot_coprime = libxs_coprime2(boot_n);
         int nodes_pool = 0;
-        internal_libxs_predict_rf_node_t* nodes =
-          (internal_libxs_predict_rf_node_t*)LIBXS_PREDICT_MALLOC(
-            (size_t)max_nodes * sizeof(internal_libxs_predict_rf_node_t), nodes_pool);
+        internal_libxs_predict_rf_node_t* nodes;
         int i, nn;
+        if (NULL != rf->trees[ti].nodes) continue;
+        nodes = (internal_libxs_predict_rf_node_t*)LIBXS_PREDICT_MALLOC(
+            (size_t)max_nodes * sizeof(internal_libxs_predict_rf_node_t),
+            nodes_pool);
         for (i = 0; i < p; ++i) {
           bootstrap[i] = (int)(LIBXS_SHUFFLE_INDEX(
-            i, boot_n, boot_coprime, (size_t)(oi * ntrees + t) * 7 + 13) % (size_t)p);
+            i, boot_n, boot_coprime,
+            (size_t)(oi * ntrees + t) * 7 + 13) % (size_t)p);
         }
-        if (NULL == nodes) continue;
-        nn = internal_libxs_predict_rf_build_tree(
-          model->entries, bootstrap, p, m, max_depth, min_leaf,
-          nodes, max_nodes, oi, rf->label_offset[oi]);
-        rf->trees[oi * ntrees + t].nodes = (internal_libxs_predict_rf_node_t*)malloc(
-          (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
-        if (NULL != rf->trees[oi * ntrees + t].nodes) {
-          memcpy(rf->trees[oi * ntrees + t].nodes, nodes,
+        if (NULL != nodes) {
+          nn = internal_libxs_predict_rf_build_tree(
+            model->entries, bootstrap, p, m, max_depth, min_leaf,
+            nodes, max_nodes, oi, rf->label_offset[oi]);
+          rf->trees[ti].nodes = (internal_libxs_predict_rf_node_t*)malloc(
             (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
-          rf->trees[oi * ntrees + t].nnodes = nn;
+          if (NULL != rf->trees[ti].nodes) {
+            memcpy(rf->trees[ti].nodes, nodes,
+              (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
+            rf->trees[ti].nnodes = nn;
+          }
+          LIBXS_PREDICT_FREE(nodes, nodes_pool);
         }
-        LIBXS_PREDICT_FREE(nodes, nodes_pool);
       }
+      LIBXS_PREDICT_FREE(bootstrap, bootstrap_pool);
     }
-  }
-  }
-  LIBXS_PREDICT_FREE(bootstrap, bootstrap_pool);
-  if (NULL != rf && NULL != rf->trees) {
-    model->rf = rf;
-  }
-  else {
-    free(rf);
   }
 }
 
@@ -1362,6 +1390,9 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model, int nclusters, int ord
     && LIBXS_PREDICT_RF == model->decompose && NULL == model->rf)
   {
     internal_libxs_predict_rf_build(model);
+    if (model->phase <= 0) {
+      internal_libxs_predict_rf_build_tasks(model, 0, 1);
+    }
   }
   if (NULL == model || 0 >= model->nentries) {
     result = EXIT_FAILURE;
@@ -1609,15 +1640,18 @@ LIBXS_API int libxs_predict_build_task(libxs_lock_t* lock,
   int result;
   LIBXS_ASSERT(NULL != model);
   if (0 == tid) {
-    model->phase = 0;
-    result = libxs_predict_build(model, nclusters, order);
     model->phase = 1;
+    result = libxs_predict_build(model, nclusters, order);
+    model->phase = -1;
   }
   else {
-    while (0 == model->phase) { /* spin-wait for tid==0 */ }
+    LIBXS_SYNC_CYCLE_EQ(&model->phase, -1, LIBXS_SYNC_NPAUSE);
     result = (0 != model->built) ? EXIT_SUCCESS : EXIT_FAILURE;
   }
-  LIBXS_UNUSED(lock); LIBXS_UNUSED(ntasks);
+  if (EXIT_SUCCESS == result && NULL != model->rf) {
+    internal_libxs_predict_rf_build_tasks(model, tid, ntasks);
+  }
+  LIBXS_UNUSED(lock);
   return result;
 }
 

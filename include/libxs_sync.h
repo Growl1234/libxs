@@ -345,11 +345,27 @@ typedef enum libxs_atomic_kind_t {
         } \
       } while(((EXP_STATE) & 1) != (*(DST_PTR) & 1)); \
     } while(0)
+#   define LIBXS_SYNC_CYCLE_EQ_ELSE(DST_PTR, EXP_VALUE, NPAUSE, ELSE) do { int libxs_sync_cycle_npause_ = 1; \
+      do { int libxs_sync_cycle_counter_ = 0; \
+        for (; libxs_sync_cycle_counter_ < libxs_sync_cycle_npause_; ++libxs_sync_cycle_counter_) LIBXS_SYNC_PAUSE; \
+        if (libxs_sync_cycle_npause_ < (NPAUSE)) { \
+          libxs_sync_cycle_npause_ *= 2; \
+        } \
+        else { \
+          libxs_sync_cycle_npause_ = (NPAUSE); \
+          LIBXS_SYNC_YIELD; \
+          ELSE \
+        } \
+      } while((EXP_VALUE) != *(DST_PTR)); \
+    } while(0)
 # else
 #   define LIBXS_SYNC_CYCLE_ELSE(DST_PTR, EXP_STATE, NPAUSE, ELSE) LIBXS_SYNC_PAUSE
+#   define LIBXS_SYNC_CYCLE_EQ_ELSE(DST_PTR, EXP_VALUE, NPAUSE, ELSE) LIBXS_SYNC_PAUSE
 # endif
 # define LIBXS_SYNC_CYCLE(DST_PTR, EXP_STATE, NPAUSE) \
     LIBXS_SYNC_CYCLE_ELSE(DST_PTR, EXP_STATE, NPAUSE, /*else*/;)
+# define LIBXS_SYNC_CYCLE_EQ(DST_PTR, EXP_VALUE, NPAUSE) \
+    LIBXS_SYNC_CYCLE_EQ_ELSE(DST_PTR, EXP_VALUE, NPAUSE, /*else*/;)
 #endif
 
 #if (0 != LIBXS_SYNC)
