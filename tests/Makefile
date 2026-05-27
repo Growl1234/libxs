@@ -31,8 +31,10 @@ endif
 
 OUTNAME := $(shell basename "$(ROOTDIR)")
 HEADERS := $(wildcard $(INCDIR)/*.h) $(wildcard $(INCDIR)/*.hpp) $(wildcard $(INCDIR)/*.hxx) $(wildcard $(INCDIR)/*.hh) \
-           $(wildcard $(SRCDIR)/*.h) $(wildcard $(SRCDIR)/*.hpp) $(wildcard $(SRCDIR)/*.hxx) $(wildcard $(SRCDIR)/*.hh) \
-           $(DEPDIR)/include/libxs_source.h
+		   $(wildcard $(SRCDIR)/*.h) $(wildcard $(SRCDIR)/*.hpp) $(wildcard $(SRCDIR)/*.hxx) $(wildcard $(SRCDIR)/*.hh) \
+		   $(wildcard $(DEPDIR)/include/*.h) $(wildcard $(DEPDIR)/include/*.hpp) \
+		   $(wildcard $(DEPDIR)/include/*.hxx) $(wildcard $(DEPDIR)/include/*.hh) \
+		   $(DEPDIR)/include/libxs_source.h
 CPPSRCS := $(shell grep -L '$(CMAIN)' $(SRCDIR)/*.cpp 2>/dev/null | tr -s "\n" " ")
 CPPSRCX := $(shell grep -l '$(CMAIN)' $(SRCDIR)/*.cpp 2>/dev/null | tr -s "\n" " ")
 CXXSRCS := $(shell grep -L '$(CMAIN)' $(SRCDIR)/*.cxx 2>/dev/null | tr -s "\n" " ")
@@ -58,6 +60,8 @@ FTNOBJX := $(call objname,$(FXXSRCX) $(F77SRCX) $(F90SRCX))
 XFILES  := $(addsuffix .x,$(addprefix $(OUTDIR)/,$(basename $(notdir \
            $(CPPSRCX) $(CXXSRCX) $(CCXSRCX) $(CSOURCX) \
            $(FXXSRCX) $(F77SRCX) $(F90SRCX)))))
+TESTNAMES := $(basename $(notdir $(TEST)))
+TESTFILES := $(if $(strip $(TEST)),$(foreach NAME,$(TESTNAMES),$(if $(wildcard $(NAME).sh),$(NULL),$(OUTDIR)/$(NAME).x)),all)
 
 REALTYPE_INDEX := $(shell bash -c 'echo "$$((RANDOM%2+1))"' 2>/dev/null)
 REALTYPE := $(word $(if $(REALTYPE_INDEX),$(REALTYPE_INDEX),1),double float)
@@ -80,14 +84,14 @@ compile: $(OBJECTS) $(FTNOBJS)
 tests: test
 
 .PHONY: test
-test: $(OUTDIR)/.make $(OUTDIR)/test.sh all
+test: $(OUTDIR)/.make $(OUTDIR)/test.sh $(TESTFILES)
 	@$(OUTDIR)/test.sh $(TEST)
 
 # determine header-only tests (to avoid linking against LIBXS library; see below)
 HEADER_ONLY = $(basename $(notdir $(shell grep -H libxs_source *.c | cut -d: -f1)))
 
 define DEFINE_LINK_LD_RULE
-$(1).x: $(2) $(OBJECTX) $(dir $(1))/.make $(if $(filter $(1),$(HEADER_ONLY)),$(NULL),$(XLIB))
+$(1).x: $(2) $(dir $(1))/.make Makefile $(DEPDIR)/Makefile.inc $(if $(filter $(1),$(HEADER_ONLY)),$(NULL),$(XLIB))
 	$(LD) $(SLDFLAGS) -o $(1).x $(2) \
 		$(if $(filter $(1),$(HEADER_ONLY)),$(NULL),$(XLIB)) \
 		$(call cleanld,$(LDFLAGS) $(CLDFLAGS))
@@ -95,7 +99,7 @@ endef
 
 define DEFINE_LINK_FC_RULE
 ifneq (,$(strip $(FC)))
-$(1).x: $(2) $(FTNOBJS) $(XLIB) $(dir $(1))/.make
+$(1).x: $(2) $(XLIB) $(dir $(1))/.make Makefile $(DEPDIR)/Makefile.inc
 	$(FC) $(SLDFLAGS) -o $(1).x $(2) $(XLIB) $(FCMTFLAGS) \
 		$(call cleanld,$(LDFLAGS) $(FLDFLAGS) $(ELDFLAGS))
 else
@@ -110,11 +114,11 @@ $(foreach SRC, $(FXXSRCX) $(F77SRCX) $(F90SRCX), \
   $(eval $(call DEFINE_LINK_FC_RULE, $(basename $(notdir $(SRC))), $(call objname,$(SRC)))))
 
 ifeq (0,$(MIX))
-$(OUTDIR)/headeronly.x: $(OUTDIR)/.make $(BLDDIR)/headeronly-c.o $(BLDDIR)/headeronly_aux-c.o
+$(OUTDIR)/headeronly.x: $(OUTDIR)/.make $(BLDDIR)/headeronly-c.o $(BLDDIR)/headeronly_aux-c.o Makefile $(DEPDIR)/Makefile.inc
 	$(LD) -o $@ $(BLDDIR)/headeronly-c.o $(BLDDIR)/headeronly_aux-c.o \
 		$(call cleanld,$(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS) $(NOBLASLIB))
 else # compile headeronly_aux.c as C++ translation unit
-$(OUTDIR)/headeronly.x: $(OUTDIR)/.make $(BLDDIR)/headeronly-c.o
+$(OUTDIR)/headeronly.x: $(OUTDIR)/.make $(BLDDIR)/headeronly-c.o Makefile $(DEPDIR)/Makefile.inc
 	@$(CP) $(SRCDIR)/headeronly_aux.c $(SRCDIR)/headeronly_aux.cpp
 	$(CXX) $(DFLAGS) $(IFLAGS) $(CXXFLAGS) $(CTARGET) -c $(SRCDIR)/headeronly_aux.cpp -o $(BLDDIR)/headeronly_aux-cpp.o
 	$(XLD) -o $@ $(BLDDIR)/headeronly_aux-cpp.o $(BLDDIR)/headeronly-c.o \
