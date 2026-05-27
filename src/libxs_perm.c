@@ -69,6 +69,14 @@
 } while(0)
 
 
+LIBXS_API_INLINE size_t internal_libxs_shuffle_coprime(
+  size_t count, const size_t* shuffle)
+{
+  const size_t result = (NULL == shuffle ? LIBXS_MEM_SHUFFLE_COPRIME(count) : *shuffle);
+  LIBXS_ASSERT_MSG(1 >= count || 1 == libxs_gcd(result, count),
+    "shuffle must be coprime to count");
+  return result;
+}
 
 
 LIBXS_API_INLINE void internal_libxs_sort_swap(
@@ -833,7 +841,7 @@ LIBXS_API int libxs_shuffle(void* inout, size_t elemsize, size_t count,
     result = EXIT_SUCCESS;
   }
   else if (NULL != inout) {
-    const size_t s = (NULL == shuffle ? LIBXS_MEM_SHUFFLE_COPRIME(count) : *shuffle);
+    const size_t s = internal_libxs_shuffle_coprime(count, shuffle);
     const size_t n = (NULL == nrepeat ? 1 : *nrepeat);
     switch (elemsize) {
       case 8:   LIBXS_MEM_SHUFFLE(inout, 8, count, s, offset, n); break;
@@ -860,7 +868,7 @@ LIBXS_API int libxs_shuffle2(void* dst, const void* src, size_t elemsize, size_t
     result = EXIT_SUCCESS;
   }
   else if (NULL != inp && NULL != out && ((out + size) <= inp || (inp + size) <= out)) {
-    const size_t s = (NULL == shuffle ? LIBXS_MEM_SHUFFLE_COPRIME(count) : *shuffle);
+    const size_t s = internal_libxs_shuffle_coprime(count, shuffle);
     size_t i = 0, j;
     j = 1 + (offset % count);
     if (count < j) j -= count;
@@ -972,7 +980,7 @@ LIBXS_API size_t libxs_unshuffle(size_t count, const size_t* shuffle)
 {
   size_t result = 0;
   if (0 < count) {
-    const size_t n = (NULL == shuffle ? LIBXS_MEM_SHUFFLE_COPRIME(count) : *shuffle);
+    const size_t n = internal_libxs_shuffle_coprime(count, shuffle);
     size_t c = count - 1, j = c, d;
     do {
       d = (j * n) % count;
@@ -996,7 +1004,7 @@ LIBXS_API int libxs_unshuffle2(void* dst, const void* src, size_t elemsize, size
     result = EXIT_SUCCESS;
   }
   else if (NULL != inp && NULL != out && ((out + size) <= inp || (inp + size) <= out)) {
-    const size_t s = (NULL == shuffle ? LIBXS_MEM_SHUFFLE_COPRIME(count) : *shuffle);
+    const size_t s = internal_libxs_shuffle_coprime(count, shuffle);
     const size_t si = (1 < count ? libxs_mod_inverse(s, count) : 0);
     size_t i = 0;
     if (NULL == nrepeat || 1 == *nrepeat) {

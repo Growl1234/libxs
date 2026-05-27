@@ -51,6 +51,38 @@ LIBXS_EXTERN_C typedef struct libxs_matdiff_t {
   int m, n, i, r;
 } libxs_matdiff_t;
 
+/** Golden Section Search option flags (ORable). */
+typedef enum libxs_gss_flags_t {
+  LIBXS_GSS_DEFAULT        = 0,
+  LIBXS_GSS_EVAL_ENDPOINTS = 1
+} libxs_gss_flags_t;
+
+/** Golden Section Search result flags (ORable). */
+typedef enum libxs_gss_status_t {
+  LIBXS_GSS_STATUS_DEFAULT      = 0,
+  LIBXS_GSS_STATUS_ENDPOINT_MIN = 1,
+  LIBXS_GSS_STATUS_FLAT_MIN     = 2,
+  LIBXS_GSS_STATUS_LEFT_REFINED = 4,
+  LIBXS_GSS_STATUS_MAXITER      = 8,
+  LIBXS_GSS_STATUS_NO_BRACKET   = 16
+} libxs_gss_status_t;
+
+/** Golden Section Search diagnostics. */
+LIBXS_EXTERN_C typedef struct libxs_gss_info_t {
+  /** Consistency score for a single valley. */
+  double unimodality;
+  /** Final minimizer and value. */
+  double xmin, fmin;
+  /** Final bracket. */
+  double x0, x1;
+  /** Function evaluations performed. */
+  int evaluations;
+  /** Iterations performed. */
+  int iterations;
+  /** ORed libxs_gss_status_t values. */
+  int status;
+} libxs_gss_info_t;
+
 /** BF16 storage type (raw uint16_t encoding: 1 sign + 8 exponent + 7 fraction). */
 typedef uint16_t libxs_bf16_t;
 
@@ -257,14 +289,23 @@ LIBXS_API double libxs_kahan_sum(double value, double* accumulator, double* comp
  * The function f is evaluated via a callback; context is forwarded opaquely.
  * Returns f(x*) where x* is the minimizer; *xmin optionally receives x*
  * (may be NULL). Converges when the bracket width reaches zero or maxiter
- * iterations are exhausted. If unimodality is non-NULL, it receives a score
- * in [0,1] indicating how consistent the samples are with a single valley
- * (1.0 = perfectly unimodal, 0.0 = highly irregular).
+ * iterations are exhausted. The flags control endpoint evaluation; the optional
+ * info receives diagnostics.
  */
 LIBXS_API double libxs_gss_min(
   double (*fn)(double x, const void* data), const void* data,
   double x0, double x1, double* xmin, int maxiter,
-  double* unimodality);
+  int flags, double ftol, libxs_gss_info_t* info);
+
+/**
+ * Bisection search for the left edge of a known minimum level on [x0, x1].
+ * The caller supplies fmin, and fn(x1) is expected to reach fmin. If the
+ * bracket is invalid, info->status includes LIBXS_GSS_STATUS_NO_BRACKET.
+ */
+LIBXS_API double libxs_bisect_min(
+  double (*fn)(double x, const void* data), const void* data,
+  double x0, double x1, double fmin, double* xmin, int maxiter,
+  double ftol, libxs_gss_info_t* info);
 
 /** SQRT with Newton's method using integer arithmetic. */
 LIBXS_API unsigned int libxs_isqrt_u64(unsigned long long x);

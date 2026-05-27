@@ -381,7 +381,8 @@ double libxs_gss_min(
   double (*fn)(double x, const void* data),
   const void* data,
   double x0, double x1, double* xmin, int maxiter,
-  double* unimodality);
+  int flags, double ftol,
+  libxs_gss_info_t* info);
 ```
 
 Minimizes a unimodal function fn on the interval [x0, x1]. The
@@ -391,13 +392,33 @@ where x\* is the minimizer; xmin (may be NULL) receives x\*.
 The bracket shrinks by factor phi = (sqrt(5)-1)/2 per iteration,
 reusing one evaluation from the previous step. Convergence is
 reached when the bracket collapses to machine precision or maxiter
-iterations are exhausted.
+iterations are exhausted. Flags can enable endpoint evaluation.
+For step-like objectives such as tolerance thresholds, where plain
+GSS may discard the side containing the first point of the minimum
+plateau, use libxs_bisect_min directly.
 
-The optional unimodality pointer (may be NULL) receives a score
-in [0, 1] indicating how consistent the sampled points are with
-a single valley: 1.0 means all samples are monotonically
-decreasing before the minimum and increasing after; lower values
-indicate irregularity or multimodality.
+The optional info pointer (may be NULL) receives diagnostics:
+status flags, iteration and evaluation counts, the final x/f pair,
+the final bracket, and a unimodality score in [0, 1]. The score
+indicates how consistent the sampled points are with a single valley:
+1.0 means all samples are monotonically decreasing before the
+minimum and increasing after; lower values indicate irregularity or
+multimodality. Endpoint results are reported through status flags
+rather than through the unimodality score.
+
+```C
+double libxs_bisect_min(
+  double (*fn)(double x, const void* data),
+  const void* data,
+  double x0, double x1, double fmin, double* xmin, int maxiter,
+  double ftol, libxs_gss_info_t* info);
+```
+
+Bisects the interval [x0, x1] to find the left edge of a known
+minimum level fmin. The right endpoint is expected to reach fmin;
+otherwise info->status includes LIBXS_GSS_STATUS_NO_BRACKET. The
+function is useful as a standalone primitive for monotone threshold
+or plateau-edge searches.
 
 ## Generalized Binomial and Distance
 

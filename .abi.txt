@@ -7,6 +7,7 @@ libxs_barrett_pow18
 libxs_barrett_pow36
 libxs_barrett_rcp
 libxs_binom
+libxs_bisect_min
 libxs_cmp_f32
 libxs_cmp_f64
 libxs_cmp_i32

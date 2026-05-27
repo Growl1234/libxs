@@ -1027,72 +1027,158 @@ LIBXS_API unsigned int libxs_barrett_pow36(unsigned int p)
 }
 
 
+LIBXS_API_INTERN int internal_libxs_gss_close(double lhs, double rhs, double ftol)
+{
+  int result;
+  if (0 < ftol) result = (LIBXS_FABS(lhs - rhs) <= ftol ? 1 : 0);
+  else result = (lhs == rhs ? 1 : 0);
+  return result;
+}
+
+
+LIBXS_API double libxs_bisect_min(
+  double (*fn)(double x, const void* data), const void* data,
+  double x0, double x1, double fmin, double* xmin, int maxiter,
+  double ftol, libxs_gss_info_t* info)
+{
+  double left_x = x0, right_x = x1, best_x = x1, best_f;
+  double left_f, right_f, midpoint, midpoint_f;
+  int iteration = 0, evaluations = 0, status = 0;
+  LIBXS_ASSERT(NULL != fn && x0 <= x1 && 0 < maxiter);
+  left_f = fn(left_x, data);
+  right_f = fn(right_x, data);
+  evaluations += 2;
+  best_f = right_f;
+  if (0 != internal_libxs_gss_close(left_f, fmin, ftol) || left_f < fmin) {
+    best_x = left_x;
+    best_f = left_f;
+    status |= LIBXS_GSS_STATUS_ENDPOINT_MIN;
+  }
+  else if (0 != internal_libxs_gss_close(right_f, fmin, ftol) || right_f < fmin) {
+    status |= LIBXS_GSS_STATUS_ENDPOINT_MIN;
+    for (iteration = 0; iteration < maxiter && left_x != right_x; ++iteration) {
+      midpoint = 0.5 * (left_x + right_x);
+      if (left_x == midpoint || right_x == midpoint) break;
+      midpoint_f = fn(midpoint, data);
+      ++evaluations;
+      if (0 != internal_libxs_gss_close(midpoint_f, best_f, ftol) || midpoint_f < best_f) {
+        right_x = midpoint;
+        best_x = midpoint;
+        best_f = midpoint_f;
+      }
+      else left_x = midpoint;
+    }
+    status |= LIBXS_GSS_STATUS_LEFT_REFINED;
+    if (maxiter <= iteration) status |= LIBXS_GSS_STATUS_MAXITER;
+  }
+  else {
+    status |= LIBXS_GSS_STATUS_NO_BRACKET;
+  }
+  if (NULL != xmin) *xmin = best_x;
+  if (NULL != info) {
+    info->status = status;
+    info->iterations = iteration;
+    info->evaluations = evaluations;
+    info->unimodality = 1.0;
+    info->xmin = best_x;
+    info->fmin = best_f;
+    info->x0 = left_x;
+    info->x1 = right_x;
+  }
+  return best_f;
+}
+
+
 LIBXS_API double libxs_gss_min(
   double (*fn)(double x, const void* data), const void* data,
   double x0, double x1, double* xmin, int maxiter,
-  double* unimodality)
+  int flags, double ftol, libxs_gss_info_t* info)
 {
   const double phi = (sqrt(5.0) - 1.0) * 0.5;
-  double b0 = x0, b1 = x1, d = b1 - b0;
-  double c0 = b0 + (1.0 - phi) * d;
-  double c1 = b0 + phi * d;
-  double f0, f1;
+  const int need_endpoints = (0 != (flags & LIBXS_GSS_EVAL_ENDPOINTS) ? 1 : 0);
+  double bracket0 = x0, bracket1 = x1, width = bracket1 - bracket0;
+  double candidate0 = bracket0 + (1.0 - phi) * width;
+  double candidate1 = bracket0 + phi * width;
+  double value0, value1, best_x, best_f, unimodality;
   double samples_x[64], samples_f[64];
-  int n, nsamples = 0, consistent = 0;
+  int iteration, nsamples = 0, evaluations = 0, consistent = 0, status = 0;
   LIBXS_ASSERT(NULL != fn && x0 <= x1 && 0 < maxiter);
-  f0 = fn(c0, data); f1 = fn(c1, data);
-  if (nsamples < 64) { samples_x[nsamples] = c0; samples_f[nsamples] = f0; ++nsamples; }
-  if (nsamples < 64) { samples_x[nsamples] = c1; samples_f[nsamples] = f1; ++nsamples; }
-  for (n = 0; n < maxiter && b0 != c0 && b1 != c1; ++n) {
-    if (f0 <= f1) {
-      b1 = c1; c1 = c0; f1 = f0;
-      d = b1 - b0;
-      c0 = b0 + (1.0 - phi) * d;
-      f0 = fn(c0, data);
-      if (nsamples < 64) { samples_x[nsamples] = c0; samples_f[nsamples] = f0; ++nsamples; }
+  if (0 != need_endpoints) {
+    if (nsamples < 64) { samples_x[nsamples] = x0; samples_f[nsamples] = fn(x0, data); ++nsamples; }
+    if (nsamples < 64) { samples_x[nsamples] = x1; samples_f[nsamples] = fn(x1, data); ++nsamples; }
+    evaluations += 2;
+  }
+  value0 = fn(candidate0, data); value1 = fn(candidate1, data); evaluations += 2;
+  if (nsamples < 64) { samples_x[nsamples] = candidate0; samples_f[nsamples] = value0; ++nsamples; }
+  if (nsamples < 64) { samples_x[nsamples] = candidate1; samples_f[nsamples] = value1; ++nsamples; }
+  for (iteration = 0; iteration < maxiter && bracket0 != candidate0 && bracket1 != candidate1; ++iteration) {
+    if (value0 <= value1) {
+      bracket1 = candidate1; candidate1 = candidate0; value1 = value0;
+      width = bracket1 - bracket0;
+      candidate0 = bracket0 + (1.0 - phi) * width;
+      value0 = fn(candidate0, data); ++evaluations;
+      if (nsamples < 64) { samples_x[nsamples] = candidate0; samples_f[nsamples] = value0; ++nsamples; }
     }
     else {
-      b0 = c0; c0 = c1; f0 = f1;
-      d = b1 - b0;
-      c1 = b0 + phi * d;
-      f1 = fn(c1, data);
-      if (nsamples < 64) { samples_x[nsamples] = c1; samples_f[nsamples] = f1; ++nsamples; }
+      bracket0 = candidate0; candidate0 = candidate1; value0 = value1;
+      width = bracket1 - bracket0;
+      candidate1 = bracket0 + phi * width;
+      value1 = fn(candidate1, data); ++evaluations;
+      if (nsamples < 64) { samples_x[nsamples] = candidate1; samples_f[nsamples] = value1; ++nsamples; }
     }
   }
-  if (NULL != unimodality && nsamples >= 3) {
-    int i, j, min_idx = 0;
-    for (i = 1; i < nsamples; ++i) {
-      if (samples_f[i] < samples_f[min_idx]) min_idx = i;
-    }
-    /* sort by x */
+  if (maxiter <= iteration) status |= LIBXS_GSS_STATUS_MAXITER;
+  if (nsamples >= 3) {
+    int i, j, min_index = 0;
     for (i = 0; i < nsamples - 1; ++i) {
       for (j = i + 1; j < nsamples; ++j) {
         if (samples_x[j] < samples_x[i]) {
-          { double t = samples_x[i]; samples_x[i] = samples_x[j]; samples_x[j] = t; }
-          { double t = samples_f[i]; samples_f[i] = samples_f[j]; samples_f[j] = t; }
-          if (min_idx == i) min_idx = j;
-          else if (min_idx == j) min_idx = i;
+          double tmp_x = samples_x[i], tmp_f = samples_f[i];
+          samples_x[i] = samples_x[j]; samples_f[i] = samples_f[j];
+          samples_x[j] = tmp_x; samples_f[j] = tmp_f;
         }
+      }
+    }
+    for (i = 1; i < nsamples; ++i) {
+      if (samples_f[i] < samples_f[min_index]) min_index = i;
+    }
+    best_x = samples_x[min_index]; best_f = samples_f[min_index];
+    for (i = 0; i < nsamples; ++i) {
+      if (samples_f[i] < best_f || (internal_libxs_gss_close(samples_f[i], best_f, ftol) && samples_x[i] < best_x)) {
+        best_x = samples_x[i]; best_f = samples_f[i]; min_index = i;
       }
     }
     consistent = 0;
     for (i = 1; i < nsamples; ++i) {
-      if (i <= min_idx && samples_f[i] <= samples_f[i - 1]) ++consistent;
-      else if (i > min_idx && samples_f[i] >= samples_f[i - 1]) ++consistent;
+      if (i <= min_index && samples_f[i] <= samples_f[i - 1]) ++consistent;
+      else if (i > min_index && samples_f[i] >= samples_f[i - 1]) ++consistent;
     }
-    *unimodality = (double)consistent / (nsamples - 1);
-  }
-  else if (NULL != unimodality) {
-    *unimodality = 1.0;
-  }
-  if (f0 <= f1) {
-    if (NULL != xmin) *xmin = c0;
-    return f0;
+    unimodality = (double)consistent / (nsamples - 1);
+    for (i = 0; i < nsamples; ++i) {
+      if (i != min_index && internal_libxs_gss_close(samples_f[i], best_f, ftol)) {
+        status |= LIBXS_GSS_STATUS_FLAT_MIN;
+      }
+    }
+    if (0 != internal_libxs_gss_close(best_x, x0, 0.0)
+      || 0 != internal_libxs_gss_close(best_x, x1, 0.0)) status |= LIBXS_GSS_STATUS_ENDPOINT_MIN;
   }
   else {
-    if (NULL != xmin) *xmin = c1;
-    return f1;
+    unimodality = 1.0;
+    if (value0 <= value1) { best_x = candidate0; best_f = value0; }
+    else { best_x = candidate1; best_f = value1; }
   }
+  if (NULL != xmin) *xmin = best_x;
+  if (NULL != info) {
+    info->status = status;
+    info->iterations = iteration;
+    info->evaluations = evaluations;
+    info->unimodality = unimodality;
+    info->xmin = best_x;
+    info->fmin = best_f;
+    info->x0 = bracket0;
+    info->x1 = bracket1;
+  }
+  return best_f;
 }
 
 
@@ -1257,8 +1343,10 @@ LIBXS_API int libxs_setdiff_min(
         ctx.pts = pts; ctx.idx = idx; ctx.qa = qa;
       }
     }
-    result = (int)libxs_gss_min(
-      internal_libxs_setdiff_fn, &ctx, 0.0, x1, tol, 10000, NULL);
+    { const double fmin = internal_libxs_setdiff_fn(x1, &ctx);
+      result = (int)libxs_bisect_min(
+        internal_libxs_setdiff_fn, &ctx, 0.0, x1, fmin, tol, 10000, 0.0, NULL);
+    }
     if (NULL != buf) {
       LIBXS_MATH_FREE(buf, pool);
     }

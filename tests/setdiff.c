@@ -184,10 +184,39 @@ int main(void)
   { double xmin = -1;
     double fmin;
     double parabola(double, const void*);
-    fmin = libxs_gss_min(parabola, NULL, 0.0, 5.0, &xmin, 10000, NULL);
+    fmin = libxs_gss_min(parabola, NULL, 0.0, 5.0, &xmin, 10000, LIBXS_GSS_DEFAULT, 0.0, NULL);
     if (1E-10 < LIBXS_FABS(xmin - 3.0) || 1E-10 < fmin) {
       FPRINTF(stderr, "ERROR line #%i: gss parabola xmin=%.17g fmin=%.17g\n",
         __LINE__, xmin, fmin);
+      exit(EXIT_FAILURE);
+    }
+  }
+  /* Plain GSS can discard a monotone step minimum plateau. */
+  { double edge = 0.75;
+    double xmin = -1.0;
+    libxs_gss_info_t info;
+    double fmin;
+    double step_plateau(double, const void*);
+    fmin = libxs_gss_min(step_plateau, &edge, 0.0, 1.0, &xmin, 64, LIBXS_GSS_DEFAULT, 0.0, &info);
+    if (!(0.5 < fmin && xmin < edge && 0.99 < info.unimodality)) {
+      FPRINTF(stderr, "ERROR line #%i: gss step limitation fmin=%.17g xmin=%.17g unimodality=%.17g\n",
+        __LINE__, fmin, xmin, info.unimodality);
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  /* Bisection directly recovers the left edge of a known minimum level. */
+  { double edge = 0.75;
+    double xmin = -1.0;
+    libxs_gss_info_t info;
+    double fmin;
+    double step_plateau(double, const void*);
+    fmin = libxs_bisect_min(step_plateau, &edge, 0.5, 1.0, 0.0, &xmin, 64, 0.0, &info);
+    if (0.0 != fmin || 1E-12 < LIBXS_FABS(xmin - edge)
+      || 0 == (info.status & LIBXS_GSS_STATUS_LEFT_REFINED))
+    {
+      FPRINTF(stderr, "ERROR line #%i: bisect step fmin=%.17g xmin=%.17g status=%i\n",
+        __LINE__, fmin, xmin, info.status);
       exit(EXIT_FAILURE);
     }
   }
@@ -256,4 +285,11 @@ double parabola(double x, const void* data)
 {
   LIBXS_UNUSED(data);
   return (x - 3.0) * (x - 3.0);
+}
+
+
+double step_plateau(double x, const void* data)
+{
+  const double edge = *((const double*)data);
+  return x < edge ? 1.0 : 0.0;
 }
