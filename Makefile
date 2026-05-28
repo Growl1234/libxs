@@ -464,7 +464,16 @@ mkslides:
 mkdocs-tests: $(TSTMDS)
 
 $(DOCDIR)/tests/%.md: $(TSTDIR)/%.c $(DOCDIR)/tests/.make
-	@echo "# $*" >$@
+	@TITLE=$$(printf '%s\n' "$*" | $(SED) \
+		-e 's/_/ /g' \
+		-e 's/-/ /g' \
+		-e 's/\<\(.\)/\u\1/g' \
+		-e 's/\<Fprint\>/Fingerprint/g' \
+		-e 's/\<Headeronly\>/Header-Only/g' \
+		-e 's/\<Mhd\>/MHD/g'); \
+	echo "# $${TITLE}" >$@; \
+	echo "" >>$@; \
+	echo "$${TITLE} test source." >>$@
 	@echo "" >>$@
 	@echo '```c'  >>$@
 	@echo '--8<-- "tests/$*.c"' >>$@

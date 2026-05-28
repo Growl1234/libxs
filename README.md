@@ -112,11 +112,12 @@ USE :: libxs, ONLY: libxs_memcmp
 | [rosetta](documentation/samples/libxs_rosetta.md)         | Hierarchical type discovery on opaque binary data            |
 | [predict](documentation/samples/libxs_predict.md)         | Train a prediction model from CSV and save it                |
 | [shuffle](documentation/samples/libxs_shuffle.md)         | Shuffling strategies comparison                              |
+| [setdiff](documentation/samples/libxs_setdiff.md)         | Deterministic set-difference tolerance experiments           |
 | [scratch](documentation/samples/libxs_scratch.md)         | Pool allocator vs system malloc                              |
 | [memory](documentation/samples/libxs_memory.md)           | Benchmarks for comparison, matrix copy, and transpose        |
+| [ozaki](documentation/samples/libxs_ozaki.md)             | Ozaki-scheme low-precision GEMM with intercepted BLAS        |
 | [gemm](documentation/samples/libxs_gemm.md)               | Batched DGEMM (strided, pointer-array, grouped) with OMP     |
 | [syrk](documentation/samples/libxs_syrk.md)               | Symmetric rank-k/2k update (SYRK/SYR2K) with validation      |
-| [ozaki](documentation/samples/libxs_ozaki.md)             | Ozaki-scheme low-precision GEMM with intercepted BLAS        |
 | [sync](documentation/samples/libxs_sync.md)               | Lock implementation microbenchmarks                          |
 
 ## License

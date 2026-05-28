@@ -66,6 +66,7 @@ nav:
   - Rosetta: samples/libxs_rosetta.md
   - Predict: samples/libxs_predict.md
   - Shuffle: samples/libxs_shuffle.md
+  - Setdiff: samples/libxs_setdiff.md
   - Scratch: samples/libxs_scratch.md
   - Memory: samples/libxs_memory.md
   - GEMM: samples/libxs_gemm.md
@@ -73,11 +74,14 @@ nav:
   - Sync: samples/libxs_sync.md
 - Tests:
   - Header-Only: tests/headeronly.md
+  - Fingerprint: tests/fprint.md
   - Intrinsics: tests/intrinsics.md
   - Histogram: tests/hist.md
   - Registry: tests/registry.md
   - Hashing: tests/hash.md
+  - Permutation: tests/perm.md
   - Matdiff: tests/matdiff.md
+  - Setdiff: tests/setdiff.md
   - Atomics: tests/atomics.md
   - Malloc: tests/malloc.md
   - Memory: tests/memory.md
