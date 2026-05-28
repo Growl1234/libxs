@@ -88,6 +88,35 @@
         PUBLIC :: libxs_syr2k_dispatch, libxs_syrk_dispatch
         PUBLIC :: libxs_syr2k, libxs_syrk
 
+        !> Public API: prediction.
+        PUBLIC :: libxs_predict_info_t, libxs_predict_query_t
+        PUBLIC :: LIBXS_PREDICT_AUTO, LIBXS_PREDICT_INTERPOLATE
+        PUBLIC :: LIBXS_PREDICT_CLASSIFY, LIBXS_PREDICT_TEMPORAL
+        PUBLIC :: LIBXS_PREDICT_IDENTITY
+        PUBLIC :: LIBXS_PREDICT_LOG, LIBXS_PREDICT_SQRT
+        PUBLIC :: LIBXS_PREDICT_RAW, LIBXS_PREDICT_SPREAD
+        PUBLIC :: LIBXS_PREDICT_PCA, LIBXS_PREDICT_SETDIFF
+        PUBLIC :: LIBXS_PREDICT_FISHER, LIBXS_PREDICT_RF
+        PUBLIC :: libxs_predict_create, libxs_predict_destroy
+        PUBLIC :: libxs_predict_lock
+        PUBLIC :: libxs_predict_set_mode
+        PUBLIC :: libxs_predict_set_weights
+        PUBLIC :: libxs_predict_set_transform
+        PUBLIC :: libxs_predict_set_refine
+        PUBLIC :: libxs_predict_set_series
+        PUBLIC :: libxs_predict_set_target
+        PUBLIC :: libxs_predict_set_decompose
+        PUBLIC :: libxs_predict_push
+        PUBLIC :: libxs_predict_build, libxs_predict_build_task
+        PUBLIC :: libxs_predict_eval, libxs_predict_inverse
+        PUBLIC :: libxs_predict_query
+        PUBLIC :: libxs_predict_get
+        PUBLIC :: libxs_predict_eval_batch
+        PUBLIC :: libxs_predict_eval_batch_task
+        PUBLIC :: libxs_predict_save, libxs_predict_load
+        PUBLIC :: libxs_predict_load_csv
+        PUBLIC :: libxs_strtoken
+
         !> Re-exported from ISO_C_BINDING for convenience.
         PUBLIC :: C_DOUBLE, C_FLOAT, C_INT, C_LONG_LONG
         PUBLIC :: C_CHAR, C_INT8_T, C_SIZE_T
@@ -141,6 +170,28 @@
      &    LIBXS_AARCH64_SVE256        = 2301,                           &
      &    LIBXS_AARCH64_SVE512        = 2401,                           &
      &    LIBXS_AARCH64_ALLFEAT       = 2999
+
+        !> Prediction mode flags (ORable).
+        INTEGER(C_INT), PARAMETER ::                                    &
+     &    LIBXS_PREDICT_AUTO        = 0,                                &
+     &    LIBXS_PREDICT_INTERPOLATE = 1,                                &
+     &    LIBXS_PREDICT_CLASSIFY    = 2,                                &
+     &    LIBXS_PREDICT_TEMPORAL    = 4
+
+        !> Prediction output transform.
+        INTEGER(C_INT), PARAMETER ::                                    &
+     &    LIBXS_PREDICT_IDENTITY = 0,                                   &
+     &    LIBXS_PREDICT_LOG      = 1,                                   &
+     &    LIBXS_PREDICT_SQRT     = 2
+
+        !> Prediction input decomposition mode.
+        INTEGER(C_INT), PARAMETER ::                                    &
+     &    LIBXS_PREDICT_RAW     = 0,                                    &
+     &    LIBXS_PREDICT_SPREAD  = 1,                                    &
+     &    LIBXS_PREDICT_PCA     = 2,                                    &
+     &    LIBXS_PREDICT_SETDIFF = 3,                                    &
+     &    LIBXS_PREDICT_FISHER  = 4,                                    &
+     &    LIBXS_PREDICT_RF      = 5
 
         !> Structure of differences with matrix norms according
         !> to http://www.netlib.org/lapack/lug/node75.html).
@@ -231,6 +282,27 @@
           TYPE(C_PTR)    :: jitter     = C_NULL_PTR
           INTEGER(C_INT) :: flags      = LIBXS_GEMM_FLAGS_DEFAULT
           TYPE(libxs_gemm_shape_t) :: shape
+        END TYPE
+
+        !> Per-output confidence information from prediction.
+        TYPE, BIND(C) :: libxs_predict_info_t
+          TYPE(C_PTR) :: values = C_NULL_PTR
+          TYPE(C_PTR) :: error = C_NULL_PTR
+          TYPE(C_PTR) :: confidence = C_NULL_PTR
+          TYPE(C_PTR) :: variance = C_NULL_PTR
+          TYPE(C_PTR) :: interpolated = C_NULL_PTR
+          INTEGER(C_INT) :: noutputs = 0
+          INTEGER(C_INT) :: cluster = -1
+          REAL(C_DOUBLE) :: distance = 0
+        END TYPE
+
+        !> Model statistics after build.
+        TYPE, BIND(C) :: libxs_predict_query_t
+          REAL(C_DOUBLE) :: compression = 0
+          INTEGER(C_INT) :: order = 0
+          INTEGER(C_INT) :: nclusters = 0
+          INTEGER(C_INT) :: nentries = 0
+          INTEGER(C_INT) :: iterations = 0
         END TYPE
 
         INTERFACE libxs_syr2k
@@ -765,6 +837,195 @@
             TYPE(libxs_gemm_backend_t), INTENT(IN) :: backend
             TYPE(C_PTR), INTENT(IN), VALUE :: registry
             TYPE(C_PTR) :: internal_syr2k_dispatch
+          END FUNCTION
+
+          FUNCTION libxs_predict_create(ninputs, noutputs)              &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_INT
+            INTEGER(C_INT), INTENT(IN), VALUE :: ninputs, noutputs
+            TYPE(C_PTR) :: libxs_predict_create
+          END FUNCTION
+
+          SUBROUTINE libxs_predict_destroy(model) BIND(C)
+            IMPORT :: C_PTR
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+          END SUBROUTINE
+
+          FUNCTION libxs_predict_lock(model) BIND(C)
+            IMPORT :: C_PTR
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            TYPE(C_PTR) :: libxs_predict_lock
+          END FUNCTION
+
+          SUBROUTINE libxs_predict_set_mode(model, mode) BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE :: mode
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_weights(model, weights)          &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_DOUBLE
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            REAL(C_DOUBLE), INTENT(IN) :: weights(*)
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_transform(model, output,         &
+     &    transform) BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE :: output, transform
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_refine(model, iterations)        &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE :: iterations
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_series(model, nseries,           &
+     &    window) BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE :: nseries, window
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_target(model, target)            &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE :: target
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_decompose(model, decompose)      &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE :: decompose
+          END SUBROUTINE
+
+          FUNCTION libxs_predict_push(lock, model, inputs, outputs)     &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_INT, C_DOUBLE
+            TYPE(C_PTR), INTENT(IN), VALUE :: lock
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            REAL(C_DOUBLE), INTENT(IN) :: inputs(*)
+            REAL(C_DOUBLE), INTENT(IN) :: outputs(*)
+            INTEGER(C_INT) :: libxs_predict_push
+          END FUNCTION
+
+          FUNCTION libxs_predict_build(model, nclusters, order)         &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE :: nclusters, order
+            INTEGER(C_INT) :: libxs_predict_build
+          END FUNCTION
+
+          FUNCTION libxs_predict_build_task(lock, model,                &
+     &    nclusters, order, tid, ntasks) BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: lock
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &        nclusters, order, tid, ntasks
+            INTEGER(C_INT) :: libxs_predict_build_task
+          END FUNCTION
+
+          SUBROUTINE libxs_predict_eval(lock, model,                    &
+     &    inputs, outputs, info, nblend) BIND(C)
+            IMPORT :: C_PTR, C_INT, C_DOUBLE,                           &
+     &        libxs_predict_info_t
+            TYPE(C_PTR), INTENT(IN), VALUE :: lock
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            REAL(C_DOUBLE), INTENT(IN) :: inputs(*)
+            REAL(C_DOUBLE), INTENT(OUT) :: outputs(*)
+            TYPE(libxs_predict_info_t), INTENT(OUT) :: info
+            INTEGER(C_INT), INTENT(IN), VALUE :: nblend
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_inverse(lock, model,                 &
+     &    target_outputs, inputs, info) BIND(C)
+            IMPORT :: C_PTR, C_DOUBLE,                                  &
+     &        libxs_predict_info_t
+            TYPE(C_PTR), INTENT(IN), VALUE :: lock
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            REAL(C_DOUBLE), INTENT(IN) :: target_outputs(*)
+            REAL(C_DOUBLE), INTENT(OUT) :: inputs(*)
+            TYPE(libxs_predict_info_t), INTENT(OUT) :: info
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_query(model, info) BIND(C)
+            IMPORT :: C_PTR, libxs_predict_query_t
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            TYPE(libxs_predict_query_t), INTENT(OUT) :: info
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_get(model, index,                    &
+     &    inputs, outputs) BIND(C)
+            IMPORT :: C_PTR, C_INT, C_DOUBLE
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE :: index
+            REAL(C_DOUBLE), INTENT(OUT) :: inputs(*)
+            REAL(C_DOUBLE), INTENT(OUT) :: outputs(*)
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_eval_batch(model,                    &
+     &    inputs_batch, outputs_batch, count, nblend) BIND(C)
+            IMPORT :: C_PTR, C_INT, C_DOUBLE
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            REAL(C_DOUBLE), INTENT(IN) :: inputs_batch(*)
+            REAL(C_DOUBLE), INTENT(OUT) :: outputs_batch(*)
+            INTEGER(C_INT), INTENT(IN), VALUE :: count, nblend
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_eval_batch_task(model,               &
+     &    inputs_batch, outputs_batch,                                  &
+     &    count, nblend, tid, ntasks) BIND(C)
+            IMPORT :: C_PTR, C_INT, C_DOUBLE
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            REAL(C_DOUBLE), INTENT(IN) :: inputs_batch(*)
+            REAL(C_DOUBLE), INTENT(OUT) :: outputs_batch(*)
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &        count, nblend, tid, ntasks
+          END SUBROUTINE
+
+          FUNCTION libxs_predict_save(model, buffer, size)              &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_INT, C_SIZE_T
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            TYPE(C_PTR), INTENT(IN), VALUE :: buffer
+            INTEGER(C_SIZE_T), INTENT(INOUT) :: size
+            INTEGER(C_INT) :: libxs_predict_save
+          END FUNCTION
+
+          FUNCTION libxs_predict_load(buffer, size) BIND(C)
+            IMPORT :: C_PTR, C_SIZE_T
+            TYPE(C_PTR), INTENT(IN), VALUE :: buffer
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE :: size
+            TYPE(C_PTR) :: libxs_predict_load
+          END FUNCTION
+
+          FUNCTION libxs_predict_load_csv(model,                        &
+     &    filename, delims, inputs, outputs) BIND(C)
+            IMPORT :: C_PTR, C_INT, C_CHAR
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            CHARACTER(C_CHAR), INTENT(IN) :: filename(*)
+            CHARACTER(C_CHAR), INTENT(IN) :: delims(*)
+            CHARACTER(C_CHAR), INTENT(IN) :: inputs(*)
+            CHARACTER(C_CHAR), INTENT(IN) :: outputs(*)
+            INTEGER(C_INT) :: libxs_predict_load_csv
+          END FUNCTION
+
+          FUNCTION libxs_strtoken(str, delims, index, length)           &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_INT, C_CHAR
+            CHARACTER(C_CHAR), INTENT(IN) :: str(*)
+            CHARACTER(C_CHAR), INTENT(IN) :: delims(*)
+            INTEGER(C_INT), INTENT(IN), VALUE :: index
+            INTEGER(C_INT), INTENT(OUT) :: length
+            TYPE(C_PTR) :: libxs_strtoken
           END FUNCTION
 
         END INTERFACE
