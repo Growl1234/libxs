@@ -11,6 +11,7 @@
 #include <libxs_mem.h>
 #include <libxs_reg.h>
 #include "libxs_crc32.h"
+#include "libxs_main.h"
 
 #if !defined(LIBXS_MALLOC_SEED)
 # define LIBXS_MALLOC_SEED 1051981
@@ -564,4 +565,10 @@ LIBXS_API int libxs_malloc_pool_info(const libxs_malloc_pool_t* pool, libxs_mall
     result = EXIT_FAILURE;
   }
   return result;
+}
+
+
+LIBXS_API libxs_malloc_pool_t* libxs_default_pool(void)
+{
+  return internal_libxs_default_pool;
 }

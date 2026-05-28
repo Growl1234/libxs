@@ -111,6 +111,9 @@ LIBXS_API int libxs_malloc_info(const void* pointer, libxs_malloc_info_t* info);
 /** Retrieve information about the pooled memory domain. */
 LIBXS_API int libxs_malloc_pool_info(const libxs_malloc_pool_t* pool, libxs_malloc_pool_info_t* info);
 
+/** Access the default memory pool (host, created at libxs_init). */
+LIBXS_API libxs_malloc_pool_t* libxs_default_pool(void);
+
 /* header-only: include implementation (deferred from libxs_macros.h) */
 #if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
 # include "libxs_source.h"

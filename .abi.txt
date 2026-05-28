@@ -19,6 +19,7 @@ libxs_cpuid_amx_enable
 libxs_cpuid_id
 libxs_cpuid_name
 libxs_cpuid_vlen
+libxs_default_pool
 libxs_diff
 libxs_diff_char
 libxs_diff_i32
