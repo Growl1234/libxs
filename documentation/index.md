@@ -115,6 +115,7 @@ USE :: libxs, ONLY: libxs_memcmp
 | [setdiff](samples/libxs_setdiff.md)         | Deterministic set-difference tolerance experiments           |
 | [scratch](samples/libxs_scratch.md)         | Pool allocator vs system malloc                              |
 | [memory](samples/libxs_memory.md)           | Benchmarks for comparison, matrix copy, and transpose        |
+| [fprint](samples/libxs_fprint.md)           | Foeppl fingerprint experiments for structure and geometry    |
 | [ozaki](samples/libxs_ozaki.md)             | Ozaki-scheme low-precision GEMM with intercepted BLAS        |
 | [gemm](samples/libxs_gemm.md)               | Batched DGEMM (strided, pointer-array, grouped) with OMP     |
 | [syrk](samples/libxs_syrk.md)               | Symmetric rank-k/2k update (SYRK/SYR2K) with validation      |

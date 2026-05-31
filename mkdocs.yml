@@ -69,6 +69,7 @@ nav:
   - Setdiff: samples/libxs_setdiff.md
   - Scratch: samples/libxs_scratch.md
   - Memory: samples/libxs_memory.md
+  - Fprint: samples/libxs_fprint.md
   - GEMM: samples/libxs_gemm.md
   - SYRK: samples/libxs_syrk.md
   - Sync: samples/libxs_sync.md
