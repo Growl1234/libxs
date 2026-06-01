@@ -174,7 +174,7 @@ typedef struct libxs_gemm_config_t {
  * Backend selection can be restricted with LIBXS_GEMM_BACKEND:
  *   0=auto/default, 1=MKL JIT, 2=LIBXSMM, 3=BLAS/MKL, 4=built-in.
  *   Selected external backends still fall back when unavailable.
- * LIBXS_GEMM_PRINT=0 prints a registry summary at termination.
+ * LIBXS_GEMM_PRINT=0 prints a registry summary when a registry is released.
  * Returns pointer to cached config (registry-owned), NULL on failure.
  */
 LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
@@ -363,22 +363,10 @@ LIBXS_API_INLINE void libxs_gemm_release(const libxs_gemm_config_t* config) {
 
 /**
  * Release all GEMM configs cached in a registry (e.g., MKL jitter),
- * then destroy the registry itself. Safe to call with NULL.
+ * optionally print a registry summary, then destroy the registry itself.
+ * Safe to call with NULL.
  */
-LIBXS_API_INLINE void libxs_gemm_release_registry(libxs_registry_t* registry) {
-  if (NULL != registry) {
-    const void* key = NULL;
-    size_t cursor = 0;
-    libxs_gemm_config_t* config = (libxs_gemm_config_t*)
-      libxs_registry_begin(registry, &key, &cursor);
-    while (NULL != config) {
-      libxs_gemm_release(config);
-      config = (libxs_gemm_config_t*)
-        libxs_registry_next(registry, &key, &cursor);
-    }
-    libxs_registry_destroy(registry);
-  }
-}
+LIBXS_API void libxs_gemm_release_registry(libxs_registry_t* registry);
 
 /**
  * Dispatch a GEMM config suitable for libxs_syr2k.

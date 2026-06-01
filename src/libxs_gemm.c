@@ -292,20 +292,20 @@ LIBXS_API_INTERN void internal_libxs_sgemm_default(
 }
 
 
-LIBXS_API_INTERN void internal_libxs_gemm_finalize(void)
+LIBXS_API_INLINE void internal_libxs_gemm_print_registry(const libxs_registry_t* registry)
 {
-  if (NULL != internal_libxs_gemm_registry) {
 #if defined(LIBXS_GEMM_PRINT)
+  if (NULL != registry) {
     const char *const env = getenv("LIBXS_GEMM_PRINT");
     if (NULL != env && 0 == atoi(env)) {
       libxs_registry_info_t info = { 0 };
-      if (EXIT_SUCCESS == libxs_registry_info(internal_libxs_gemm_registry, &info)) {
+      if (EXIT_SUCCESS == libxs_registry_info(registry, &info)) {
         const void* key = NULL;
         size_t cursor = 0;
         unsigned long nf64 = 0, nf32 = 0, njit = 0, nxgemm = 0, nblas = 0, nfallback = 0;
         const char* backend = "0:auto";
         const libxs_gemm_config_t* config = (const libxs_gemm_config_t*)
-          libxs_registry_begin(internal_libxs_gemm_registry, &key, &cursor);
+          libxs_registry_begin(registry, &key, &cursor);
         if (INTERNAL_GEMM_BACKEND_MKL_JIT == internal_libxs_gemm_backend) backend = "1:mkl-jit";
         else if (INTERNAL_GEMM_BACKEND_LIBXSMM == internal_libxs_gemm_backend) backend = "2:libxsmm";
         else if (INTERNAL_GEMM_BACKEND_BLAS == internal_libxs_gemm_backend) backend = "3:blas";
@@ -320,7 +320,7 @@ LIBXS_API_INTERN void internal_libxs_gemm_finalize(void)
             || (LIBXS_DATATYPE_F32 == shape->datatype && internal_libxs_sgemm_default != config->sgemm_blas)) ++nblas;
           else ++nfallback;
           config = (const libxs_gemm_config_t*)
-            libxs_registry_next(internal_libxs_gemm_registry, &key, &cursor);
+            libxs_registry_next(registry, &key, &cursor);
         }
         fprintf(stderr, "LIBXS INFO: GEMM registry entries=%lu capacity=%lu nbytes=%lu backend=%s\n",
           (unsigned long)info.size, (unsigned long)info.capacity, (unsigned long)info.nbytes, backend);
@@ -328,7 +328,33 @@ LIBXS_API_INTERN void internal_libxs_gemm_finalize(void)
           nf64, nf32, njit, nxgemm, nblas, nfallback);
       }
     }
+  }
+#else
+  LIBXS_UNUSED(registry);
 #endif
+}
+
+
+LIBXS_API void libxs_gemm_release_registry(libxs_registry_t* registry)
+{
+  if (NULL != registry) {
+    const void* key = NULL;
+    size_t cursor = 0;
+    libxs_gemm_config_t* config;
+    internal_libxs_gemm_print_registry(registry);
+    config = (libxs_gemm_config_t*)libxs_registry_begin(registry, &key, &cursor);
+    while (NULL != config) {
+      libxs_gemm_release(config);
+      config = (libxs_gemm_config_t*)libxs_registry_next(registry, &key, &cursor);
+    }
+    libxs_registry_destroy(registry);
+  }
+}
+
+
+LIBXS_API_INTERN void internal_libxs_gemm_finalize(void)
+{
+  if (NULL != internal_libxs_gemm_registry) {
     libxs_gemm_release_registry(internal_libxs_gemm_registry);
     internal_libxs_gemm_registry = NULL;
   }

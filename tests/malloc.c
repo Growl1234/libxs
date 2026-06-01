@@ -309,9 +309,17 @@ int main(void)
     libxs_free_pool(spool);
   }
 
-  /* Test: NULL pool returns NULL */
+  /* Test: NULL pool uses the default pool */
   if (0 == nerrors) {
-    nerrors += (NULL != libxs_malloc(NULL, 1024, 0));
+    libxs_malloc_pool_info_t pinfo;
+    libxs_malloc_info_t minfo;
+    void *const p = libxs_malloc(NULL, 1024, LIBXS_MALLOC_AUTO);
+    nerrors += (NULL == p);
+    if (NULL != p) {
+      nerrors += (EXIT_SUCCESS != libxs_malloc_info(p, &minfo) || minfo.size < 1024);
+      nerrors += (EXIT_SUCCESS != libxs_malloc_pool_info(NULL, &pinfo) || 1 > pinfo.nactive);
+      libxs_free(p);
+    }
   }
 
   /* Test: libxs_free(NULL) is safe */

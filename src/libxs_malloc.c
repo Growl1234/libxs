@@ -103,6 +103,19 @@ LIBXS_API_INLINE libxs_registry_t* internal_libxs_malloc_get_registry(int alignm
 }
 
 
+LIBXS_API_INLINE libxs_malloc_pool_t* internal_libxs_malloc_default_pool(void)
+{
+  libxs_malloc_pool_t *result = internal_libxs_default_pool;
+#if !defined(LIBXS_INIT_COMPLETED)
+  if (NULL == result && 0 == libxs_ninit) {
+    libxs_init();
+    result = internal_libxs_default_pool;
+  }
+#endif
+  return result;
+}
+
+
 LIBXS_API void libxs_pmalloc_init(size_t size, size_t* num, void* pool[], void* storage)
 {
   char *p = (char*)storage;
@@ -192,6 +205,7 @@ LIBXS_API_INLINE void internal_libxs_malloc_peak_update(libxs_malloc_pool_t *poo
 LIBXS_API void* libxs_malloc(libxs_malloc_pool_t* pool, size_t size, int alignment)
 {
   void *result = NULL;
+  if (NULL == pool) pool = internal_libxs_malloc_default_pool();
   if (NULL != pool && 0 != size) {
     internal_libxs_malloc_chunk_t *chunk = NULL;
     void **info = NULL;
@@ -543,6 +557,7 @@ LIBXS_API void libxs_free_pool(libxs_malloc_pool_t* pool)
 LIBXS_API int libxs_malloc_pool_info(const libxs_malloc_pool_t* pool, libxs_malloc_pool_info_t* info)
 {
   int result = EXIT_SUCCESS;
+  if (NULL == pool) pool = internal_libxs_malloc_default_pool();
   if (NULL != info) {
     LIBXS_MEMZERO(info);
     if (NULL != pool && NULL != pool->slots) {
@@ -570,5 +585,5 @@ LIBXS_API int libxs_malloc_pool_info(const libxs_malloc_pool_t* pool, libxs_mall
 
 LIBXS_API libxs_malloc_pool_t* libxs_default_pool(void)
 {
-  return internal_libxs_default_pool;
+  return internal_libxs_malloc_default_pool();
 }
