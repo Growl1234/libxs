@@ -635,16 +635,9 @@ LIBXS_API unsigned char libxs_diff(const void* a, const void* b, unsigned char s
 # if (LIBXS_X86_AVX2 > LIBXS_MAX_STATIC_TARGET_ARCH)
   return internal_libxs_diff_sse(a, b, size);
 # else /* pointer based function call */
-# if defined(LIBXS_INIT_COMPLETED)
-  LIBXS_ASSERT(NULL != internal_libxs_diff_function);
-  return (unsigned char)(64 <= size
-    ? internal_libxs_diff_function(a, b, size)
-    : internal_libxs_diff_sse(a, b, size));
-# else
   return (unsigned char)((NULL != internal_libxs_diff_function && 64 <= size)
     ? internal_libxs_diff_function(a, b, size)
     : internal_libxs_diff_sse(a, b, size));
-# endif
 # endif
 # else
   return internal_libxs_diff_sw(a, b, size);
@@ -721,16 +714,9 @@ LIBXS_API int libxs_memcmp(const void* a, const void* b, size_t size)
 # if (LIBXS_X86_AVX2 > LIBXS_MAX_STATIC_TARGET_ARCH)
   return internal_libxs_memcmp_sse(a, b, size);
 # else /* pointer based function call */
-# if defined(LIBXS_INIT_COMPLETED)
-  LIBXS_ASSERT(NULL != internal_libxs_memcmp_function);
-  return (64 <= size
-    ? internal_libxs_memcmp_function(a, b, size)
-    : internal_libxs_memcmp_sse(a, b, size));
-# else
   return ((NULL != internal_libxs_memcmp_function && 64 <= size)
     ? internal_libxs_memcmp_function(a, b, size)
     : internal_libxs_memcmp_sse(a, b, size));
-# endif
 # endif
 # else
   return internal_libxs_memcmp_sw(a, b, size);

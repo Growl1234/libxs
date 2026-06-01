@@ -106,12 +106,10 @@ LIBXS_API_INLINE libxs_registry_t* internal_libxs_malloc_get_registry(int alignm
 LIBXS_API_INLINE libxs_malloc_pool_t* internal_libxs_malloc_default_pool(void)
 {
   libxs_malloc_pool_t *result = internal_libxs_default_pool;
-#if !defined(LIBXS_INIT_COMPLETED)
   if (NULL == result && 0 == libxs_ninit) {
     libxs_init();
     result = internal_libxs_default_pool;
   }
-#endif
   return result;
 }
 
