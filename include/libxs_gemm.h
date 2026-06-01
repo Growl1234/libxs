@@ -171,6 +171,9 @@ typedef struct libxs_gemm_config_t {
  *   its own key, avoiding redundant code generation.
  * backend: backend function pointers (MKL JIT, LIBXSMM, BLAS). NULL
  *   means no backends (built-in default only).
+ * Backend selection can be restricted with LIBXS_GEMM_BACKEND:
+ *   0=auto/default, 1=MKL JIT, 2=LIBXSMM, 3=BLAS/MKL, 4=built-in.
+ *   Selected external backends still fall back when unavailable.
  * Returns pointer to cached config (registry-owned), NULL on failure.
  */
 LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(

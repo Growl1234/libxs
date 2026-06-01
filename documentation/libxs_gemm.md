@@ -103,6 +103,11 @@ differs from shape, the kernel is looked up under kernel_shape
 first (double-dispatch), avoiding redundant code generation.
 backend: function pointers for backends. NULL means built-in
 default only. Same registry semantics as above.
+`LIBXS_GEMM_BACKEND` can restrict the starting point of the
+runtime fallback chain: 0 = automatic/default, 1 = MKL JIT,
+2 = LIBXSMM, 3 = BLAS/MKL, 4 = built-in fallback. Choices 1-3
+still fall through to lower-priority backends if the requested
+backend is not supplied or cannot dispatch the shape.
 
 Backend callback signatures (MKL-compatible):
 
@@ -314,6 +319,9 @@ kernel call (MKL JIT or LIBXSMM when available).
 
     LIBXS_GEMM_PRINT=N   Print dispatch info every N-th call
                           to stderr (compile-time gate).
+    LIBXS_GEMM_BACKEND=N Select runtime backend chain start:
+                0 auto/default, 1 MKL JIT, 2 LIBXSMM,
+                3 BLAS/MKL, 4 built-in fallback.
 
 ## Example (C)
 

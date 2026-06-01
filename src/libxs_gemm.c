@@ -28,6 +28,12 @@
 # define INTERNAL_GEMM_NLOCKS 16
 #endif
 
+#define INTERNAL_GEMM_BACKEND_AUTO 0
+#define INTERNAL_GEMM_BACKEND_MKL_JIT 1
+#define INTERNAL_GEMM_BACKEND_LIBXSMM 2
+#define INTERNAL_GEMM_BACKEND_BLAS 3
+#define INTERNAL_GEMM_BACKEND_DEFAULT 4
+
 #define INTERNAL_GEMM_NOTRANS(C) ('N' == (C) || 'n' == (C))
 
 
@@ -139,6 +145,7 @@ LIBXS_APIVAR_DEFINE(libxs_registry_t* internal_libxs_gemm_registry);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_bm);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_bn);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_bk);
+LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_backend);
 
 LIBXS_APIVAR_DEFINE(LIBXS_TLS void* internal_libxs_syrk_buffer);
 LIBXS_APIVAR_DEFINE(LIBXS_TLS size_t internal_libxs_syrk_buffer_size);
@@ -159,6 +166,7 @@ LIBXS_API_INTERN void internal_libxs_gemm_init(void)
     const char *const gemm_bm_env = getenv("LIBXS_GEMM_BM");
     const char *const gemm_bn_env = getenv("LIBXS_GEMM_BN");
     const char *const gemm_bk_env = getenv("LIBXS_GEMM_BK");
+    const char *const gemm_backend_env = getenv("LIBXS_GEMM_BACKEND");
 #if defined(LIBXS_INTERCEPT_DYNAMIC)
     const char *const env = getenv("LIBXS_SYRK_BLAS");
     const int syrk_blas = (NULL == env ? 1/*default*/ : atoi(env));
@@ -199,6 +207,13 @@ LIBXS_API_INTERN void internal_libxs_gemm_init(void)
     internal_libxs_gemm_bm = (NULL == gemm_bm_env ? LIBXS_GEMM_BM : atoi(gemm_bm_env));
     internal_libxs_gemm_bn = (NULL == gemm_bn_env ? LIBXS_GEMM_BN : atoi(gemm_bn_env));
     internal_libxs_gemm_bk = (NULL == gemm_bk_env ? LIBXS_GEMM_BK : atoi(gemm_bk_env));
+    internal_libxs_gemm_backend = (NULL == gemm_backend_env)
+      ? INTERNAL_GEMM_BACKEND_AUTO : atoi(gemm_backend_env);
+    if (INTERNAL_GEMM_BACKEND_AUTO > internal_libxs_gemm_backend
+      || INTERNAL_GEMM_BACKEND_DEFAULT < internal_libxs_gemm_backend)
+    {
+      internal_libxs_gemm_backend = INTERNAL_GEMM_BACKEND_AUTO;
+    }
     internal_libxs_gemm_registry = libxs_registry_create();
     internal_libxs_gemm_init_once = 1;
   }
@@ -351,7 +366,13 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
         const int km = kernel_shape->m, kn = kernel_shape->n, kk = kernel_shape->k;
         const int klda = kernel_shape->lda, kldb = kernel_shape->ldb;
         const int kldc = kernel_shape->ldc;
-        if (NULL != backend && NULL != backend->jit_create_dgemm
+        const int gemm_backend = internal_libxs_gemm_backend;
+        const int use_jit = (INTERNAL_GEMM_BACKEND_AUTO == gemm_backend
+          || INTERNAL_GEMM_BACKEND_MKL_JIT == gemm_backend);
+        const int use_xgemm = (INTERNAL_GEMM_BACKEND_LIBXSMM >= gemm_backend);
+        const int use_blas = (INTERNAL_GEMM_BACKEND_BLAS >= gemm_backend);
+        if (0 != use_jit
+            && NULL != backend && NULL != backend->jit_create_dgemm
             && NULL != backend->jit_get_dgemm
             && LIBXS_DATATYPE_F64 == kernel_shape->datatype) {
           const int mkl_ta = (0 == ta) ? 111 : 112;
@@ -366,7 +387,8 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
             config.jitter = jitter;
           }
         }
-        else if (NULL != backend && NULL != backend->jit_create_sgemm
+        else if (0 != use_jit
+          && NULL != backend && NULL != backend->jit_create_sgemm
             && NULL != backend->jit_get_sgemm
             && LIBXS_DATATYPE_F32 == kernel_shape->datatype) {
           const int mkl_ta = (0 == ta) ? 111 : 112;
@@ -382,7 +404,8 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
           }
         }
         if (NULL == config.dgemm_jit && NULL == config.sgemm_jit
-            && NULL != backend && NULL != backend->xgemm_dispatch) {
+          && 0 != use_xgemm
+          && NULL != backend && NULL != backend->xgemm_dispatch) {
           unsigned int xflags = 0;
           int xsmm_ok = 0;
           if (0 != ta) xflags |= 1;
@@ -407,12 +430,18 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
             }
           }
         }
-        config.dgemm_blas = (NULL != backend && NULL != backend->dgemm_blas)
-          ? backend->dgemm_blas : (NULL != internal_libxs_dgemm_blas)
-          ? internal_libxs_dgemm_blas : internal_libxs_dgemm_default;
-        config.sgemm_blas = (NULL != backend && NULL != backend->sgemm_blas)
-          ? backend->sgemm_blas : (NULL != internal_libxs_sgemm_blas)
-          ? internal_libxs_sgemm_blas : internal_libxs_sgemm_default;
+        if (0 != use_blas) {
+          config.dgemm_blas = (NULL != backend && NULL != backend->dgemm_blas)
+            ? backend->dgemm_blas : (NULL != internal_libxs_dgemm_blas)
+            ? internal_libxs_dgemm_blas : internal_libxs_dgemm_default;
+          config.sgemm_blas = (NULL != backend && NULL != backend->sgemm_blas)
+            ? backend->sgemm_blas : (NULL != internal_libxs_sgemm_blas)
+            ? internal_libxs_sgemm_blas : internal_libxs_sgemm_default;
+        }
+        else {
+          config.dgemm_blas = internal_libxs_dgemm_default;
+          config.sgemm_blas = internal_libxs_sgemm_default;
+        }
         if (0 != memcmp(shape, kernel_shape, sizeof(*shape))) {
           libxs_gemm_config_t kconfig;
           LIBXS_MEMZERO(&kconfig);
