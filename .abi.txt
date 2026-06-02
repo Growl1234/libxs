@@ -46,6 +46,7 @@ libxs_gemm_dispatch_rt
 libxs_gemm_index
 libxs_gemm_index_task
 libxs_gemm_release
+libxs_gemm_release_registry
 libxs_get_verbosity
 libxs_gss_min
 libxs_hash
