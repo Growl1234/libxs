@@ -325,8 +325,8 @@ LIBXS_API_INTERN void internal_libxs_signal(int signum) {
 }
 
 
-LIBXS_API void __wrap__gfortran_runtime_warning_at(const char* /*where*/, const char* /*message*/, ...);
-LIBXS_API void __wrap__gfortran_runtime_warning_at(const char* where, const char* message, ...)
+LIBXS_API LIBXS_ATTRIBUTE_WEAK void __wrap__gfortran_runtime_warning_at(const char* /*where*/, const char* /*message*/, ...);
+LIBXS_API LIBXS_ATTRIBUTE_WEAK void __wrap__gfortran_runtime_warning_at(const char* where, const char* message, ...)
 { /* link application with "-Wl,--wrap=_gfortran_runtime_warning_at" */
   LIBXS_UNUSED(message);
   LIBXS_UNUSED(where);
