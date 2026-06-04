@@ -142,7 +142,7 @@ static int write_summary(const char outdir[])
   double dup_b[4] = {1.0, 2.0, 2.0, 2.0};
   int i;
   int result = EXIT_FAILURE;
-  sprintf(path, "%s/summary.csv", outdir);
+  LIBXS_SNPRINTF(path, sizeof(path), "%s/summary.csv", outdir);
   file = fopen(path, "w");
   if (NULL != file) {
     fprintf(file, "case,n,elementwise_mismatch,setdiff,tol\n");
@@ -172,7 +172,7 @@ static int write_landscape(const char outdir[], int n, int steps)
   int result = EXIT_FAILURE;
   fill_real(avals, bvals, n, 0.45);
   bvals[n / 2] += 2.0;
-  sprintf(path, "%s/landscape.csv", outdir);
+  LIBXS_SNPRINTF(path, sizeof(path), "%s/landscape.csv", outdir);
   file = fopen(path, "w");
   if (NULL != file) {
     fprintf(file, "tau,defect\n");
@@ -198,7 +198,7 @@ static int write_tolerance(const char outdir[], const char sizes[])
   FILE* file;
   int result = EXIT_SUCCESS;
   strcpy(copy, sizes);
-  sprintf(path, "%s/tolerance.csv", outdir);
+  LIBXS_SNPRINTF(path, sizeof(path), "%s/tolerance.csv", outdir);
   file = fopen(path, "w");
   if (NULL == file) result = EXIT_FAILURE;
   if (EXIT_SUCCESS == result) {
@@ -240,7 +240,7 @@ static int write_scaling(const char outdir[], const char sizes[], int reps)
   FILE* file;
   int result = EXIT_SUCCESS;
   strcpy(copy, sizes);
-  sprintf(path, "%s/scaling.csv", outdir);
+  LIBXS_SNPRINTF(path, sizeof(path), "%s/scaling.csv", outdir);
   file = fopen(path, "w");
   if (NULL == file) result = EXIT_FAILURE;
   if (EXIT_SUCCESS == result) {
@@ -303,7 +303,7 @@ static int write_complex(const char outdir[])
     bvals[2 * i + 1] = avals[2 * i + 1] + 0.01 * (double)(((i + 1) % 3) - 1);
   }
   defect = libxs_setdiff_min(LIBXS_DATATYPE_C64, avals, n, bvals, n, &tol);
-  sprintf(path, "%s/complex.csv", outdir);
+  LIBXS_SNPRINTF(path, sizeof(path), "%s/complex.csv", outdir);
   file = fopen(path, "w");
   if (NULL != file) {
     fprintf(file, "n,defect,tol,fixed_defect_at_tol\n");
