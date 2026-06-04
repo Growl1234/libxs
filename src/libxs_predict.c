@@ -106,6 +106,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   int iterations;
   int nseries, window, target, decompose;
   int nts, ts_capacity;
+  int diff_mode, diff_order;
   int refine;
   volatile int phase;
 };
@@ -402,6 +403,7 @@ LIBXS_API libxs_predict_t* libxs_predict_create(int ninputs, int noutputs)
       model->ninputs = ninputs;
       model->noutputs = noutputs;
       model->eval_mode = LIBXS_PREDICT_AUTO;
+      model->diff_mode = -1;
     }
   }
   return model;
@@ -548,6 +550,15 @@ LIBXS_API void libxs_predict_set_decompose(libxs_predict_t* model, int decompose
 }
 
 
+LIBXS_API void libxs_predict_set_diff(libxs_predict_t* model, int order)
+{
+  LIBXS_ASSERT(NULL != model);
+  if (NULL != model) {
+    model->diff_mode = order;
+  }
+}
+
+
 LIBXS_API_INLINE void internal_libxs_predict_decompose_apply(
   const libxs_predict_t* model, const double* raw, double* out)
 {
@@ -563,7 +574,7 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_apply(
   else if (LIBXS_PREDICT_SPREAD == model->decompose
     && model->nseries >= 2 && model->window > 0)
   {
-    const int w = model->window;
+    const int w = m / model->nseries;
     int i;
     for (i = 0; i < w; ++i) {
       out[i] = 0.5 * (raw[i] + raw[w + i]);
@@ -591,7 +602,7 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_inverse(
   else if (LIBXS_PREDICT_SPREAD == model->decompose
     && model->nseries >= 2 && model->window > 0)
   {
-    const int w = model->window;
+    const int w = m / model->nseries;
     int i;
     for (i = 0; i < w; ++i) {
       raw[i] = modes[i] + modes[w + i];
@@ -1219,17 +1230,71 @@ LIBXS_API_INLINE int internal_libxs_predict_grow(libxs_predict_t* model)
 }
 
 
+LIBXS_API_INLINE int internal_libxs_predict_ts_diff_order(
+  const libxs_predict_t* model)
+{
+  const int s = model->nseries;
+  const int n = model->nts;
+  const int tgt = model->target;
+  const size_t shape = (size_t)n;
+  const size_t stride = (size_t)s;
+  libxs_fprint_t fp;
+  int result = 0;
+  if (n >= 4 && EXIT_SUCCESS == libxs_fprint(&fp, LIBXS_DATATYPE_F64,
+    model->ts_buf + tgt, 1, &shape, &stride,
+    LIBXS_MIN(3, n - 1), -1))
+  {
+    const double decay = libxs_fprint_decay(&fp);
+    if (decay == decay && decay < 1.0) {
+      result = 1;
+    }
+  }
+  return result;
+}
+
+
+LIBXS_API_INLINE void internal_libxs_predict_ts_diff_apply(
+  double* buf, int n, int s, int d)
+{
+  int dd, i, si;
+  for (dd = 0; dd < d; ++dd) {
+    for (i = 0; i < n - 1 - dd; ++i) {
+      for (si = 0; si < s; ++si) {
+        buf[i * s + si] = buf[(i + 1) * s + si] - buf[i * s + si];
+      }
+    }
+  }
+}
+
+
 LIBXS_API_INLINE void internal_libxs_predict_ts_expand(libxs_predict_t* model)
 {
   const int s = model->nseries;
-  const int w = model->window;
   const int h = model->noutputs;
-  const int m = model->ninputs;
-  const int nwindows = model->nts - w - h + 1;
+  int nts = model->nts, diff_d, w, m, nwindows;
   int raw_pool = 0;
-  double* raw = (double*)LIBXS_PREDICT_MALLOC((size_t)m * sizeof(double), raw_pool);
+  double* raw;
   int t;
-  if (NULL != raw) {
+  if (model->diff_mode > 0) {
+    model->diff_order = model->diff_mode;
+  }
+  else if (0 == model->diff_mode) {
+    model->diff_order = internal_libxs_predict_ts_diff_order(model);
+  }
+  diff_d = model->diff_order;
+  if (diff_d > 0) {
+    internal_libxs_predict_ts_diff_apply(model->ts_buf, nts, s, diff_d);
+    nts -= diff_d;
+    model->nts = nts;
+  }
+  w = model->window - diff_d;
+  m = s * w;
+  if (diff_d > 0) {
+    model->ninputs = m;
+  }
+  nwindows = nts - w - h + 1;
+  raw = (double*)LIBXS_PREDICT_MALLOC((size_t)m * sizeof(double), raw_pool);
+  if (NULL != raw && nwindows > 0) {
   for (t = 0; t < nwindows; ++t) {
     double* inputs = (double*)malloc((size_t)m * sizeof(double));
     double* outputs = (double*)malloc((size_t)h * sizeof(double));
@@ -1663,16 +1728,46 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
   {
     const int m = model->ninputs, n = model->noutputs;
     const int mode = model->eval_mode;
+    const int diff_d = (model->diff_mode >= 0) ? model->diff_order : 0;
     const int force_classify = (0 != (mode & LIBXS_PREDICT_CLASSIFY)) ? 1 : 0;
     const int force_interp = (0 != (mode & LIBXS_PREDICT_INTERPOLATE)) ? 1 : 0;
     const int extrapolate_mode = (0 != (mode & LIBXS_PREDICT_TEMPORAL)) ? 1 : 0;
+    const double* raw_inputs = inputs;
     int extrapolate = 0;
-    int norm_pool = 0, decomp_pool = 0;
+    int norm_pool = 0, decomp_pool = 0, diff_pool = 0;
     double* decomp_inputs = NULL;
+    double* diff_inputs = NULL;
     double* norm_inputs = (double*)LIBXS_PREDICT_MALLOC((size_t)m * sizeof(double), norm_pool);
     double local_buf[256];
     double *vals, *errs, *conf, *var, best_dist;
     int *rels, c, j, best_c = 0;
+    if (diff_d > 0 && model->nseries > 0) {
+      const int raw_w = model->window;
+      const int s = model->nseries;
+      const int raw_m = s * raw_w;
+      const int dw = raw_w - diff_d;
+      int i, si, dd;
+      diff_inputs = (double*)LIBXS_PREDICT_MALLOC(
+        (size_t)raw_m * sizeof(double), diff_pool);
+      if (NULL != diff_inputs) {
+        memcpy(diff_inputs, inputs, (size_t)raw_m * sizeof(double));
+        for (dd = 0; dd < diff_d; ++dd) {
+          const int len = raw_w - dd;
+          for (si = 0; si < s; ++si) {
+            for (i = 0; i < len - 1; ++i) {
+              diff_inputs[si * raw_w + i] =
+                diff_inputs[si * raw_w + i + 1] - diff_inputs[si * raw_w + i];
+            }
+          }
+        }
+        for (si = 1; si < s; ++si) {
+          for (i = 0; i < dw; ++i) {
+            diff_inputs[si * dw + i] = diff_inputs[si * raw_w + i];
+          }
+        }
+        inputs = diff_inputs;
+      }
+    }
     if (LIBXS_PREDICT_RAW != model->decompose
       && (model->nseries >= 2 || NULL != model->decompose_mat)) {
       decomp_inputs = (double*)LIBXS_PREDICT_MALLOC((size_t)m * sizeof(double), decomp_pool);
@@ -1961,6 +2056,22 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
         vals[j] = internal_libxs_predict_inv(model->transforms[j], vals[j]);
       }
     }
+    if (diff_d > 0 && model->nseries > 0) {
+      const int tgt = model->target;
+      const int raw_w = model->window;
+      int dd;
+      for (dd = diff_d - 1; dd >= 0; --dd) {
+        double base = raw_inputs[tgt * raw_w + raw_w - 1];
+        int k;
+        for (k = 0; k < dd; ++k) {
+          base = base - raw_inputs[tgt * raw_w + raw_w - 2 - k];
+        }
+        for (j = 0; j < n; ++j) {
+          base += vals[j];
+          vals[j] = base;
+        }
+      }
+    }
     if (NULL != outputs) {
       memcpy(outputs, vals, (size_t)n * sizeof(double));
     }
@@ -1974,6 +2085,7 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
     }
     LIBXS_PREDICT_FREE(norm_inputs, norm_pool);
     if (NULL != decomp_inputs) LIBXS_PREDICT_FREE(decomp_inputs, decomp_pool);
+    if (NULL != diff_inputs) LIBXS_PREDICT_FREE(diff_inputs, diff_pool);
     if (NULL != lock) LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
   }
 }
@@ -2112,6 +2224,7 @@ LIBXS_API void libxs_predict_query(
   info->nclusters = model->nclusters;
   info->nentries = model->nentries;
   info->iterations = model->iterations;
+  info->diff_order = model->diff_order;
 }
 
 

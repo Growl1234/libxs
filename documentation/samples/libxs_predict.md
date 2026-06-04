@@ -1,6 +1,6 @@
 # Predict Samples
 
-Six executables demonstrating fingerprint-guided prediction:
+Seven executables demonstrating fingerprint-guided prediction:
 
 - **predict_params** -- Parameter prediction from structured CSV
   (GPU kernel tuning, configuration databases).
@@ -13,6 +13,8 @@ Six executables demonstrating fingerprint-guided prediction:
 - **predict_soi** -- Southern Oscillation Index prediction from
   anti-correlated Tahiti/Darwin sea level pressure using SPREAD
   decomposition (sum/diff modes).
+- **predict_stock2** -- Paired-stock timeseries prediction from CSV
+  using SPREAD decomposition on two correlated price series.
 - **predict_crystal** -- Crystal system classification from composition
   features (AFLOW ICSD, 7 classes, 60K entries).
 ## Build
@@ -185,6 +187,41 @@ making the spread (which *is* the SOI) easier to predict.
 
 Fixed-width: YEAR followed by 12 monthly sea level pressure values
 (mb above 1000 mb). Data from 1951 to present.
+## predict_stock2
+
+Paired-stock timeseries prediction from a CSV file containing two
+correlated price series. Uses `libxs_predict_set_diff(model, 0)` for
+automatic differencing (non-stationary data) and SPREAD decomposition
+(sum/diff modes) to exploit correlation between the stocks. Compares
+against a raw concatenation baseline and a single-series baseline to
+show whether the cross-series signal improves forecasts.
+
+### Usage
+
+    ./predict_stock2.x <csv_file> [col1] [col2] [train_fraction]
+
+    csv_file        Comma-delimited CSV with header row.
+    col1            0-based column index for stock 1 (default: 1).
+    col2            0-based column index for stock 2 (default: 2).
+    train_fraction  Fraction of data for training (default: 0.8).
+
+### Example
+
+    ./predict_stock2.x stocks.csv 1 2
+
+### Data Format
+
+CSV with a header line; numeric columns selected by index:
+
+    Date,Stock1,Stock2
+    2007-01-03,19.520000457763672,12.165162086486816
+    2007-01-04,19.790000915527344,12.655348777770996
+    ...
+
+### Data Source
+
+Historical stock price CSV from
+[Bulk Stock Data Downloader](https://bulkstockdatadownloader.app/).
 ## predict_crystal
 
 Crystal system prediction (7-class classification) from chemical
@@ -248,7 +285,16 @@ All samples share the same prediction library (libxs_predict):
    modes before kNN matching, exploiting the anti-correlation structure
    that defines the Southern Oscillation Index.
 
-6. **predict_crystal**: 37 composition features predict one of 7
+6. **predict_stock2**: Two stock price series loaded via
+   `libxs_predict_load_csv` with numeric column indices.
+   `libxs_predict_set_diff(model, 0)` auto-detects that stock prices
+   are non-stationary and differences them before window construction;
+   at eval, predicted differences are integrated back to absolute
+   prices. SPREAD decomposition separates sum (market trend) from
+   diff (relative strength), making correlated equities easier to
+   predict.
+
+7. **predict_crystal**: 37 composition features predict one of 7
    crystal systems. Uses `LIBXS_PREDICT_RF` (Random Forest) for
    79.7% accuracy, or `LIBXS_PREDICT_FISHER` (kNN with automatic
    feature weighting) for 70.7%. Confidence gating raises accuracy

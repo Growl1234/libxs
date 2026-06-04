@@ -171,6 +171,8 @@ void libxs_predict_set_target(libxs_predict_t* model,
   int target);
 void libxs_predict_set_decompose(libxs_predict_t* model,
   int decompose);
+void libxs_predict_set_diff(libxs_predict_t* model,
+  int order);
 ```
 
 Declare timeseries structure for automatic sliding-window
@@ -184,7 +186,18 @@ input = concatenated windows across all series, output = the
 next horizon values of the target series.
 
 set_target selects which series to predict (0-based, default 0).
+Each model predicts one target series; to forecast multiple series,
+create one model per target (sharing the same training data and
+decomposition).
 set_decompose selects input processing mode (see above).
+
+set_diff enables auto-differencing for non-stationary series:
+- `set_diff(model, 0)`: auto-detect order from fingerprint decay.
+- `set_diff(model, d)`: explicit order d (1 = linear detrend, etc).
+- Default is disabled (-1). The build step fingerprints the target
+  series and finds the lowest order that makes it stationary.
+  At eval, the framework differences the raw query, predicts in
+  diff space, and integrates back to absolute values.
 
 Single-series example (sunspots):
 ```C
@@ -208,8 +221,25 @@ for (t = 0; t < n; ++t) {
 libxs_predict_build(model, 0, 2);
 ```
 
+Non-stationary example (trending stock prices):
+```C
+model = libxs_predict_create(WINDOW * 2, HORIZON);
+libxs_predict_set_mode(model, LIBXS_PREDICT_TEMPORAL);
+libxs_predict_set_series(model, 2, WINDOW);
+libxs_predict_set_target(model, 0);
+libxs_predict_set_decompose(model, LIBXS_PREDICT_SPREAD);
+libxs_predict_set_diff(model, 0);  /* auto-detect order */
+for (t = 0; t < n; ++t) {
+    double vals[2] = {price_A[t], price_B[t]};
+    libxs_predict_push(NULL, model, vals, NULL);
+}
+libxs_predict_build(model, 0, 2);
+```
+
 The eval signature is unchanged: provide ninputs values
-(raw window for all series) and receive horizon predictions.
+(raw window for all series) and receive absolute predictions.
+The framework differences the query internally, predicts in
+diff space, and integrates back using the query's last value.
 The decomposition is applied transparently to the query.
 
 ## Training

@@ -75,6 +75,8 @@ LIBXS_EXTERN_C typedef struct libxs_predict_query_t {
   int nentries;
   /** GSS iterations performed during quality optimization (0 if quality >= 0). */
   int iterations;
+  /** Auto-detected differencing order (0 if DIFF not enabled or not needed). */
+  int diff_order;
 } libxs_predict_query_t;
 
 
@@ -157,6 +159,26 @@ LIBXS_API void libxs_predict_set_target(libxs_predict_t* model, int target);
  */
 LIBXS_API void libxs_predict_set_decompose(libxs_predict_t* model,
   int decompose);
+
+/**
+ * Enable auto-differencing for non-stationary timeseries.
+ * order > 0: explicit differencing order (1 removes linear trend,
+ *            2 removes quadratic trend).
+ * order = 0: auto-detect from fingerprint decay of the target series.
+ *            The build step determines the lowest order that makes
+ *            the series approximately stationary.
+ * order < 0: disabled (default).
+ *
+ * At build time the pushed series is differentiated d times before
+ * window construction. At eval time the caller provides raw values;
+ * the framework differences the query, predicts in diff space, and
+ * integrates the result back to absolute values.
+ * Requires set_series (timeseries structure).
+ * Composes with pointwise transforms (LOG/SQRT): the pipeline is
+ * push -> accumulate -> diff -> windows -> fwd transform on outputs,
+ * eval -> inv transform -> integrate -> absolute values.
+ */
+LIBXS_API void libxs_predict_set_diff(libxs_predict_t* model, int order);
 
 /**
  * Push one training entry (incremental).
