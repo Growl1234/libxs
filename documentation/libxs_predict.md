@@ -198,6 +198,10 @@ set_diff enables auto-differencing for non-stationary series:
   series and finds the lowest order that makes it stationary.
   At eval, the framework differences the raw query, predicts in
   diff space, and integrates back to absolute values.
+- Avoid combining set_diff with LIBXS_PREDICT_INTERPOLATE: differenced
+  outputs are typically noisy (random-walk residuals), and polynomial
+  extrapolation diverges on such data. Use AUTO (default) which lets
+  the fingerprint choose kNN where appropriate.
 
 Single-series example (sunspots):
 ```C

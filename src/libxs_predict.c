@@ -171,8 +171,11 @@ LIBXS_API_INLINE void internal_libxs_predict_kmeans(libxs_predict_t* model, int 
       internal_libxs_predict_normalize(model,
         model->entries[i].inputs, pts + (size_t)i * m);
     }
-    /* farthest-first initialization */
-    memcpy(centroids, pts, (size_t)m * sizeof(double));
+    { const size_t seed = (0 == (model->eval_mode & LIBXS_PREDICT_TEMPORAL))
+        ? LIBXS_SHUFFLE_INDEX(0, (size_t)p, libxs_coprime2((size_t)p), 0)
+        : 0;
+      memcpy(centroids, pts + seed * m, (size_t)m * sizeof(double));
+    }
     for (i = 0; i < p; ++i) dists[i] = DBL_MAX;
     for (c = 1; c < nclusters; ++c) {
       int farthest = 0;
