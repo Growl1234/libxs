@@ -787,7 +787,10 @@ LIBXS_API void libxs_stdio_acquire(void);
 LIBXS_API void libxs_stdio_release(void);
 
 /* header-only: include implementation (deferred from libxs_macros.h) */
-#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \
+ && !defined(LIBXS_MALLOC_H) && !defined(LIBXS_HIST_H) \
+ && !defined(LIBXS_REG_H) && !defined(LIBXS_GEMM_H) \
+ && !defined(LIBXS_PREDICT_H)
 # include "libxs_source.h"
 #endif
 

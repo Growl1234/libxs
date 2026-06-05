@@ -22,6 +22,7 @@ include $(DEPDIR)/Makefile.inc
 ifeq (,$(XLIB))
 ifneq (,$(wildcard $(DEPDIR)/include/libxs_source.h))
   DFLAGS += -DLIBXS_SOURCE
+  HEADERONLY = 1
 endif
 endif
 
@@ -35,9 +36,11 @@ HEADERS := $(wildcard $(INCDIR)/*.h) \
            $(DEPDIR)/include/libxs_source.h
 CSOURCS := $(wildcard $(SRCDIR)/*.c)
 COBJCTS := $(patsubst %,$(BLDDIR)/%,$(notdir $(CSOURCS:.c=-c.o)))
+ifneq (1,$(HEADERONLY))
 ifneq (,$(strip $(FC)))
 F77SRCS := $(wildcard $(SRCDIR)/*.F)
 F77OBJS := $(patsubst %,$(BLDDIR)/%,$(notdir $(F77SRCS:.F=-f77.o)))
+endif
 endif
 OBJECTS := $(COBJCTS)
 FTNOBJS := $(F77OBJS)
@@ -49,10 +52,14 @@ all: $(XFILES)
 .PHONY: compile
 compile: $(OBJECTS) $(FTNOBJS)
 
+ifneq (1,$(HEADERONLY))
 ifneq (,$(strip $(FC)))
 ifneq (0,$(shell echo "$$((3>$(XSMM_GCC) || 40600<=$(FC_VERSION_NUM)))"))
 $(OUTDIR)/$(OUTNAME).x: $(OUTDIR)/.make $(OBJECTS) $(FTNOBJS) $(XLIB)
 	$(FLD) -o $@ $(OBJECTS) $(FTNOBJS) $(XLIB) $(FCMTFLAGS) $(SLDFLAGS) $(LDFLAGS) $(FLDFLAGS) $(ELDFLAGS)
+else
+.PHONY: $(OUTDIR)/$(OUTNAME).x
+endif
 else
 .PHONY: $(OUTDIR)/$(OUTNAME).x
 endif

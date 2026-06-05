@@ -139,7 +139,8 @@ LIBXS_API void libxs_itrans_batch(void* inout, unsigned int typesize,
   int tid, int ntasks);
 
 /* header-only: include implementation (deferred from libxs_macros.h) */
-#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \
+ && !defined(LIBXS_GEMM_H) && !defined(LIBXS_PREDICT_H)
 # include "libxs_source.h"
 #endif
 

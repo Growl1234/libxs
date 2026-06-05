@@ -117,7 +117,8 @@ LIBXS_API int libxs_registry_extract(libxs_registry_t* registry, const void* key
 LIBXS_API int libxs_registry_info(const libxs_registry_t* registry, libxs_registry_info_t* info);
 
 /* header-only: include implementation (deferred from libxs_macros.h) */
-#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \
+ && !defined(LIBXS_GEMM_H) && !defined(LIBXS_PREDICT_H)
 # include "libxs_source.h"
 #endif
 

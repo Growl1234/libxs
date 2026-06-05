@@ -53,7 +53,8 @@ LIBXS_API_INLINE libxs_timer_tick_t libxs_timer_ncycles(libxs_timer_tick_t tick0
 LIBXS_API double libxs_timer_duration(libxs_timer_tick_t tick0, libxs_timer_tick_t tick1);
 
 /* header-only: include implementation (deferred from libxs_macros.h) */
-#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \
+ && !defined(LIBXS_PREDICT_H)
 # include "libxs_source.h"
 #endif
 

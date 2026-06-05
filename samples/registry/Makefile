@@ -20,6 +20,7 @@ include $(DEPDIR)/Makefile.inc
 ifeq (,$(XLIB))
 ifneq (,$(wildcard $(DEPDIR)/include/libxs_source.h))
   DFLAGS += -DLIBXS_SOURCE
+  HEADERONLY = 1
 endif
 endif
 
@@ -39,6 +40,7 @@ CPPOBJS := $(patsubst %,$(BLDDIR)/%,$(notdir $(CPPSRCS:.cpp=-cpp.o)))
 CXXOBJS := $(patsubst %,$(BLDDIR)/%,$(notdir $(CXXSRCS:.cxx=-cxx.o)))
 CCXOBJS := $(patsubst %,$(BLDDIR)/%,$(notdir $(CCXSRCS:.cc=-cc.o)))
 COBJCTS := $(patsubst %,$(BLDDIR)/%,$(notdir $(CSOURCS:.c=-c.o)))
+ifneq (1,$(HEADERONLY))
 ifneq (,$(strip $(FC)))
 FXXSRCS := $(wildcard $(SRCDIR)/*.f)
 F77SRCS := $(wildcard $(SRCDIR)/*.F)
@@ -47,6 +49,7 @@ FXXOBJS := $(patsubst %,$(BLDDIR)/%,$(notdir $(FXXSRCS:.f=-f.o)))
 F77OBJS := $(patsubst %,$(BLDDIR)/%,$(notdir $(F77SRCS:.F=-f77.o)))
 F90OBJS := $(patsubst %,$(BLDDIR)/%,$(notdir $(F90SRCS:.f90=-f90.o)))
 F90OBJS := $(patsubst %,$(BLDDIR)/%,$(notdir $(F90OBJS:.F90=-f90.o)))
+endif
 endif
 SOURCES := $(CPPSRCS) $(CXXSRCS) $(CCXSRCS) $(CSOURCS)
 OBJECTS := $(CPPOBJS) $(CXXOBJS) $(CCXOBJS) $(COBJCTS)
@@ -61,10 +64,14 @@ all: $(XFILES)
 .PHONY: compile
 compile: $(OBJECTS) $(FTNOBJS)
 
+ifneq (1,$(HEADERONLY))
 ifneq (,$(strip $(FC)))
 $(OUTDIR)/$(OUTNAME)f.x: $(OUTDIR)/.make $(BLDDIR)/$(OUTNAME)-f.o $(XLIB)
 	$(FLD) -o $@ $(BLDDIR)/$(OUTNAME)-f.o $(XLIB) \
 		$(FCMTFLAGS) $(SLDFLAGS) $(LDFLAGS) $(FLDFLAGS) $(ELDFLAGS)
+else
+.PHONY: $(OUTDIR)/$(OUTNAME)f.x
+endif
 else
 .PHONY: $(OUTDIR)/$(OUTNAME)f.x
 endif

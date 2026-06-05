@@ -20,6 +20,7 @@ include $(DEPDIR)/Makefile.inc
 ifeq (,$(XLIB))
 ifneq (,$(wildcard $(DEPDIR)/include/libxs_source.h))
   DFLAGS += -DLIBXS_SOURCE
+  HEADERONLY = 1
 endif
 endif
 
@@ -33,12 +34,14 @@ HEADERS := $(wildcard $(INCDIR)/*.h) \
            $(DEPDIR)/include/libxs_source.h
 CSOURCS := $(wildcard $(SRCDIR)/*.c)
 COBJCTS := $(patsubst %,$(BLDDIR)/%,$(notdir $(CSOURCS:.c=-c.o)))
+ifneq (1,$(HEADERONLY))
 ifneq (,$(strip $(FC)))
 FXXSRCS := $(wildcard $(SRCDIR)/*.f)
 F90SRCS := $(wildcard $(SRCDIR)/*.f90) $(wildcard $(SRCDIR)/*.F90)
 FXXOBJS := $(patsubst %,$(BLDDIR)/%,$(notdir $(FXXSRCS:.f=-f.o)))
 F90OBJS := $(patsubst %,$(BLDDIR)/%,$(notdir $(F90SRCS:.f90=-f90.o)))
 F90OBJS := $(patsubst %,$(BLDDIR)/%,$(notdir $(F90OBJS:.F90=-f90.o)))
+endif
 endif
 SOURCES := $(CSOURCS)
 OBJECTS := $(COBJCTS)
@@ -59,10 +62,14 @@ else
   QKMALLOC ?= 0
 endif
 
+ifneq (1,$(HEADERONLY))
 ifneq (,$(strip $(FC)))
 ifneq (0,$(shell echo "$$((3>$(XSMM_GCC) || 40600<=$(FC_VERSION_NUM)))"))
 $(OUTDIR)/$(OUTNAME)f.x: $(OUTDIR)/.make $(FTNOBJS) $(XLIB)
 	$(FLD) -o $@ $(FTNOBJS) $(XLIB) $(FCMTFLAGS) $(SLDFLAGS) $(LDFLAGS) $(FLDFLAGS) $(ELDFLAGS)
+else
+.PHONY: $(OUTDIR)/$(OUTNAME)f.x
+endif
 else
 .PHONY: $(OUTDIR)/$(OUTNAME)f.x
 endif

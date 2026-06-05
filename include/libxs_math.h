@@ -411,7 +411,8 @@ LIBXS_API_INLINE unsigned int libxs_mod_u64(uint64_t x, unsigned int p,
 }
 
 /* header-only: include implementation (deferred from libxs_macros.h) */
-#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \
+ && !defined(LIBXS_RNG_H) && !defined(LIBXS_PREDICT_H)
 # include "libxs_source.h"
 #endif
 

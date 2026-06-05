@@ -71,7 +71,8 @@ LIBXS_API void libxs_hist_update_min(double* dst, const double* src, int count);
 LIBXS_API void libxs_hist_update_max(double* dst, const double* src, int count);
 
 /* header-only: include implementation (deferred from libxs_macros.h) */
-#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \
+ && !defined(LIBXS_PREDICT_H)
 # include "libxs_source.h"
 #endif
 

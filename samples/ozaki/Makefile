@@ -25,6 +25,7 @@ include $(DEPDIR)/Makefile.inc
 ifeq (,$(XLIB))
 ifneq (,$(wildcard $(DEPDIR)/include/libxs_source.h))
   DFLAGS += -DLIBXS_SOURCE
+  HEADERONLY = 1
 endif
 endif
 

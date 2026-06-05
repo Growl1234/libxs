@@ -20,6 +20,7 @@ include $(DEPDIR)/Makefile.inc
 ifeq (,$(XLIB))
 ifneq (,$(wildcard $(DEPDIR)/include/libxs_source.h))
   DFLAGS += -DLIBXS_SOURCE
+  HEADERONLY = 1
 endif
 endif
 
@@ -32,9 +33,11 @@ HEADERS := $(wildcard $(INCDIR)/*.h) $(wildcard $(SRCDIR)/*.h) \
            $(DEPDIR)/include/libxs_source.h
 CSOURCS := $(wildcard $(SRCDIR)/gemm_*.c)
 COBJCTS := $(patsubst %,$(BLDDIR)/%,$(notdir $(CSOURCS:.c=-c.o)))
+ifneq (1,$(HEADERONLY))
 ifneq (,$(strip $(FC)))
 F77SRCS := $(wildcard $(SRCDIR)/gemm_*.F)
 F77OBJS := $(patsubst %,$(BLDDIR)/%,$(notdir $(F77SRCS:.F=-f77.o)))
+endif
 endif
 OBJECTS := $(COBJCTS)
 FTNOBJS := $(F77OBJS)
@@ -60,10 +63,14 @@ $(OUTDIR)/gemm_groups.x: $(OUTDIR)/.make $(BLDDIR)/gemm_groups-c.o $(XLIB)
 $(OUTDIR)/gemm_index.x: $(OUTDIR)/.make $(BLDDIR)/gemm_index-c.o $(XLIB)
 	$(LD) -o $@ $(BLDDIR)/gemm_index-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
+ifneq (1,$(HEADERONLY))
 ifneq (,$(strip $(FC)))
 ifneq (0,$(shell echo "$$((3>$(XSMM_GCC) || 40600<=$(FC_VERSION_NUM)))"))
 $(OUTDIR)/gemm_indexf.x: $(OUTDIR)/.make $(BLDDIR)/gemm_index-f77.o $(XLIB)
 	$(FLD) -o $@ $(BLDDIR)/gemm_index-f77.o $(XLIB) $(FCMTFLAGS) $(SLDFLAGS) $(LDFLAGS) $(FLDFLAGS) $(ELDFLAGS)
+else
+.PHONY: $(OUTDIR)/gemm_indexf.x
+endif
 else
 .PHONY: $(OUTDIR)/gemm_indexf.x
 endif

@@ -115,7 +115,8 @@ LIBXS_API int libxs_malloc_pool_info(const libxs_malloc_pool_t* pool, libxs_mall
 LIBXS_API libxs_malloc_pool_t* libxs_default_pool(void);
 
 /* header-only: include implementation (deferred from libxs_macros.h) */
-#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \
+ && !defined(LIBXS_PREDICT_H)
 # include "libxs_source.h"
 #endif
 
