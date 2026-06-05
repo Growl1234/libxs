@@ -104,6 +104,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   int built;
   int eval_mode;
   int iterations;
+  double spread_alpha, spread_beta;
   int nseries, window, target, decompose;
   int nts, ts_capacity;
   int diff_mode, diff_order;
@@ -407,6 +408,7 @@ LIBXS_API libxs_predict_t* libxs_predict_create(int ninputs, int noutputs)
       model->noutputs = noutputs;
       model->eval_mode = LIBXS_PREDICT_AUTO;
       model->diff_mode = -1;
+      model->spread_alpha = 1.0;
     }
   }
   return model;
@@ -578,10 +580,18 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_apply(
     && model->nseries >= 2 && model->window > 0)
   {
     const int w = m / model->nseries;
+    const int tgt = model->target;
+    const int other = (0 == tgt) ? 1 : 0;
+    const double alpha = model->spread_alpha;
+    const double beta = model->spread_beta;
+    const double* a = raw + tgt * w;
+    const double* b = raw + other * w;
     int i;
     for (i = 0; i < w; ++i) {
-      out[i] = 0.5 * (raw[i] + raw[w + i]);
-      out[w + i] = 0.5 * (raw[i] - raw[w + i]);
+      const double bn = (LIBXS_FABS(alpha) > 1e-30)
+        ? (b[i] - beta) / alpha : b[i];
+      out[i] = 0.5 * (a[i] + bn);
+      out[w + i] = 0.5 * (a[i] - bn);
     }
   }
   else {
@@ -606,10 +616,16 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_inverse(
     && model->nseries >= 2 && model->window > 0)
   {
     const int w = m / model->nseries;
+    const int tgt = model->target;
+    const int other = (0 == tgt) ? 1 : 0;
+    const double alpha = model->spread_alpha;
+    const double beta = model->spread_beta;
     int i;
     for (i = 0; i < w; ++i) {
-      raw[i] = modes[i] + modes[w + i];
-      raw[w + i] = modes[i] - modes[w + i];
+      const double a = modes[i] + modes[w + i];
+      const double bn = modes[i] - modes[w + i];
+      raw[tgt * w + i] = a;
+      raw[other * w + i] = alpha * bn + beta;
     }
   }
   else {
@@ -1294,6 +1310,30 @@ LIBXS_API_INLINE void internal_libxs_predict_ts_expand(libxs_predict_t* model)
   m = s * w;
   if (diff_d > 0) {
     model->ninputs = m;
+  }
+  if (LIBXS_PREDICT_SPREAD == model->decompose && s >= 2 && nts > 1) {
+    const int tgt = model->target;
+    const int other = (0 == tgt) ? 1 : 0;
+    double sum_a = 0, sum_b = 0, sum_aa = 0, sum_ab = 0;
+    int i;
+    for (i = 0; i < nts; ++i) {
+      const double a = model->ts_buf[i * s + tgt];
+      const double b = model->ts_buf[i * s + other];
+      sum_a += a;
+      sum_b += b;
+      sum_aa += a * a;
+      sum_ab += a * b;
+    }
+    { const double denom = (double)nts * sum_aa - sum_a * sum_a;
+      if (LIBXS_FABS(denom) > 1e-30) {
+        model->spread_alpha = ((double)nts * sum_ab - sum_a * sum_b) / denom;
+        model->spread_beta = (sum_b - model->spread_alpha * sum_a) / nts;
+      }
+      else {
+        model->spread_alpha = 1.0;
+        model->spread_beta = 0.0;
+      }
+    }
   }
   nwindows = nts - w - h + 1;
   raw = (double*)LIBXS_PREDICT_MALLOC((size_t)m * sizeof(double), raw_pool);
