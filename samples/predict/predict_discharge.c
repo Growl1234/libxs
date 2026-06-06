@@ -129,7 +129,7 @@ static int load_discharge(const char* filename, double** values, int* count)
 static void evaluate_forecast(const libxs_predict_t* model,
   const double* series, int total, int train_end)
 {
-  double sum_err[HORIZON] = {0}, max_err[HORIZON] = {0};
+  double sum_err[HORIZON] = { 0 }, max_err[HORIZON] = { 0 };
   double sum_conf = 0;
   int neval = 0, t, h;
   for (t = train_end; t <= total - HORIZON; ++t) {

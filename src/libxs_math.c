@@ -283,7 +283,7 @@ LIBXS_API_INLINE unsigned int internal_libxs_product_limit(unsigned int product,
     maxp /= result;
   }
   if (LIBXS_PRODUCT_LIMIT >= maxp) {
-    unsigned int k[2][LIBXS_PRODUCT_LIMIT] = { {0} }, *k0 = k[0], *k1 = k[1], *kt, p;
+    unsigned int k[2][LIBXS_PRODUCT_LIMIT] = { { 0 } }, *k0 = k[0], *k1 = k[1], *kt, p;
     n = libxs_primes_u32(product / result, fact, 32);
     /* initialize table with trivial factor */
     for (p = 0; p <= maxp; ++p) k[0][p] = 1;

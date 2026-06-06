@@ -49,7 +49,7 @@ int main(int argc, char* argv[])
 #else
   int complex_input = 0;
 #endif
-  GEMM_REAL_TYPE complex_alpha[2] = {0}, complex_beta[2] = {0};
+  GEMM_REAL_TYPE complex_alpha[2] = { 0 }, complex_beta[2] = { 0 };
   GEMM_REAL_TYPE *a = NULL, *b = NULL, *c = NULL, *c_ref = NULL;
   GEMM_INT_TYPE a_rows, a_cols, b_rows, b_cols;
   libxs_matdiff_t diff;
@@ -65,7 +65,7 @@ int main(int argc, char* argv[])
 #endif
 
   if (2 < argc && 0 == m) { /* Indicate filename(s) */
-    GEMM_REAL_TYPE scalar[2] = {0};
+    GEMM_REAL_TYPE scalar[2] = { 0 };
     GEMM_INT_TYPE dim0, dim1;
     size_t ncomp = 0;
     gemm_mhd_settings_t settings_a;

@@ -102,7 +102,7 @@ int main(int argc, char* argv[])
 #endif
           dt_build = libxs_timer_duration(tick, libxs_timer_tick());
           if (EXIT_SUCCESS == build_ok) {
-            { libxs_predict_query_t qi = {0};
+            { libxs_predict_query_t qi = { 0 };
               libxs_predict_query(model, &qi);
               fprintf(stdout, "Built: %d clusters, %.1fx compression, order=%d"
                 " (%.2f s)\n", qi.nclusters, qi.compression, qi.order, dt_build);
@@ -159,7 +159,7 @@ static void evaluate(const libxs_predict_t* model,
   const libxs_predict_t* reference, int ntotal)
 {
   libxs_timer_tick_t tick;
-  double maxerr[NOUTPUTS] = {0}, sumerr[NOUTPUTS] = {0};
+  double maxerr[NOUTPUTS] = { 0 }, sumerr[NOUTPUTS] = { 0 };
   double dt_eval;
   double* all_inputs = (double*)malloc((size_t)ntotal * NINPUTS * sizeof(double));
   double* all_predicted = (double*)malloc((size_t)ntotal * NOUTPUTS * sizeof(double));

@@ -60,7 +60,7 @@ int main(int argc, char* argv[])
       dt_build = libxs_timer_duration(tick, libxs_timer_tick());
       if (EXIT_SUCCESS == build_ok) {
         libxs_predict_query_t qi;
-        double sum_err[HORIZON] = {0}, max_err[HORIZON] = {0};
+        double sum_err[HORIZON] = { 0 }, max_err[HORIZON] = { 0 };
         double sum_conf = 0;
         int neval = 0, h;
         LIBXS_MEMZERO(&qi);

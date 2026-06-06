@@ -162,7 +162,7 @@ static void evaluate_forecast(const libxs_predict_t* model,
   const double* tahiti, const double* darwin, int total, int train_end,
   int decompose)
 {
-  double sum_err[HORIZON] = {0}, max_err[HORIZON] = {0};
+  double sum_err[HORIZON] = { 0 }, max_err[HORIZON] = { 0 };
   double sum_conf = 0;
   int neval = 0, t, h;
   for (t = train_end; t <= total - HORIZON; ++t) {
