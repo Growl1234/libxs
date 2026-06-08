@@ -272,16 +272,34 @@ $(foreach OBJ,$(OBJFILES),$(eval $(call DEFINE_COMPILE_RULE, \
 
 $(BLDDIR)/intel64/$(PROJECT)_main.o: $(DIRSTATE)/.state
 
+ifeq (0,$(FPP))
+  CPP := $(call which,cpp)
+  ifeq (,$(CPP))
+    $(error FPP=0 requires cpp but none was found)
+  endif
+  FORTRAN_API := $(BLDDIR)/intel64/$(PROJECT).f
+else
+  FORTRAN_API := $(INCDIR)/$(PROJECT).F
+endif
+
 .PHONY: module
 ifneq (,$(strip $(FC)))
 module: $(INCDIR)/$(PROJECT).mod
-ifneq ($(ABSDIR),$(HEREDIR))
-$(INCDIR)/$(PROJECT).f: $(ROOTINC)/$(PROJECT).f $(INCDIR)/.make
+ifeq (0,$(FPP))
+  $(BLDDIR)/intel64/$(PROJECT).f: $(ROOTINC)/$(PROJECT).F $(BLDDIR)/intel64/.make
+	$(CPP) $(CPPFLAGS) $(DFLAGS) -traditional-cpp $< | $(GREP) -v '^#' > $@
+  $(INCDIR)/$(PROJECT).f: $(BLDDIR)/intel64/$(PROJECT).f $(INCDIR)/.make
 	@$(CP) $< $@
+  module: $(INCDIR)/$(PROJECT).f
+else
+  ifneq ($(ABSDIR),$(HEREDIR))
+  $(INCDIR)/$(PROJECT).F: $(ROOTINC)/$(PROJECT).F $(INCDIR)/.make
+	@$(CP) $< $@
+  endif
 endif
-$(BLDDIR)/intel64/$(PROJECT)-mod.o: $(BLDDIR)/intel64/.make $(INCDIR)/$(PROJECT).f
+$(BLDDIR)/intel64/$(PROJECT)-mod.o: $(BLDDIR)/intel64/.make $(FORTRAN_API)
 	$(FC) $(DFLAGS) $(IFLAGS) $(FCMTFLAGS) $(filter-out $(FFORM_FLAG),$(FCFLAGS)) $(FTARGET) \
-		-c $(INCDIR)/$(PROJECT).f -o $@ $(FMFLAGS) $(INCDIR)
+		-c $(FORTRAN_API) -o $@ $(FMFLAGS) $(INCDIR)
 $(INCDIR)/$(PROJECT).mod: $(BLDDIR)/intel64/$(PROJECT)-mod.o
 	@if [ -e $(BLDDIR)/intel64/$(PROJECT).mod ]; then $(CP) $(BLDDIR)/intel64/$(PROJECT).mod $(INCDIR); fi
 	@if [ -e $(BLDDIR)/intel64/$(PROJECT).mod ]; then $(CP) $(BLDDIR)/intel64/$(PROJECT).mod $(INCDIR); fi
@@ -578,7 +596,11 @@ endif
 	@$(CP) -v  $(HEADERS_MAIN) $(PREFIX)/$(PINCDIR)
 	@$(CP) -v  $(INCDIR)/$(PROJECT)_version.h $(PREFIX)/$(PINCDIR)
 	@$(CP) -v  $(INCDIR)/$(PROJECT).h $(PREFIX)/$(PINCDIR)
+ifeq (0,$(FPP))
 	@$(CP) -v  $(INCDIR)/$(PROJECT).f $(PREFIX)/$(PINCDIR)
+else
+	@$(CP) -v  $(INCDIR)/$(PROJECT).F $(PREFIX)/$(PINCDIR)
+endif
 	@$(CP) -va $(INCDIR)/*.mod* $(PREFIX)/$(PINCDIR) 2>/dev/null || true
 	@echo
 	@echo "$(PROJUPP) installing header-only..."
