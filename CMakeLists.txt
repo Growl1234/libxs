@@ -94,7 +94,9 @@ else()
     add_library(libxs STATIC ${LIBXS_SRCS})
   endif()
   add_library(libxs::libxs ALIAS libxs)
-  set_target_properties(libxs PROPERTIES OUTPUT_NAME xs)
+  set_target_properties(libxs PROPERTIES
+    OUTPUT_NAME xs
+    POSITION_INDEPENDENT_CODE ON)
 
   target_compile_definitions(libxs PRIVATE LIBXS_BUILD=1)
 
