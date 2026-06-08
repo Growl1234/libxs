@@ -107,6 +107,7 @@
         PUBLIC :: libxs_predict_set_target
         PUBLIC :: libxs_predict_set_decompose
         PUBLIC :: libxs_predict_set_diff
+        PUBLIC :: libxs_predict_set_distill
         PUBLIC :: libxs_predict_push
         PUBLIC :: libxs_predict_build, libxs_predict_build_task
         PUBLIC :: libxs_predict_eval, libxs_predict_inverse
@@ -913,6 +914,14 @@
             IMPORT :: C_PTR, C_INT
             TYPE(C_PTR), INTENT(IN), VALUE :: model
             INTEGER(C_INT), INTENT(IN), VALUE :: order
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_distill(model, method,           &
+     &    keep_denom) BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE :: method
+            INTEGER(C_INT), INTENT(IN), VALUE :: keep_denom
           END SUBROUTINE
 
           FUNCTION libxs_predict_push(lock, model, inputs, outputs)     &

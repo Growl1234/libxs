@@ -205,6 +205,35 @@ set_diff enables auto-differencing for non-stationary series:
   extrapolation diverges on such data. Use AUTO (default) which lets
   the fingerprint choose kNN where appropriate.
 
+set_distill enables knowledge distillation during build:
+```C
+void libxs_predict_set_distill(libxs_predict_t* model,
+  int method, int keep_denom);
+```
+The build step performs sliding-fold cross-prediction: every pushed
+entry is predicted from a model that never saw it. The final model
+trains on those predictions rather than the original outputs.
+- `method`: point-selection strategy for the final model.
+  `LIBXS_PREDICT_DISTILL_SHUFFLE` (0): well-dispersed uniform
+  selection via coprime stride.
+- `keep_denom`: keep 1/keep_denom of the predicted points
+  (1 = all, 2 = 50%, 4 = 25%). Smaller fractions yield smaller
+  models with graceful quality degradation.
+
+The resulting model has no exact recall of training data. When
+queried with a known input, the output is a genuine prediction
+from held-out neighbors -- smoothing over measurement noise and
+tuning outliers. This is useful for deployment where the model
+should generalize rather than memorize.
+
+```C
+model = libxs_predict_create(NINPUTS, NOUTPUTS);
+libxs_predict_set_distill(model, LIBXS_PREDICT_DISTILL_SHUFFLE, 2);
+for (i = 0; i < n; ++i)
+    libxs_predict_push(NULL, model, inputs[i], outputs[i]);
+libxs_predict_build(model, 0, 0);
+```
+
 Single-series example (sunspots):
 ```C
 model = libxs_predict_create(WINDOW, HORIZON);

@@ -32,14 +32,20 @@ Reports validation quality on a held-out subset.
 
 ### Usage
 
-    ./predict_params.x [fraction] [auto|cat|interp] [-N] <csvfile> [modelfile]
+    ./predict_params.x [fraction] [auto|cat|distill|interp|rf] [-N] <csvfile> [modelfile]
 
     fraction   Validation split 0..1 for quality report (default: 0.8).
                The full model always trains on all entries.
     auto       Auto-detect mode per output (default).
     cat        Force categorical (kNN) for all outputs.
+    distill    Sliding-fold distillation: every point is predicted from
+               a model that never saw it, then the final model trains
+               on those predictions. -N keeps 1/N of predicted points
+               (e.g., -2 = 50%, -4 = 25%). Without -N, all points kept.
     interp     Force interpolation for all outputs.
+    rf         Random Forest classification.
     -N         Max polynomial order for final build (default: 0 = auto).
+               With distill: keep 1/N of predicted points.
     csvfile    Delimited text file (semicolons, commas, or tabs).
                The first line may be a header (auto-skipped if non-numeric).
     modelfile  Output path for the binary model.
@@ -48,6 +54,7 @@ Reports validation quality on a held-out subset.
 ### Example
 
     ./predict_params.x ../../samples/smm/params/tune_multiply_PVC.csv
+    ./predict_params.x 0.8 distill -2 tune_multiply_PVC.csv model.bin
 ## predict_sunspots
 
 Timeseries forecasting using sliding-window nearest-neighbor prediction.
@@ -260,7 +267,9 @@ All samples share the same prediction library (libxs_predict):
 
 1. **predict_params**: Each CSV row is an independent (inputs, outputs)
    pair. The model learns spatial relationships in the input space
-   and predicts outputs for unseen input combinations.
+   and predicts outputs for unseen input combinations. The `distill`
+   mode builds a model where every stored output is a genuine
+   cross-validated prediction -- no training point is memorized.
 
 2. **predict_sunspots**: Uses `libxs_predict_set_series` to declare
    timeseries structure; the framework constructs sliding windows
