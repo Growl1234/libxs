@@ -21,7 +21,7 @@ SRC="${HERE}/../src"
 EXT="c"
 
 if [ ! -d "${SRC}" ]; then
-  SRC="${HERE}/../include/libxs"
+  SRC="${HERE}/../libxs"
 fi
 
 if [ "${FIND}" ] && [ "${SORT}" ] && [ "${SED}" ] && [ -d "${SRC}" ]; then
