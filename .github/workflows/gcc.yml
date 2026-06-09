@@ -65,7 +65,7 @@ jobs:
         test -f $HOME/libxs-install/include/libxs/libxs.h
         test -f $HOME/libxs-install/include/libxs/libxs_version.h
         test -f $HOME/libxs-install/include/libxs/libxs_source.h
-        test -d $HOME/libxs-install/include/libxs/libxs
+        test -d $HOME/libxs-install/include/libxs/src
         ls $HOME/libxs-install/lib/libxs.* >/dev/null
 
     - name: Out-of-tree build and test
@@ -111,8 +111,7 @@ jobs:
         cmake -B build \
           -DCMAKE_BUILD_TYPE=Debug \
           -DCMAKE_INSTALL_PREFIX=$HOME/libxs-install \
-          -DLIBXS_SHARED=${{ matrix.shared == 'shared' && 'ON' || 'OFF' }} \
-          -DLIBXS_FORTRAN=ON
+          -DBUILD_SHARED_LIBS=${{ matrix.shared == 'shared' && 'ON' || 'OFF' }}
 
     - name: Build
       run: cmake --build build -j $(nproc)
@@ -126,10 +125,13 @@ jobs:
         test -f $HOME/libxs-install/include/libxs/libxs.f
         test -f $HOME/libxs-install/include/libxs/libxs_spec.fi
         test -f $HOME/libxs-install/include/libxs/libxs_jit.F
+        test -f $HOME/libxs-install/include/libxs/libxs_source.h
+        test -d $HOME/libxs-install/include/libxs/src
         ls $HOME/libxs-install/lib/libxs* >/dev/null
         ls $HOME/libxs-install/lib/pkgconfig/libxs.pc >/dev/null
         test -f $HOME/libxs-install/lib/cmake/libxs/libxsConfig.cmake
         test -f $HOME/libxs-install/lib/cmake/libxs/libxsTargets.cmake
+        test -d $HOME/libxs-install/share/libxs
 
     - name: Verify find_package
       run: |

@@ -18,7 +18,7 @@ DOCDIR := documentation
 
 # subdirectories (relative) to PREFIX (install targets)
 PINCDIR ?= include/$(PROJECT)
-PSRCDIR ?= $(PROJECT)
+PSRCDIR ?= src
 POUTDIR ?= $(OUTDIR)
 PPKGDIR ?= $(OUTDIR)/pkgconfig
 PMODDIR ?= $(OUTDIR)
@@ -326,6 +326,8 @@ DOCMDS := $(addprefix $(ABSDIR)/,$(filter-out \
     $(DOCDIR)/$(PROJECT)_fortran.md, \
   $(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
     $(DOCDIR)/$(PROJECT)_*.md 2>/dev/null)))
+INSTMDS := $(DOCMDS) $(addprefix $(ABSDIR)/,$(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
+    $(DOCDIR)/index.md $(DOCDIR)/LICENSE.md 2>/dev/null))
 TSTSRC := $(filter-out $(TSTDIR)/headeronly_aux.c, \
   $(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
     $(TSTDIR)/*.c 2>/dev/null))
@@ -596,7 +598,7 @@ ifneq ($(PREFIX),$(ABSDIR))
 	@echo "$(PROJUPP) installing documentation..."
 	@$(MKDIR) -p $(PREFIX)/$(PDOCDIR)
 	@$(CP) -va $(ROOTDIR)/$(DOCDIR)/*.pdf $(PREFIX)/$(PDOCDIR)
-	@$(CP) -va $(ROOTDIR)/$(DOCDIR)/*.md $(PREFIX)/$(PDOCDIR)
+	@$(CP) -va $(INSTMDS) $(PREFIX)/$(PDOCDIR)
 #	@$(CP) -v  $(ROOTDIR)/SECURITY.md $(PREFIX)/$(PDOCDIR) || true
 #	@$(CP) -v  $(ROOTDIR)/version.txt $(PREFIX)/$(PDOCDIR) || true
 	@$(SED) "s/^\"//;s/\\\n\"$$//;/STATIC=/d" $(DIRSTATE)/.state >$(PREFIX)/$(PDOCDIR)/build.txt 2>/dev/null || true
