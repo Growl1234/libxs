@@ -1695,7 +1695,7 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
         if (conf[j] < min_conf) min_conf = conf[j];
       }
       if (0 >= model->refine && min_conf >= 0.9) max_iter = 0;
-      for (; iter_count < max_iter && model->nentries > 0; ++iter_count) {
+      for (; iter_count < max_iter && NULL != model->entries; ++iter_count) {
         double target[128];
         int canon_pool = 0;
         double* canon = (double*)LIBXS_PREDICT_MALLOC(
@@ -1838,7 +1838,19 @@ LIBXS_API void libxs_predict_inverse(libxs_lock_t* lock,
   libxs_predict_info_t* info)
 {
   LIBXS_ASSERT(NULL != model && 0 != model->built && NULL != target_outputs && NULL != inputs);
-  {
+  if (NULL == model->entries) {
+    memset(inputs, 0, (size_t)model->ninputs * sizeof(double));
+    if (NULL != info) {
+      info->noutputs = model->noutputs;
+      info->cluster = -1;
+      info->distance = DBL_MAX;
+      info->values = NULL;
+      info->error = NULL;
+      info->confidence = NULL;
+      info->interpolated = NULL;
+    }
+  }
+  else {
     const int p = model->nentries;
     const int m = model->ninputs;
     const int n = model->noutputs;
