@@ -21,6 +21,7 @@ PINCDIR ?= include/$(PROJECT)
 PSRCDIR ?= src
 POUTDIR ?= $(OUTDIR)
 PPKGDIR ?= $(OUTDIR)/pkgconfig
+PCMKDIR ?= $(OUTDIR)/cmake/$(PROJECT)
 PMODDIR ?= $(OUTDIR)
 PBINDIR ?= $(BINDIR)
 PTSTDIR ?= $(TSTDIR)
@@ -294,7 +295,7 @@ else
 endif
 
 .PHONY: clib
-clib: cheader $(PPKGDIR)/$(PROJECT)-static.pc $(PPKGDIR)/$(PROJECT)-shared.pc
+clib: cheader $(PPKGDIR)/$(PROJECT)-static.pc $(PPKGDIR)/$(PROJECT)-shared.pc $(PCMKDIR)/$(PROJECT)Config.cmake
 ifeq (,$(filter-out 0 2,$(BUILD)))
 $(OUTDIR)/$(PROJECT).$(SLIBEXT): $(OUTDIR)/.make $(OBJFILES) $(FTNOBJS)
 	$(MAKE_AR) $(OUTDIR)/$(PROJECT).$(SLIBEXT) $(call tailwords,$^)
@@ -510,7 +511,7 @@ endif
 endif
 ifneq (,$(wildcard $(OUTDIR))) # still exists
 	@-rm -f $(OUTDIR)/$(PROJECT)*.$(SLIBEXT) $(OUTDIR)/$(PROJECT)*.$(DLIBEXT)*
-	@-rm -rf $(PPKGDIR)
+	@-rm -rf $(PPKGDIR) $(PCMKDIR)
 endif
 ifneq ($(call qapath,$(BINDIR)),$(ROOTDIR))
 ifneq ($(call qapath,$(BINDIR)),$(HEREDIR))
@@ -568,9 +569,11 @@ endif
 	@$(CP) -va $(OUTDIR)/$(PROJECT)*.$(DLIBEXT)* $(PREFIX)/$(POUTDIR) 2>/dev/null || true
 	@$(CP) -v  $(OUTDIR)/$(PROJECT).$(SLIBEXT)  $(PREFIX)/$(POUTDIR) 2>/dev/null || true
 	@echo
-	@echo "$(PROJUPP) installing pkg-config and module files..."
+	@echo "$(PROJUPP) installing pkg-config and CMake config files..."
 	@$(MKDIR) -p $(PREFIX)/$(PPKGDIR)
 	@$(CP) -va $(PPKGDIR)/*.pc $(PREFIX)/$(PPKGDIR) 2>/dev/null || true
+	@$(MKDIR) -p $(PREFIX)/$(PCMKDIR)
+	@$(CP) -v $(PCMKDIR)/*.cmake $(PREFIX)/$(PCMKDIR) 2>/dev/null || true
 	@if [ ! -e $(PREFIX)/$(PMODDIR)/$(PROJECT).env ]; then \
 		$(MKDIR) -p $(PREFIX)/$(PMODDIR); \
 		$(CP) -v $(OUTDIR)/$(PROJECT).env $(PREFIX)/$(PMODDIR) 2>/dev/null || true; \
@@ -702,6 +705,11 @@ $(PPKGDIR)/$(PROJECT)-shared.pc: $(OUTDIR)/$(PROJECT).$(DLIBEXT) $(PPKGDIR)/.mak
 else
 .PHONY: $(PPKGDIR)/$(PROJECT)-shared.pc
 endif
+
+$(PCMKDIR)/$(PROJECT)Config.cmake: $(ROOTSCR)/$(PROJECT)Config.cmake $(PCMKDIR)/.make
+	@$(CP) $< $@
+	@$(SED) $(ROOTSCR)/$(PROJECT)ConfigVersion.cmake.in \
+		-e 's|@VERSION@|$(VERSION_STRING)|g' >$(PCMKDIR)/$(PROJECT)ConfigVersion.cmake
 
 $(OUTDIR)/$(PROJECT).env: $(OUTDIR)/.make $(INCDIR)/$(PROJECT).h
 	@echo "#%Module1.0" >$@

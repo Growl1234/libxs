@@ -67,6 +67,7 @@ jobs:
         test -f $HOME/libxs-install/include/libxs/libxs_source.h
         test -d $HOME/libxs-install/include/libxs/src
         ls $HOME/libxs-install/lib/libxs.* >/dev/null
+        test -f $HOME/libxs-install/lib/cmake/libxs/libxsConfig.cmake
 
     - name: Out-of-tree build and test
       run: |
