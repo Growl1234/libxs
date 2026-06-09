@@ -353,11 +353,6 @@ LIBXS_API_INLINE void libxs_gemm_release(const libxs_gemm_config_t* config) {
       mkl_jit_destroy(config->jitter);
     }
 #endif
-#if !defined(NDEBUG)
-    { const uintptr_t addr = (uintptr_t)config;
-      LIBXS_MEMZERO((libxs_gemm_config_t*)addr);
-    }
-#endif
   }
 }
 
