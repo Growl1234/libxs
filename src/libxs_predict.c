@@ -420,11 +420,13 @@ LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
   if (NULL != model) {
     int i;
     internal_libxs_predict_free_clusters(model);
-    for (i = 0; i < model->nentries; ++i) {
-      free(model->entries[i].inputs);
-      free(model->entries[i].outputs);
+    if (NULL != model->entries) {
+      for (i = 0; i < model->nentries; ++i) {
+        free(model->entries[i].inputs);
+        free(model->entries[i].outputs);
+      }
+      free(model->entries);
     }
-    free(model->entries);
     free(model->input_min);
     free(model->input_rng);
     free(model->weights);
