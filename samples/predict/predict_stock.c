@@ -34,11 +34,16 @@ int main(int argc, char* argv[])
   const char* filename = (argc > 1) ? argv[1] : NULL;
   const char* colspec = (argc > 2) ? argv[2] : "1,2";
   const double split = (argc > 3) ? atof(argv[3]) : 0.8;
-  const int distill = (argc > 4 && 'd' == argv[4][0]) ? 1 : 0;
+  double quality = 0;
+  if (argc > 4 && 'c' == argv[4][0]) {
+    const char* p = argv[4];
+    while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
+    quality = ('\0' != *p) ? atof(p) : 0.9;
+  }
   int result = EXIT_FAILURE;
   if (NULL == filename) {
     fprintf(stderr,
-      "Usage: %s <csv_file> [columns] [train_fraction] [distill]\n"
+      "Usage: %s <csv_file> [columns] [train_fraction] [compress[Q]]\n"
       "  Multi-stock timeseries prediction with auto-differencing.\n"
       "  columns: comma-separated 0-based column indices (default: 1,2).\n"
       "  Uses PCA decomposition for 3+ series, SPREAD for 2.\n"
@@ -119,17 +124,11 @@ int main(int argc, char* argv[])
               if (NULL != split_m[s] && NULL != full_m[s]) {
                 libxs_predict_set_mode(split_m[s], LIBXS_PREDICT_TEMPORAL);
                 libxs_predict_set_diff(split_m[s], 0);
-                if (0 != distill) {
-                  libxs_predict_set_distill(split_m[s], 0);
-                }
                 libxs_predict_set_series(split_m[s], nseries, WINDOW);
                 libxs_predict_set_target(split_m[s], s);
                 libxs_predict_set_decompose(split_m[s], decompose);
                 libxs_predict_set_mode(full_m[s], LIBXS_PREDICT_TEMPORAL);
                 libxs_predict_set_diff(full_m[s], 0);
-                if (0 != distill) {
-                  libxs_predict_set_distill(full_m[s], 0);
-                }
                 libxs_predict_set_series(full_m[s], nseries, WINDOW);
                 libxs_predict_set_target(full_m[s], s);
                 libxs_predict_set_decompose(full_m[s], decompose);
@@ -141,10 +140,10 @@ int main(int argc, char* argv[])
                   }
                   libxs_predict_push(NULL, full_m[s], vals, NULL);
                 }
-                if (EXIT_SUCCESS != libxs_predict_build(split_m[s], 0, 2)) {
+                if (EXIT_SUCCESS != libxs_predict_build(split_m[s], 0, 2, quality)) {
                   ok = 0;
                 }
-                if (EXIT_SUCCESS != libxs_predict_build(full_m[s], 0, 2)) {
+                if (EXIT_SUCCESS != libxs_predict_build(full_m[s], 0, 2, quality)) {
                   ok = 0;
                 }
               }
@@ -187,16 +186,10 @@ int main(int argc, char* argv[])
               if (NULL != split_m[s] && NULL != full_m[s]) {
                 libxs_predict_set_mode(split_m[s], LIBXS_PREDICT_TEMPORAL);
                 libxs_predict_set_diff(split_m[s], 0);
-                if (0 != distill) {
-                  libxs_predict_set_distill(split_m[s], 0);
-                }
                 libxs_predict_set_series(split_m[s], nseries, WINDOW);
                 libxs_predict_set_target(split_m[s], s);
                 libxs_predict_set_mode(full_m[s], LIBXS_PREDICT_TEMPORAL);
                 libxs_predict_set_diff(full_m[s], 0);
-                if (0 != distill) {
-                  libxs_predict_set_distill(full_m[s], 0);
-                }
                 libxs_predict_set_series(full_m[s], nseries, WINDOW);
                 libxs_predict_set_target(full_m[s], s);
                 for (t = 0; t < total; ++t) {
@@ -207,10 +200,10 @@ int main(int argc, char* argv[])
                   }
                   libxs_predict_push(NULL, full_m[s], vals, NULL);
                 }
-                if (EXIT_SUCCESS != libxs_predict_build(split_m[s], 0, 2)) {
+                if (EXIT_SUCCESS != libxs_predict_build(split_m[s], 0, 2, quality)) {
                   ok = 0;
                 }
-                if (EXIT_SUCCESS != libxs_predict_build(full_m[s], 0, 2)) {
+                if (EXIT_SUCCESS != libxs_predict_build(full_m[s], 0, 2, quality)) {
                   ok = 0;
                 }
               }
@@ -245,15 +238,9 @@ int main(int argc, char* argv[])
               if (NULL != split_m[s] && NULL != full_m[s]) {
                 libxs_predict_set_mode(split_m[s], LIBXS_PREDICT_TEMPORAL);
                 libxs_predict_set_diff(split_m[s], 0);
-                if (0 != distill) {
-                  libxs_predict_set_distill(split_m[s], 0);
-                }
                 libxs_predict_set_series(split_m[s], 1, WINDOW);
                 libxs_predict_set_mode(full_m[s], LIBXS_PREDICT_TEMPORAL);
                 libxs_predict_set_diff(full_m[s], 0);
-                if (0 != distill) {
-                  libxs_predict_set_distill(full_m[s], 0);
-                }
                 libxs_predict_set_series(full_m[s], 1, WINDOW);
                 for (t = 0; t < total; ++t) {
                   double vals[STOCK_MAXCOLS];
@@ -263,10 +250,10 @@ int main(int argc, char* argv[])
                   }
                   libxs_predict_push(NULL, full_m[s], &vals[s], NULL);
                 }
-                if (EXIT_SUCCESS != libxs_predict_build(split_m[s], 0, 2)) {
+                if (EXIT_SUCCESS != libxs_predict_build(split_m[s], 0, 2, quality)) {
                   ok = 0;
                 }
-                if (EXIT_SUCCESS != libxs_predict_build(full_m[s], 0, 2)) {
+                if (EXIT_SUCCESS != libxs_predict_build(full_m[s], 0, 2, quality)) {
                   ok = 0;
                 }
               }

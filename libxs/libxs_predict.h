@@ -180,18 +180,6 @@ LIBXS_API void libxs_predict_set_decompose(libxs_predict_t* model,
  */
 LIBXS_API void libxs_predict_set_diff(libxs_predict_t* model, int order);
 
-/**
- * Enable distillation: the build step performs leave-one-out (or
- * fold-based) cross-prediction so that every training point is
- * predicted from a model that never saw it, then builds the final
- * model on those predictions rather than the original outputs.
- * nfolds: 0 = leave-one-out (default/purest), >0 = explicit fold count
- *         (larger folds trade purity for speed).
- * Call with nfolds < 0 to disable (default state).
- * The resulting model has no exact recall of training data.
- */
-LIBXS_API void libxs_predict_set_distill(libxs_predict_t* model,
-  int nfolds);
 
 /**
  * Push one training entry (incremental).
@@ -217,22 +205,29 @@ LIBXS_API int libxs_predict_push(libxs_lock_t* lock,
  *            >0 = use at most this order.
  *             0 = auto-optimize via GSS.
  *            <0 = auto-optimize with |order| GSS iterations.
+ * quality:   confidence threshold for model compression (0..1).
+ *            0.0 (default) keeps all entries (no compression).
+ *            >0: after building, entries whose leave-one-out
+ *            cross-prediction confidence >= quality are dropped
+ *            (they are redundant). The resulting model is smaller
+ *            and eval signals "no result" for queries below the
+ *            quality threshold (info->distance = DBL_MAX).
  *
  * Returns EXIT_SUCCESS or EXIT_FAILURE.
  * May be called again after pushing additional entries (rebuilds).
  */
 LIBXS_API int libxs_predict_build(libxs_predict_t* model,
-  int nclusters, int order);
+  int nclusters, int order, double quality);
 
 /**
  * Per-thread form of libxs_predict_build. All threads must call
- * this collectively with the same model/nclusters/order.
+ * this collectively with the same model/nclusters/order/quality.
  * tid==0 performs the build; other threads spin-wait.
  * The lock is optional (NULL is accepted).
  */
 LIBXS_API int libxs_predict_build_task(libxs_lock_t* lock,
   libxs_predict_t* model, int nclusters, int order,
-  int tid, int ntasks);
+  double quality, int tid, int ntasks);
 
 /**
  * Predict output parameters for a given input.

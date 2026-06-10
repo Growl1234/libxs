@@ -91,7 +91,6 @@
         PUBLIC :: libxs_predict_set_target
         PUBLIC :: libxs_predict_set_decompose
         PUBLIC :: libxs_predict_set_diff
-        PUBLIC :: libxs_predict_set_distill
         PUBLIC :: libxs_predict_push
         PUBLIC :: libxs_predict_build, libxs_predict_build_task
         PUBLIC :: libxs_predict_eval, libxs_predict_inverse
@@ -859,13 +858,6 @@
             INTEGER(C_INT), INTENT(IN), VALUE :: order
           END SUBROUTINE
 
-          SUBROUTINE libxs_predict_set_distill(model, nfolds)            &
-     &    BIND(C)
-            IMPORT :: C_PTR, C_INT
-            TYPE(C_PTR), INTENT(IN), VALUE :: model
-            INTEGER(C_INT), INTENT(IN), VALUE :: nfolds
-          END SUBROUTINE
-
           FUNCTION libxs_predict_push(lock, model, inputs, outputs)     &
      &    BIND(C)
             IMPORT :: C_PTR, C_INT, C_DOUBLE
@@ -876,21 +868,23 @@
             INTEGER(C_INT) :: libxs_predict_push
           END FUNCTION
 
-          FUNCTION libxs_predict_build(model, nclusters, order)         &
-     &    BIND(C)
-            IMPORT :: C_PTR, C_INT
+          FUNCTION libxs_predict_build(model, nclusters, order,         &
+     &    quality) BIND(C)
+            IMPORT :: C_PTR, C_INT, C_DOUBLE
             TYPE(C_PTR), INTENT(IN), VALUE :: model
             INTEGER(C_INT), INTENT(IN), VALUE :: nclusters, order
+            REAL(C_DOUBLE), INTENT(IN), VALUE :: quality
             INTEGER(C_INT) :: libxs_predict_build
           END FUNCTION
 
           FUNCTION libxs_predict_build_task(lock, model,                &
-     &    nclusters, order, tid, ntasks) BIND(C)
-            IMPORT :: C_PTR, C_INT
+     &    nclusters, order, quality, tid, ntasks) BIND(C)
+            IMPORT :: C_PTR, C_INT, C_DOUBLE
             TYPE(C_PTR), INTENT(IN), VALUE :: lock
             TYPE(C_PTR), INTENT(IN), VALUE :: model
             INTEGER(C_INT), INTENT(IN), VALUE ::                        &
      &        nclusters, order, tid, ntasks
+            REAL(C_DOUBLE), INTENT(IN), VALUE :: quality
             INTEGER(C_INT) :: libxs_predict_build_task
           END FUNCTION
 

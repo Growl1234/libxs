@@ -11,25 +11,29 @@ LIBXS_API_INLINE const char* internal_libxs_predict_detect_delims(const char* li
 LIBXS_API_INLINE int internal_libxs_predict_resolve_col(
   const char* name, const char* header, const char* delims)
 {
-  int col = 0;
-  const char* p = header;
+  int result = -1;
   char* endptr = NULL;
   const long idx = strtol(name, &endptr, 10);
-  if (endptr != name && '\0' == *endptr) return (int)idx;
-  if (NULL == header) return -1;
-  while ('\0' != *p) {
-    const char* field = p;
-    size_t flen;
-    while ('\0' != *p && NULL == strchr(delims, *p)) ++p;
-    flen = (size_t)(p - field);
-    if (flen == strlen(name)) {
-      const char* hit = libxs_stristrn(field, name, flen);
-      if (hit == field) return col;
-    }
-    if ('\0' != *p) ++p;
-    ++col;
+  if (endptr != name && '\0' == *endptr) {
+    result = (int)idx;
   }
-  return -1;
+  else if (NULL != header) {
+    const char* p = header;
+    int col = 0;
+    while ('\0' != *p && 0 > result) {
+      const char* field = p;
+      size_t flen;
+      while ('\0' != *p && NULL == strchr(delims, *p)) ++p;
+      flen = (size_t)(p - field);
+      if (flen == strlen(name)) {
+        const char* hit = libxs_stristrn(field, name, flen);
+        if (hit == field) result = col;
+      }
+      if ('\0' != *p) ++p;
+      ++col;
+    }
+  }
+  return result;
 }
 
 

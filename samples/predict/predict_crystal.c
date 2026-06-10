@@ -24,17 +24,30 @@ int main(int argc, char* argv[])
   const double split = (argc > 2) ? atof(argv[2]) : 0.8;
   const int order = (argc > 3) ? atoi(argv[3]) : 2;
   const int nclusters = (argc > 4) ? atoi(argv[4]) : 0;
-  const int distill = (argc > 5 && 'd' == argv[5][0]) ? 1 : 0;
-  int result = EXIT_FAILURE;
+  int decompose = LIBXS_PREDICT_RF;
+  double quality = 0;
+  int argi = 5, result = EXIT_FAILURE;
+  while (argi < argc) {
+    if ('c' == argv[argi][0]) {
+      const char* p = argv[argi];
+      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
+      quality = ('\0' != *p) ? atof(p) : 0.9;
+    }
+    else if ('f' == argv[argi][0]) decompose = LIBXS_PREDICT_FISHER;
+    else if ('s' == argv[argi][0]) decompose = LIBXS_PREDICT_SETDIFF;
+    else if ('r' == argv[argi][0]) decompose = LIBXS_PREDICT_RF;
+    else if ('n' == argv[argi][0]) decompose = LIBXS_PREDICT_RAW;
+    ++argi;
+  }
   if (NULL == filename) {
     fprintf(stdout,
       "Usage: %s <crystal_csv> [train_fraction] [order] [nclusters]"
-      " [distill]\n"
+      " [compress[Q]] [fisher|setdiff|rf|none]\n"
       "  Crystal system prediction from composition features.\n"
       "  Input: CSV with numeric features + crystal_system label (last col).\n"
       "  Crystal systems: 1=triclinic, 2=monoclinic, 3=orthorhombic,\n"
       "    4=tetragonal, 5=trigonal, 6=hexagonal, 7=cubic.\n"
-      "  Default train_fraction: 0.8\n", argv[0]);
+      "  Default: rf decomposition, train_fraction=0.8\n", argv[0]);
   }
   else {
     libxs_predict_t* source = libxs_predict_create(NFEAT, 1);
@@ -51,10 +64,7 @@ int main(int argc, char* argv[])
           int t, correct = 0, ntest = 0, gated = 0, gated_correct = 0;
           int build_ok = EXIT_FAILURE;
           double sum_conf = 0, dt_build, dt_eval;
-          libxs_predict_set_decompose(model, LIBXS_PREDICT_RF);
-          if (0 != distill) {
-            libxs_predict_set_distill(model, 0);
-          }
+          libxs_predict_set_decompose(model, decompose);
           for (t = 0; t < train_end; ++t) {
             double inputs[NFEAT], output;
             libxs_predict_get(source, t, inputs, &output);
@@ -64,10 +74,10 @@ int main(int argc, char* argv[])
 #if defined(_OPENMP)
 #         pragma omp parallel
           { build_ok = libxs_predict_build_task(NULL, model, nclusters, order,
-              omp_get_thread_num(), omp_get_num_threads());
+              quality, omp_get_thread_num(), omp_get_num_threads());
           }
 #else
-          build_ok = libxs_predict_build(model, nclusters, order);
+          build_ok = libxs_predict_build(model, nclusters, order, quality);
 #endif
           dt_build = libxs_timer_duration(tick, libxs_timer_tick());
           if (EXIT_SUCCESS == build_ok) {
@@ -88,12 +98,12 @@ int main(int argc, char* argv[])
                 libxs_predict_get(source, t, NULL, &expected);
                 label = LIBXS_ROUNDX(int, expected);
                 if (LIBXS_ROUNDX(int, predicted) == label) ++correct;
-                if (info.confidence[0] >= 0.9) {
+                if (NULL != info.confidence && info.confidence[0] >= 0.9) {
                   ++gated;
                   if (LIBXS_ROUNDX(int, predicted) == label) ++gated_correct;
                 }
               }
-              sum_conf += info.confidence[0];
+              if (NULL != info.confidence) sum_conf += info.confidence[0];
               ++ntest;
             }
             dt_eval = libxs_timer_duration(tick, libxs_timer_tick());

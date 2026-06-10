@@ -25,13 +25,18 @@ int main(int argc, char* argv[])
 {
   const char* filename = (argc > 1) ? argv[1] : NULL;
   const double split = (argc > 2) ? atof(argv[2]) : 0.8;
-  const int distill = (argc > 3 && 'd' == argv[3][0]) ? 1 : 0;
+  double quality = 0;
+  if (argc > 3 && 'c' == argv[3][0]) {
+    const char* p = argv[3];
+    while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
+    quality = ('\0' != *p) ? atof(p) : 0.9;
+  }
   int result = EXIT_FAILURE;
   double* series = NULL;
   int total = 0;
   if (NULL == filename) {
     fprintf(stdout,
-      "Usage: %s <sunspot_csv> [train_fraction] [distill]\n"
+      "Usage: %s <sunspot_csv> [train_fraction] [compress[Q]]\n"
       "  Timeseries prediction using sliding-window kNN.\n"
       "  Input: SILSO monthly sunspot CSV (semicolon-delimited).\n"
       "  Default train_fraction: 0.8\n", argv[0]);
@@ -46,9 +51,6 @@ int main(int argc, char* argv[])
       int t, build_ok = EXIT_FAILURE;
       libxs_predict_set_mode(model, LIBXS_PREDICT_TEMPORAL);
       libxs_predict_set_series(model, 1, WINDOW);
-      if (0 != distill) {
-        libxs_predict_set_distill(model, 0);
-      }
       for (t = 0; t < train_end; ++t) {
         libxs_predict_push(NULL, model, &series[t], NULL);
       }
@@ -56,10 +58,10 @@ int main(int argc, char* argv[])
 #if defined(_OPENMP)
 #     pragma omp parallel
       { build_ok = libxs_predict_build_task(NULL, model, 0, 2,
-          omp_get_thread_num(), omp_get_num_threads());
+          quality, omp_get_thread_num(), omp_get_num_threads());
       }
 #else
-      build_ok = libxs_predict_build(model, 0, 2);
+      build_ok = libxs_predict_build(model, 0, 2, quality);
 #endif
       dt_build = libxs_timer_duration(tick, libxs_timer_tick());
       if (EXIT_SUCCESS == build_ok) {

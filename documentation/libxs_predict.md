@@ -205,38 +205,13 @@ set_diff enables auto-differencing for non-stationary series:
   extrapolation diverges on such data. Use AUTO (default) which lets
   the fingerprint choose kNN where appropriate.
 
-set_distill enables knowledge distillation during build:
-```C
-void libxs_predict_set_distill(libxs_predict_t* model, int nfolds);
-```
-The build step performs leave-one-out (or fold-based)
-cross-prediction: every pushed entry is predicted from a model
-that never saw it. The final model trains on those predictions
-rather than the original outputs.
-- `nfolds = 0`: leave-one-out (purest, one fold per entry).
-- `nfolds > 0`: explicit fold count (larger = faster, less pure).
-- Default is disabled (nfolds < 0).
-
-The resulting model has no exact recall of training data. When
-queried with a known input, the output is a genuine prediction
-from held-out neighbors -- smoothing over measurement noise and
-tuning outliers. Parallelized via OpenMP over folds.
-
-```C
-model = libxs_predict_create(NINPUTS, NOUTPUTS);
-libxs_predict_set_distill(model, 0);  /* LOO */
-for (i = 0; i < n; ++i)
-    libxs_predict_push(NULL, model, inputs[i], outputs[i]);
-libxs_predict_build(model, 0, 0);
-```
-
 Single-series example (sunspots):
 ```C
 model = libxs_predict_create(WINDOW, HORIZON);
 libxs_predict_set_series(model, 1, WINDOW);
 for (t = 0; t < n; ++t)
     libxs_predict_push(NULL, model, &series[t], NULL);
-libxs_predict_build(model, 0, 2);
+libxs_predict_build(model, 0, 2, 0);
 ```
 
 Multi-series example (anti-correlated pair):
@@ -249,7 +224,7 @@ for (t = 0; t < n; ++t) {
     double vals[2] = {A[t], B[t]};
     libxs_predict_push(NULL, model, vals, NULL);
 }
-libxs_predict_build(model, 0, 2);
+libxs_predict_build(model, 0, 2, 0);
 ```
 
 Non-stationary example (trending stock prices):
@@ -264,7 +239,7 @@ for (t = 0; t < n; ++t) {
     double vals[2] = {price_A[t], price_B[t]};
     libxs_predict_push(NULL, model, vals, NULL);
 }
-libxs_predict_build(model, 0, 2);
+libxs_predict_build(model, 0, 2, 0);
 ```
 
 The eval signature is unchanged: provide ninputs values
@@ -292,7 +267,7 @@ EXIT_FAILURE.
 
 ```C
 int libxs_predict_build(libxs_predict_t* model,
-  int nclusters, int order);
+  int nclusters, int order, double quality);
 ```
 
 Build the model from pushed entries. A value of nclusters=0
@@ -303,15 +278,31 @@ via exhaustive scan over [1..MAXORDER], order < 0 scans up
 to |order|. May be called again after pushing more entries
 (normalization is recomputed from all entries).
 
+The quality parameter (0..1) controls model compression:
+- quality = 0: no compression (default, all entries retained).
+- quality > 0: after building, a leave-one-out pass removes
+  entries that are perfectly predictable by their neighbors.
+  An entry is removed only if (a) the kNN prediction with that
+  entry excluded matches the actual value for all classify-mode
+  outputs, (b) the local neighborhood shows zero variance
+  (unanimous agreement), and (c) the minimum LOO confidence
+  exceeds quality. For interpolation-mode outputs, the polynomial
+  residual must be below errors * (1-quality).
+
+Compression operates in-place (no rebuild): clusters are
+compacted and polynomials refitted on the remaining entries.
+Skipped for Random Forest models. The quality value is
+transient (not saved with the model).
+
 ```C
 int libxs_predict_build_task(libxs_lock_t* lock,
   libxs_predict_t* model, int nclusters, int order,
-  int tid, int ntasks);
+  double quality, int tid, int ntasks);
 ```
 
 Per-thread collective form. All threads call with same
-model/nclusters/order. tid=0 performs the build, others
-spin-wait. The lock is optional (NULL is accepted).
+model/nclusters/order/quality. tid=0 performs the build,
+others spin-wait. The lock is optional (NULL is accepted).
 
 ## Evaluation
 

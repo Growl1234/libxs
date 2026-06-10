@@ -151,7 +151,6 @@ libxs_predict_query
 libxs_predict_save
 libxs_predict_set_decompose
 libxs_predict_set_diff
-libxs_predict_set_distill
 libxs_predict_set_mode
 libxs_predict_set_refine
 libxs_predict_set_series

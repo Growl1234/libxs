@@ -26,8 +26,9 @@ static void evaluate(const libxs_predict_t* model,
 
 int main(int argc, char* argv[])
 {
-  int argi = 1, mode = LIBXS_PREDICT_AUTO, use_rf = 0, use_distill = 0;
+  int argi = 1, mode = LIBXS_PREDICT_AUTO, use_rf = 0;
   int order_arg = 0;
+  double quality = 0;
   double eval_fraction = 0.8;
   const char *filename, *modelfile;
   int result = EXIT_FAILURE;
@@ -37,8 +38,14 @@ int main(int argc, char* argv[])
   }
   if (argi < argc && 'a' <= argv[argi][0]) {
     if ('a' == argv[argi][0]) mode = LIBXS_PREDICT_AUTO;
-    else if ('c' == argv[argi][0]) mode = LIBXS_PREDICT_CLASSIFY;
-    else if ('d' == argv[argi][0]) use_distill = 1;
+    else if ('c' == argv[argi][0] && 'a' == argv[argi][1]) {
+      mode = LIBXS_PREDICT_CLASSIFY;
+    }
+    else if ('c' == argv[argi][0] && 'o' == argv[argi][1]) {
+      const char* p = argv[argi];
+      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
+      quality = ('\0' != *p) ? atof(p) : 0.9;
+    }
     else if ('i' == argv[argi][0]) mode = LIBXS_PREDICT_INTERPOLATE;
     else if ('r' == argv[argi][0]) use_rf = 1;
     ++argi;
@@ -63,12 +70,12 @@ int main(int argc, char* argv[])
   }
   if (NULL == filename) {
     fprintf(stdout,
-      "Usage: %s [fraction] [auto|cat|distill|interp|rf] [-N]"
+      "Usage: %s [fraction] [auto|cat|compress[Q]|interp|rf] [-N]"
       " <csvfile> [modelfile]\n"
       "  fraction: validation split 0..1 for quality report (default: 0.8)\n"
       "  auto:     auto-detect mode per output (default)\n"
       "  cat:      force categorical (kNN) for all outputs\n"
-      "  distill:  LOO cross-prediction (no exact recall)\n"
+      "  compress: drop predictable entries (Q: threshold, default 0.9)\n"
       "  interp:   force interpolation for all outputs\n"
       "  rf:       Random Forest classification\n"
       "  -N: max polynomial order (default: 0 = auto)\n"
@@ -89,7 +96,6 @@ int main(int argc, char* argv[])
           double inputs[NINPUTS], outputs[NOUTPUTS], dt_build;
           libxs_predict_set_mode(model, mode);
           if (0 != use_rf) libxs_predict_set_decompose(model, LIBXS_PREDICT_RF);
-          if (0 != use_distill) libxs_predict_set_distill(model, 0);
           for (i = 0; i < ntotal; ++i) {
             libxs_predict_get(source, i, inputs, outputs);
             libxs_predict_push(NULL, model, inputs, outputs);
@@ -98,18 +104,20 @@ int main(int argc, char* argv[])
 #if defined(_OPENMP)
 #         pragma omp parallel
           { const int br = libxs_predict_build_task(NULL, model, 0, order_arg,
-              omp_get_thread_num(), omp_get_num_threads());
+              quality, omp_get_thread_num(), omp_get_num_threads());
             if (0 == omp_get_thread_num()) build_ok = br;
           }
 #else
-          build_ok = libxs_predict_build_task(NULL, model, 0, order_arg, 0, 1);
+          build_ok = libxs_predict_build_task(NULL, model, 0, order_arg,
+            quality, 0, 1);
 #endif
           dt_build = libxs_timer_duration(tick, libxs_timer_tick());
           if (EXIT_SUCCESS == build_ok) {
             { libxs_predict_query_t qi = { 0 };
               libxs_predict_query(model, &qi);
               fprintf(stdout, "Built: %d clusters, %.1fx compression, order=%d"
-                " (%.2f s)\n", qi.nclusters, qi.compression, qi.order, dt_build);
+                " (%d entries, %.2f s)\n", qi.nclusters, qi.compression,
+                qi.order, qi.nentries, dt_build);
             }
             { const int nval = LIBXS_MAX(
                 (int)(ntotal * eval_fraction + 0.5), 1);
@@ -121,12 +129,12 @@ int main(int argc, char* argv[])
                 if (0 != use_rf) {
                   libxs_predict_set_decompose(val_model, LIBXS_PREDICT_RF);
                 }
-                if (0 != use_distill) libxs_predict_set_distill(val_model, 0);
                 for (i = 0; i < nval; ++i) {
                   libxs_predict_get(source, i, vi, vo);
                   libxs_predict_push(NULL, val_model, vi, vo);
                 }
-                if (EXIT_SUCCESS == libxs_predict_build(val_model, 0, order_arg))
+                if (EXIT_SUCCESS == libxs_predict_build(
+                  val_model, 0, order_arg, quality))
                 {
                   evaluate(val_model, source, ntotal);
                 }

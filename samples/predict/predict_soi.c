@@ -24,13 +24,18 @@ int main(int argc, char* argv[])
   const char* tahiti_file = (argc > 1) ? argv[1] : NULL;
   const char* darwin_file = (argc > 2) ? argv[2] : NULL;
   const double split = (argc > 3) ? atof(argv[3]) : 0.8;
-  const int distill = (argc > 4 && 'd' == argv[4][0]) ? 1 : 0;
+  double quality = 0;
+  if (argc > 4 && 'c' == argv[4][0]) {
+    const char* p = argv[4];
+    while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
+    quality = ('\0' != *p) ? atof(p) : 0.9;
+  }
   int result = EXIT_FAILURE;
   double *tahiti = NULL, *darwin = NULL;
   int ntahiti = 0, ndarwin = 0;
   if (NULL == tahiti_file || NULL == darwin_file) {
     fprintf(stdout,
-      "Usage: %s <tahiti_file> <darwin_file> [train_fraction] [distill]\n"
+      "Usage: %s <tahiti_file> <darwin_file> [train_fraction] [compress[Q]]\n"
       "  SOI prediction from anti-correlated Tahiti/Darwin SLP.\n"
       "  Uses SPREAD decomposition (sum/diff modes).\n"
       "  Input: NOAA CPC fixed-width monthly SLP files.\n"
@@ -50,16 +55,13 @@ int main(int argc, char* argv[])
       libxs_predict_set_series(model, NSERIES, WINDOW);
       libxs_predict_set_target(model, 0);
       libxs_predict_set_decompose(model, LIBXS_PREDICT_SPREAD);
-      if (0 != distill) {
-        libxs_predict_set_distill(model, 0);
-      }
       for (t = 0; t < train_end; ++t) {
         double vals[2];
         vals[0] = tahiti[t];
         vals[1] = darwin[t];
         libxs_predict_push(NULL, model, vals, NULL);
       }
-      if (EXIT_SUCCESS == libxs_predict_build(model, 0, 2)) {
+      if (EXIT_SUCCESS == libxs_predict_build(model, 0, 2, quality)) {
         libxs_predict_query_t qi;
         LIBXS_MEMZERO(&qi);
         libxs_predict_query(model, &qi);
@@ -77,16 +79,13 @@ int main(int argc, char* argv[])
           libxs_predict_set_mode(raw_model, LIBXS_PREDICT_TEMPORAL);
           libxs_predict_set_series(raw_model, NSERIES, WINDOW);
           libxs_predict_set_target(raw_model, 0);
-          if (0 != distill) {
-            libxs_predict_set_distill(raw_model, 0);
-          }
           for (t = 0; t < train_end; ++t) {
             double vals[2];
             vals[0] = tahiti[t];
             vals[1] = darwin[t];
             libxs_predict_push(NULL, raw_model, vals, NULL);
           }
-          if (EXIT_SUCCESS == libxs_predict_build(raw_model, 0, 2)) {
+          if (EXIT_SUCCESS == libxs_predict_build(raw_model, 0, 2, quality)) {
             fprintf(stdout, "\n--- RAW concatenation (baseline) ---\n");
             evaluate_forecast(raw_model, tahiti, darwin, total, train_end, 0);
           }
@@ -97,13 +96,10 @@ int main(int argc, char* argv[])
         if (NULL != solo_model) {
           libxs_predict_set_mode(solo_model, LIBXS_PREDICT_TEMPORAL);
           libxs_predict_set_series(solo_model, 1, WINDOW);
-          if (0 != distill) {
-            libxs_predict_set_distill(solo_model, 0);
-          }
           for (t = 0; t < train_end; ++t) {
             libxs_predict_push(NULL, solo_model, &tahiti[t], NULL);
           }
-          if (EXIT_SUCCESS == libxs_predict_build(solo_model, 0, 2)) {
+          if (EXIT_SUCCESS == libxs_predict_build(solo_model, 0, 2, quality)) {
             fprintf(stdout, "\n--- Tahiti-only (single series) ---\n");
             evaluate_forecast(solo_model, tahiti, darwin, total, train_end, 0);
           }

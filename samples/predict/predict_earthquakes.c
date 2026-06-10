@@ -26,11 +26,16 @@ int main(int argc, char* argv[])
 {
   const char* filename = (argc > 1) ? argv[1] : NULL;
   const double split = (argc > 2) ? atof(argv[2]) : 0.8;
-  const int distill = (argc > 3 && 'd' == argv[3][0]) ? 1 : 0;
+  double quality = 0;
+  if (argc > 3 && 'c' == argv[3][0]) {
+    const char* p = argv[3];
+    while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
+    quality = ('\0' != *p) ? atof(p) : 0.9;
+  }
   int result = EXIT_FAILURE;
   if (NULL == filename) {
     fprintf(stdout,
-      "Usage: %s <usgs_csv> [train_fraction] [distill]\n"
+      "Usage: %s <usgs_csv> [train_fraction] [compress[Q]]\n"
       "  Earthquake magnitude prediction from location and depth.\n"
       "  Input: USGS earthquake catalog CSV (comma-delimited).\n"
       "  Predicts magnitude from (latitude, longitude, depth).\n"
@@ -51,9 +56,6 @@ int main(int argc, char* argv[])
           libxs_timer_tick_t tick;
           double inputs[NINPUTS], outputs[NOUTPUTS], dt_build;
           int i, build_ok = EXIT_FAILURE;
-          if (0 != distill) {
-            libxs_predict_set_distill(model, 0);
-          }
           for (i = 0; i < train_end; ++i) {
             libxs_predict_get(source, i, inputs, outputs);
             libxs_predict_push(NULL, model, inputs, outputs);
@@ -62,10 +64,10 @@ int main(int argc, char* argv[])
 #if defined(_OPENMP)
 #         pragma omp parallel
           { build_ok = libxs_predict_build_task(NULL, model, 0, 2,
-              omp_get_thread_num(), omp_get_num_threads());
+              quality, omp_get_thread_num(), omp_get_num_threads());
           }
 #else
-          build_ok = libxs_predict_build(model, 0, 2);
+          build_ok = libxs_predict_build(model, 0, 2, quality);
 #endif
           dt_build = libxs_timer_duration(tick, libxs_timer_tick());
           if (EXIT_SUCCESS == build_ok) {

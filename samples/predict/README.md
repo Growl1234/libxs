@@ -36,20 +36,19 @@ Reports validation quality on a held-out subset.
 
 ### Usage
 
-    ./predict_params.x [fraction] [auto|cat|distill|interp|rf] [-N] <csvfile> [modelfile]
+    ./predict_params.x [fraction] [auto|cat|compress[Q]|interp|rf] [-N] <csvfile> [modelfile]
 
     fraction   Validation split 0..1 for quality report (default: 0.8).
                The full model always trains on all entries.
     auto       Auto-detect mode per output (default).
     cat        Force categorical (kNN) for all outputs.
-    distill    Sliding-fold distillation: every point is predicted from
-               a model that never saw it, then the final model trains
-               on those predictions. -N keeps 1/N of predicted points
-               (e.g., -2 = 50%, -4 = 25%). Without -N, all points kept.
+    compress   Drop redundant entries via leave-one-out confidence.
+               Q is the quality threshold (default: 0.9). Only entries
+               with unanimous neighbor agreement (variance=0) across all
+               outputs and confidence >= Q are removed.
     interp     Force interpolation for all outputs.
     rf         Random Forest classification.
     -N         Max polynomial order for final build (default: 0 = auto).
-               With distill: keep 1/N of predicted points.
     csvfile    Delimited text file (semicolons, commas, or tabs).
                The first line may be a header (auto-skipped if non-numeric).
     modelfile  Output path for the binary model.
@@ -58,7 +57,7 @@ Reports validation quality on a held-out subset.
 ### Example
 
     ./predict_params.x ../../samples/smm/params/tune_multiply_PVC.csv
-    ./predict_params.x 0.8 distill -2 tune_multiply_PVC.csv model.bin
+    ./predict_params.x 0.8 compress0.9 tune_multiply_PVC.csv model.bin
 
 
 ## predict_sunspots
@@ -70,26 +69,27 @@ patterns were seen in training.
 
 ### Usage
 
-    ./predict_sunspots.x <csvfile> [train_fraction]
+    ./predict_sunspots.x <csvfile> [train_fraction] [compress[Q]]
 
     csvfile         Semicolon-delimited timeseries (SILSO sunspot format).
     train_fraction  Fraction of data used for training (default: 0.8).
+    compress        Optional model compression (Q: threshold, default 0.9).
 
 ### Example
 
     ./predict_sunspots.x predict_sunspots.csv 0.8
 
     Loaded 3328 monthly sunspot values from predict_sunspots.csv
-    Window=12, Horizon=6, Train=2650, Test=666
-    Built: 51 clusters, 32.0x compression, order=2
+    Window=12, Horizon=6, Train=2645, Test=666
+    Built: 51 clusters, 32.4x compression, order=2
     Forecast quality (661 test windows):
       step   avg-err   max-err
-      t+1      17.58     88.10
-      t+2      19.48    115.00
-      t+3      21.01    107.10
-      t+4      21.76    114.50
-      t+5      22.84    118.40
-      t+6      24.26    153.20
+      t+1      17.58     89.87
+      t+2      19.54    114.73
+      t+3      20.87    106.02
+      t+4      21.64    110.37
+      t+5      22.77    122.43
+      t+6      23.92    147.13
       avg confidence: 1.000
 
 ### Data Source
@@ -111,10 +111,11 @@ patterns at nearby locations?
 
 ### Usage
 
-    ./predict_earthquakes.x <usgs_csv> [train_fraction]
+    ./predict_earthquakes.x <usgs_csv> [train_fraction] [compress[Q]]
 
     usgs_csv        USGS earthquake catalog CSV (comma-delimited).
     train_fraction  Fraction of data for training (default: 0.8).
+    compress        Optional model compression (Q: threshold, default 0.9).
 
 ### Example
 
@@ -123,11 +124,11 @@ patterns at nearby locations?
     Loaded 19619 earthquake events from predict_earthquakes.csv
     Inputs: latitude, longitude, depth -> Output: magnitude
     Train=15695, Test=3924
-    Built: 125 clusters, 83.9x compression, order=2
+    Built: 125 clusters, 84.5x compression, order=2
     Prediction quality (3924 test events):
-      avg magnitude error: 0.272
+      avg magnitude error: 0.265
       max magnitude error: 2.700
-      avg confidence: 0.649
+      avg confidence: 0.694
 
 ### Data Source
 
@@ -146,10 +147,11 @@ heavy-tailed data. Predicts the next 7 days from the previous
 
 ### Usage
 
-    ./predict_discharge.x <discharge_tsv> [train_fraction]
+    ./predict_discharge.x <discharge_tsv> [train_fraction] [compress[Q]]
 
     discharge_tsv   USGS NWIS daily discharge (tab-delimited RDB format).
     train_fraction  Fraction of data for training (default: 0.8).
+    compress        Optional model compression (Q: threshold, default 0.9).
 
 ### Example
 
@@ -157,16 +159,16 @@ heavy-tailed data. Predicts the next 7 days from the previous
 
     Loaded 9135 daily discharge values from predict_discharge.tsv
     Window=14 (+3 diffs +day-of-year), Horizon=7, Train=7294, Test=1827
-    Built: 85 clusters, 58.4x compression, order=2
+    Built: 85 clusters, 61.3x compression, order=2
     Forecast quality (1821 test windows):
       step   avg-err   max-err
-      t+1      644.5   17726.6
-      t+2      769.0   21363.5
-      t+3      877.9   23199.8
-      t+4      963.7   24193.4
-      t+5     1044.1   25086.3
-      t+6     1131.3   25735.3
-      t+7     1225.9   26729.3
+      t+1      639.0   17700.0
+      t+2      759.0   27200.0
+      t+3      836.0   27200.0
+      t+4      929.5   27100.0
+      t+5     1007.9   27000.0
+      t+6     1093.5   27000.0
+      t+7     1172.6   27100.0
       avg confidence: 1.000
 
 ### Data Source
@@ -187,11 +189,12 @@ making the spread (which *is* the SOI) easier to predict.
 
 ### Usage
 
-    ./predict_soi.x <tahiti_file> <darwin_file> [train_fraction]
+    ./predict_soi.x <tahiti_file> <darwin_file> [train_fraction] [compress[Q]]
 
     tahiti_file     NOAA CPC monthly Tahiti SLP (fixed-width).
     darwin_file     NOAA CPC monthly Darwin SLP (fixed-width).
     train_fraction  Fraction of data for training (default: 0.8).
+    compress        Optional model compression (Q: threshold, default 0.9).
 
 ### Example
 
@@ -219,11 +222,12 @@ signal improves forecasts.
 
 ### Usage
 
-    ./predict_stock.x <csv_file> [columns] [train_fraction]
+    ./predict_stock.x <csv_file> [columns] [train_fraction] [compress[Q]]
 
     csv_file        Comma-delimited CSV with header row.
     columns         Comma-separated 0-based column indices (default: 1,2).
     train_fraction  Fraction of data for training (default: 0.8).
+    compress        Optional model compression (Q: threshold, default 0.9).
 
 ### Example
 
@@ -253,10 +257,15 @@ or `LIBXS_PREDICT_RF` for Random Forest classification.
 
 ### Usage
 
-    ./predict_crystal.x <crystal_csv> [train_fraction] [order] [nclusters]
+    ./predict_crystal.x <crystal_csv> [train_fraction] [order] [nclusters] [compress[Q]] [fisher|setdiff|rf|none]
 
     crystal_csv     CSV with composition features + crystal_system label.
     train_fraction  Fraction of data for training (default: 0.8).
+    compress        Optional model compression (Q: threshold, default 0.9).
+    fisher          Use Fisher discriminant feature weighting.
+    setdiff         Use setdiff feature selection.
+    rf              Random Forest classification (default).
+    none            Raw kNN without feature processing.
 
 ### Example
 
@@ -264,9 +273,9 @@ or `LIBXS_PREDICT_RF` for Random Forest classification.
 
     Loaded 60386 entries (37 features) from predict_crystal.csv
     Train=48309, Test=12077
-    Built: 220 clusters, 208.7x compression, order=2
-    Accuracy: 9625/12077 = 79.7%
-    Confidence-gated (>=0.9): 6167/6502 = 94.8% (coverage 53.8%)
+    Built: 220 clusters, 208.6x compression, order=2
+    Accuracy: 9612/12077 = 79.6%
+    Confidence-gated (>=0.9): 6161/6482 = 95.0% (coverage 53.7%)
     Avg confidence: 0.820
 
 ### Data Source
@@ -285,9 +294,10 @@ All samples share the same prediction library (libxs_predict):
 
 1. **predict_params**: Each CSV row is an independent (inputs, outputs)
    pair. The model learns spatial relationships in the input space
-   and predicts outputs for unseen input combinations. The `distill`
-   mode builds a model where every stored output is a genuine
-   cross-validated prediction -- no training point is memorized.
+   and predicts outputs for unseen input combinations. The `compress`
+   mode removes entries that are perfectly predictable by their
+   neighbors (LOO confidence check), reducing model size without
+   affecting accuracy.
 
 2. **predict_sunspots**: Uses `libxs_predict_set_series` to declare
    timeseries structure; the framework constructs sliding windows
