@@ -25,14 +25,14 @@ int main(int argc, char* argv[])
   const char* darwin_file = (argc > 2) ? argv[2] : NULL;
   const double split = (argc > 3) ? atof(argv[3]) : 0.8;
   double quality = 0;
+  int result = EXIT_FAILURE;
+  double *tahiti = NULL, *darwin = NULL;
+  int ntahiti = 0, ndarwin = 0;
   if (argc > 4 && 'c' == argv[4][0]) {
     const char* p = argv[4];
     while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
     quality = ('\0' != *p) ? atof(p) : 0.9;
   }
-  int result = EXIT_FAILURE;
-  double *tahiti = NULL, *darwin = NULL;
-  int ntahiti = 0, ndarwin = 0;
   if (NULL == tahiti_file || NULL == darwin_file) {
     fprintf(stdout,
       "Usage: %s <tahiti_file> <darwin_file> [train_fraction] [compress[Q]]\n"

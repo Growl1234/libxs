@@ -27,12 +27,12 @@ int main(int argc, char* argv[])
   const char* filename = (argc > 1) ? argv[1] : NULL;
   const double split = (argc > 2) ? atof(argv[2]) : 0.8;
   double quality = 0;
+  int result = EXIT_FAILURE;
   if (argc > 3 && 'c' == argv[3][0]) {
     const char* p = argv[3];
     while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
     quality = ('\0' != *p) ? atof(p) : 0.9;
   }
-  int result = EXIT_FAILURE;
   if (NULL == filename) {
     fprintf(stdout,
       "Usage: %s <usgs_csv> [train_fraction] [compress[Q]]\n"

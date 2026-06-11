@@ -35,12 +35,12 @@ int main(int argc, char* argv[])
   const char* colspec = (argc > 2) ? argv[2] : "1,2";
   const double split = (argc > 3) ? atof(argv[3]) : 0.8;
   double quality = 0;
+  int result = EXIT_FAILURE;
   if (argc > 4 && 'c' == argv[4][0]) {
     const char* p = argv[4];
     while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
     quality = ('\0' != *p) ? atof(p) : 0.9;
   }
-  int result = EXIT_FAILURE;
   if (NULL == filename) {
     fprintf(stderr,
       "Usage: %s <csv_file> [columns] [train_fraction] [compress[Q]]\n"
