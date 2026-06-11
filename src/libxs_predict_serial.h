@@ -255,7 +255,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
       model->clusters = (internal_libxs_predict_cluster_t*)calloc(
         (size_t)nclust, sizeof(internal_libxs_predict_cluster_t));
       model->eval_buf = (double*)malloc(
-        (size_t)nout * 3 * sizeof(double) + (size_t)nout * sizeof(int));
+        (size_t)nout * 4 * sizeof(double) + (size_t)nout * sizeof(int));
       if (NULL == model->clusters || NULL == model->eval_buf) ok = EXIT_FAILURE;
     }
     { int c;
