@@ -26,7 +26,7 @@
 # define LIBXS_MALLOC_EVICT_SIZE (8 * LIBXS_MALLOC_UPSIZE)
 #endif
 #if !defined(LIBXS_MALLOC_EVICT_LIMIT)
-# define LIBXS_MALLOC_EVICT_LIMIT (64 * LIBXS_MALLOC_EVICT_SIZE)
+# define LIBXS_MALLOC_EVICT_LIMIT ((size_t)512 * LIBXS_MALLOC_EVICT_SIZE)
 #endif
 #if !defined(LIBXS_MALLOC_EVICT_AGE)
 # define LIBXS_MALLOC_EVICT_AGE 8
@@ -542,7 +542,8 @@ LIBXS_API void libxs_free_pool(libxs_malloc_pool_t* pool)
 {
   if (NULL != pool) {
     if (LIBXS_VERBOSITY_HIGH <= libxs_verbosity || 0 > libxs_verbosity) {
-      libxs_malloc_pool_print(stderr, "INFO LIBXS: pool ", pool);
+      libxs_malloc_pool_print(stderr,
+        0 < pool->max_nthreads ? "INFO LIBXS: xpool " : "INFO LIBXS: pool ", pool);
     }
     if (NULL != pool->slots) {
       libxs_registry_t *const reg = internal_libxs_malloc_registry;
@@ -615,7 +616,7 @@ LIBXS_API void libxs_malloc_pool_print(FILE* ostream, const char prefix[],
   static const char *const labels[] = { "<1M", "1-4M", "4-16M", "16-64M", "64-256M", ">=256M" };
   libxs_malloc_pool_info_t info;
   if (NULL != ostream && EXIT_SUCCESS == libxs_malloc_pool_info(pool, &info) && 0 != info.nmallocs) {
-    size_t i;
+    size_t i, total_evict_limit = 0, total_evict_age = 0;
     if (NULL != prefix) fprintf(ostream, "%s", prefix);
     fprintf(ostream, "used=%llu size=%llu peak=%llu allocs=%llu active=%llu\n",
       (unsigned long long)(info.used >> 20), (unsigned long long)(info.size >> 20),
@@ -630,6 +631,18 @@ LIBXS_API void libxs_malloc_pool_print(FILE* ostream, const char prefix[],
           (unsigned long long)h->ngrows, (unsigned long long)h->nevicts_age,
           (unsigned long long)h->nevicts_limit);
       }
+      total_evict_limit += h->nevicts_limit;
+      total_evict_age += h->nevicts_age;
+    }
+    if (0 != total_evict_limit || 0 != total_evict_age) {
+      const size_t suggest_limit = info.peak + (info.peak >> 2);
+      if (NULL != prefix) fprintf(ostream, "%s", prefix);
+      fprintf(ostream, "  suggest: LIBXS_MALLOC_EVICT_LIMIT=%llu",
+        (unsigned long long)(suggest_limit >> 20));
+      if (0 != total_evict_age) {
+        fprintf(ostream, " LIBXS_MALLOC_EVICT_AGE=+");
+      }
+      fprintf(ostream, "\n");
     }
   }
 }
