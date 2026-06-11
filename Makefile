@@ -675,7 +675,7 @@ ALIAS_INCDIR := $(subst $$$$,$(if $(findstring $$$$/,$$$$$(PINCDIR)),,\$${prefix
 ALIAS_LIBDIR := $(subst $$$$,$(if $(findstring $$$$/,$$$$$(POUTDIR)),,\$${prefix}/),$(subst $$$$$(ALIAS_PREFIX),\$${prefix},$$$$$(POUTDIR)))
 
 PCTEMPLATE := $(ROOTSCR)/$(PROJECT).pc.in
-PCSUBST = $(SED) $(PCTEMPLATE) \
+PCSUBST_BASE = $(SED) $(PCTEMPLATE) \
   -e 's|@PROJECT@|$(PROJECT)|g' \
   -e 's|@DESCRIPTION@|Specialized tensor operations|g' \
   -e 's|@URL@|https://github.com/hfp/$(PROJECT)/|g' \
@@ -683,12 +683,13 @@ PCSUBST = $(SED) $(PCTEMPLATE) \
   -e 's|@PREFIX@|$(ALIAS_PREFIX)|g' \
   -e 's|@INCLUDEDIR@|$(ALIAS_INCDIR)|g' \
   -e 's|@LIBDIR@|$(ALIAS_LIBDIR)|g' \
-  -e 's|@LINKNAME@|$(patsubst lib%,%,$(PROJECT))|g' \
   -e 's|@LIBS_PRIVATE@|$(if $(ALIAS_PRIVLIBS),Libs.private: $(ALIAS_PRIVLIBS),)|g'
+PCSUBST_STATIC = $(PCSUBST_BASE) -e 's|@LIBS@|$${libdir}/$(PROJECT).$(SLIBEXT)|g'
+PCSUBST_SHARED = $(PCSUBST_BASE) -e 's|@LIBS@|-L$${libdir} -l$(patsubst lib%,%,$(PROJECT))|g'
 
 ifeq (,$(filter-out 0 2,$(BUILD)))
 $(PPKGDIR)/$(PROJECT)-static.pc: $(OUTDIR)/$(PROJECT).$(SLIBEXT) $(PPKGDIR)/.make $(PCTEMPLATE)
-	@$(PCSUBST) >$@
+	@$(PCSUBST_STATIC) >$@
   ifeq (,$(filter-out 0 2,$(BUILD)))
 	@ln -fs $(notdir $@) $(PPKGDIR)/$(PROJECT).pc
   endif
@@ -698,7 +699,7 @@ endif
 
 ifeq (,$(filter-out 1 2,$(BUILD)))
 $(PPKGDIR)/$(PROJECT)-shared.pc: $(OUTDIR)/$(PROJECT).$(DLIBEXT) $(PPKGDIR)/.make $(PCTEMPLATE)
-	@$(PCSUBST) >$@
+	@$(PCSUBST_SHARED) >$@
   ifeq (,$(filter-out 1,$(BUILD)))
 	@ln -fs $(notdir $@) $(PPKGDIR)/$(PROJECT).pc
   endif
