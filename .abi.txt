@@ -100,6 +100,7 @@ libxs_malloc_bytes
 libxs_malloc_info
 libxs_malloc_pool
 libxs_malloc_pool_info
+libxs_malloc_pool_print
 libxs_malloc_xpool
 libxs_matcopy
 libxs_matcopy_task

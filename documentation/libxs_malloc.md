@@ -13,14 +13,27 @@ typedef struct libxs_malloc_info_t {
 ```
 
 ```C
+typedef struct libxs_malloc_pool_hist_t {
+  size_t count;         /* allocations in this bucket */
+  size_t nreuses;       /* chunk reused without reallocation */
+  size_t ngrows;        /* chunk reallocated (too small) */
+  size_t nevicts_age;   /* evictions triggered by age */
+  size_t nevicts_limit; /* evictions triggered by memory limit */
+} libxs_malloc_pool_hist_t;
+```
+
+```C
 typedef struct libxs_malloc_pool_info_t {
   size_t used;      /* memory currently in use (sum of requested sizes) */
   size_t size;      /* total allocated memory (sum of actual chunk sizes) */
   size_t peak;      /* peak memory consumption */
   size_t nactive;   /* pending (not yet freed) allocations */
   size_t nmallocs;  /* total allocation count */
+  libxs_malloc_pool_hist_t hist[6]; /* per-bucket histogram */
 } libxs_malloc_pool_info_t;
 ```
+
+The histogram uses 6 logarithmic buckets keyed on requested size: <1M, 1-4M, 4-16M, 16-64M, 64-256M, >=256M. Each bucket tracks how allocations in that size class were served (reuse vs. grow) and how many were evicted by the pool's memory-pressure heuristics.
 
 ```C
 typedef struct libxs_malloc_pool_t libxs_malloc_pool_t; /* opaque */
@@ -67,7 +80,20 @@ Destroy the pool and release all associated memory. Accepts NULL.
 int libxs_malloc_pool_info(const libxs_malloc_pool_t* pool, libxs_malloc_pool_info_t* info);
 ```
 
-Query aggregate pool statistics.
+Query aggregate pool statistics including the per-bucket histogram.
+
+```C
+void libxs_malloc_pool_print(FILE* ostream, const char prefix[],
+  const libxs_malloc_pool_t* pool);
+```
+
+Print pool statistics and per-bucket histogram to `ostream`. Each non-empty bucket is printed on its own line showing count, reuse, grow, and eviction numbers. The `prefix` string (may be NULL) is prepended to each line. No output is produced if the pool has zero allocations or `ostream` is NULL.
+
+```C
+libxs_malloc_pool_t* libxs_default_pool(void);
+```
+
+Access the default host memory pool (created at `libxs_init`). Printed automatically at `libxs_finalize` when `LIBXS_VERBOSE` >= 4.
 
 ## General Allocation
 

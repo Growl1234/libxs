@@ -15,15 +15,26 @@
 
 /** Automatic alignment with inline metadata (default). */
 #define LIBXS_MALLOC_AUTO 0
-/** Preserve allocator's native pointer (out-of-band metadata). */
+/**
+ * Preserve allocator's pointer (out-of-band metadata,
+ * values > 1: explicit alignment).
+ */
 #define LIBXS_MALLOC_NATIVE 1
-/* Values > 1 are interpreted as explicit alignment (inline metadata). */
 
 
 /** Information about allocated memory (pointer). */
 LIBXS_EXTERN_C typedef struct libxs_malloc_info_t {
   size_t size;
 } libxs_malloc_info_t;
+
+/** Per-bucket allocation statistics (<1M, 1-4M, 4-16M, 16-64M, 64-256M, >=256M). */
+LIBXS_EXTERN_C typedef struct libxs_malloc_pool_hist_t {
+  size_t count;
+  size_t nreuses;
+  size_t ngrows;
+  size_t nevicts_age;
+  size_t nevicts_limit;
+} libxs_malloc_pool_hist_t;
 
 /** Information about pooled memory. */
 LIBXS_EXTERN_C typedef struct libxs_malloc_pool_info_t {
@@ -37,14 +48,8 @@ LIBXS_EXTERN_C typedef struct libxs_malloc_pool_info_t {
   size_t nactive;
   /** Number of allocations so far. */
   size_t nmallocs;
-  /** Chunk reused without reallocation. */
-  size_t nreuses;
-  /** Chunk reallocated because it was too small. */
-  size_t ngrows;
-  /** Evictions triggered by age threshold. */
-  size_t nevict_age;
-  /** Evictions triggered by pool memory limit. */
-  size_t nevict_limit;
+  /** Per-bucket histogram. */
+  libxs_malloc_pool_hist_t hist[6];
 } libxs_malloc_pool_info_t;
 
 /** Opaque pool type (created by libxs_malloc_pool). */
@@ -118,6 +123,9 @@ LIBXS_API void libxs_free(void* pointer);
 LIBXS_API int libxs_malloc_info(const void* pointer, libxs_malloc_info_t* info);
 /** Retrieve information about the pooled memory domain. */
 LIBXS_API int libxs_malloc_pool_info(const libxs_malloc_pool_t* pool, libxs_malloc_pool_info_t* info);
+/** Print pool statistics including per-bucket histogram. */
+LIBXS_API void libxs_malloc_pool_print(FILE* ostream, const char prefix[],
+  const libxs_malloc_pool_t* pool);
 
 /** Access the default memory pool (host, created at libxs_init). */
 LIBXS_API libxs_malloc_pool_t* libxs_default_pool(void);

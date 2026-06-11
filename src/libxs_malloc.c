@@ -43,6 +43,11 @@
 #if !defined(LIBXS_MALLOC_POOL_INIT)
 # define LIBXS_MALLOC_POOL_INIT 16
 #endif
+#if !defined(LIBXS_MALLOC_HIST_SHIFT)
+# define LIBXS_MALLOC_HIST_SHIFT 20
+#endif
+#define LIBXS_MALLOC_HIST_NBUCKETS \
+  (sizeof(((libxs_malloc_pool_info_t*)0)->hist) / sizeof(libxs_malloc_pool_hist_t))
 
 
 typedef struct internal_libxs_malloc_chunk_t {
@@ -65,15 +70,12 @@ struct libxs_malloc_pool_t {
   internal_libxs_malloc_chunk_t **slots;
   size_t slots_size;
   size_t slots_num;
-  size_t nreuses;
-  size_t ngrows;
 #if defined(LIBXS_MALLOC_EVICT)
   size_t generation;
   size_t pool_bytes;
   size_t pool_peak;
-  size_t nevict_age;
-  size_t nevict_limit;
 #endif
+  libxs_malloc_pool_hist_t hist[LIBXS_MALLOC_HIST_NBUCKETS];
 };
 
 LIBXS_APIVAR_DEFINE(libxs_lock_t internal_libxs_malloc_plocks[LIBXS_MALLOC_NLOCKS]);
@@ -192,6 +194,15 @@ LIBXS_API_INLINE void internal_libxs_malloc_pool_return(internal_libxs_malloc_ch
 }
 
 
+LIBXS_API_INLINE int internal_libxs_malloc_hist_bucket(size_t size)
+{
+  int b = 0;
+  size >>= LIBXS_MALLOC_HIST_SHIFT;
+  while (0 != size && b < (int)(LIBXS_MALLOC_HIST_NBUCKETS) - 1) { size >>= 2; ++b; }
+  return b;
+}
+
+
 #if defined(LIBXS_MALLOC_EVICT)
 LIBXS_API_INLINE void internal_libxs_malloc_peak_update(libxs_malloc_pool_t *pool, size_t candidate)
 {
@@ -258,6 +269,7 @@ LIBXS_API void* libxs_malloc(libxs_malloc_pool_t* pool, size_t size, int alignme
     LIBXS_LOCK_RELEASE(LIBXS_LOCK, &pool->plock);
 #endif
     if (NULL != chunk) {
+      const int hist_b = internal_libxs_malloc_hist_bucket(size);
       libxs_registry_t *const reg = internal_libxs_malloc_get_registry(alignment);
       const size_t alignpot = LIBXS_UP2POT(LIBXS_MAX(sizeof(void*) + 1,
         1 < alignment ? (size_t)alignment : LIBXS_ALIGNMENT));
@@ -266,6 +278,9 @@ LIBXS_API void* libxs_malloc(libxs_malloc_pool_t* pool, size_t size, int alignme
 #if defined(LIBXS_MALLOC_EVICT)
       const size_t nmallocs = (size_t)LIBXS_ATOMIC(LIBXS_ATOMIC_ADD_FETCH, LIBXS_BITS)(
         &pool->generation, 1, LIBXS_ATOMIC_LOCKORDER);
+#endif
+      LIBXS_ATOMIC(LIBXS_ATOMIC_ADD_FETCH, LIBXS_BITS)(&pool->hist[hist_b].count, 1, LIBXS_ATOMIC_RELAXED);
+#if defined(LIBXS_MALLOC_EVICT)
       if (NULL != chunk->pointer && chunk->last_tick != 0 &&
           (0 < pool->max_nthreads || NULL != pool->fn_malloc.std) &&
           LIBXS_MALLOC_EVICT_AGE < nmallocs / LIBXS_MALLOC_TICK_RATE - chunk->last_tick)
@@ -276,7 +291,7 @@ LIBXS_API void* libxs_malloc(libxs_malloc_pool_t* pool, size_t size, int alignme
         else pool->fn_free.std(chunk->pointer);
         chunk->pointer = NULL;
         LIBXS_ATOMIC(LIBXS_ATOMIC_SUB_FETCH, LIBXS_BITS)(&pool->pool_bytes, chunk->used, LIBXS_ATOMIC_LOCKORDER);
-        LIBXS_ATOMIC(LIBXS_ATOMIC_ADD_FETCH, LIBXS_BITS)(&pool->nevict_age, 1, LIBXS_ATOMIC_RELAXED);
+        LIBXS_ATOMIC(LIBXS_ATOMIC_ADD_FETCH, LIBXS_BITS)(&pool->hist[hist_b].nevicts_age, 1, LIBXS_ATOMIC_RELAXED);
         chunk->used = 0;
         chunk->size = 0;
       }
@@ -305,7 +320,7 @@ LIBXS_API void* libxs_malloc(libxs_malloc_pool_t* pool, size_t size, int alignme
             chunk->used = size;
             chunk->size = alloc_size;
             ++chunk->nmallocs;
-            LIBXS_ATOMIC(LIBXS_ATOMIC_ADD_FETCH, LIBXS_BITS)(&pool->ngrows, 1, LIBXS_ATOMIC_RELAXED);
+            LIBXS_ATOMIC(LIBXS_ATOMIC_ADD_FETCH, LIBXS_BITS)(&pool->hist[hist_b].ngrows, 1, LIBXS_ATOMIC_RELAXED);
 #if defined(LIBXS_MALLOC_EVICT)
             { const size_t new_bytes = (size_t)LIBXS_ATOMIC(LIBXS_ATOMIC_ADD_FETCH, LIBXS_BITS)(
                 &pool->pool_bytes, size - old_used, LIBXS_ATOMIC_LOCKORDER);
@@ -333,7 +348,7 @@ LIBXS_API void* libxs_malloc(libxs_malloc_pool_t* pool, size_t size, int alignme
         }
         else { /* reuse */
           chunk->used = size;
-          LIBXS_ATOMIC(LIBXS_ATOMIC_ADD_FETCH, LIBXS_BITS)(&pool->nreuses, 1, LIBXS_ATOMIC_RELAXED);
+          LIBXS_ATOMIC(LIBXS_ATOMIC_ADD_FETCH, LIBXS_BITS)(&pool->hist[hist_b].nreuses, 1, LIBXS_ATOMIC_RELAXED);
           if (NULL != reg) {
             result = chunk->pointer;
             if (NULL == libxs_registry_set(reg,
@@ -413,6 +428,7 @@ LIBXS_API void libxs_free(void* pointer)
     {
       const size_t total_bytes = LIBXS_ATOMIC(LIBXS_ATOMIC_LOAD, LIBXS_BITS)(&pool->pool_bytes, LIBXS_ATOMIC_RELAXED);
       if (LIBXS_MALLOC_EVICT_LIMIT < total_bytes) {
+        const int evict_b = internal_libxs_malloc_hist_bucket(chunk->used);
         const size_t reclaimed = chunk->used;
         if (0 < pool->max_nthreads) {
           pool->fn_free.ext(chunk->pointer, pool->extra[libxs_tid() % pool->max_nthreads]);
@@ -422,7 +438,7 @@ LIBXS_API void libxs_free(void* pointer)
         chunk->used = 0;
         chunk->size = 0;
         LIBXS_ATOMIC(LIBXS_ATOMIC_SUB_FETCH, LIBXS_BITS)(&pool->pool_bytes, reclaimed, LIBXS_ATOMIC_LOCKORDER);
-        LIBXS_ATOMIC(LIBXS_ATOMIC_ADD_FETCH, LIBXS_BITS)(&pool->nevict_limit, 1, LIBXS_ATOMIC_RELAXED);
+        LIBXS_ATOMIC(LIBXS_ATOMIC_ADD_FETCH, LIBXS_BITS)(&pool->hist[evict_b].nevicts_limit, 1, LIBXS_ATOMIC_RELAXED);
       }
     }
     chunk->last_tick = LIBXS_ATOMIC(LIBXS_ATOMIC_LOAD, LIBXS_BITS)(&pool->generation, LIBXS_ATOMIC_RELAXED)
@@ -565,10 +581,10 @@ LIBXS_API int libxs_malloc_pool_info(const libxs_malloc_pool_t* pool, libxs_mall
   int result = EXIT_SUCCESS;
   if (NULL == pool) pool = internal_libxs_malloc_default_pool();
   if (NULL != info) {
-    LIBXS_MEMZERO(info);
+    memset(info, 0, sizeof(*info));
     if (NULL != pool && NULL != pool->slots) {
       const internal_libxs_malloc_chunk_t *chunk = pool->all;
-      size_t nchunks = 0;
+      size_t nchunks = 0, i;
       while (NULL != chunk) {
         info->nmallocs += chunk->nmallocs;
         info->used += chunk->used;
@@ -577,19 +593,42 @@ LIBXS_API int libxs_malloc_pool_info(const libxs_malloc_pool_t* pool, libxs_mall
         ++nchunks;
       }
       info->nactive = nchunks - pool->slots_num;
-      info->nreuses = pool->nreuses;
-      info->ngrows = pool->ngrows;
 #if defined(LIBXS_MALLOC_EVICT)
       info->peak = pool->pool_peak;
-      info->nevict_age = pool->nevict_age;
-      info->nevict_limit = pool->nevict_limit;
 #endif
+      for (i = 0; i < LIBXS_MALLOC_HIST_NBUCKETS; ++i) info->hist[i] = pool->hist[i];
     }
   }
   else {
     result = EXIT_FAILURE;
   }
   return result;
+}
+
+
+LIBXS_API void libxs_malloc_pool_print(FILE* ostream, const char prefix[],
+  const libxs_malloc_pool_t* pool)
+{
+  static const char *const labels[] = { "<1M", "1-4M", "4-16M", "16-64M", "64-256M", ">=256M" };
+  libxs_malloc_pool_info_t info;
+  if (NULL != ostream && EXIT_SUCCESS == libxs_malloc_pool_info(pool, &info) && 0 != info.nmallocs) {
+    size_t i;
+    if (NULL != prefix) fprintf(ostream, "%s", prefix);
+    fprintf(ostream, "used=%llu size=%llu peak=%llu allocs=%llu active=%llu\n",
+      (unsigned long long)(info.used >> 20), (unsigned long long)(info.size >> 20),
+      (unsigned long long)(info.peak >> 20), (unsigned long long)info.nmallocs,
+      (unsigned long long)info.nactive);
+    for (i = 0; i < LIBXS_MALLOC_HIST_NBUCKETS; ++i) {
+      const libxs_malloc_pool_hist_t *const h = info.hist + i;
+      if (0 != h->count) {
+        if (NULL != prefix) fprintf(ostream, "%s", prefix);
+        fprintf(ostream, "  %s: %llu (reuse=%llu grow=%llu evict_age=%llu evict_limit=%llu)\n",
+          labels[i], (unsigned long long)h->count, (unsigned long long)h->nreuses,
+          (unsigned long long)h->ngrows, (unsigned long long)h->nevicts_age,
+          (unsigned long long)h->nevicts_limit);
+      }
+    }
+  }
 }
 
 
