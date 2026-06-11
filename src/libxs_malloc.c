@@ -541,6 +541,9 @@ LIBXS_API void libxs_malloc_arg(libxs_malloc_pool_t* pool, const void* extra)
 LIBXS_API void libxs_free_pool(libxs_malloc_pool_t* pool)
 {
   if (NULL != pool) {
+    if (LIBXS_VERBOSITY_HIGH <= libxs_verbosity || 0 > libxs_verbosity) {
+      libxs_malloc_pool_print(stderr, "INFO LIBXS: pool ", pool);
+    }
     if (NULL != pool->slots) {
       libxs_registry_t *const reg = internal_libxs_malloc_registry;
       internal_libxs_malloc_chunk_t *chunk = pool->all;

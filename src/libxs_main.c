@@ -602,11 +602,6 @@ LIBXS_API_DTOR void libxs_finalize(void)
 {
   internal_libxs_gemm_finalize();
   internal_libxs_memory_finalize();
-  if ((LIBXS_VERBOSITY_HIGH < libxs_verbosity || 0 > libxs_verbosity)
-    && NULL != internal_libxs_default_pool)
-  {
-    libxs_malloc_pool_print(stderr, "INFO LIBXS: pool ", internal_libxs_default_pool);
-  }
   libxs_free_pool(internal_libxs_default_pool);
   internal_libxs_default_pool = NULL;
 }
