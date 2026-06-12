@@ -93,7 +93,7 @@ add_library(libxs::libxs ALIAS libxs)
 set_target_properties(libxs PROPERTIES
   OUTPUT_NAME xs
   VERSION ${PROJECT_VERSION}
-  SOVERSION 0
+  SOVERSION ${PROJECT_VERSION_MAJOR}
   POSITION_INDEPENDENT_CODE ON)
 
 target_compile_definitions(libxs PRIVATE LIBXS_BUILD=1)
