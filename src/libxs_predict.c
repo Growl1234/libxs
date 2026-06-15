@@ -88,6 +88,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   internal_libxs_predict_entry_t* entries;
   internal_libxs_predict_cluster_t* clusters;
   int* assignments;
+  int* hknn_assignments;
   double* eval_buf;
   double* input_min;
   double* input_rng;
@@ -101,6 +102,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   int ninputs, noutputs;
   int nentries, capacity;
   int nclusters;
+  int hknn_nclusters;
   int built;
   int eval_mode;
   int iterations;
@@ -525,6 +527,7 @@ LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
     free(model->transforms);
     free(model->ts_buf);
     free(model->decompose_mat);
+    free(model->hknn_assignments);
     if (NULL != model->rf) {
       int ti;
       const int total_trees = model->rf->ntrees * model->rf->noutputs;
@@ -997,6 +1000,7 @@ LIBXS_API_INLINE void internal_libxs_predict_setdiff_build(libxs_predict_t* mode
 
 
 #include "libxs_predict_rf.h"
+#include "libxs_predict_hknn.h"
 
 
 LIBXS_API_INLINE int internal_libxs_predict_grow(libxs_predict_t* model)
@@ -1245,6 +1249,17 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
     }
   }
   if (NULL != model && 0 < model->nentries
+    && LIBXS_PREDICT_HKNN == model->decompose
+    && NULL == model->hknn_assignments)
+  {
+    model->hknn_assignments = (int*)calloc((size_t)model->nentries, sizeof(int));
+    if (NULL != model->hknn_assignments) {
+      model->hknn_nclusters = 0;
+      internal_libxs_predict_hknn_partition(model, &model->hknn_nclusters);
+      if (model->hknn_nclusters < 1) model->hknn_nclusters = 1;
+    }
+  }
+  if (NULL != model && 0 < model->nentries
     && LIBXS_PREDICT_RF == model->decompose && NULL == model->rf)
   {
     internal_libxs_predict_rf_build(model);
@@ -1306,10 +1321,20 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
     }
     if (nclusters > p) nclusters = p;
     model->assignments = (int*)calloc((size_t)p, sizeof(int));
+    model->eval_buf = (double*)malloc((size_t)n * 4 * sizeof(double) + (size_t)n * sizeof(int));
+    if (NULL == model->assignments || NULL == model->eval_buf) {
+      result = EXIT_FAILURE;
+    }
+    if (EXIT_SUCCESS == result && LIBXS_PREDICT_HKNN == model->decompose
+      && NULL != model->hknn_assignments && model->hknn_nclusters > 0)
+    {
+      memcpy(model->assignments, model->hknn_assignments,
+        (size_t)p * sizeof(int));
+      nclusters = model->hknn_nclusters;
+    }
     model->clusters = (internal_libxs_predict_cluster_t*)calloc(
       (size_t)nclusters, sizeof(internal_libxs_predict_cluster_t));
-    model->eval_buf = (double*)malloc((size_t)n * 4 * sizeof(double) + (size_t)n * sizeof(int));
-    if (NULL == model->assignments || NULL == model->clusters || NULL == model->eval_buf) {
+    if (NULL == model->clusters) {
       result = EXIT_FAILURE;
     }
     if (EXIT_SUCCESS == result) {
@@ -1320,7 +1345,13 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
       }
     }
     if (EXIT_SUCCESS == result) {
-      internal_libxs_predict_kmeans(model, nclusters);
+      if (LIBXS_PREDICT_HKNN == model->decompose) {
+        internal_libxs_predict_hknn_centroids(model, nclusters);
+        internal_libxs_predict_hknn_refine(model, nclusters);
+      }
+      else {
+        internal_libxs_predict_kmeans(model, nclusters);
+      }
       for (i = 0; i < p; ++i) {
         ++model->clusters[model->assignments[i]].nentries;
       }

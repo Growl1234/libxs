@@ -37,7 +37,8 @@ typedef enum libxs_predict_decompose_t {
   LIBXS_PREDICT_PCA     = 2,
   LIBXS_PREDICT_SETDIFF = 3,
   LIBXS_PREDICT_FISHER  = 4,
-  LIBXS_PREDICT_RF      = 5
+  LIBXS_PREDICT_RF      = 5,
+  LIBXS_PREDICT_HKNN    = 6
 } libxs_predict_decompose_t;
 
 /** Opaque prediction model type. */
@@ -156,6 +157,8 @@ LIBXS_API void libxs_predict_set_target(libxs_predict_t* model, int target);
  * LIBXS_PREDICT_SETDIFF: auto feature selection via setdiff scores.
  * LIBXS_PREDICT_FISHER: auto feature selection via Fisher criterion.
  * LIBXS_PREDICT_RF: Random Forest classification (per-output).
+ * LIBXS_PREDICT_HKNN: hierarchical kNN with RF-derived partition
+ *   from Hilbert-stratified input space.
  */
 LIBXS_API void libxs_predict_set_decompose(libxs_predict_t* model,
   int decompose);

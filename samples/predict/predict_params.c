@@ -32,7 +32,7 @@ static double deployment_confidence(const libxs_predict_info_t* info);
 
 int main(int argc, char* argv[])
 {
-  int argi = 1, mode = LIBXS_PREDICT_AUTO, use_rf = 0;
+  int argi = 1, mode = LIBXS_PREDICT_AUTO, use_rf = 0, use_hknn = 0;
   int order_arg = 0;
   double quality = 0;
   double eval_fraction = 0.8;
@@ -54,6 +54,7 @@ int main(int argc, char* argv[])
     }
     else if ('i' == argv[argi][0]) mode = LIBXS_PREDICT_INTERPOLATE;
     else if ('r' == argv[argi][0]) use_rf = 1;
+    else if ('h' == argv[argi][0]) use_hknn = 1;
     ++argi;
   }
   if (argi < argc && '-' == argv[argi][0] && '\0' != argv[argi][1]) {
@@ -85,6 +86,7 @@ int main(int argc, char* argv[])
       "  compress: drop predictable entries (Q: threshold, default 0.9)\n"
       "  interp:   force interpolation for all outputs\n"
       "  rf:       Random Forest classification\n"
+      "  hknn:    hierarchical kNN (Hilbert-stratified RF partition)\n"
       "  -N: max polynomial order (default: 0 = auto)\n"
       "  confidence-prefix: optional prefix for saved-model confidence maps\n"
       "  Trains on all entries, saves the model, and reports\n"
@@ -104,6 +106,7 @@ int main(int argc, char* argv[])
           double inputs[NINPUTS], outputs[NOUTPUTS], dt_build;
           libxs_predict_set_mode(model, mode);
           if (0 != use_rf) libxs_predict_set_decompose(model, LIBXS_PREDICT_RF);
+          else if (0 != use_hknn) libxs_predict_set_decompose(model, LIBXS_PREDICT_HKNN);
           for (i = 0; i < ntotal; ++i) {
             libxs_predict_get(source, i, inputs, outputs);
             libxs_predict_push(NULL, model, inputs, outputs);
@@ -136,6 +139,9 @@ int main(int argc, char* argv[])
                 libxs_predict_set_mode(val_model, mode);
                 if (0 != use_rf) {
                   libxs_predict_set_decompose(val_model, LIBXS_PREDICT_RF);
+                }
+                else if (0 != use_hknn) {
+                  libxs_predict_set_decompose(val_model, LIBXS_PREDICT_HKNN);
                 }
                 for (i = 0; i < nval; ++i) {
                   libxs_predict_get(source, i, vi, vo);
@@ -189,53 +195,92 @@ int main(int argc, char* argv[])
 static void evaluate(const libxs_predict_t* model,
   const libxs_predict_t* reference, int ntotal)
 {
-  libxs_timer_tick_t tick;
-  double maxerr[NOUTPUTS] = { 0 }, sumerr[NOUTPUTS] = { 0 };
-  double dt_eval;
   double* all_inputs = (double*)malloc((size_t)ntotal * NINPUTS * sizeof(double));
   double* all_predicted = (double*)malloc((size_t)ntotal * NOUTPUTS * sizeof(double));
-  int i, j;
-  if (NULL == all_inputs || NULL == all_predicted) {
-    free(all_inputs);
-    free(all_predicted);
-    return;
-  }
-  for (i = 0; i < ntotal; ++i) {
-    libxs_predict_get(reference, i, all_inputs + (size_t)i * NINPUTS, NULL);
-  }
-  tick = libxs_timer_tick();
+  if (NULL != all_inputs && NULL != all_predicted) {
+    double maxerr[NOUTPUTS] = { 0 }, sumerr[NOUTPUTS] = { 0 };
+    libxs_timer_tick_t tick;
+    double dt_eval;
+    int i, j;
+    for (i = 0; i < ntotal; ++i) {
+      libxs_predict_get(reference, i, all_inputs + (size_t)i * NINPUTS, NULL);
+    }
+    tick = libxs_timer_tick();
 #if defined(_OPENMP)
-# pragma omp parallel
-  { const int tid = omp_get_thread_num(), ntasks = omp_get_num_threads();
-    libxs_predict_eval_batch_task(model, all_inputs, all_predicted,
-      ntotal, 1, tid, ntasks);
-  }
+#   pragma omp parallel
+    { const int tid = omp_get_thread_num(), ntasks = omp_get_num_threads();
+      libxs_predict_eval_batch_task(model, all_inputs, all_predicted,
+        ntotal, 1, tid, ntasks);
+    }
 #else
-  libxs_predict_eval_batch(model, all_inputs, all_predicted, ntotal, 1);
+    libxs_predict_eval_batch(model, all_inputs, all_predicted, ntotal, 1);
 #endif
-  dt_eval = libxs_timer_duration(tick, libxs_timer_tick());
-  for (i = 0; i < ntotal; ++i) {
-    double expected[NOUTPUTS];
-    libxs_predict_get(reference, i, NULL, expected);
+    dt_eval = libxs_timer_duration(tick, libxs_timer_tick());
+    for (i = 0; i < ntotal; ++i) {
+      double expected[NOUTPUTS];
+      libxs_predict_get(reference, i, NULL, expected);
+      for (j = 0; j < NOUTPUTS; ++j) {
+        const double err = LIBXS_DELTA(
+          all_predicted[(size_t)i * NOUTPUTS + j], expected[j]);
+        sumerr[j] += err;
+        if (err > maxerr[j]) maxerr[j] = err;
+      }
+    }
+    fprintf(stdout, "Validation (%d samples):\n", ntotal);
+    fprintf(stdout, "  param   avg-err   max-err\n");
     for (j = 0; j < NOUTPUTS; ++j) {
-      const double err = LIBXS_DELTA(
-        all_predicted[(size_t)i * NOUTPUTS + j], expected[j]);
-      sumerr[j] += err;
-      if (err > maxerr[j]) maxerr[j] = err;
+      int len = 0;
+      const char* name = libxs_strtoken(output_names, ",", j, &len);
+      fprintf(stdout, "  %-4.*s  %9.2e %9.2e\n",
+        len, name,
+        (0 < ntotal) ? (sumerr[j] / ntotal) : 0.0, maxerr[j]);
+    }
+    fprintf(stdout, "Eval: %d queries (%.2f s)\n", ntotal, dt_eval);
+    { const int nconf = (int)(sizeof(confidence_outputs)
+        / sizeof(confidence_outputs[0]));
+      const double threshold = 0.9;
+      int gated_correct[5] = {0}, gated_wrong[5] = {0}, deferred[5] = {0};
+      int ci;
+      for (i = 0; i < ntotal; ++i) {
+        double expected[NOUTPUTS];
+        libxs_predict_info_t info;
+        libxs_predict_eval(NULL, model,
+          all_inputs + (size_t)i * NINPUTS, NULL, &info, 1);
+        libxs_predict_get(reference, i, NULL, expected);
+        for (ci = 0; ci < nconf; ++ci) {
+          const int oi = confidence_outputs[ci];
+          if (NULL != info.confidence && info.confidence[oi] >= threshold) {
+            if (NULL != info.values
+              && LIBXS_ROUNDX(int, info.values[oi]) == (int)expected[oi])
+            {
+              ++gated_correct[ci];
+            }
+            else {
+              ++gated_wrong[ci];
+            }
+          }
+          else {
+            ++deferred[ci];
+          }
+        }
+      }
+      fprintf(stdout, "Gated deployment (threshold=%.1f):\n", threshold);
+      fprintf(stdout,
+        "  param  correct  wrong  deferred  coverage  precision\n");
+      for (ci = 0; ci < nconf; ++ci) {
+        const int oi = confidence_outputs[ci];
+        const int acted = gated_correct[ci] + gated_wrong[ci];
+        int len = 0;
+        const char* name = libxs_strtoken(output_names, ",", oi, &len);
+        fprintf(stdout, "  %-4.*s  %5d  %5d  %5d     %5.1f%%    %5.1f%%\n",
+          len, name, gated_correct[ci], gated_wrong[ci], deferred[ci],
+          (ntotal > 0) ? 100.0 * acted / ntotal : 0.0,
+          (acted > 0) ? 100.0 * gated_correct[ci] / acted : 100.0);
+      }
     }
   }
   free(all_inputs);
   free(all_predicted);
-  fprintf(stdout, "Validation (%d samples):\n", ntotal);
-  fprintf(stdout, "  param   avg-err   max-err\n");
-  for (j = 0; j < NOUTPUTS; ++j) {
-    int len = 0;
-    const char* name = libxs_strtoken(output_names, ",", j, &len);
-    fprintf(stdout, "  %-4.*s  %9.2e %9.2e\n",
-      len, name,
-      (0 < ntotal) ? (sumerr[j] / ntotal) : 0.0, maxerr[j]);
-  }
-  fprintf(stdout, "Eval: %d queries (%.2f s)\n", ntotal, dt_eval);
 }
 
 
