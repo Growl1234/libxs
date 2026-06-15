@@ -29,7 +29,13 @@ import subprocess
 from lxml import etree
 from pptx import Presentation
 from pptx.oxml.ns import qn
+from pptx.dml.color import RGBColor
 from pptx.util import Inches, Pt
+
+try:
+    from PIL import Image as PILImage
+except ImportError:
+    PILImage = None
 
 SLIDE_WIDTH = Inches(40 / 3)  # 16:9 widescreen
 SLIDE_HEIGHT = Inches(7.5)
@@ -143,7 +149,7 @@ def _split_title_body(slides):
             result.append(s)
             continue
         heavy = any(
-            b["type"] in ("code", "table", "bullets")
+            b["type"] in ("code", "table", "bullets", "image")
             or (b["type"] == "text" and len(b["lines"]) > 2)
             for b in s["blocks"]
         )
@@ -156,6 +162,7 @@ def _split_title_body(slides):
                 "subtitle": s["subtitle"],
                 "is_title": True,
                 "blocks": [],
+                "notes": s.get("notes", ""),
             }
         )
         result.append(
@@ -164,6 +171,7 @@ def _split_title_body(slides):
                 "subtitle": "",
                 "is_title": False,
                 "blocks": s["blocks"],
+                "notes": "",
             }
         )
     return result
@@ -200,6 +208,8 @@ def _block_lines(block):
         return max(1, (nchars + 79) // 80)
     if btype == "heading":
         return 2
+    if btype == "image":
+        return 8
     return 1
 
 
@@ -240,6 +250,7 @@ def _breakup_slides(slides):
                     "subtitle": slide["subtitle"] if idx == 0 else "",
                     "is_title": False,
                     "blocks": chunk,
+                    "notes": slide.get("notes", "") if idx == 0 else "",
                 }
             )
     return result
@@ -255,7 +266,10 @@ def _parse_slide(text):
     if not text:
         return None
     lines = text.split("\n")
-    slide = {"title": "", "subtitle": "", "is_title": False, "blocks": []}
+    slide = {
+        "title": "", "subtitle": "", "is_title": False, "blocks": [],
+        "notes": "",
+    }
     i = _skip_blank(lines, 0)
 
     h1 = False
@@ -275,8 +289,29 @@ def _parse_slide(text):
 
     cur = None
     in_code = False
+    note_lines = []
+    in_note = False
     while i < len(lines):
         line = lines[i]
+
+        if in_note:
+            if not line.strip():
+                in_note = False
+            else:
+                note_lines.append(line.strip())
+            i += 1
+            continue
+
+        m_note = re.match(r"^Note:\s*(.*)$", line)
+        if m_note and not in_code:
+            if cur:
+                slide["blocks"].append(cur)
+                cur = None
+            in_note = True
+            if m_note.group(1):
+                note_lines.append(m_note.group(1))
+            i += 1
+            continue
 
         if line.strip().startswith("```"):
             if in_code:
@@ -316,6 +351,17 @@ def _parse_slide(text):
             i += 1
             continue
 
+        m_img = re.match(r"^!\[([^\]]*)\]\(([^)]+)\)\s*$", line)
+        if m_img:
+            if cur:
+                slide["blocks"].append(cur)
+                cur = None
+            slide["blocks"].append(
+                {"type": "image", "alt": m_img.group(1), "path": m_img.group(2)}
+            )
+            i += 1
+            continue
+
         m_bullet = re.match(r"^\s*(?:\\?[-*])\s+(.*)$", line)
         m_enum = re.match(r"^\s*(\d+)[.)]\s+(.*)$", line)
         if m_bullet or m_enum:
@@ -350,6 +396,8 @@ def _parse_slide(text):
         slide["blocks"].append(cur)
     if h1:
         slide["is_title"] = True
+    if note_lines:
+        slide["notes"] = " ".join(note_lines)
     return slide
 
 
@@ -363,10 +411,64 @@ def _find_layout(prs, name):
     return None
 
 
-def build_presentation(slides):
+def _set_notes(slide, text):
+    if not text:
+        return
+    notes_slide = slide.notes_slide
+    tf = notes_slide.notes_text_frame
+    tf.text = text
+
+
+def _image_size(img_path, max_width, max_height):
+    """Compute scaled dimensions preserving aspect ratio."""
+    if PILImage is not None:
+        with PILImage.open(img_path) as img:
+            w_px, h_px = img.size
+    else:
+        w_px, h_px = 1280, 720
+    aspect = w_px / h_px
+    width = max_width
+    height = int(width / aspect)
+    if height > max_height:
+        height = max_height
+        width = int(height * aspect)
+    return width, height
+
+
+def _apply_dark_theme(prs):
+    """Set black background on all slide layouts and master."""
+    for master in prs.slide_masters:
+        bg = master.background
+        bg.fill.solid()
+        bg.fill.fore_color.rgb = RGBColor(0, 0, 0)
+    for layout in prs.slide_layouts:
+        bg = layout.background
+        bg.fill.solid()
+        bg.fill.fore_color.rgb = RGBColor(0, 0, 0)
+
+
+def _set_text_color(prs):
+    """Set all text runs to white across every slide."""
+    white = RGBColor(255, 255, 255)
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    for run in para.runs:
+                        run.font.color.rgb = white
+            if shape.has_table:
+                for row in shape.table.rows:
+                    for cell in row.cells:
+                        for para in cell.text_frame.paragraphs:
+                            for run in para.runs:
+                                run.font.color.rgb = white
+
+
+def build_presentation(slides, base_dir="."):
     prs = Presentation()
     prs.slide_width = SLIDE_WIDTH
     prs.slide_height = SLIDE_HEIGHT
+    _apply_dark_theme(prs)
     for layout in prs.slide_layouts:
         for ph in layout.placeholders:
             if ph.placeholder_format.idx <= 1:
@@ -385,9 +487,10 @@ def build_presentation(slides):
         if s["is_title"]:
             _title_slide(prs, s)
         elif any(b["type"] == "table" for b in s["blocks"]):
-            _table_slide(prs, s)
+            _table_slide(prs, s, base_dir)
         else:
-            _content_slide(prs, s)
+            _content_slide(prs, s, base_dir)
+    _set_text_color(prs)
     return prs
 
 
@@ -402,18 +505,47 @@ def _title_slide(prs, data):
         if block["type"] == "text":
             p = tf.add_paragraph()
             add_runs(p, " ".join(block["lines"]))
+    _set_notes(slide, data.get("notes", ""))
 
 
-def _content_slide(prs, data):
-    layout = _find_layout(prs, "Title and Content") or prs.slide_layouts[1]
+def _content_slide(prs, data, base_dir="."):
+    has_image = any(b["type"] == "image" for b in data["blocks"])
+    layout = (
+        _find_layout(prs, "Title Only") or prs.slide_layouts[5]
+        if has_image
+        else _find_layout(prs, "Title and Content") or prs.slide_layouts[1]
+    )
     slide = prs.slides.add_slide(layout)
     slide.placeholders[0].text = data["title"]
-    tf = slide.placeholders[1].text_frame
-    tf.clear()
-    _render_blocks(tf, data["blocks"], placeholder=True)
+    if has_image:
+        top = BODY_TOP
+        for block in data["blocks"]:
+            if block["type"] == "image":
+                top = _add_image(slide, block, base_dir, MARGIN, top)
+            else:
+                n = 1
+                if block["type"] in ("code", "bullets"):
+                    n = len(block.get("lines", block.get("items", [])))
+                elif block["type"] == "text":
+                    n = len(block["lines"])
+                lh = (
+                    CODE_LINE_HEIGHT if block["type"] == "code"
+                    else TEXT_LINE_HEIGHT
+                )
+                height = lh * max(n, 1)
+                txbox = slide.shapes.add_textbox(MARGIN, top, CONTENT_WIDTH, height)
+                tf = txbox.text_frame
+                tf.word_wrap = True
+                _render_blocks(tf, [block], placeholder=False)
+                top += height + BLOCK_SPACING
+    else:
+        tf = slide.placeholders[1].text_frame
+        tf.clear()
+        _render_blocks(tf, data["blocks"], placeholder=True)
+    _set_notes(slide, data.get("notes", ""))
 
 
-def _table_slide(prs, data):
+def _table_slide(prs, data, base_dir="."):
     layout = _find_layout(prs, "Title Only") or prs.slide_layouts[5]
     slide = prs.slides.add_slide(layout)
     slide.placeholders[0].text = data["title"]
@@ -424,6 +556,8 @@ def _table_slide(prs, data):
     for block in data["blocks"]:
         if block["type"] == "table":
             top = _add_table(slide, block["rows"], left, top, width)
+        elif block["type"] == "image":
+            top = _add_image(slide, block, base_dir, left, top)
         else:
             n = 1
             if block["type"] in ("code", "bullets"):
@@ -437,6 +571,7 @@ def _table_slide(prs, data):
             tf.word_wrap = True
             _render_blocks(tf, [block], placeholder=False)
             top += height + BLOCK_SPACING
+    _set_notes(slide, data.get("notes", ""))
 
 
 def _render_blocks(tf, blocks, placeholder=False):
@@ -498,6 +633,20 @@ def _add_table(slide, rows, left, top, width):
                     for run in p.runs:
                         run.font.bold = True
     return top + TABLE_ROW_HEIGHT * n_rows + BLOCK_SPACING
+
+
+def _add_image(slide, block, base_dir, left, top):
+    img_path = block["path"]
+    if not os.path.isabs(img_path):
+        img_path = os.path.join(base_dir, img_path)
+    if not os.path.isfile(img_path):
+        return top
+    max_w = CONTENT_WIDTH
+    max_h = SLIDE_HEIGHT - top - MARGIN
+    width, height = _image_size(img_path, max_w, max_h)
+    cx = left + (max_w - width) // 2
+    slide.shapes.add_picture(img_path, cx, top, width, height)
+    return top + height + BLOCK_SPACING
 
 
 # ---------------------------------------------------------------------------
@@ -602,7 +751,8 @@ def main():
         output = os.path.splitext(args.input)[0] + ".pptx"
 
     slides = parse_markdown(args.input, args.split, breakup)
-    prs = build_presentation(slides)
+    base_dir = os.path.dirname(os.path.abspath(args.input))
+    prs = build_presentation(slides, base_dir)
     prs.save(output)
     autofit(output)
     if not args.no_resave:
