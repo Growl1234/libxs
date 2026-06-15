@@ -86,7 +86,7 @@ int main(int argc, char* argv[])
       "  compress: drop predictable entries (Q: threshold, default 0.9)\n"
       "  interp:   force interpolation for all outputs\n"
       "  rf:       Random Forest classification\n"
-      "  hknn:    hierarchical kNN (Hilbert-stratified RF partition)\n"
+      "  hknn:    hierarchical kNN (Fisher-guided partition)\n"
       "  -N: max polynomial order (default: 0 = auto)\n"
       "  confidence-prefix: optional prefix for saved-model confidence maps\n"
       "  Trains on all entries, saves the model, and reports\n"

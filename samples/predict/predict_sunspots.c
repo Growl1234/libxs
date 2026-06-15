@@ -25,18 +25,23 @@ int main(int argc, char* argv[])
 {
   const char* filename = (argc > 1) ? argv[1] : NULL;
   const double split = (argc > 2) ? atof(argv[2]) : 0.8;
+  int decompose = LIBXS_PREDICT_RAW;
   double quality = 0;
-  int result = EXIT_FAILURE;
+  int argi, result = EXIT_FAILURE;
   double* series = NULL;
   int total = 0;
-  if (argc > 3 && 'c' == argv[3][0]) {
-    const char* p = argv[3];
-    while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
-    quality = ('\0' != *p) ? atof(p) : 0.9;
+  for (argi = 3; argi < argc; ++argi) {
+    if ('c' == argv[argi][0]) {
+      const char* p = argv[argi];
+      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
+      quality = ('\0' != *p) ? atof(p) : 0.9;
+    }
+    else if ('h' == argv[argi][0]) decompose = LIBXS_PREDICT_HKNN;
+    else if ('r' == argv[argi][0]) decompose = LIBXS_PREDICT_RF;
   }
   if (NULL == filename) {
     fprintf(stdout,
-      "Usage: %s <sunspot_csv> [train_fraction] [compress[Q]]\n"
+      "Usage: %s <sunspot_csv> [train_fraction] [compress[Q]] [hknn|rf]\n"
       "  Timeseries prediction using sliding-window kNN.\n"
       "  Input: SILSO monthly sunspot CSV (semicolon-delimited).\n"
       "  Default train_fraction: 0.8\n", argv[0]);
@@ -50,6 +55,7 @@ int main(int argc, char* argv[])
       double dt_build, dt_eval;
       int t, build_ok = EXIT_FAILURE;
       libxs_predict_set_mode(model, LIBXS_PREDICT_TEMPORAL);
+      libxs_predict_set_decompose(model, decompose);
       libxs_predict_set_series(model, 1, WINDOW);
       for (t = 0; t < train_end; ++t) {
         libxs_predict_push(NULL, model, &series[t], NULL);

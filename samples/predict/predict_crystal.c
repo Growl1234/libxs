@@ -34,6 +34,7 @@ int main(int argc, char* argv[])
       quality = ('\0' != *p) ? atof(p) : 0.9;
     }
     else if ('f' == argv[argi][0]) decompose = LIBXS_PREDICT_FISHER;
+    else if ('h' == argv[argi][0]) decompose = LIBXS_PREDICT_HKNN;
     else if ('s' == argv[argi][0]) decompose = LIBXS_PREDICT_SETDIFF;
     else if ('r' == argv[argi][0]) decompose = LIBXS_PREDICT_RF;
     else if ('n' == argv[argi][0]) decompose = LIBXS_PREDICT_RAW;
@@ -42,7 +43,7 @@ int main(int argc, char* argv[])
   if (NULL == filename) {
     fprintf(stdout,
       "Usage: %s <crystal_csv> [train_fraction] [order] [nclusters]"
-      " [compress[Q]] [fisher|setdiff|rf|none]\n"
+      " [compress[Q]] [fisher|hknn|setdiff|rf|none]\n"
       "  Crystal system prediction from composition features.\n"
       "  Input: CSV with numeric features + crystal_system label (last col).\n"
       "  Crystal systems: 1=triclinic, 2=monoclinic, 3=orthorhombic,\n"

@@ -24,18 +24,24 @@ int main(int argc, char* argv[])
   const char* tahiti_file = (argc > 1) ? argv[1] : NULL;
   const char* darwin_file = (argc > 2) ? argv[2] : NULL;
   const double split = (argc > 3) ? atof(argv[3]) : 0.8;
+  int decompose = -1;
   double quality = 0;
-  int result = EXIT_FAILURE;
+  int argi, result = EXIT_FAILURE;
   double *tahiti = NULL, *darwin = NULL;
   int ntahiti = 0, ndarwin = 0;
-  if (argc > 4 && 'c' == argv[4][0]) {
-    const char* p = argv[4];
-    while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
-    quality = ('\0' != *p) ? atof(p) : 0.9;
+  for (argi = 4; argi < argc; ++argi) {
+    if ('c' == argv[argi][0]) {
+      const char* p = argv[argi];
+      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
+      quality = ('\0' != *p) ? atof(p) : 0.9;
+    }
+    else if ('h' == argv[argi][0]) decompose = LIBXS_PREDICT_HKNN;
+    else if ('r' == argv[argi][0]) decompose = LIBXS_PREDICT_RF;
   }
   if (NULL == tahiti_file || NULL == darwin_file) {
     fprintf(stdout,
-      "Usage: %s <tahiti_file> <darwin_file> [train_fraction] [compress[Q]]\n"
+      "Usage: %s <tahiti_file> <darwin_file> [train_fraction]"
+      " [compress[Q]] [hknn|rf]\n"
       "  SOI prediction from anti-correlated Tahiti/Darwin SLP.\n"
       "  Uses SPREAD decomposition (sum/diff modes).\n"
       "  Input: NOAA CPC fixed-width monthly SLP files.\n"
@@ -54,7 +60,8 @@ int main(int argc, char* argv[])
       libxs_predict_set_mode(model, LIBXS_PREDICT_TEMPORAL);
       libxs_predict_set_series(model, NSERIES, WINDOW);
       libxs_predict_set_target(model, 0);
-      libxs_predict_set_decompose(model, LIBXS_PREDICT_SPREAD);
+      libxs_predict_set_decompose(model,
+        (0 <= decompose) ? decompose : LIBXS_PREDICT_SPREAD);
       for (t = 0; t < train_end; ++t) {
         double vals[2];
         vals[0] = tahiti[t];
