@@ -1,7 +1,5 @@
 # Parameter Prediction
 
-<a href="../predict/" target="_blank">Start Presentation</a>
-
 Header: `libxs_predict.h`
 
 Predict output parameters from input parameters using
@@ -45,7 +43,8 @@ typedef enum libxs_predict_decompose_t {
   LIBXS_PREDICT_PCA     = 2,
   LIBXS_PREDICT_SETDIFF = 3,
   LIBXS_PREDICT_FISHER  = 4,
-  LIBXS_PREDICT_RF      = 5
+  LIBXS_PREDICT_RF      = 5,
+  LIBXS_PREDICT_HKNN    = 6
 } libxs_predict_decompose_t;
 ```
 
@@ -79,12 +78,22 @@ Controls input processing and prediction strategy:
   trees. Per-output confidence = vote fraction. Excels on
   high-dimensional classification (37+ features). Persisted
   in save/load (compact on-disk format: 15 bytes/node).
+- HKNN: hierarchical kNN. At build time, partitions data
+  using a Fisher-guided kd-tree (output-aware dimension
+  selection, adaptive balance penalty) followed by Lloyd
+  refinement. Uses Gini impurity when a single categorical
+  output is detected. A soft cap based on the Fisher/Gini
+  score suppresses marginal splits near target cluster count.
+  Inference uses standard kNN within each partition. Best for
+  structured parameter prediction where output-aware spatial
+  partitioning outperforms geometric k-means.
 
 PCA/SPREAD decomposition is applied at build time to stored
 entries and at eval time to user queries. Inverse prediction
 returns inputs in raw (user) space. Feature selection modes
 (SETDIFF, FISHER) only set weights at build time. RF replaces
-the kNN eval path entirely.
+the kNN eval path entirely. HKNN replaces only the clustering
+step (kNN inference is unchanged).
 
 ## Output Transforms
 
@@ -157,13 +166,6 @@ automatically when per-output confidence drops below 0.9.
 When set to >0, always perform the given number of iterations
 regardless of confidence.
 
-Refinement works by: (1) predicting outputs, (2) finding the
-canonical historical entry matching those outputs via inverse,
-(3) re-predicting from the canonical inputs. If the refined
-prediction has higher confidence, it replaces the original.
-This improves self-consistency for uncertain queries without
-affecting confident predictions.
-
 ## Timeseries Configuration
 
 ```C
@@ -188,22 +190,12 @@ input = concatenated windows across all series, output = the
 next horizon values of the target series.
 
 set_target selects which series to predict (0-based, default 0).
-Each model predicts one target series; to forecast multiple series,
-create one model per target (sharing the same training data and
-decomposition).
 set_decompose selects input processing mode (see above).
 
 set_diff enables auto-differencing for non-stationary series:
 - `set_diff(model, 0)`: auto-detect order from fingerprint decay.
-- `set_diff(model, d)`: explicit order d (1 = linear detrend, etc).
-- Default is disabled (-1). The build step fingerprints the target
-  series and finds the lowest order that makes it stationary.
-  At eval, the framework differences the raw query, predicts in
-  diff space, and integrates back to absolute values.
-- Avoid combining set_diff with LIBXS_PREDICT_INTERPOLATE: differenced
-  outputs are typically noisy (random-walk residuals), and polynomial
-  extrapolation diverges on such data. Use AUTO (default) which lets
-  the fingerprint choose kNN where appropriate.
+- `set_diff(model, d)`: explicit order d (1 = linear detrend).
+- Default is disabled (-1).
 
 Single-series example (sunspots):
 ```C
@@ -234,19 +226,13 @@ libxs_predict_set_mode(model, LIBXS_PREDICT_TEMPORAL);
 libxs_predict_set_series(model, 2, WINDOW);
 libxs_predict_set_target(model, 0);
 libxs_predict_set_decompose(model, LIBXS_PREDICT_SPREAD);
-libxs_predict_set_diff(model, 0);  /* auto-detect order */
+libxs_predict_set_diff(model, 0);
 for (t = 0; t < n; ++t) {
     double vals[2] = {price_A[t], price_B[t]};
     libxs_predict_push(NULL, model, vals, NULL);
 }
 libxs_predict_build(model, 0, 2, 0);
 ```
-
-The eval signature is unchanged: provide ninputs values
-(raw window for all series) and receive absolute predictions.
-The framework differences the query internally, predicts in
-diff space, and integrates back using the query's last value.
-The decomposition is applied transparently to the query.
 
 ## Training
 
@@ -257,42 +243,23 @@ int libxs_predict_push(libxs_lock_t* lock,
 ```
 
 Push one training entry. When set_series was called and
-outputs is NULL, the inputs array holds nseries values
-representing one timestep; sliding windows are constructed
-at build time. Otherwise, inputs holds M values and outputs
-holds N values as before. Output values are transformed
-internally if a transform was set. The lock is optional
-(NULL if single-threaded). Returns EXIT_SUCCESS or
-EXIT_FAILURE.
+outputs is NULL, inputs holds nseries values representing
+one timestep; sliding windows are constructed at build time.
+Returns EXIT_SUCCESS or EXIT_FAILURE.
 
 ```C
 int libxs_predict_build(libxs_predict_t* model,
   int nclusters, int order, double quality);
 ```
 
-Build the model from pushed entries. A value of nclusters=0
-selects sqrt(n) clusters automatically. The order parameter
-controls maximum polynomial order for interpolation:
-order > 0 uses at most that order, order = 0 auto-optimizes
-via exhaustive scan over [1..MAXORDER], order < 0 scans up
-to |order|. May be called again after pushing more entries
-(normalization is recomputed from all entries).
+Build the model from pushed entries. nclusters=0 selects
+sqrt(n) clusters automatically. order>0 uses at most that
+order, order=0 auto-optimizes, order<0 scans up to |order|.
 
 The quality parameter (0..1) controls model compression:
-- quality = 0: no compression (default, all entries retained).
-- quality > 0: after building, a leave-one-out pass removes
-  entries that are perfectly predictable by their neighbors.
-  An entry is removed only if (a) the kNN prediction with that
-  entry excluded matches the actual value for all classify-mode
-  outputs, (b) the local neighborhood shows zero variance
-  (unanimous agreement), and (c) the minimum LOO confidence
-  exceeds quality. For interpolation-mode outputs, the polynomial
-  residual must be below errors * (1-quality).
-
-Compression operates in-place (no rebuild): clusters are
-compacted and polynomials refitted on the remaining entries.
-Skipped for Random Forest models. The quality value is
-transient (not saved with the model).
+- quality=0: no compression (default, all entries retained).
+- quality>0: leave-one-out pass removes entries that are
+  perfectly predictable by their neighbors.
 
 ```C
 int libxs_predict_build_task(libxs_lock_t* lock,
@@ -301,8 +268,7 @@ int libxs_predict_build_task(libxs_lock_t* lock,
 ```
 
 Per-thread collective form. All threads call with same
-model/nclusters/order/quality. tid=0 performs the build,
-others spin-wait. The lock is optional (NULL is accepted).
+parameters. tid=0 performs the build, others spin-wait.
 
 ## Evaluation
 
@@ -313,24 +279,10 @@ void libxs_predict_eval(libxs_lock_t* lock,
   libxs_predict_info_t* info, int nblend);
 ```
 
-Predict outputs for given inputs. Output values are
-inverse-transformed if a transform was set (caller receives
-original-scale values). The nblend parameter controls
-multi-cluster blending: 1=nearest only, 0=auto. The info
-pointer (optional) receives per-output confidence, variance,
-error bounds, and mode flags.
-
-When average confidence is below 0.7, the framework
-automatically expands to multi-cluster blending for outputs
-with low confidence (per-output selective blend). Only
-outputs with confidence below the threshold are blended;
-high-confidence outputs retain their primary-cluster
-prediction. This self-correcting behavior improves uncertain
-outputs without degrading confident ones.
-
-After blending, if any output remains below confidence 0.9,
-one forward-inverse-forward refinement iteration is applied
-automatically (see set_refine).
+Predict outputs for given inputs. nblend controls
+multi-cluster blending: 1=nearest only, 0=auto.
+The info pointer (optional) receives per-output confidence,
+variance, error bounds, and mode flags.
 
 ```C
 void libxs_predict_inverse(libxs_lock_t* lock,
@@ -340,10 +292,6 @@ void libxs_predict_inverse(libxs_lock_t* lock,
 ```
 
 Inverse prediction: find inputs that produce desired outputs.
-Discrete (classify-mode) outputs are matched exactly as
-constraints; continuous (interpolate-mode) outputs are matched
-by proximity. Returns the best-matching entry's inputs.
-The info distance field gives the residual (0 = exact match).
 
 ```C
 void libxs_predict_eval_batch(
@@ -357,9 +305,8 @@ void libxs_predict_eval_batch_task(
   int count, int nblend, int tid, int ntasks);
 ```
 
-Batch prediction. The input array holds count*M values
-(row-major), the output array receives count*N values.
-The task variant distributes queries across threads by slice.
+Batch prediction. The task variant distributes queries
+across threads by slice.
 
 ## Query and Access
 
@@ -371,11 +318,9 @@ void libxs_predict_get(const libxs_predict_t* model,
   int index, double inputs[], double outputs[]);
 ```
 
-The query function fills a statistics struct with cluster
-count, entry count, compression ratio, polynomial order used,
-and order-scan iterations. The get function retrieves the
-i-th pushed entry (0-based); inputs and outputs may
-independently be NULL.
+query fills a statistics struct (cluster count, entry count,
+compression ratio, polynomial order, diff_order).
+get retrieves the i-th pushed entry (0-based).
 
 ## Persistence
 
@@ -388,8 +333,6 @@ libxs_predict_t* libxs_predict_load(
 
 Save: pass buffer=NULL to query required size, then allocate
 and call again. Load: returns a ready-to-eval model or NULL.
-The loaded model does not reference the source buffer.
-Weights and transforms are persisted in the binary format.
 
 ## CSV Import
 
@@ -400,21 +343,8 @@ int libxs_predict_load_csv(libxs_predict_t* model,
   const char* outputs[], int noutputs);
 ```
 
-Load delimited text and push entries. Setting delims to NULL
-auto-detects the separator. Lines starting with '#' are
-skipped as comments.
-
-The inputs and outputs arrays may be NULL: when NULL, columns
-are assigned sequentially (inputs = columns 0..ninputs-1,
-outputs = columns ninputs..ninputs+noutputs-1). When non-NULL,
-each column identifier is matched case-insensitively against
-the header line; if no match, it is parsed as a numeric index
-(0-based). Column names not found in the header are assigned
-to trailing unlabeled data columns in order.
-
-Rows with non-numeric values at selected columns are skipped
-(handles header lines automatically). Returns the number of
-entries pushed, or -1 on I/O error.
+Load delimited text and push entries. delims=NULL auto-detects
+separator. Returns number of entries pushed, or -1 on error.
 
 ## Structures
 
@@ -431,23 +361,11 @@ typedef struct libxs_predict_info_t {
 } libxs_predict_info_t;
 ```
 
-Populated by libxs_predict_eval when info is non-NULL.
-The error array holds per-output truncation error bounds.
-The confidence array holds per-output kNN vote fraction
-(0..1): the weighted agreement among k nearest neighbors.
-The variance array holds per-output variance among the k
-nearest neighbors -- high variance indicates disagreement
-in value (not just in vote) and triggers internal shrinkage
-toward the cluster mean for classify-mode outputs.
-The interpolated array is non-zero for outputs where
-polynomial interpolation was used. The cluster field gives
-the assigned cluster index (-1 if blended). The distance
-field gives the normalized distance to the nearest cluster
-centroid relative to its radius (0 = at centroid, >1 =
-outside training region).
-
-For inverse prediction, only cluster and distance are
-populated (distance gives the residual match quality).
+Populated by eval when info is non-NULL. confidence holds
+per-output kNN vote fraction (0..1). variance holds
+per-output neighbor disagreement. cluster gives the assigned
+cluster index (-1 if blended). distance gives normalized
+distance to nearest centroid.
 
 ```C
 typedef struct libxs_predict_query_t {
@@ -456,12 +374,10 @@ typedef struct libxs_predict_query_t {
   int nclusters;
   int nentries;
   int iterations;
+  int diff_order;
 } libxs_predict_query_t;
 ```
 
-Populated by libxs_predict_query. The compression field
-gives the ratio of raw data size to model size. The order
-field holds the polynomial order used (after auto-optimization
-if the build parameter was <= 0). The iterations field reports
-the number of orders scanned (0 if order > 0 was given
-directly).
+Populated by query. compression = raw/model size ratio.
+order = polynomial order used. diff_order = differencing
+order (0 if disabled).

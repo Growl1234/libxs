@@ -159,23 +159,57 @@ dimensionality. The functions return EXIT_SUCCESS or EXIT_FAILURE.
 ## k-d Tree
 
 ```C
+typedef int (*libxs_kdtree_split_t)(
+  int* dim, int* pos, const double* pts, int* idx,
+  int count, int depth, int nleaves, void* ctx);
+
+typedef struct libxs_kdtree_config_t {
+  int min_leaf;
+  libxs_kdtree_split_t split;
+  void* ctx;
+} libxs_kdtree_config_t;
+```
+
+Split callback for custom tree construction. Writes chosen
+split dimension into *dim and left-child count into *pos.
+The callback may reorder idx[0..count-1] to place left entries
+first; if it does, the partition function skips its internal
+quickselect. nleaves gives the current number of leaves already
+assigned. Return 0 for a valid split, nonzero to force a leaf.
+
+Config struct: min_leaf controls minimum node size (0 = split
+down to 1 element). split=NULL uses round-robin median splits.
+
+```C
 void libxs_kdtree_build(const double* pts, int* idx, int n,
-  int ndims, int stride);
+  int ndims, int stride, const libxs_kdtree_config_t* config);
+```
+
+Build a k-d tree in-place. Points are stored row-major:
+pts[i*stride + k] is coordinate k of point i. The index array
+idx[0..n-1] is rearranged into implicit tree structure.
+config may be NULL (round-robin median, leaf at 1 element).
+
+```C
+int libxs_kdtree_partition(const double* pts, int* idx, int n,
+  int ndims, int stride, int* assignments,
+  const libxs_kdtree_config_t* config);
+```
+
+Partition n points into leaves and write leaf IDs into
+assignments[0..n-1]. Returns the number of leaves. Same tree
+logic as build, but produces cluster assignments instead of a
+query-tree index.
+
+```C
 int libxs_kdtree_nearest(const double* pts, const int* idx,
   const unsigned char* used, int n, int ndims, int stride,
   const double* query, double max_dist2);
 ```
 
-Dense-array k-d tree for nearest-neighbor queries in arbitrary
-dimensions. Points are stored row-major: pts[i*stride + k] is
-coordinate k of point i. stride >= ndims allows padding or
-interleaved auxiliary data. The index array idx[0..n-1] is
-rearranged into implicit tree structure during build.
-
-Query: finds the nearest point to query[0..ndims-1] within
-squared Euclidean distance max_dist2. Returns the point index
-or -1. The used array (may be NULL) marks consumed points
-(non-zero entries are skipped).
+Find the nearest point to query[0..ndims-1] within squared
+Euclidean distance max_dist2. Returns the point index or -1.
+The used array (may be NULL) marks consumed points.
 
 Convenience wrappers for 2D (interleaved x,y layout):
 
