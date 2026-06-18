@@ -10,7 +10,7 @@ of [LIBXSMM](https://github.com/libxsmm/libxsmm).
 
 | Domain                                            | Header              | Description                                                    |
 |---------------------------------------------------|---------------------|----------------------------------------------------------------|
-| [Permutation](documentation/libxs_perm.md)        | `libxs_perm.h`      | Co-prime shuffling, smooth row permutations                    |
+| [Permutation](documentation/libxs_perm.md)        | `libxs_perm.h`      | Co-prime shuffling, smooth row permutations, stratification    |
 | [Histogram](documentation/libxs_hist.md)          | `libxs_hist.h`      | Thread-safe histogram with running statistics                  |
 | [Registry](documentation/libxs_reg.md)            | `libxs_reg.h`       | Thread-safe key-value store with per-thread caching            |
 | [Hashing](documentation/libxs_hash.md)            | `libxs_hash.h`      | CRC32-based hashing, Adler-32, string hashing                  |

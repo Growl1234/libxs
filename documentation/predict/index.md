@@ -192,7 +192,7 @@ a confidence-gated predictor can provide it or abstain.
 | --- | ---: | ---: | --- |
 | Sunspots | MAE 17.6 | MAE 19.8–45.5 | 1.0 (dense cycles) |
 | Discharge | 0.23 err/σ | 0.10–0.47 | 1.0 (seasonal) |
-| SOI | nRMSE 0.11 | 0.23–0.55 | 1.0 (spread modes) |
+| SOI* | nRMSE 0.11 | 0.23–0.55 | 1.0 (spread modes) |
 | Earthquakes | MAE 0.265 | 0.184–0.283 | 0.694 (ambiguous) |
 | Crystals | 79.6% → 95.0% (conf ≥ 0.9) | ≈75–80% | 54% gated coverage |
 
@@ -203,6 +203,11 @@ metrics.
 <span style="opacity: 0.4; font-size: 50%;">Results for comparison from
 [Dang2022], [Akkala2025], [Kratzert2018], [Kratzert2019], [Simatupang2025],
 [Ahmed2024], [Kaftan2025]</span>
+
+<span style="opacity: 0.4; font-size: 50%;">* SOI: Southern Oscillation Index</span>
+
+Note: The Southern Oscillation Index (SOI) measures the difference in air pressure between
+Tahiti and Darwin, Australia, serving as a key indicator of El Niño and La Niña events.
 
 ---
 
@@ -254,9 +259,29 @@ The useful model is not the one that *always* has an answer.
 
 It is the one that knows when its answer should not be in charge.
 
-<span style="opacity: 0.2;">This slide set: https://libxs.readthedocs.io/predict/  
+<span style="opacity: 0.3;">This slide set: https://libxs.readthedocs.io/predict/  
 LIBXS: https://libxs.readthedocs.io/
 </span>
+
+---
+
+## What Else is in LIBXS?
+
+| Domain          | Summary                                                        |
+|-----------------|----------------------------------------------------------------|
+| Permutation     | Co-prime shuffling, smooth row permutations, stratification    |
+| Histogram       | Thread-safe histogram with running statistics                  |
+| Registry        | Thread-safe key-value store with per-thread caching            |
+| Hashing         | CRC32-based hashing, Adler-32, string hashing                  |
+| **Predict**     | Fingerprint-guided parameter prediction with model persistence |
+| Malloc          | Pool-based allocator (steady-state, no system calls)           |
+| Memory          | Byte comparison, matrix copy/transpose, alignment queries      |
+| String          | Edit distance, substring search, word similarity, formatting   |
+| Timer           | High-resolution timing via calibrated TSC                      |
+| CPUID           | CPU feature detection (SSE to AVX-512, AArch64, RISC-V)        |
+| GEMM            | Batched dense GEMM (strided, pointer-array, grouped)           |
+| Math            | Matrix comparison, GCD/LCM, coprime, BF16 conversion           |
+| MHD             | Read/write MetaImage (MHD/MHA) files                           |
 
 ---
 
