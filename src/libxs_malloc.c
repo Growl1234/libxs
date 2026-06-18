@@ -266,7 +266,7 @@ LIBXS_API_INLINE size_t internal_libxs_malloc_evict_available(
     internal_libxs_malloc_deallocate(pool, pointer);
     reclaimed += used;
   }
-  if (NULL != current->pointer) {
+  if (NULL != current && NULL != current->pointer) {
     const int hist_b = internal_libxs_malloc_hist_bucket(current->used);
     internal_libxs_malloc_deallocate(pool, current->pointer);
     reclaimed += current->used;
@@ -379,8 +379,12 @@ LIBXS_API void* libxs_malloc(libxs_malloc_pool_t* pool, size_t size, int alignme
           else { /* default: realloc */
             pointer = realloc(chunk->pointer, alloc_size);
 #if defined(LIBXS_MALLOC_EVICT)
-            if (NULL == pointer && 0 != internal_libxs_malloc_evict_available(pool, chunk)) {
+            if (NULL == pointer && 0 != internal_libxs_malloc_evict_available(pool, NULL)) {
               pointer = realloc(chunk->pointer, alloc_size);
+            }
+            if (NULL == pointer && NULL != chunk->pointer) {
+              internal_libxs_malloc_evict_available(pool, chunk);
+              pointer = (char*)internal_libxs_malloc_allocate(pool, alloc_size);
             }
 #endif
           }
