@@ -11,15 +11,17 @@ knows when a safe rule should stay in charge.
 
 ## The Problem
 
-CP2K and DBCSR tune GPU kernels for known matrix shapes.
-
-Deployment sees new shapes between tuned points.
+CP2K and DBCSR use tuned GPU kernels for known matrix shapes.  
+However, deployment sees new shapes between tuned points.
 
 | Choice | Risk |
 | --- | --- |
 | Fixed rules only | Miss local tuning opportunities |
 | Predict everything | Silent slowdowns |
 | Confidence-gated | Override only with evidence |
+
+<span style="opacity: 0.4; font-size: 50%;">Prior work predicted offline
+based on hardware-occupancy features using XGBoost [Jakobovits 2019].</span>
 
 ---
 
@@ -40,15 +42,13 @@ support.
 
 ## GPU Kernel Dispatch
 
-Small-matrix GPU kernel dispatch.
+Small-matrix GPU kernel dispatch from inputs `M`, `N`, and `K`.
 
-Inputs: `M`, `N`, `K`.
+**Output**: batch size, block sizes, workgroup shape,  
+loop unroll, layout, and access selectors.
 
-Outputs: batch size, block sizes, workgroup shape, loop unroll, layout,
-and access selectors.
-
-Training data: tuned kernels across GPU architectures (Intel PVC
-shown here; method is device-agnostic).
+**Training data**: tuned kernels parameters  
+(device-agnostic, Intel PVC shown here).
 
 ---
 
@@ -62,7 +62,7 @@ Nearby shapes can agree on a value that is wrong for the query.
 | --- | ---: | ---: | ---: |
 | 21 × 22 × 23 | 4 | 21 | 487 vs. 991 GF/s |
 
-Average error is not the operational risk.
+Average error is not the operational risk, e.g., Mean Absolute Error.
 
 Note: This example motivates policy separation. The current full-rerun
 evidence is summarized later.
@@ -79,8 +79,9 @@ Separate ownership from prediction.
 | structural safety | preference/access choices |
 | source rules stay authoritative | override near-unanimously |
 
-SMM kernel parameters: BS batch-size, BM/BN/BK block extents,
-WS work-sharing, WG workgroup shape, LU unroll, AL/AA/AB access modes.
+SMM kernel parameters: BS batch-size, BM/BN/BK block extents,  
+WS work-sharing, WG workgroup shape, LU unroll,  
+AL/AA/AB access modes.
 
 ---
 
@@ -108,12 +109,12 @@ else:
     use safe rule
 ```
 
-Abstention is part of LIBXS behavior.  Learned tuning becomes
-compatible with hard-won domain rules.
+Abstention is part of LIBXS behavior. Learned tuning  
+becomes compatible with hard-won domain rules.
 
 ---
 
-## PVC Tuning Structure
+## Tuned GPU Parameters
 
 ![PVC tuning impact by arithmetic-intensity bin](assets/pvc_ai_performance_slide.png)
 
@@ -124,7 +125,7 @@ values).  Other bins are near neutral — the rules are already strong.
 
 ---
 
-## PVC Confidence Projection
+## Confidence Projection
 
 ![Saved PVC predictor confidence over the M×N×K cube](assets/pvc_confidence_projection.png)
 
@@ -143,6 +144,11 @@ It changes the failure mode.
 | Wrong values silently deploy | Low evidence defers |
 | Average error hides risk | Per-output confidence is visible |
 | Outliers look like bugs | Outliers identify missing data |
+
+How to know if a parameter is confidently predicted?  
+Well, if you know how to predict...
+
+Note: confidence = (sum of weights voting for winner) / (sum of all weights)
 
 ---
 
@@ -171,6 +177,9 @@ The interface is still prediction plus confidence.
 The sample is a mixed classification problem  
 where confidence decides whether to act.
 
+<span style="opacity: 0.4; font-size: 50%;">AFLOW: An Automatic Framework
+for High-Throughput Materials Discovery [Curtarolo 2012].</span>
+
 Note: This is the key slide for computational chemistry audience.
 Structure initialization in CP2K/FHI-aims requires symmetry information;
 a confidence-gated predictor can provide it or abstain.
@@ -191,12 +200,16 @@ Confidence separates dense-coverage domains from genuinely ambiguous
 ones.  Literature comparisons are orienting — different features, splits,
 metrics.
 
+<span style="opacity: 0.4; font-size: 50%;">Results for comparison from
+[Dang2022], [Akkala2025], [Kratzert2018], [Kratzert2019], [Simatupang2025],
+[Ahmed2024], [Kaftan2025]</span>
+
 ---
 
 ## Why This Matters for Atomistic Codes
 
-Simulation setup often needs plausible structure or kernel choices before
-expensive computation begins.
+Simulation setup often needs plausible structure or  
+kernel choices before expensive computation begins.
 
 A confidence-gated predictor can say:
 
@@ -217,7 +230,7 @@ No Python, no framework dependency — links into your Fortran binary.
 | Checkpoint or idle point | `libxs_predict_build` | rebuild model cheaply |
 | Next query | `libxs_predict_eval` | value + confidence |
 
-Start from a CSV of prior runs or start empty — learn from completed
+Start from a CSV of prior runs or start empty — learn from completed  
 work, and let later decisions use the stronger local evidence.
 
 ---
@@ -226,25 +239,31 @@ work, and let later decisions use the stronger local evidence.
 
 - Sparse tuning spaces reward abstention.
 - Confidence must be per output.
-- Running jobs can add evidence and rebuild at checkpoints.
+- Running jobs can add evidence  
+  and rebuild at checkpoints.
 - Fingerprints diagnose mode choice.
 - *k*NN votes expose local evidence.
-- Rule deferral turns uncertainty into safe behavior.
+- Rule deferral turns uncertainty  
+  into safe behavior.
 
 ---
 
 ## Closing Thought
 
-The useful model is not the one that always has an answer.
+The useful model is not the one that *always* has an answer.
 
 It is the one that knows when its answer should not be in charge.
+
+<span style="opacity: 0.2;">This slide set: https://libxs.readthedocs.io/predict/  
+LIBXS: https://libxs.readthedocs.io/
+</span>
 
 ---
 
 ## If It Is Hardcoded, It Is a Candidate
 
-Any magic constant or fixed heuristic that was fitted once and
-never revisited is a prediction opportunity.
+Any magic constant or fixed heuristic that was fitted once  
+and never revisited is a prediction opportunity.
 
 | Pattern | Example |
 | --- | --- |
@@ -253,19 +272,19 @@ never revisited is a prediction opportunity.
 | Compile-time constant | `max_elements_per_block = 32` |
 | Static threshold | `eps_filter` in LS-SCF |
 
-If the code ships a number that someone tuned by hand — confidence-gated
+If the code ships a number that someone tuned by hand — confidence-gated  
 prediction can learn a better one at runtime or abstain safely.
 
 ---
 
-## Ideas: Work Packages
+## Ideas: Where to apply Prediction?
 
-Five places where confidence-gated prediction plugs into CP2K.
+Five places where confidence-gated prediction plugs into CP2K.  
 Each is self-contained — pick the one that excites you.
 
 ---
 
-## WP 1 — HFX Cost Model
+## 1) HFX Cost Model
 
 Shell-quartet cost drives load balancing.  Today: a fixed polynomial
 fitted once.  Tomorrow: learn from measured timings, improve every SCF.
@@ -284,7 +303,7 @@ step 4+:        eval(inputs) → cost estimate + confidence
 
 ---
 
-## WP 2 — K-Point Mesh and Grouping
+## 2) K-Point Mesh and Grouping
 
 Users guess `nkp_grid` and `parallel_group_size`.  A database of
 converged runs can recommend both — or abstain and keep the default.
@@ -305,7 +324,7 @@ One-shot at setup.  No MPI-redistribution.
 
 ---
 
-## WP 3 — SCF Convergence
+## 3) SCF Convergence
 
 MD / geometry-opt repeats SCF hundreds of times on similar densities.
 Predict iteration count to adapt `max_scf`, DIIS depth, preconditioner.
@@ -326,14 +345,14 @@ communication.
 
 ---
 
-## WP 4 — Filter Threshold (LS-SCF)
+## 4) Filter Threshold (LS-SCF)
 
 `eps_filter` balances sparsity against accuracy.  Static today;
 optimal value drifts as the density matrix evolves.
 
 ```text
         ε tight           ε loose
-accuracy  |████████████████······|  sparsity
+accuracy  |XXXXXXXXXXXXXXXX······|  sparsity
           ↑ cubic cost     ↑ lost digits
 
 push(iteration, sparsity_frac, timing)   — temporal mode
@@ -346,7 +365,7 @@ fallback to the previous value.
 
 ---
 
-## WP 5 — DBCSR Block Size
+## 5a) DBCSR Block Size
 
 `max_elements_per_block = 32` — hardcoded, never tuned per system.
 
@@ -369,7 +388,7 @@ MPI-redistribution — cheap at setup, prohibitive mid-run.
 
 ---
 
-## WP 5 — When to Predict
+## 5b) When to Predict
 
 CP2K creates few distinct matrix structures per run.  Matrices that
 share row/column block-size arrays are structurally identical (S, H, P,
