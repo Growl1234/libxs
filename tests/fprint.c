@@ -22,7 +22,7 @@ int main(void)
   { double a[] = {5.0, 5.0, 5.0, 5.0, 5.0};
     const size_t shape[] = {5};
     libxs_fprint_t fa;
-    if (EXIT_SUCCESS != libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 4, -1)) {
+    if (EXIT_SUCCESS != libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 4, 0, 0, 0)) {
       FPRINTF(stderr, "ERROR line #%i: constant fprint failed\n", __LINE__);
       exit(EXIT_FAILURE);
     }
@@ -48,7 +48,7 @@ int main(void)
   { double a[] = {0.0, 1.0, 2.0, 3.0, 4.0};
     const size_t shape[] = {5};
     libxs_fprint_t fa;
-    if (EXIT_SUCCESS != libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 4, -1)) {
+    if (EXIT_SUCCESS != libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 4, 0, 0, 0)) {
       FPRINTF(stderr, "ERROR line #%i: linear fprint failed\n", __LINE__);
       exit(EXIT_FAILURE);
     }
@@ -72,7 +72,7 @@ int main(void)
     const size_t shape[] = {5};
     libxs_fprint_t fa;
     double d;
-    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 4, -1);
+    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 4, 0, 0, 0);
     d = libxs_fprint_diff(&fa, &fa, NULL);
     if (1E-15 < d) {
       FPRINTF(stderr, "ERROR line #%i: self-distance=%.17g\n", __LINE__, d);
@@ -85,8 +85,8 @@ int main(void)
     double a3[] = {0.0, 4.0, 16.0};
     const size_t s5[] = {5}, s3[] = {3};
     libxs_fprint_t f5, f3;
-    libxs_fprint(&f5, LIBXS_DATATYPE_F64, a5, 1, s5, NULL, 2, -1);
-    libxs_fprint(&f3, LIBXS_DATATYPE_F64, a3, 1, s3, NULL, 2, -1);
+    libxs_fprint(&f5, LIBXS_DATATYPE_F64, a5, 1, s5, NULL, 2, 0, 0, 0);
+    libxs_fprint(&f3, LIBXS_DATATYPE_F64, a3, 1, s3, NULL, 2, 0, 0, 0);
     FPRINTF(stderr, "INFO line #%i: quadratic 5vs3 dist=%.17g\n",
       __LINE__, libxs_fprint_diff(&f5, &f3, NULL));
   }
@@ -97,8 +97,8 @@ int main(void)
     const size_t shape[] = {4};
     libxs_fprint_t fa, fb;
     double d;
-    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 3, -1);
-    libxs_fprint(&fb, LIBXS_DATATYPE_F64, b, 1, shape, NULL, 3, -1);
+    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 3, 0, 0, 0);
+    libxs_fprint(&fb, LIBXS_DATATYPE_F64, b, 1, shape, NULL, 3, 0, 0, 0);
     d = libxs_fprint_diff(&fa, &fb, NULL);
     if (1E-12 > d) {
       FPRINTF(stderr, "ERROR line #%i: different distance=%.17g\n", __LINE__, d);
@@ -112,8 +112,8 @@ int main(void)
     const size_t shape[] = {4};
     libxs_fprint_t fa, fb;
     double dab, dba;
-    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 3, -1);
-    libxs_fprint(&fb, LIBXS_DATATYPE_F64, b, 1, shape, NULL, 3, -1);
+    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 3, 0, 0, 0);
+    libxs_fprint(&fb, LIBXS_DATATYPE_F64, b, 1, shape, NULL, 3, 0, 0, 0);
     dab = libxs_fprint_diff(&fa, &fb, NULL);
     dba = libxs_fprint_diff(&fb, &fa, NULL);
     if (1E-15 < LIBXS_DELTA(dab, dba)) {
@@ -129,8 +129,8 @@ int main(void)
     const size_t shape[] = {4};
     libxs_fprint_t fa, fb;
     double d_val, d_def;
-    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 3, -1);
-    libxs_fprint(&fb, LIBXS_DATATYPE_F64, b, 1, shape, NULL, 3, -1);
+    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 3, 0, 0, 0);
+    libxs_fprint(&fb, LIBXS_DATATYPE_F64, b, 1, shape, NULL, 3, 0, 0, 0);
     d_val = libxs_fprint_diff(&fa, &fb, w);
     d_def = libxs_fprint_diff(&fa, &fb, NULL);
     if (1E-15 < LIBXS_DELTA(d_val, d_def) && d_val > d_def) {
@@ -143,7 +143,7 @@ int main(void)
   { float a[] = {1.0f, 2.0f, 4.0f, 8.0f};
     const size_t shape[] = {4};
     libxs_fprint_t fa;
-    if (EXIT_SUCCESS != libxs_fprint(&fa, LIBXS_DATATYPE_F32, a, 1, shape, NULL, 3, -1)) {
+    if (EXIT_SUCCESS != libxs_fprint(&fa, LIBXS_DATATYPE_F32, a, 1, shape, NULL, 3, 0, 0, 0)) {
       FPRINTF(stderr, "ERROR line #%i: F32 fprint failed\n", __LINE__);
       exit(EXIT_FAILURE);
     }
@@ -157,7 +157,7 @@ int main(void)
   { int a[] = {10, 20, 30, 40};
     const size_t shape[] = {4};
     libxs_fprint_t fa;
-    if (EXIT_SUCCESS != libxs_fprint(&fa, LIBXS_DATATYPE_I32, a, 1, shape, NULL, 2, -1)) {
+    if (EXIT_SUCCESS != libxs_fprint(&fa, LIBXS_DATATYPE_I32, a, 1, shape, NULL, 2, 0, 0, 0)) {
       FPRINTF(stderr, "ERROR line #%i: I32 fprint failed\n", __LINE__);
       exit(EXIT_FAILURE);
     }
@@ -171,7 +171,7 @@ int main(void)
   { double a[] = {1.0, 2.0};
     const size_t shape[] = {2};
     libxs_fprint_t fa;
-    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 10, -1);
+    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 10, 0, 0, 0);
     if (1 != fa.order) {
       FPRINTF(stderr, "ERROR line #%i: clamp order=%d\n", __LINE__, fa.order);
       exit(EXIT_FAILURE);
@@ -182,7 +182,7 @@ int main(void)
   { double a[] = {42.0};
     const size_t shape[] = {1};
     libxs_fprint_t fa;
-    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 5, -1);
+    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 5, 0, 0, 0);
     if (0 != fa.order || 1 != fa.n) {
       FPRINTF(stderr, "ERROR line #%i: single order=%d n=%d\n", __LINE__, fa.order, fa.n);
       exit(EXIT_FAILURE);
@@ -201,8 +201,8 @@ int main(void)
     const size_t shape[] = {3, 4};
     libxs_fprint_t fa, fb;
     double d;
-    libxs_fprint(&fa, LIBXS_DATATYPE_F64, m, 2, shape, NULL, 2, -1);
-    libxs_fprint(&fb, LIBXS_DATATYPE_F64, m, 2, shape, NULL, 2, -1);
+    libxs_fprint(&fa, LIBXS_DATATYPE_F64, m, 2, shape, NULL, 2, 0, 0, 0);
+    libxs_fprint(&fb, LIBXS_DATATYPE_F64, m, 2, shape, NULL, 2, 0, 0, 0);
     d = libxs_fprint_diff(&fa, &fb, NULL);
     if (1E-15 < d) {
       FPRINTF(stderr, "ERROR line #%i: 2D self-distance=%.17g\n", __LINE__, d);
@@ -218,8 +218,8 @@ int main(void)
     const size_t shape[] = {3, 2};
     libxs_fprint_t fa, fb;
     double d;
-    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 2, shape, NULL, 2, -1);
-    libxs_fprint(&fb, LIBXS_DATATYPE_F64, b, 2, shape, NULL, 2, -1);
+    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 2, shape, NULL, 2, 0, 0, 0);
+    libxs_fprint(&fb, LIBXS_DATATYPE_F64, b, 2, shape, NULL, 2, 0, 0, 0);
     d = libxs_fprint_diff(&fa, &fb, NULL);
     if (1E-12 > d) {
       FPRINTF(stderr, "ERROR line #%i: 2D different distance=%.17g\n", __LINE__, d);
@@ -233,8 +233,8 @@ int main(void)
     const size_t shape[] = {3, 2};
     libxs_fprint_t fa, fb;
     double dab, dba;
-    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 2, shape, NULL, 2, -1);
-    libxs_fprint(&fb, LIBXS_DATATYPE_F64, b, 2, shape, NULL, 2, -1);
+    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 2, shape, NULL, 2, 0, 0, 0);
+    libxs_fprint(&fb, LIBXS_DATATYPE_F64, b, 2, shape, NULL, 2, 0, 0, 0);
     dab = libxs_fprint_diff(&fa, &fb, NULL);
     dba = libxs_fprint_diff(&fb, &fa, NULL);
     if (1E-14 < LIBXS_DELTA(dab, dba)) {
@@ -252,8 +252,8 @@ int main(void)
     const size_t rshape[] = {3, 2};
     libxs_fprint_t fm, fr;
     double d;
-    libxs_fprint(&fm, LIBXS_DATATYPE_F64, m, 2, shape, stride, 2, -1);
-    libxs_fprint(&fr, LIBXS_DATATYPE_F64, ref, 2, rshape, NULL, 2, -1);
+    libxs_fprint(&fm, LIBXS_DATATYPE_F64, m, 2, shape, stride, 2, 0, 0, 0);
+    libxs_fprint(&fr, LIBXS_DATATYPE_F64, ref, 2, rshape, NULL, 2, 0, 0, 0);
     d = libxs_fprint_diff(&fm, &fr, NULL);
     if (1E-14 < d) {
       FPRINTF(stderr, "ERROR line #%i: 2D stride distance=%.17g\n", __LINE__, d);
@@ -268,8 +268,8 @@ int main(void)
                   7.0, 8.0, 9.0, 10.0, 11.0, 12.0};
     const size_t sa[] = {3, 2}, sb[] = {6, 2};
     libxs_fprint_t fa, fb;
-    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 2, sa, NULL, 2, -1);
-    libxs_fprint(&fb, LIBXS_DATATYPE_F64, b, 2, sb, NULL, 2, -1);
+    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 2, sa, NULL, 2, 0, 0, 0);
+    libxs_fprint(&fb, LIBXS_DATATYPE_F64, b, 2, sb, NULL, 2, 0, 0, 0);
     FPRINTF(stderr, "INFO line #%i: 2D shape diff dist=%.17g\n",
       __LINE__, libxs_fprint_diff(&fa, &fb, NULL));
   }
@@ -280,7 +280,7 @@ int main(void)
     libxs_fprint_t fa;
     int i;
     for (i = 0; i < 24; ++i) a[i] = (double)(i * i);
-    if (EXIT_SUCCESS != libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 3, shape, NULL, 2, -1)) {
+    if (EXIT_SUCCESS != libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 3, shape, NULL, 2, 0, 0, 0)) {
       FPRINTF(stderr, "ERROR line #%i: 3D fprint failed\n", __LINE__);
       exit(EXIT_FAILURE);
     }
@@ -304,7 +304,7 @@ int main(void)
         for (i0 = 0; i0 < 3; ++i0)
           m[i2 * 12 + i1 * 3 + i0] = 1.0 + i1;
     for (ax = 0; ax < 3; ++ax) {
-      if (EXIT_SUCCESS != libxs_fprint(&fp, LIBXS_DATATYPE_F64, m, 3, shape, NULL, 3, ax)) {
+      if (EXIT_SUCCESS != libxs_fprint(&fp, LIBXS_DATATYPE_F64, m, 3, shape, NULL, 3, ax, 0, LIBXS_FPRINT_PERAXIS)) {
         FPRINTF(stderr, "ERROR line #%i: 3D axis=%d fprint failed\n", __LINE__, ax);
         exit(EXIT_FAILURE);
       }
@@ -336,7 +336,7 @@ int main(void)
     const size_t shape[] = {5};
     libxs_fprint_t fa;
     double raw_d1;
-    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 2, -1);
+    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 2, 0, 0, 0);
     raw_d1 = libxs_fprint_raw(&fa, 1, fa.linf[1]);
     if (1.0 < LIBXS_DELTA(raw_d1, 10.0)) {
       FPRINTF(stderr, "ERROR line #%i: raw d1=%.17g expected 10\n", __LINE__, raw_d1);
