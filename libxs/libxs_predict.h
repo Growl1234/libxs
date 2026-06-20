@@ -134,6 +134,20 @@ LIBXS_API void libxs_predict_set_refine(libxs_predict_t* model,
   int iterations);
 
 /**
+ * Set multi-cluster smoothing for evaluation.
+ * amount=0 (default): no smoothing, only nearest cluster.
+ * amount<0 (e.g., -1): auto-derive from fingerprint at build time.
+ *   Outputs classified as smooth by the fingerprint get blended;
+ *   categorical outputs remain unblended. The effective amount is
+ *   proportional to the fraction of smooth outputs.
+ * amount>0: manual blending radius (fraction of nearest-cluster
+ *   distance). Only smooth-mode outputs are blended; categorical
+ *   outputs are not affected.
+ */
+LIBXS_API void libxs_predict_set_smooth(libxs_predict_t* model,
+  double amount);
+
+/**
  * Declare timeseries structure: nseries co-observed series, each with
  * the given window size. ninputs must equal nseries * window, noutputs
  * is the forecast horizon. When set, push(lock, model, values, NULL)

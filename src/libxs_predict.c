@@ -116,6 +116,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   int nts, ts_capacity;
   int diff_mode, diff_order;
   int refine;
+  double smooth;
   volatile int phase;
 };
 
@@ -616,6 +617,13 @@ LIBXS_API void libxs_predict_set_refine(libxs_predict_t* model, int iterations)
 {
   LIBXS_ASSERT(NULL != model);
   model->refine = iterations;
+}
+
+
+LIBXS_API void libxs_predict_set_smooth(libxs_predict_t* model, double amount)
+{
+  LIBXS_ASSERT(NULL != model);
+  model->smooth = amount;
 }
 
 
@@ -1533,6 +1541,20 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
     }
     if (EXIT_SUCCESS == result) {
       model->built = 1;
+      if (model->smooth < 0) {
+        int nsmooth = 0, ntotal_modes = 0, j;
+        for (c = 0; c < nclusters; ++c) {
+          const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
+          if (NULL != cl->mode) {
+            for (j = 0; j < n; ++j) {
+              if (0 == cl->mode[j]) ++nsmooth;
+              ++ntotal_modes;
+            }
+          }
+        }
+        model->smooth = (ntotal_modes > 0)
+          ? 0.5 * (double)nsmooth / ntotal_modes : 0.0;
+      }
       if (LIBXS_PREDICT_HKNN == model->decompose && n > 1
         && NULL == model->hknn_po_clusters)
       {
@@ -1742,6 +1764,18 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
         for (j = 0; j < n; ++j) avg_conf += conf[j];
         avg_conf /= n;
         if (avg_conf < 0.7) nblend = LIBXS_MIN(3, model->nclusters);
+        else if (model->smooth > 0) {
+          const double radius = sqrt(best_dist) * (1.0 + model->smooth);
+          int nb = 1;
+          for (c = 0; c < model->nclusters; ++c) {
+            if (c != best_c) {
+              const double d = sqrt(libxs_dist2(
+                norm_inputs, model->clusters[c].centroid, m));
+              if (d <= radius) ++nb;
+            }
+          }
+          nblend = LIBXS_MIN(nb, model->nclusters);
+        }
       }
       if (nblend <= 1 && NULL != info) {
         info->cluster = best_c;
@@ -1769,13 +1803,14 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
         if (minj != b) { dc_t tmp = dists[b]; dists[b] = dists[minj]; dists[minj] = tmp; }
       }
       for (j = 0; j < n; ++j) {
-        if (conf[j] >= conf_thr) continue;
         { const internal_libxs_predict_cluster_t* cl_primary = &model->clusters[dists[0].idx];
           const int use_classify = (0 != force_classify)
             ? 1 : ((0 != force_interp) ? 0 : cl_primary->mode[j]);
           double blend_val = 0, blend_conf = 0, blend_var = 0, blend_err = 0;
           double wsum = 0;
           int blend_rel = 0;
+          if (conf[j] >= conf_thr && (0.0 >= model->smooth
+            || 0 != use_classify)) continue;
           for (b = 0; b < nblend; ++b) {
             const int ci = dists[b].idx;
             const internal_libxs_predict_cluster_t* cl2 = &model->clusters[ci];

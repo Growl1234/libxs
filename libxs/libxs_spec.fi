@@ -87,6 +87,7 @@
         PUBLIC :: libxs_predict_set_weights
         PUBLIC :: libxs_predict_set_transform
         PUBLIC :: libxs_predict_set_refine
+        PUBLIC :: libxs_predict_set_smooth
         PUBLIC :: libxs_predict_set_series
         PUBLIC :: libxs_predict_set_target
         PUBLIC :: libxs_predict_set_decompose
@@ -205,6 +206,14 @@
         INTEGER(C_INT), PARAMETER ::                                    &
      &    LIBXS_FPRINT_MAXORDER = 8
         PUBLIC :: LIBXS_FPRINT_MAXORDER
+        !> Fingerprint preprocessing flags (ORable).
+        INTEGER(C_INT), PARAMETER ::                                    &
+     &    LIBXS_FPRINT_DEFAULT  = 0,                                    &
+     &    LIBXS_FPRINT_SORT     = 1,                                    &
+     &    LIBXS_FPRINT_AUTOCORR = 2,                                    &
+     &    LIBXS_FPRINT_PERAXIS  = 4
+        PUBLIC :: LIBXS_FPRINT_DEFAULT, LIBXS_FPRINT_SORT
+        PUBLIC :: LIBXS_FPRINT_AUTOCORR, LIBXS_FPRINT_PERAXIS
 
         !> Foeppl polynomial fingerprint norms per derivative order.
         TYPE, BIND(C) :: libxs_fprint_t
@@ -735,7 +744,8 @@
           ! internal (use libxs_fprint)
           FUNCTION internal_fprint(info,                                &
      &    datatype, data, ndims, shape, stride,                         &
-     &    order, axis) BIND(C, NAME="libxs_fprint")
+     &    order, axis, smooth, flags)                                   &
+     &    BIND(C, NAME="libxs_fprint")
             IMPORT :: libxs_fprint_t, C_PTR, C_INT
             TYPE(libxs_fprint_t), INTENT(OUT)   :: info
             INTEGER(C_INT), INTENT(IN), VALUE   :: datatype
@@ -745,6 +755,8 @@
             TYPE(C_PTR), INTENT(IN), VALUE      :: stride
             INTEGER(C_INT), INTENT(IN), VALUE   :: order
             INTEGER(C_INT), INTENT(IN), VALUE   :: axis
+            INTEGER(C_INT), INTENT(IN), VALUE   :: smooth
+            INTEGER(C_INT), INTENT(IN), VALUE   :: flags
             INTEGER(C_INT) :: internal_fprint
           END FUNCTION
 
@@ -833,6 +845,13 @@
             IMPORT :: C_PTR, C_INT
             TYPE(C_PTR), INTENT(IN), VALUE :: model
             INTEGER(C_INT), INTENT(IN), VALUE :: iterations
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_smooth(model, amount)            &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_DOUBLE
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            REAL(C_DOUBLE), INTENT(IN), VALUE :: amount
           END SUBROUTINE
 
           SUBROUTINE libxs_predict_set_series(model, nseries,           &
