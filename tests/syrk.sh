@@ -27,22 +27,30 @@ run_check() {
     if awk "BEGIN{exit(${ERR} <= ${TOL} ? 0 : 1)}" 2>/dev/null; then
       :
     else
-      >&2 echo "FAILED: ${PROG} ${N} ${K} ${R} => error=${ERR} (tol=${TOL})"
+      >&2 echo "FAILED: ${PROG} ${N} ${K} ${R} (LIBXS_GEMM_BACKEND=${LIBXS_GEMM_BACKEND}, LIBXS_SYRK_BLAS=${LIBXS_SYRK_BLAS}) => error=${ERR} (tol=${TOL})"
       exit 1
     fi
   done
 }
 
-# small path (n <= block, k <= block)
-run_check 4 3 1
-run_check 32 16 1
-run_check 64 64 1
+for LIBXS_GEMM_BACKEND in 0 1 2 3 4; do
+  export LIBXS_GEMM_BACKEND
+  for LIBXS_SYRK_BLAS in 0 1; do
+    export LIBXS_SYRK_BLAS
 
-# blocked path (n > block or k > block), non-aligned remainders
-run_check 100 77 1
-run_check 200 200 1
-run_check 500 500 1
+    # small path (n <= block, k <= block)
+    run_check 4 3 1
+    run_check 32 16 1
+    run_check 64 64 1
 
-# non-square k
-run_check 128 300 1
-run_check 300 50 1
+    # blocked path (n > block or k > block), non-aligned remainders
+    run_check 100 77 1
+    run_check 200 200 1
+    run_check 500 500 1
+
+    # non-square k
+    run_check 128 300 1
+    run_check 300 50 1
+
+  done
+done
