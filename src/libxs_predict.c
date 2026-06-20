@@ -1092,7 +1092,7 @@ LIBXS_API_INLINE int internal_libxs_predict_ts_diff_order(
   int result = 0;
   if (n >= 4 && EXIT_SUCCESS == libxs_fprint(&fp, LIBXS_DATATYPE_F64,
     model->ts_buf + tgt, 1, &shape, &stride,
-    LIBXS_MIN(3, n - 1), 0, 0, 0))
+    LIBXS_MIN(3, n - 1), 0, 1, 0))
   {
     const double decay = libxs_fprint_decay(&fp);
     if (decay == decay && decay < 1.0) {
