@@ -93,6 +93,7 @@ libxs_itrans_task
 libxs_kahan_sum
 libxs_kdtree_build
 libxs_kdtree_nearest
+libxs_kdtree_partition
 libxs_lcm
 libxs_malloc
 libxs_malloc_arg
@@ -155,6 +156,7 @@ libxs_predict_set_diff
 libxs_predict_set_mode
 libxs_predict_set_refine
 libxs_predict_set_series
+libxs_predict_set_smooth
 libxs_predict_set_target
 libxs_predict_set_transform
 libxs_predict_set_weights
