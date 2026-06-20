@@ -37,10 +37,11 @@
 #define INTERNAL_GEMM_NOTRANS(C) ('N' == (C) || 'n' == (C))
 
 
-#define INTERNAL_SYRK_IRANGE(UPPER, JJ, CM, ISTART, IEND) \
+#define INTERNAL_SYRK_IRANGE(UPPER, JJ, IB, JB, CM, ISTART, IEND) \
   do { \
-    (ISTART) = (UPPER) ? 0 : (JJ); \
-    (IEND)   = (UPPER) ? (JJ) + 1 : (CM); \
+    const int dij_ = (JB) - (IB) + (JJ); \
+    (ISTART) = (UPPER) ? 0 : (dij_ > 0 ? dij_ : 0); \
+    (IEND)   = (UPPER) ? (dij_ + 1 < (CM) ? dij_ + 1 : (CM)) : (CM); \
   } while(0)
 
 #define INTERNAL_SYRK_SCATTER(TYPE, CC, LDC, T, LDT, \
@@ -50,7 +51,7 @@
     if (DIAG) { \
       for (jj_ = 0; jj_ < (CN); ++jj_) { \
         int istart_, iend_; \
-        INTERNAL_SYRK_IRANGE(UPPER, jj_, CM, istart_, iend_); \
+        INTERNAL_SYRK_IRANGE(UPPER, jj_, IB, JB, CM, istart_, iend_); \
         for (ii_ = istart_; ii_ < iend_; ++ii_) { \
           ((TYPE*)(CC))[(IB) + ii_ + (size_t)((JB) + jj_) * (LDC)] = \
             (BETA) * ((TYPE*)(CC))[(IB) + ii_ + (size_t)((JB) + jj_) * (LDC)] \
@@ -70,18 +71,22 @@
   } while(0)
 
 #define INTERNAL_SYR2K_SCATTER(TYPE, CC, LDC, T1, T2, LDT, \
-  IB, JB, CM, CN, UPPER, DIAG, ALPHA, BETA) \
+  IB, JB, CM, CN, UPPER, DIAG, SYM, ALPHA, BETA) \
   do { \
     int ii_, jj_; \
     if (DIAG) { \
       for (jj_ = 0; jj_ < (CN); ++jj_) { \
         int istart_, iend_; \
-        INTERNAL_SYRK_IRANGE(UPPER, jj_, CM, istart_, iend_); \
+        INTERNAL_SYRK_IRANGE(UPPER, jj_, IB, JB, CM, istart_, iend_); \
         for (ii_ = istart_; ii_ < iend_; ++ii_) { \
+          const TYPE val_ = (SYM) \
+            ? ((const TYPE*)(T1))[ii_ + (size_t)jj_ * (LDT)] \
+              + ((const TYPE*)(T1))[jj_ + (size_t)ii_ * (LDT)] \
+            : ((const TYPE*)(T1))[ii_ + (size_t)jj_ * (LDT)] \
+              + ((const TYPE*)(T2))[ii_ + (size_t)jj_ * (LDT)]; \
           ((TYPE*)(CC))[(IB) + ii_ + (size_t)((JB) + jj_) * (LDC)] = \
             (BETA) * ((TYPE*)(CC))[(IB) + ii_ + (size_t)((JB) + jj_) * (LDC)] \
-            + (ALPHA) * (((const TYPE*)(T1))[ii_ + (size_t)jj_ * (LDT)] \
-                       + ((const TYPE*)(T1))[jj_ + (size_t)ii_ * (LDT)]); \
+            + (ALPHA) * val_; \
         } \
       } \
     } \
@@ -906,11 +911,11 @@ LIBXS_API void libxs_syr2k_task(
           }
           if (LIBXS_DATATYPE_F64 == config->shape.datatype) {
             INTERNAL_SYR2K_SCATTER(double, c, ldc, scratch, scratch,
-              n, 0, 0, n, n, upper, 1, alpha, beta);
+              n, 0, 0, n, n, upper, 1, 1, alpha, beta);
           }
           else {
             INTERNAL_SYR2K_SCATTER(float, c, ldc, scratch, scratch,
-              n, 0, 0, n, n, upper, 1, (float)alpha, (float)beta);
+              n, 0, 0, n, n, upper, 1, 1, (float)alpha, (float)beta);
           }
         }
       }
@@ -959,9 +964,10 @@ LIBXS_API void libxs_syr2k_task(
             const int skip = upper
               ? (ib > jb + cn - 1) : (ib + cm - 1 < jb);
             if (0 == skip) {
-              const int diag = (ib == jb);
+              const int diag = (ib < jb + cn && jb < ib + cm);
+              const int sym = (diag && ib == jb && cm == cn);
               const int full = (cm == bm && cn == bn);
-              const size_t clear = diag
+              const size_t clear = sym
                 ? (size_t)bm * bn * elemsize
                 : need;
               memset(scratch, 0, clear);
@@ -970,12 +976,12 @@ LIBXS_API void libxs_syr2k_task(
                 if (full && ck == bk && (NULL != config->xgemm || NULL != config->dgemm_jit || NULL != config->sgemm_jit)) {
                   const size_t aoff = ((size_t)ib + (size_t)kb * lda) * elemsize;
                   const size_t boff = ((size_t)jb + (size_t)kb * ldb) * elemsize;
-                  const size_t bioff = ((size_t)ib + (size_t)kb * ldb) * elemsize;
-                  const size_t ajoff = ((size_t)jb + (size_t)kb * lda) * elemsize;
                   libxs_gemm_call(config,
                     (const char*)a + aoff,
                     (const char*)b + boff, scratch);
-                  if (0 == diag) {
+                  if (0 == sym) {
+                    const size_t bioff = ((size_t)ib + (size_t)kb * ldb) * elemsize;
+                    const size_t ajoff = ((size_t)jb + (size_t)kb * lda) * elemsize;
                     libxs_gemm_call(config,
                       (const char*)b + bioff,
                       (const char*)a + ajoff, scratch2);
@@ -988,7 +994,7 @@ LIBXS_API void libxs_syr2k_task(
                     (const char*)a + aoff,
                     (const char*)b + boff, scratch,
                     cm, cn, ck, lda, ldb, bm, 1.0, 1.0);
-                  if (0 == diag) {
+                  if (0 == sym) {
                     const size_t bioff = ((size_t)ib + (size_t)kb * ldb) * elemsize;
                     const size_t ajoff = ((size_t)jb + (size_t)kb * lda) * elemsize;
                     internal_libxs_gemm_blas(config,
@@ -1000,11 +1006,11 @@ LIBXS_API void libxs_syr2k_task(
               }
               if (LIBXS_DATATYPE_F64 == config->shape.datatype) {
                 INTERNAL_SYR2K_SCATTER(double, c, ldc, scratch, scratch2,
-                  bm, ib, jb, cm, cn, upper, diag, alpha, beta);
+                  bm, ib, jb, cm, cn, upper, diag, sym, alpha, beta);
               }
               else {
                 INTERNAL_SYR2K_SCATTER(float, c, ldc, scratch, scratch2,
-                  bm, ib, jb, cm, cn, upper, diag,
+                  bm, ib, jb, cm, cn, upper, diag, sym,
                   (float)alpha, (float)beta);
               }
             }
@@ -1109,7 +1115,7 @@ LIBXS_API void libxs_syrk_task(
             const int skip = upper
               ? (ib > jb + cn - 1) : (ib + cm - 1 < jb);
             if (0 == skip) {
-              const int diag = (ib == jb);
+              const int diag = (ib < jb + cn && jb < ib + cm);
               const int full = (cm == bm && cn == bn);
               memset(scratch, 0, need);
               for (kb = 0; kb < k; kb += bk) {
