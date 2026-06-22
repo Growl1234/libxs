@@ -313,11 +313,30 @@ kernel call (MKL JIT or LIBXSMM when available).
 
 ## Environment Variables
 
-    LIBXS_GEMM_PRINT=N   Print dispatch info every N-th call
-                          to stderr (compile-time gate).
-    LIBXS_GEMM_BACKEND=N Select runtime backend chain start:
-                0 auto/default, 1 MKL JIT, 2 LIBXSMM,
-                3 BLAS/MKL, 4 built-in fallback.
+    LIBXS_GEMM_BM=N       Row block size for tiled SYRK/SYR2K
+                           (default: 24).
+    LIBXS_GEMM_BN=N       Column block size (default: 48).
+    LIBXS_GEMM_BK=N       K-direction block size (default: 128).
+    LIBXS_GEMM_BACKEND=N  Select runtime backend chain start:
+                           0 auto (default), 1 MKL JIT,
+                           2 LIBXSMM, 3 BLAS, 4 built-in fallback.
+    LIBXS_GEMM_JIT_MAX=N  Arithmetic-intensity threshold for JIT
+                           dispatch. JIT/LIBXSMM kernels are only
+                           generated when the kernel shape's AI
+                           (flops/bytes) is below N (default: 7,
+                           roughly the AI of an 80x80x80 kernel).
+                           Set to 0 to disable JIT entirely.
+    LIBXS_GEMM_JIT_LIMIT=N  Maximum consecutive registry misses
+                           (new JIT compilations) before JIT is
+                           suspended. A registry hit resets the
+                           counter. Prevents unbounded compile
+                           cost for workloads with many unique
+                           shapes that are never reused. Set to 0
+                           to disable the limit (default: 64).
+    LIBXS_GEMM_PRINT=N    Print dispatch info every N-th call
+                           to stderr (requires compile-time gate).
+    LIBXS_SYRK_PRINT=N    Print DSYRK/DSYR2K BLAS fallback calls
+                           to stderr (requires compile-time gate).
 
 ## Example (C)
 

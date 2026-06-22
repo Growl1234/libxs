@@ -151,6 +151,8 @@ LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_bm);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_bn);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_bk);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_jit_max);
+LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_jit_limit);
+LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_jit_misses);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_backend);
 
 LIBXS_APIVAR_DEFINE(LIBXS_TLS void* internal_libxs_syrk_buffer);
@@ -179,6 +181,7 @@ LIBXS_API_INTERN void internal_libxs_gemm_init(void)
     const char *const gemm_bn_env = getenv("LIBXS_GEMM_BN");
     const char *const gemm_bk_env = getenv("LIBXS_GEMM_BK");
     const char *const gemm_jit_max_env = getenv("LIBXS_GEMM_JIT_MAX");
+    const char *const gemm_jit_limit_env = getenv("LIBXS_GEMM_JIT_LIMIT");
     const char *const gemm_backend_env = getenv("LIBXS_GEMM_BACKEND");
 #if defined(LIBXS_INTERCEPT_DYNAMIC)
     const char *const env = getenv("LIBXS_SYRK_BLAS");
@@ -247,6 +250,8 @@ LIBXS_API_INTERN void internal_libxs_gemm_init(void)
     internal_libxs_gemm_bk = (NULL == gemm_bk_env ? LIBXS_GEMM_BK : atoi(gemm_bk_env));
     internal_libxs_gemm_jit_max = (NULL == gemm_jit_max_env
       ? 7 /*default: AI of ~80x80x80*/ : atoi(gemm_jit_max_env));
+    internal_libxs_gemm_jit_limit = (NULL == gemm_jit_limit_env
+      ? 64 /*default*/ : atoi(gemm_jit_limit_env));
     internal_libxs_gemm_backend = (NULL == gemm_backend_env)
       ? INTERNAL_GEMM_BACKEND_AUTO : atoi(gemm_backend_env);
     if (INTERNAL_GEMM_BACKEND_AUTO > internal_libxs_gemm_backend
@@ -442,15 +447,21 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
         (const libxs_registry_t*)reg,
         shape, sizeof(*shape), libxs_registry_lock(reg));
     }
+    if (NULL != result) {
+      internal_libxs_gemm_jit_misses = 0;
+    }
     if (NULL == result && NULL != reg) {
-      libxs_gemm_config_t config;
+      const int jit_allowed = (0 >= internal_libxs_gemm_jit_limit
+        || internal_libxs_gemm_jit_misses < internal_libxs_gemm_jit_limit);
       const libxs_gemm_config_t* kernel = NULL;
+      libxs_gemm_config_t config;
+      LIBXS_MEMZERO(&config);
+      ++internal_libxs_gemm_jit_misses;
       if (0 != memcmp(shape, kernel_shape, sizeof(*shape))) {
         kernel = (const libxs_gemm_config_t*)libxs_registry_get(
           (const libxs_registry_t*)reg,
           kernel_shape, sizeof(*kernel_shape), libxs_registry_lock(reg));
       }
-      LIBXS_MEMZERO(&config);
       config.shape = *shape;
       if (NULL != kernel) {
         config.dgemm_jit = kernel->dgemm_jit;
@@ -475,7 +486,8 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
         const size_t kflops = (size_t)km * kn * kk * 2;
         const size_t kbytes = elemsize *
           ((size_t)km * kk + (size_t)kk * kn + (size_t)km * kn);
-        const int use_kernel = (0 < internal_libxs_gemm_jit_max
+        const int use_kernel = (0 != jit_allowed
+          && 0 < internal_libxs_gemm_jit_max
           && kflops < (size_t)internal_libxs_gemm_jit_max * kbytes);
         const libxs_jit_create_dgemm_t jcd =
           (NULL != backend && NULL != backend->jit_create_dgemm)
