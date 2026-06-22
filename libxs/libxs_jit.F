@@ -208,6 +208,27 @@
         SUBROUTINE libxs_finalize()
         END SUBROUTINE
 
+        FUNCTION libxs_gemm_dispatch(config,                            &
+     &  datatype, transa, transb,                                       &
+     &  m, n, k, lda, ldb, ldc, alpha, beta, registry)
+          TYPE(libxs_gemm_config_t), INTENT(INOUT) :: config
+          INTEGER(C_INT), INTENT(IN) :: datatype
+          CHARACTER, INTENT(IN), VALUE :: transa, transb
+          INTEGER(C_INT), INTENT(IN) :: m, n, k, lda, ldb, ldc
+          REAL(C_DOUBLE), INTENT(IN) :: alpha, beta
+          TYPE(C_PTR), INTENT(IN), OPTIONAL :: registry
+          INTEGER(C_INT) :: libxs_gemm_dispatch
+          config%shape%datatype = datatype
+          config%shape%transa = transa
+          config%shape%transb = transb
+          config%shape%m = m; config%shape%n = n; config%shape%k = k
+          config%shape%lda = lda
+          config%shape%ldb = ldb
+          config%shape%ldc = ldc
+          config%shape%alpha = alpha; config%shape%beta = beta
+          libxs_gemm_dispatch = 1
+        END FUNCTION
+
         SUBROUTINE libxs_gemm_call_config(config, a, b, c)
           TYPE(libxs_gemm_config_t), INTENT(IN) :: config
           TYPE(C_PTR), INTENT(IN), VALUE :: a, b

@@ -37,6 +37,7 @@
         END INTERFACE
 
         PUBLIC :: libxs_init, libxs_finalize
+        PUBLIC :: libxs_gemm_dispatch
         PUBLIC :: libxs_gemm_call
         PUBLIC :: libxs_syr2k, libxs_syrk
         PUBLIC :: C_INT, C_DOUBLE, C_LOC
