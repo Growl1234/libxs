@@ -35,10 +35,17 @@ int main(int argc, char* argv[])
   const char* colspec = (argc > 2) ? argv[2] : "1,2";
   const double split = (argc > 3) ? atof(argv[3]) : 0.8;
   int decompose_arg = -1;
-  double quality = 0;
+  double quality = 0, consistency = 0;
   int argi, result = EXIT_FAILURE;
   for (argi = 4; argi < argc; ++argi) {
-    if ('c' == argv[argi][0]) {
+    if ('c' == argv[argi][0] && 'o' == argv[argi][1]
+      && 'n' == argv[argi][2])
+    {
+      const char* p = argv[argi];
+      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
+      consistency = ('\0' != *p) ? atof(p) : 0.9;
+    }
+    else if ('c' == argv[argi][0]) {
       const char* p = argv[argi];
       while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
       quality = ('\0' != *p) ? atof(p) : 0.9;
@@ -135,11 +142,13 @@ int main(int argc, char* argv[])
                 libxs_predict_set_series(split_m[s], nseries, WINDOW);
                 libxs_predict_set_target(split_m[s], s);
                 libxs_predict_set_decompose(split_m[s], decompose);
+                if (0.0 != consistency) libxs_predict_set_consistency(split_m[s], consistency);
                 libxs_predict_set_mode(full_m[s], LIBXS_PREDICT_TEMPORAL);
                 libxs_predict_set_diff(full_m[s], 0);
                 libxs_predict_set_series(full_m[s], nseries, WINDOW);
                 libxs_predict_set_target(full_m[s], s);
                 libxs_predict_set_decompose(full_m[s], decompose);
+                if (0.0 != consistency) libxs_predict_set_consistency(full_m[s], consistency);
                 for (t = 0; t < total; ++t) {
                   double vals[STOCK_MAXCOLS];
                   libxs_predict_get(source, t, vals, NULL);

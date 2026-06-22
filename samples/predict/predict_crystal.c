@@ -25,10 +25,17 @@ int main(int argc, char* argv[])
   const int order = (argc > 3) ? atoi(argv[3]) : 2;
   const int nclusters = (argc > 4) ? atoi(argv[4]) : 0;
   int decompose = LIBXS_PREDICT_RF;
-  double quality = 0;
+  double quality = 0, consistency = 0;
   int argi = 5, result = EXIT_FAILURE;
   while (argi < argc) {
-    if ('c' == argv[argi][0]) {
+    if ('c' == argv[argi][0] && 'o' == argv[argi][1]
+      && 'n' == argv[argi][2])
+    {
+      const char* p = argv[argi];
+      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
+      consistency = ('\0' != *p) ? atof(p) : 0.9;
+    }
+    else if ('c' == argv[argi][0]) {
       const char* p = argv[argi];
       while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
       quality = ('\0' != *p) ? atof(p) : 0.9;
@@ -66,6 +73,7 @@ int main(int argc, char* argv[])
           int build_ok = EXIT_FAILURE;
           double sum_conf = 0, dt_build, dt_eval;
           libxs_predict_set_decompose(model, decompose);
+          if (0.0 != consistency) libxs_predict_set_consistency(model, consistency);
           for (t = 0; t < train_end; ++t) {
             double inputs[NFEAT], output;
             libxs_predict_get(source, t, inputs, &output);

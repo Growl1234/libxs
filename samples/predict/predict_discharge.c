@@ -24,12 +24,19 @@ int main(int argc, char* argv[])
   const char* filename = (argc > 1) ? argv[1] : NULL;
   const double split = (argc > 2) ? atof(argv[2]) : 0.8;
   int decompose = LIBXS_PREDICT_RAW;
-  double quality = 0;
+  double quality = 0, consistency = 0;
   int argi, result = EXIT_FAILURE;
   double* series = NULL;
   int total = 0;
   for (argi = 3; argi < argc; ++argi) {
-    if ('c' == argv[argi][0]) {
+    if ('c' == argv[argi][0] && 'o' == argv[argi][1]
+      && 'n' == argv[argi][2])
+    {
+      const char* p = argv[argi];
+      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
+      consistency = ('\0' != *p) ? atof(p) : 0.9;
+    }
+    else if ('c' == argv[argi][0]) {
       const char* p = argv[argi];
       while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
       quality = ('\0' != *p) ? atof(p) : 0.9;
@@ -57,6 +64,7 @@ int main(int argc, char* argv[])
       int t;
       libxs_predict_set_mode(model, LIBXS_PREDICT_TEMPORAL);
       libxs_predict_set_decompose(model, decompose);
+      if (0.0 != consistency) libxs_predict_set_consistency(model, consistency);
       libxs_predict_set_transform(model, -1, LIBXS_PREDICT_LOG);
       for (t = WINDOW; t <= train_end - HORIZON; ++t) {
         int i;

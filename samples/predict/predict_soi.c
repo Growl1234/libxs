@@ -25,12 +25,19 @@ int main(int argc, char* argv[])
   const char* darwin_file = (argc > 2) ? argv[2] : NULL;
   const double split = (argc > 3) ? atof(argv[3]) : 0.8;
   int decompose = -1;
-  double quality = 0;
+  double quality = 0, consistency = 0;
   int argi, result = EXIT_FAILURE;
   double *tahiti = NULL, *darwin = NULL;
   int ntahiti = 0, ndarwin = 0;
   for (argi = 4; argi < argc; ++argi) {
-    if ('c' == argv[argi][0]) {
+    if ('c' == argv[argi][0] && 'o' == argv[argi][1]
+      && 'n' == argv[argi][2])
+    {
+      const char* p = argv[argi];
+      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
+      consistency = ('\0' != *p) ? atof(p) : 0.9;
+    }
+    else if ('c' == argv[argi][0]) {
       const char* p = argv[argi];
       while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
       quality = ('\0' != *p) ? atof(p) : 0.9;
@@ -62,6 +69,7 @@ int main(int argc, char* argv[])
       libxs_predict_set_target(model, 0);
       libxs_predict_set_decompose(model,
         (0 <= decompose) ? decompose : LIBXS_PREDICT_SPREAD);
+      if (0.0 != consistency) libxs_predict_set_consistency(model, consistency);
       for (t = 0; t < train_end; ++t) {
         double vals[2];
         vals[0] = tahiti[t];

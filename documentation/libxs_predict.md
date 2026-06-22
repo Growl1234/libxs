@@ -168,6 +168,41 @@ automatically when per-output confidence drops below 0.9.
 When set to >0, always perform the given number of iterations
 regardless of confidence.
 
+```C
+void libxs_predict_set_smooth(libxs_predict_t* model,
+  double amount);
+```
+
+Control multi-cluster blending at eval time.
+- amount<0: auto-determine blending radius from model structure.
+- amount=0: no blending (default after manual assignment).
+- amount>0: blend predictions from clusters within
+  (1+amount)*nearest_distance radius. Only smooth-mode outputs
+  are blended; categorical outputs remain unblended.
+
+```C
+void libxs_predict_set_consistency(libxs_predict_t* model,
+  double amount);
+```
+
+Set round-trip consistency penalty (0..1). During the
+refinement loop, the prediction is inverse-mapped back to
+input space. If the reconstructed input differs from the
+original query by more than the cluster diameter, the
+prediction is geometrically inconsistent.
+
+- amount=0 (default): inconsistency only skips refinement
+  (no confidence change).
+- amount>0: confidence is actively penalized proportional
+  to the round-trip distance:
+  `conf = quality + conf / (1 + amount * rt_dist / dmax)`
+- amount=1: halves confidence above the quality floor when
+  the round-trip distance equals the cluster diameter.
+
+This catches predictions where the model contradicts itself:
+the output maps back to a different input region than the
+query came from.
+
 ## Timeseries Configuration
 
 ```C
@@ -258,10 +293,21 @@ Build the model from pushed entries. nclusters=0 selects
 sqrt(n) clusters automatically. order>0 uses at most that
 order, order=0 auto-optimizes, order<0 scans up to |order|.
 
-The quality parameter (0..1) controls model compression:
-- quality=0: no compression (default, all entries retained).
+The quality parameter (0..1) controls model compression and
+confidence scaling:
+- quality=0: no compression, no coverage scaling (default).
 - quality>0: leave-one-out pass removes entries that are
-  perfectly predictable by their neighbors.
+  perfectly predictable by their neighbors. Additionally,
+  confidence is scaled by coverage at eval time:
+  `conf = quality + coverage * (raw_conf - quality)`
+  where coverage is the product of two factors:
+  - inter-cluster: min(cluster_entries / expected_entries, 1).
+    Penalizes underpopulated clusters.
+  - intra-cluster: 1/(1 + query_dist/cluster_dmax).
+    Penalizes queries far from the cluster center.
+  The quality value acts as a confidence floor -- predictions
+  in sparse regions approach quality but never go below it.
+  The quality is persisted in save/load.
 
 ```C
 int libxs_predict_build_task(libxs_lock_t* lock,
@@ -364,10 +410,14 @@ typedef struct libxs_predict_info_t {
 ```
 
 Populated by eval when info is non-NULL. confidence holds
-per-output kNN vote fraction (0..1). variance holds
-per-output neighbor disagreement. cluster gives the assigned
-cluster index (-1 if blended). distance gives normalized
-distance to nearest centroid.
+per-output confidence (0..1), incorporating:
+- variety: kNN vote agreement (classify) or 1.0 (interpolation),
+- coverage: cluster population and query centrality (when
+  quality>0, see libxs_predict_build),
+- consistency: round-trip penalty (when set_consistency>0).
+variance holds per-output neighbor disagreement. cluster
+gives the assigned cluster index (-1 if blended). distance
+gives normalized distance to nearest centroid.
 
 ```C
 typedef struct libxs_predict_query_t {

@@ -148,6 +148,17 @@ LIBXS_API void libxs_predict_set_smooth(libxs_predict_t* model,
   double amount);
 
 /**
+ * Set round-trip consistency penalty (0..1).
+ * When >0 and the refinement round-trip distance exceeds the cluster
+ * diameter, confidence is scaled toward the quality threshold:
+ *   conf = quality + conf / (1 + amount * rt_dist/dmax)
+ * 0 (default): inconsistency only skips refinement.
+ * 1: full penalty (halves confidence at rt_dist == dmax).
+ */
+LIBXS_API void libxs_predict_set_consistency(libxs_predict_t* model,
+  double amount);
+
+/**
  * Declare timeseries structure: nseries co-observed series, each with
  * the given window size. ninputs must equal nseries * window, noutputs
  * is the forecast horizon. When set, push(lock, model, values, NULL)

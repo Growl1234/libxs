@@ -44,7 +44,8 @@ libxs_free_pool
 libxs_gcd
 libxs_gemm_batch
 libxs_gemm_batch_task
-libxs_gemm_call
+libxs_gemm_call_config
+libxs_gemm_call_direct
 libxs_gemm_call_f
 libxs_gemm_dispatch_base
 libxs_gemm_dispatch_rt
@@ -151,6 +152,7 @@ libxs_predict_lock
 libxs_predict_push
 libxs_predict_query
 libxs_predict_save
+libxs_predict_set_consistency
 libxs_predict_set_decompose
 libxs_predict_set_diff
 libxs_predict_set_mode
