@@ -37,6 +37,61 @@ try:
 except ImportError:
     PILImage = None
 
+HAS_LATEX = shutil.which("latex") is not None and shutil.which("dvipng") is not None
+
+MATH_DPI = 300
+_math_tmpdir = None
+
+
+def _get_math_tmpdir():
+    global _math_tmpdir
+    if _math_tmpdir is None:
+        import tempfile
+        _math_tmpdir = tempfile.mkdtemp(prefix="md2pptx_math_")
+    return _math_tmpdir
+
+
+_math_counter = 0
+
+
+def render_math(latex):
+    """Render LaTeX to a transparent PNG with white text via latex+dvipng."""
+    global _math_counter
+    if not HAS_LATEX:
+        return None
+    _math_counter += 1
+    latex = latex.replace("\\\\", "\\")
+    tmpdir = _get_math_tmpdir()
+    tex_path = os.path.join(tmpdir, f"math_{_math_counter}.tex")
+    dvi_path = os.path.join(tmpdir, f"math_{_math_counter}.dvi")
+    out_path = os.path.join(tmpdir, f"math_{_math_counter}.png")
+    tex_src = (
+        "\\documentclass[preview]{standalone}\n"
+        "\\usepackage{amsmath,amssymb}\n"
+        "\\usepackage{xcolor}\n"
+        "\\begin{document}\n"
+        "\\color{white}\n"
+        f"$\\displaystyle {latex}$\n"
+        "\\end{document}\n"
+    )
+    with open(tex_path, "w") as f:
+        f.write(tex_src)
+    try:
+        subprocess.run(
+            ["latex", "-interaction=nonstopmode", "-output-directory", tmpdir,
+             tex_path],
+            capture_output=True, timeout=30,
+        )
+        subprocess.run(
+            ["dvipng", "-D", str(MATH_DPI), "-T", "tight", "-bg", "Transparent",
+             "-o", out_path, dvi_path],
+            capture_output=True, timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    return out_path if os.path.isfile(out_path) else None
+
+
 SLIDE_WIDTH = Inches(40 / 3)  # 16:9 widescreen
 SLIDE_HEIGHT = Inches(7.5)
 
@@ -208,6 +263,8 @@ def _block_lines(block):
         return max(1, (nchars + 79) // 80)
     if btype == "heading":
         return 2
+    if btype == "math":
+        return 3
     if btype == "image":
         return 8
     return 1
@@ -329,6 +386,32 @@ def _parse_slide(text):
         if in_code:
             cur["lines"].append(line)
             i += 1
+            continue
+
+        if not in_code and line.strip().startswith("$$"):
+            if cur:
+                slide["blocks"].append(cur)
+                cur = None
+            stripped = line.strip()
+            if stripped.endswith("$$") and len(stripped) > 4:
+                latex = stripped[2:-2].strip()
+                slide["blocks"].append({"type": "math", "latex": latex})
+                i += 1
+            else:
+                math_lines = []
+                if len(stripped) > 2:
+                    math_lines.append(stripped[2:])
+                i += 1
+                while i < len(lines) and not lines[i].strip().endswith("$$"):
+                    math_lines.append(lines[i])
+                    i += 1
+                if i < len(lines):
+                    end = lines[i].strip()
+                    if end != "$$":
+                        math_lines.append(end[:-2])
+                    i += 1
+                latex = "\n".join(math_lines).strip()
+                slide["blocks"].append({"type": "math", "latex": latex})
             continue
 
         if line.strip().startswith("|") and "|" in line.strip()[1:]:
@@ -486,7 +569,7 @@ def build_presentation(slides, base_dir="."):
     for s in slides:
         if s["is_title"]:
             _title_slide(prs, s)
-        elif any(b["type"] == "table" for b in s["blocks"]):
+        elif any(b["type"] in ("table", "math") for b in s["blocks"]):
             _table_slide(prs, s, base_dir)
         else:
             _content_slide(prs, s, base_dir)
@@ -558,6 +641,8 @@ def _table_slide(prs, data, base_dir="."):
             top = _add_table(slide, block["rows"], left, top, width)
         elif block["type"] == "image":
             top = _add_image(slide, block, base_dir, left, top)
+        elif block["type"] == "math":
+            top = _add_math(slide, block["latex"], left, top, width)
         else:
             n = 1
             if block["type"] in ("code", "bullets"):
@@ -649,6 +734,23 @@ def _add_image(slide, block, base_dir, left, top):
     return top + height + BLOCK_SPACING
 
 
+def _add_math(slide, latex, left, top, width):
+    """Render LaTeX to a PNG and place it centered on the slide."""
+    img_path = render_math(latex)
+    if img_path is None or not os.path.isfile(img_path):
+        txbox = slide.shapes.add_textbox(left, top, width, TEXT_LINE_HEIGHT)
+        tf = txbox.text_frame
+        p = tf.paragraphs[0]
+        add_runs(p, latex, font_size=CODE_SIZE, code=True)
+        return top + TEXT_LINE_HEIGHT + BLOCK_SPACING
+    max_w = width
+    max_h = SLIDE_HEIGHT - top - MARGIN
+    img_w, img_h = _image_size(img_path, max_w, max_h)
+    cx = left + (max_w - img_w) // 2
+    slide.shapes.add_picture(img_path, cx, top, img_w, img_h)
+    return top + img_h + BLOCK_SPACING
+
+
 # ---------------------------------------------------------------------------
 # Post-processing
 # ---------------------------------------------------------------------------
@@ -681,31 +783,41 @@ def resave(pptx_path):
     except (FileNotFoundError, subprocess.CalledProcessError):
         return
     try:
-        subprocess.check_call(
+        subprocess.run(
             [
                 "powershell.exe",
                 "-NoProfile",
                 "-Command",
                 (
                     f"$pp = New-Object -ComObject PowerPoint.Application;"
-                    f'$pres = $pp.Presentations.Open("{winpath}");'
-                    f"foreach ($slide in $pres.Slides) {{"
-                    f"  foreach ($shape in $slide.Shapes) {{"
-                    f"    if ($shape.HasTextFrame) {{"
-                    f"      $shape.TextFrame2.AutoSize = 0;"
-                    f"      $shape.TextFrame2.AutoSize = 2"
+                    f"try {{"
+                    f"  $pres = $pp.Presentations.Open('{winpath}',"
+                    f"    [Microsoft.Office.Core.MsoTriState]::msoFalse,"
+                    f"    [Microsoft.Office.Core.MsoTriState]::msoFalse,"
+                    f"    [Microsoft.Office.Core.MsoTriState]::msoFalse);"
+                    f"  if ($pres -ne $null) {{"
+                    f"    foreach ($slide in $pres.Slides) {{"
+                    f"      foreach ($shape in $slide.Shapes) {{"
+                    f"        if ($shape.HasTextFrame) {{"
+                    f"          $shape.TextFrame2.AutoSize = 0;"
+                    f"          $shape.TextFrame2.AutoSize = 2"
+                    f"        }}"
+                    f"      }}"
                     f"    }}"
+                    f"    $pres.Save();"
+                    f"    $pres.Close()"
                     f"  }}"
-                    f"}}"
-                    f"$pres.Save();"
-                    f"$pres.Close();"
-                    f"$pp.Quit();"
-                    f"[System.Runtime.InteropServices.Marshal]"
+                    f"}} finally {{"
+                    f"  $pp.Quit();"
+                    f"  [System.Runtime.InteropServices.Marshal]"
                     f"::ReleaseComObject($pp) | Out-Null"
+                    f"}}"
                 ),
-            ]
+            ],
+            capture_output=True, timeout=60,
         )
-    except (FileNotFoundError, subprocess.CalledProcessError):
+    except (FileNotFoundError, subprocess.CalledProcessError,
+            subprocess.TimeoutExpired):
         pass
 
 
@@ -757,6 +869,8 @@ def main():
     autofit(output)
     if not args.no_resave:
         resave(output)
+    if _math_tmpdir and os.path.isdir(_math_tmpdir):
+        shutil.rmtree(_math_tmpdir)
 
 
 if __name__ == "__main__":
