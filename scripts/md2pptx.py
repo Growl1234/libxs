@@ -37,21 +37,42 @@ try:
 except ImportError:
     PILImage = None
 
-HAS_LATEX = shutil.which("latex") is not None and shutil.which("dvipng") is not None
+SLIDE_WIDTH = Inches(40 / 3)  # 16:9 widescreen
+SLIDE_HEIGHT = Inches(7.5)
 
+CODE_FONT = "Courier New"
+CODE_SIZE = Pt(20)
+TABLE_SIZE = Pt(12)
+BODY_SIZE = Pt(18)
+
+MARGIN = Inches(0.5)
+TITLE_TOP = Inches(0.5)
+TITLE_BOX = Inches(1.25)
+BODY_TOP = TITLE_TOP + TITLE_BOX + Inches(0.1)
+BODY_HEIGHT = SLIDE_HEIGHT - BODY_TOP - MARGIN
+CONTENT_WIDTH = SLIDE_WIDTH - 2 * MARGIN
+TABLE_ROW_HEIGHT = Inches(0.5)
+CODE_LINE_HEIGHT = Inches(0.35)
+TEXT_LINE_HEIGHT = Inches(0.4)
+BLOCK_SPACING = Inches(0.4)
+MATH_SPACING = Inches(0.2)
 MATH_DPI = 300
+MATH_SCALE = 2.4
+
+MAX_CONTENT_LINES = 15
+
+HAS_LATEX = shutil.which("latex") is not None and shutil.which("dvipng") is not None
 _math_tmpdir = None
+_math_counter = 0
 
 
 def _get_math_tmpdir():
     global _math_tmpdir
     if _math_tmpdir is None:
         import tempfile
+
         _math_tmpdir = tempfile.mkdtemp(prefix="md2pptx_math_")
     return _math_tmpdir
-
-
-_math_counter = 0
 
 
 def render_math(latex):
@@ -71,47 +92,42 @@ def render_math(latex):
         "\\usepackage{xcolor}\n"
         "\\begin{document}\n"
         "\\color{white}\n"
-        f"$\\displaystyle {latex}$\n"
+        f"${latex}$\n"
         "\\end{document}\n"
     )
     with open(tex_path, "w") as f:
         f.write(tex_src)
     try:
         subprocess.run(
-            ["latex", "-interaction=nonstopmode", "-output-directory", tmpdir,
-             tex_path],
-            capture_output=True, timeout=30,
+            [
+                "latex",
+                "-interaction=nonstopmode",
+                "-output-directory",
+                tmpdir,
+                tex_path,
+            ],
+            capture_output=True,
+            timeout=30,
         )
         subprocess.run(
-            ["dvipng", "-D", str(MATH_DPI), "-T", "tight", "-bg", "Transparent",
-             "-o", out_path, dvi_path],
-            capture_output=True, timeout=30,
+            [
+                "dvipng",
+                "-D",
+                str(MATH_DPI),
+                "-T",
+                "tight",
+                "-bg",
+                "Transparent",
+                "-o",
+                out_path,
+                dvi_path,
+            ],
+            capture_output=True,
+            timeout=30,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return None
     return out_path if os.path.isfile(out_path) else None
-
-
-SLIDE_WIDTH = Inches(40 / 3)  # 16:9 widescreen
-SLIDE_HEIGHT = Inches(7.5)
-
-CODE_FONT = "Courier New"
-CODE_SIZE = Pt(20)
-TABLE_SIZE = Pt(12)
-BODY_SIZE = Pt(18)
-
-MARGIN = Inches(0.5)
-TITLE_TOP = Inches(0.5)
-TITLE_BOX = Inches(1.25)
-BODY_TOP = TITLE_TOP + TITLE_BOX + Inches(0.1)
-BODY_HEIGHT = SLIDE_HEIGHT - BODY_TOP - MARGIN
-CONTENT_WIDTH = SLIDE_WIDTH - 2 * MARGIN
-TABLE_ROW_HEIGHT = Inches(0.5)
-CODE_LINE_HEIGHT = Inches(0.35)
-TEXT_LINE_HEIGHT = Inches(0.4)
-BLOCK_SPACING = Inches(0.6)
-
-MAX_CONTENT_LINES = 15
 
 
 # ---------------------------------------------------------------------------
@@ -124,19 +140,68 @@ def _typographic(text):
     return text
 
 
+def _latex_to_text(latex):
+    """Convert simple inline LaTeX to readable plain text."""
+    s = latex.strip()
+    s = s.replace("\\,", "")
+    s = s.replace("\\;", " ")
+    s = s.replace("\\quad", "  ")
+    s = s.replace("\\qquad", "   ")
+    s = re.sub(r"\\mathcal\{([^}]*)\}", r"\1", s)
+    s = re.sub(r"\\text\{([^}]*)\}", r"\1", s)
+    s = re.sub(r"\\texttt\{([^}]*)\}", r"\1", s)
+    s = re.sub(r"\\mathrm\{([^}]*)\}", r"\1", s)
+    s = s.replace("\\times", "×")
+    s = s.replace("\\cdot", "·")
+    s = s.replace("\\approx", "≈")
+    s = s.replace("\\leq", "≤")
+    s = s.replace("\\geq", "≥")
+    s = s.replace("\\neq", "≠")
+    s = s.replace("\\pm", "±")
+    s = s.replace("\\infty", "∞")
+    s = s.replace("\\sum", "∑")
+    s = s.replace("\\prod", "∏")
+    s = s.replace("\\Delta", "Δ")
+    s = s.replace("\\alpha", "α")
+    s = s.replace("\\beta", "β")
+    s = s.replace("\\gamma", "γ")
+    s = s.replace("\\delta", "δ")
+    s = s.replace("\\epsilon", "ε")
+    s = s.replace("\\lambda", "λ")
+    s = s.replace("\\mu", "μ")
+    s = s.replace("\\pi", "π")
+    s = s.replace("\\sigma", "σ")
+    s = s.replace("\\tau", "τ")
+    s = s.replace("\\omega", "ω")
+    s = re.sub(r"\\bigl?", "", s)
+    s = re.sub(r"\\bigr?", "", s)
+    s = re.sub(r"\\left", "", s)
+    s = re.sub(r"\\right", "", s)
+    s = re.sub(r"\\mathrel\{([^}]*)\}", r"\1", s)
+    s = re.sub(r"_\{([^}]*)\}", r"_\1", s)
+    s = re.sub(r"\^\{([^}]*)\}", r"^\1", s)
+    s = re.sub(r"\\[a-zA-Z]+", "", s)
+    s = re.sub(r"[{}]", "", s)
+    s = re.sub(r"  +", " ", s).strip()
+    return s
+
+
 def parse_inline(text):
-    """Parse **bold**, *italic*, and `code` into [(text, style), ...]."""
+    """Parse **bold**, *italic*, `code`, and $math$ into [(text, style), ...]."""
     result = []
     pos = 0
-    for m in re.finditer(r"\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`", text):
+    pat = re.compile(r"\*\*(.+?)\*\*" r"|\*(.+?)\*" r"|`(.+?)`" r"|\$([^$]+?)\$")
+    for m in pat.finditer(text):
         if m.start() > pos:
             result.append((_typographic(text[pos : m.start()]), "normal"))
         if m.group(1) is not None:
             result.append((_typographic(m.group(1)), "bold"))
         elif m.group(2) is not None:
             result.append((_typographic(m.group(2)), "italic"))
-        else:
+        elif m.group(3) is not None:
             result.append((m.group(3), "code"))
+        else:
+            result.append((_latex_to_text(m.group(4)), "italic"))
         pos = m.end()
     if pos < len(text):
         result.append((_typographic(text[pos:]), "normal"))
@@ -324,7 +389,10 @@ def _parse_slide(text):
         return None
     lines = text.split("\n")
     slide = {
-        "title": "", "subtitle": "", "is_title": False, "blocks": [],
+        "title": "",
+        "subtitle": "",
+        "is_title": False,
+        "blocks": [],
         "notes": "",
     }
     i = _skip_blank(lines, 0)
@@ -611,10 +679,7 @@ def _content_slide(prs, data, base_dir="."):
                     n = len(block.get("lines", block.get("items", [])))
                 elif block["type"] == "text":
                     n = len(block["lines"])
-                lh = (
-                    CODE_LINE_HEIGHT if block["type"] == "code"
-                    else TEXT_LINE_HEIGHT
-                )
+                lh = CODE_LINE_HEIGHT if block["type"] == "code" else TEXT_LINE_HEIGHT
                 height = lh * max(n, 1)
                 txbox = slide.shapes.add_textbox(MARGIN, top, CONTENT_WIDTH, height)
                 tf = txbox.text_frame
@@ -709,10 +774,37 @@ def _add_table(slide, rows, left, top, width):
         n_rows, n_cols, left, top, width, TABLE_ROW_HEIGHT * n_rows
     )
     tbl = shape.table
+    tbl_pr = tbl._tbl.tblPr
+    tbl_pr.set("bandRow", "0")
+    tbl_pr.set("bandCol", "0")
+    tbl_pr.set("firstRow", "0")
+    tbl_pr.set("lastRow", "0")
+    tbl_pr.set("firstCol", "0")
+    tbl_pr.set("lastCol", "0")
     for r, row_data in enumerate(rows):
         for c, cell_text in enumerate(row_data):
             if c < n_cols:
-                p = tbl.cell(r, c).text_frame.paragraphs[0]
+                cell = tbl.cell(r, c)
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = RGBColor(0, 0, 0)
+                tcPr = cell._tc.get_or_add_tcPr()
+                if r == 0:
+                    ln = etree.SubElement(tcPr, qn("a:lnT"))
+                    ln.set("w", "0")
+                    etree.SubElement(ln, qn("a:noFill"))
+                if r == n_rows - 1:
+                    ln = etree.SubElement(tcPr, qn("a:lnB"))
+                    ln.set("w", "0")
+                    etree.SubElement(ln, qn("a:noFill"))
+                if c == 0:
+                    ln = etree.SubElement(tcPr, qn("a:lnL"))
+                    ln.set("w", "0")
+                    etree.SubElement(ln, qn("a:noFill"))
+                if c == n_cols - 1:
+                    ln = etree.SubElement(tcPr, qn("a:lnR"))
+                    ln.set("w", "0")
+                    etree.SubElement(ln, qn("a:noFill"))
+                p = cell.text_frame.paragraphs[0]
                 add_runs(p, cell_text, font_size=TABLE_SIZE)
                 if r == 0:
                     for run in p.runs:
@@ -742,13 +834,20 @@ def _add_math(slide, latex, left, top, width):
         tf = txbox.text_frame
         p = tf.paragraphs[0]
         add_runs(p, latex, font_size=CODE_SIZE, code=True)
-        return top + TEXT_LINE_HEIGHT + BLOCK_SPACING
-    max_w = width
-    max_h = SLIDE_HEIGHT - top - MARGIN
-    img_w, img_h = _image_size(img_path, max_w, max_h)
-    cx = left + (max_w - img_w) // 2
+        return top + TEXT_LINE_HEIGHT + MATH_SPACING
+    if PILImage is not None:
+        with PILImage.open(img_path) as img:
+            w_px, h_px = img.size
+    else:
+        w_px, h_px = 400, 50
+    img_w = int(Inches(w_px / MATH_DPI) * MATH_SCALE)
+    img_h = int(Inches(h_px / MATH_DPI) * MATH_SCALE)
+    if img_w > width:
+        img_h = int(img_h * width / img_w)
+        img_w = width
+    cx = left + (width - img_w) // 2
     slide.shapes.add_picture(img_path, cx, top, img_w, img_h)
-    return top + img_h + BLOCK_SPACING
+    return top + img_h + MATH_SPACING
 
 
 # ---------------------------------------------------------------------------
@@ -814,10 +913,14 @@ def resave(pptx_path):
                     f"}}"
                 ),
             ],
-            capture_output=True, timeout=60,
+            capture_output=True,
+            timeout=60,
         )
-    except (FileNotFoundError, subprocess.CalledProcessError,
-            subprocess.TimeoutExpired):
+    except (
+        FileNotFoundError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+    ):
         pass
 
 
