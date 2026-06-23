@@ -1,15 +1,4 @@
-sphinx_rtd_theme
-recommonmark
-mistune>=3.2.1
 mkdocs>=1.6.1
 mkslides>=2
-m2r2
 pymdown-extensions>=10.0
-beautifulsoup4
-graphviz
-markdown-include
-pcpp
-python-markdown-math
-toposort
-tqdm
-rich
+ford
