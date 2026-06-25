@@ -473,6 +473,23 @@ def _parse_slide(text):
             i += 1
             continue
 
+        m_imgtag = re.match(
+            r'^\s*<img\b[^>]*\bsrc="([^"]+)"[^>]*/?\s*>\s*$', line, re.IGNORECASE
+        )
+        if m_imgtag:
+            if cur:
+                slide["blocks"].append(cur)
+                cur = None
+            alt = ""
+            m_alt = re.search(r'\balt="([^"]*)"', line, re.IGNORECASE)
+            if m_alt:
+                alt = m_alt.group(1)
+            slide["blocks"].append(
+                {"type": "image", "alt": alt, "path": m_imgtag.group(1)}
+            )
+            i += 1
+            continue
+
         if re.match(r"^\s*<[^>]+>\s*$", line) and not line.strip().startswith("<br"):
             stripped = line.strip()
             inner = re.sub(r"<[^>]*>", "", stripped).strip()
@@ -762,7 +779,7 @@ def _render_blocks(tf, blocks, placeholder=False):
         if btype == "text":
             p = tf.paragraphs[0] if first else tf.add_paragraph()
             first = False
-            add_runs(p, " ".join(block["lines"]))
+            add_runs(p, " ".join(block["lines"]), font_size=BODY_SIZE)
             p.line_spacing = 1.0
             if placeholder:
                 no_bullet(p)
@@ -773,6 +790,7 @@ def _render_blocks(tf, blocks, placeholder=False):
             run = p.add_run()
             run.text = block["text"]
             run.font.bold = True
+            run.font.size = BODY_SIZE
             if placeholder:
                 no_bullet(p)
 
@@ -782,7 +800,7 @@ def _render_blocks(tf, blocks, placeholder=False):
                 first = False
                 if not placeholder:
                     item = "• " + item
-                add_runs(p, item)
+                add_runs(p, item, font_size=BODY_SIZE)
                 p.line_spacing = 1.0
 
         elif btype == "code":
@@ -883,6 +901,21 @@ def _add_math(slide, latex, left, top, width):
 # ---------------------------------------------------------------------------
 # Post-processing
 # ---------------------------------------------------------------------------
+def _estimate_text_height(tf):
+    """Estimate total text height in EMU based on paragraph count and font sizes."""
+    total = 0
+    for para in tf.paragraphs:
+        size = None
+        for run in para.runs:
+            if run.font.size:
+                size = run.font.size
+                break
+        if size is None:
+            size = Pt(18)
+        total += int(size * 1.4)
+    return total
+
+
 def autofit(pptx_path):
     prs = Presentation(pptx_path)
     for slide in prs.slides:
@@ -897,7 +930,12 @@ def autofit(pptx_path):
                     or body_pr.find(qn("a:noAutofit")) is not None
                 ):
                     continue
-                etree.SubElement(body_pr, qn("a:normAutofit"))
+                el = etree.SubElement(body_pr, qn("a:normAutofit"))
+                text_h = _estimate_text_height(shape.text_frame)
+                if text_h > shape.height and shape.height > 0:
+                    scale = int(shape.height * 100000 // text_h)
+                    scale = max(scale, 25000)
+                    el.set("fontScale", str(scale))
     prs.save(pptx_path)
 
 
