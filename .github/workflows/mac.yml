@@ -23,7 +23,7 @@ jobs:
         libxstream: [prebuilt]
         include:
           - clang: default
-            flags: DBG=1 PEDANTIC=2
+            flags: DBG=1 PEDANTIC=2 FORCE_CXX=1 FORTRAN=0
             libxstream: header-only
 
     env:

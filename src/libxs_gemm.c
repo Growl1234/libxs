@@ -154,8 +154,8 @@ LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_jit_max);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_jit_warmup);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_backend);
 
-LIBXS_APIVAR_DEFINE(LIBXS_TLS void* internal_libxs_syrk_buffer);
-LIBXS_APIVAR_DEFINE(LIBXS_TLS size_t internal_libxs_syrk_buffer_size);
+static LIBXS_TLS void* internal_libxs_syrk_buffer;
+static LIBXS_TLS size_t internal_libxs_syrk_buffer_size;
 
 LIBXS_APIVAR_DEFINE(libxs_gemm_dblas_t internal_libxs_dgemm_blas);
 LIBXS_APIVAR_DEFINE(libxs_gemm_sblas_t internal_libxs_sgemm_blas);
