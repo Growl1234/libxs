@@ -358,32 +358,32 @@ tests: libs
 	@$(FLOCK) $(ROOTDIR)/$(TSTDIR) "$(MAKE) --no-print-directory test"
 
 $(DOCDIR)/index.md: $(DOCDIR)/.make $(ROOTDIR)/Makefile $(ROOTDIR)/README.md
-	@$(SED) $(ROOTDIR)/README.md \
+	@$(SED) \
 		-e 's/\[!\[..*\](..*)\](..*)//g' \
 		-e 's/\[\[..*\](..*)\]//g' \
 		-e "s/](${DOCDIR}\//](/g" \
 		-e 'N;/^\n$$/d;P;D' \
-		>$@
+		<$(ROOTDIR)/README.md >$@
 	@$(CP) $(ROOTDIR)/LICENSE.md $(DOCDIR)/LICENSE.md
 
 $(DOCDIR)/$(PROJECT)_scripts.md: $(DOCDIR)/.make $(ROOTDIR)/Makefile $(ROOTSCR)/README.md
-	@$(SED) $(ROOTSCR)/README.md \
+	@$(SED) \
 		-e 's/\[!\[..*\](..*)\](..*)//g' \
 		-e 's/\[\[..*\](..*)\]//g' \
 		-e "s/](${DOCDIR}\//](/g" \
 		-e 'N;/^\n$$/d;P;D' \
-		>$@
+		<$(ROOTSCR)/README.md >$@
 
 $(DOCDIR)/$(PROJECT)_samples.md: $(DOCDIR)/.make $(DOCDIR)/$(SPLDIR)/.make $(ROOTDIR)/Makefile $(SPLMDS)
 	@for MD in $(SPLMDS); do \
-		$(SED) $${MD} \
+		$(SED) \
 			-e 's/\[!\[..*\](..*)\](..*)//g' \
 			-e 's/\[\[..*\](..*)\]//g' \
 			-e "s/](${DOCDIR}\//](/g" \
 			-e 'N;/^\n$$/d;P;D' \
-			>$(DOCDIR)/$(SPLDIR)/$(PROJECT)_$$(basename $$(dirname $${MD})).md; \
+			<$${MD} >$(DOCDIR)/$(SPLDIR)/$(PROJECT)_$$(basename $$(dirname $${MD})).md; \
 	done
-	@$(SED) $(SPLMDS) \
+	@cat $(SPLMDS) | $(SED) \
 		-e 's/^#/##/' \
 		-e 's/<sub>/~/g' -e 's/<\/sub>/~/g' \
 		-e 's/<sup>/^/g' -e 's/<\/sup>/^/g' \
@@ -688,15 +688,12 @@ else ifneq (Darwin,$(UNAME))
     ALIAS_PRIVLIBS := $(LIBDL) $(LIBM) $(LIBC)
   endif
 endif
-ifneq (,$(OMPFLAG_FORCE))
-  ALIAS_PRIVLIBS_EXT := -fopenmp
-endif
 
 ALIAS_INCDIR := $(subst $$$$,$(if $(findstring $$$$/,$$$$$(PINCDIR)),,\$${prefix}/),$(subst $$$$$(ALIAS_PREFIX),\$${prefix},$$$$$(PINCDIR)))
 ALIAS_LIBDIR := $(subst $$$$,$(if $(findstring $$$$/,$$$$$(POUTDIR)),,\$${prefix}/),$(subst $$$$$(ALIAS_PREFIX),\$${prefix},$$$$$(POUTDIR)))
 
 PCTEMPLATE := $(ROOTSCR)/$(PROJECT).pc.in
-PCSUBST_BASE = $(SED) $(PCTEMPLATE) \
+PCSUBST_BASE = $(SED) \
   -e 's|@PROJECT@|$(PROJECT)|g' \
   -e 's|@DESCRIPTION@|Specialized tensor operations|g' \
   -e 's|@URL@|https://github.com/hfp/$(PROJECT)/|g' \
@@ -710,7 +707,7 @@ PCSUBST_SHARED = $(PCSUBST_BASE) -e 's|@LIBS@|-L$${libdir} -l$(patsubst lib%,%,$
 
 ifeq (,$(filter-out 0 2,$(BUILD)))
 $(PPKGDIR)/$(PROJECT)-static.pc: $(OUTDIR)/$(PROJECT).$(SLIBEXT) $(PPKGDIR)/.make $(PCTEMPLATE)
-	@$(PCSUBST_STATIC) >$@
+	@$(PCSUBST_STATIC) <$(PCTEMPLATE) >$@
   ifeq (,$(filter-out 0 2,$(BUILD)))
 	@ln -fs $(notdir $@) $(PPKGDIR)/$(PROJECT).pc
   endif
@@ -720,7 +717,7 @@ endif
 
 ifeq (,$(filter-out 1 2,$(BUILD)))
 $(PPKGDIR)/$(PROJECT)-shared.pc: $(OUTDIR)/$(PROJECT).$(DLIBEXT) $(PPKGDIR)/.make $(PCTEMPLATE)
-	@$(PCSUBST_SHARED) >$@
+	@$(PCSUBST_SHARED) <$(PCTEMPLATE) >$@
   ifeq (,$(filter-out 1,$(BUILD)))
 	@ln -fs $(notdir $@) $(PPKGDIR)/$(PROJECT).pc
   endif
@@ -730,8 +727,8 @@ endif
 
 $(PCMKDIR)/$(PROJECT)Config.cmake: $(ROOTSCR)/$(PROJECT)Config.cmake $(PCMKDIR)/.make
 	@$(CP) $< $@
-	@$(SED) $(ROOTSCR)/$(PROJECT)ConfigVersion.cmake.in \
-		-e 's|@VERSION@|$(VERSION_STRING)|g' >$(PCMKDIR)/$(PROJECT)ConfigVersion.cmake
+	@$(SED) -e 's|@VERSION@|$(VERSION_STRING)|g' \
+		<$(ROOTSCR)/$(PROJECT)ConfigVersion.cmake.in >$(PCMKDIR)/$(PROJECT)ConfigVersion.cmake
 
 $(OUTDIR)/$(PROJECT).env: $(OUTDIR)/.make $(INCDIR)/$(PROJECT).h
 	@echo "#%Module1.0" >$@

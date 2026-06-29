@@ -41,7 +41,7 @@ jobs:
 
       - name: Build
         run: |
-          make -d ${{ matrix.flags }}
+          make ${{ matrix.flags }}
 
   CMake:
     runs-on: macos-latest
