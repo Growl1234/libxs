@@ -185,8 +185,9 @@ LIBXS_API int libxs_matdiff(libxs_matdiff_t* info,
           size_t shape[2] = { 0 }, size[2] = { 0 };
           char filename[256] = "";
           libxs_mhd_element_handler_info_t info_dst;
-          libxs_mhd_info_t mhd_info = { 2, 1, 0/*type*/, 0 };
-          libxs_mhd_write_info_t mhd_winfo = { 0 };
+          libxs_mhd_info_t mhd_info = { 2, 1, (libxs_data_t)0/*type*/, 0 };
+          libxs_mhd_write_info_t mhd_winfo;
+          LIBXS_MEMZERO(&mhd_winfo);
           LIBXS_MEMZERO(&info_dst);
           mhd_info.type = datatype;
           if (0 == reshape) {

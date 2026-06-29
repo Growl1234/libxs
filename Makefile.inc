@@ -1554,7 +1554,9 @@ else # GCC assumed
         CSTD := -std=c99
       endif
       ifeq (0,$(ANALYZE))
+      ifeq (,$(filter-out 0,$(FORCE_CXX)))
         CFLAGS += -Wstrict-prototypes
+      endif
       endif
       CXXFLAGS += $(CPEDANTIC) -Wno-long-long
       #CXXFLAGS += -Wno-missing-field-initializers
@@ -1610,7 +1612,9 @@ else # GCC assumed
         CXXFLAGS += $(CPEDANTIC) -Wno-long-long
       endif
       ifeq (0,$(ANALYZE))
+      ifeq (,$(filter-out 0,$(FORCE_CXX)))
         CFLAGS += -Wstrict-prototypes
+      endif
       endif
       #CXXFLAGS += -Wno-missing-field-initializers #-Wzero-as-null-pointer-constant
       CFLAGS += $(CSTD) $(CPEDANTIC)

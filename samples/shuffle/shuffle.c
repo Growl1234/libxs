@@ -109,9 +109,11 @@ int main(int argc, char* argv[])
       LIBXS_DATATYPE_U16,
       LIBXS_DATATYPE_U8
     };
-    libxs_mhd_element_handler_info_t mhdinfo = { 0 };
+    libxs_mhd_element_handler_info_t mhdinfo;
     libxs_mhd_info_t mhd_write_info = { 2, 1, LIBXS_DATATYPE_UNKNOWN, 0 };
-    libxs_mhd_write_info_t mhd_winfo = { 0 };
+    libxs_mhd_write_info_t mhd_winfo;
+    LIBXS_MEMZERO(&mhdinfo);
+    LIBXS_MEMZERO(&mhd_winfo);
     const size_t nelemtypes = sizeof(elemtypes) / sizeof(*elemtypes);
     const size_t nchannels = 1, mhdsize = n / nchannels;
     size_t shape[2], y = 0, typesize = 0;

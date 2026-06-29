@@ -30,7 +30,7 @@
     + (size_t)(TS) * ((size_t)(I) * (LDO) + (J)))
 /* xcopy kernel: zero stores (matzero) */
 #define LIBXS_MZERO_KERNEL(TYPE, TS, OUT, IN, LDI, LDO, I, J, SRC, DST) \
-  static const double libxs_mzero_zero_[32]; \
+  static const double libxs_mzero_zero_[32] = { 0 }; \
   const TYPE *const SRC = (const TYPE*)libxs_mzero_zero_; \
   TYPE *const DST = (TYPE*)(((char*)(OUT)) \
     + (size_t)(TS) * ((size_t)(I) * (LDO) + (J)))

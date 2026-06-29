@@ -342,7 +342,8 @@ LIBXS_API_INLINE void internal_libxs_gemm_print_registry(const libxs_registry_t*
   if (NULL != registry) {
     const char *const env = getenv("LIBXS_GEMM_PRINT");
     if (NULL != env && 0 == atoi(env)) {
-      libxs_registry_info_t info = { 0 };
+      libxs_registry_info_t info;
+      LIBXS_MEMZERO(&info);
       if (EXIT_SUCCESS == libxs_registry_info(registry, &info) && 0 < info.size) {
         const void* key = NULL;
         size_t cursor = 0;
@@ -617,7 +618,8 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
       if (0 < interval) {
         static int counter = 0;
         if (0 == (++counter % interval)) {
-          libxs_registry_info_t info = { 0 };
+          libxs_registry_info_t info;
+          LIBXS_MEMZERO(&info);
           LIBXS_EXPECT(EXIT_SUCCESS == libxs_registry_info(reg, &info));
           LIBXS_ASSERT((NULL != result));
           fprintf(stderr, "LIBXS INFO: "

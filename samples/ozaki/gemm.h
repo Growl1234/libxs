@@ -209,7 +209,8 @@ LIBXS_API_INLINE int gemm_mhd_write(const char* filename, const GEMM_REAL_TYPE* 
     ext_size += GEMM_MHD_SETTINGS_SIZE;
   }
   {
-    libxs_mhd_write_info_t winfo = { 0 };
+    libxs_mhd_write_info_t winfo;
+    memset(&winfo, 0, sizeof(winfo));
     winfo.extension = ext;
     winfo.extension_size = ext_size;
     return libxs_mhd_write(filename, NULL /*offset*/, size, pitch, &mhd_info, data, &winfo);

@@ -183,7 +183,7 @@ LIBXS_API_INLINE void internal_libxs_malloc_pool_return(internal_libxs_malloc_ch
   if (pool->slots_num >= pool->slots_size) {
     const size_t new_size = (0 < pool->slots_size
       ? (2 * pool->slots_size) : LIBXS_MALLOC_POOL_INIT);
-    internal_libxs_malloc_chunk_t **const np = realloc(
+    internal_libxs_malloc_chunk_t **const np = (internal_libxs_malloc_chunk_t**)realloc(
       pool->slots, new_size * sizeof(void*));
     if (NULL != np) {
       pool->slots_size = new_size;
@@ -408,10 +408,10 @@ LIBXS_API void* libxs_malloc(libxs_malloc_pool_t* pool, size_t size, int alignme
               if (NULL != pointer) internal_libxs_malloc_deallocate(pool, chunk->pointer);
             }
             else { /* default: realloc */
-              pointer = realloc(chunk->pointer, alloc_size);
+              pointer = (char*)realloc(chunk->pointer, alloc_size);
 #if defined(LIBXS_MALLOC_EVICT)
               if (NULL == pointer && 0 != internal_libxs_malloc_evict_available(pool, NULL)) {
-                pointer = realloc(chunk->pointer, alloc_size);
+                pointer = (char*)realloc(chunk->pointer, alloc_size);
               }
               if (NULL == pointer && NULL != chunk->pointer) {
                 internal_libxs_malloc_evict_available(pool, chunk);
@@ -532,7 +532,7 @@ LIBXS_API void libxs_free(void* pointer)
           libxs_registry_lock(internal_libxs_malloc_registry))
       : 0;
     if (0 == found) {
-      chunk = *(void**)((uintptr_t)pointer - sizeof(void*));
+      chunk = (internal_libxs_malloc_chunk_t*)*(void**)((uintptr_t)pointer - sizeof(void*));
     }
     LIBXS_ASSERT(NULL != chunk && NULL != chunk->pool);
     pool = chunk->pool;
@@ -577,7 +577,7 @@ LIBXS_API int libxs_malloc_info(const void* pointer, libxs_malloc_info_t* info)
             libxs_registry_lock(internal_libxs_malloc_registry))
         : 0;
       if (0 == found) {
-        chunk = *(void**)((uintptr_t)pointer - sizeof(void*));
+        chunk = (internal_libxs_malloc_chunk_t*)*(void**)((uintptr_t)pointer - sizeof(void*));
       }
       info->size = chunk->used;
     }

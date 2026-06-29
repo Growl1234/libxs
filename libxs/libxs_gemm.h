@@ -228,6 +228,21 @@ LIBXS_API void libxs_gemm_index_task(
   int batchsize, const libxs_gemm_config_t* config,
   int tid, int ntasks);
 
+#if defined(__BLAS) && !defined(__MKL) && !defined(MKL_H)
+LIBXS_EXTERN void LIBXS_FSYMBOL(dgemm)(
+  const char*, const char*,
+  const int*, const int*, const int*,
+  const double*, const double*, const int*,
+  const double*, const int*,
+  const double*, double*, const int*);
+LIBXS_EXTERN void LIBXS_FSYMBOL(sgemm)(
+  const char*, const char*,
+  const int*, const int*, const int*,
+  const float*, const float*, const int*,
+  const float*, const int*,
+  const float*, float*, const int*);
+#endif
+
 /**
  * Dispatch a GEMM kernel and return a pointer to the configuration.
  * On registry hit, returns pointer to cached config (zero-cost).
@@ -273,21 +288,8 @@ LIBXS_API_INLINE libxs_gemm_config_t* libxs_gemm_dispatch(
   LIBXS_FPTR_ASSIGN(libxs_gemm_dblas_t, be.dgemm_blas, dgemm);
   LIBXS_FPTR_ASSIGN(libxs_gemm_sblas_t, be.sgemm_blas, sgemm);
 #elif defined(__BLAS)
-  { extern void LIBXS_FSYMBOL(dgemm)(
-      const char*, const char*,
-      const int*, const int*, const int*,
-      const double*, const double*, const int*,
-      const double*, const int*,
-      const double*, double*, const int*);
-    extern void LIBXS_FSYMBOL(sgemm)(
-      const char*, const char*,
-      const int*, const int*, const int*,
-      const float*, const float*, const int*,
-      const float*, const int*,
-      const float*, float*, const int*);
-    be.dgemm_blas = LIBXS_FSYMBOL(dgemm);
-    be.sgemm_blas = LIBXS_FSYMBOL(sgemm);
-  }
+  be.dgemm_blas = LIBXS_FSYMBOL(dgemm);
+  be.sgemm_blas = LIBXS_FSYMBOL(sgemm);
 #endif
   return libxs_gemm_dispatch_rt(&shape, NULL, &be, registry);
 }
@@ -304,11 +306,11 @@ LIBXS_API_INLINE void libxs_gemm_call(
   LIBXS_ASSERT(NULL != config);
   if (NULL != config->dgemm_jit) {
     LIBXS_ASSERT(NULL != config->jitter);
-    config->dgemm_jit(config->jitter, a, b, c);
+    config->dgemm_jit(config->jitter, (const double*)a, (const double*)b, (double*)c);
   }
   else if (NULL != config->sgemm_jit) {
     LIBXS_ASSERT(NULL != config->jitter);
-    config->sgemm_jit(config->jitter, a, b, c);
+    config->sgemm_jit(config->jitter, (const float*)a, (const float*)b, (float*)c);
   }
   else if (NULL != config->xgemm) {
     libxs_gemm_param_t xparam;
