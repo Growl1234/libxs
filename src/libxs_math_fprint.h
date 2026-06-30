@@ -384,35 +384,39 @@ LIBXS_API int libxs_fprint_partial(libxs_fprint_t* info,
         }
       }
       prv = buf + n + 1;
-      for (k = 0; k <= kmax; ++k) {
-        int nk;
-        if (k > 0) {
-          tmp = prv; prv = cur; cur = tmp;
-          nk = n - 1;
-          if (0 == first) {
-            const double d0 = prv[0] - info->tail[k - 1];
-            const double a0 = d0 < 0 ? -d0 : d0;
-            info->acc_sq[k] += d0 * d0;
-            info->acc_abs[k] += a0;
-            info->acc_sum[k] += d0;
-            if (a0 > raw_linf[k]) raw_linf[k] = a0;
-            ++info->nk[k];
+      { int prev_nk = n;
+        double saved_tail[LIBXS_FPRINT_MAXORDER + 1];
+        for (k = 0; k <= kmax; ++k) saved_tail[k] = info->tail[k];
+        for (k = 0; k <= kmax; ++k) {
+          int nk;
+          if (k > 0) {
+            tmp = prv; prv = cur; cur = tmp;
+            nk = prev_nk - 1;
+            if (0 == first) {
+              const double d0 = prv[0] - saved_tail[k - 1];
+              for (i = 0; i < nk; ++i) cur[i + 1] = prv[i + 1] - prv[i];
+              cur[0] = d0;
+              ++nk;
+            }
+            else {
+              for (i = 0; i < nk; ++i) cur[i] = prv[i + 1] - prv[i];
+            }
           }
-          for (i = 0; i < nk; ++i) cur[i] = prv[i + 1] - prv[i];
+          else {
+            nk = n;
+          }
+          for (i = 0; i < nk; ++i) {
+            const double v = cur[i];
+            const double a = v < 0 ? -v : v;
+            info->acc_sq[k] += v * v;
+            info->acc_abs[k] += a;
+            info->acc_sum[k] += v;
+            if (a > raw_linf[k]) raw_linf[k] = a;
+          }
+          info->nk[k] += nk;
+          info->tail[k] = (nk > 0) ? cur[nk - 1] : info->tail[k];
+          prev_nk = nk;
         }
-        else {
-          nk = n;
-        }
-        for (i = 0; i < nk; ++i) {
-          const double v = cur[i];
-          const double a = v < 0 ? -v : v;
-          info->acc_sq[k] += v * v;
-          info->acc_abs[k] += a;
-          info->acc_sum[k] += v;
-          if (a > raw_linf[k]) raw_linf[k] = a;
-        }
-        info->nk[k] += nk;
-        info->tail[k] = (nk > 0) ? cur[nk - 1] : info->tail[k];
       }
       info->n += n;
       { const double h = info->n > 1 ? 1.0 / (info->n - 1) : 1.0;

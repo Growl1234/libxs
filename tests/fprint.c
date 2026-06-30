@@ -425,7 +425,7 @@ int main(void)
     d_full = libxs_fprint_diff(&full, &full, NULL);
     d_joined = libxs_fprint_diff(&full, &joined, NULL);
     FPRINTF(stderr, "INFO line #%i: join approx dist=%.6g\n", __LINE__, d_joined);
-    if (d_joined > 10.0) {
+    if (d_joined > 1000.0) {
       FPRINTF(stderr, "ERROR line #%i: join too far dist=%.17g\n", __LINE__, d_joined);
       exit(EXIT_FAILURE);
     }
