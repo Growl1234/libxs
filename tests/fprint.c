@@ -8,6 +8,7 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 #include <libxs/libxs_math.h>
+#include <string.h>
 
 #if defined(_DEBUG)
 # define FPRINTF(STREAM, ...) do { fprintf(STREAM, __VA_ARGS__); } while(0)
@@ -342,6 +343,93 @@ int main(void)
       FPRINTF(stderr, "ERROR line #%i: raw d1=%.17g expected 10\n", __LINE__, raw_d1);
       exit(EXIT_FAILURE);
     }
+  }
+
+  /* partial: single chunk matches batch fprint */
+  { double a[] = {1.0, 3.0, 2.0, 7.0, 5.0, 4.0, 8.0, 6.0};
+    const size_t shape[] = {8};
+    libxs_fprint_t batch, partial;
+    int k;
+    libxs_fprint(&batch, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 4, 0, 0, 0);
+    memset(&partial, 0, sizeof(partial));
+    if (EXIT_SUCCESS != libxs_fprint_partial(&partial, LIBXS_DATATYPE_F64, a, 8, 4)) {
+      FPRINTF(stderr, "ERROR line #%i: partial single-chunk failed\n", __LINE__);
+      exit(EXIT_FAILURE);
+    }
+    if (batch.order != partial.order || batch.n != partial.n) {
+      FPRINTF(stderr, "ERROR line #%i: partial order=%d/%d n=%d/%d\n",
+        __LINE__, batch.order, partial.order, batch.n, partial.n);
+      exit(EXIT_FAILURE);
+    }
+    for (k = 0; k <= batch.order; ++k) {
+      if (1E-10 < LIBXS_DELTA(batch.l2[k], partial.l2[k])) {
+        FPRINTF(stderr, "ERROR line #%i: partial l2[%d]=%.17g vs %.17g\n",
+          __LINE__, k, batch.l2[k], partial.l2[k]);
+        exit(EXIT_FAILURE);
+      }
+      if (1E-10 < LIBXS_DELTA(batch.mean[k], partial.mean[k])) {
+        FPRINTF(stderr, "ERROR line #%i: partial mean[%d]=%.17g vs %.17g\n",
+          __LINE__, k, batch.mean[k], partial.mean[k]);
+        exit(EXIT_FAILURE);
+      }
+    }
+  }
+
+  /* partial: two chunks match batch on concatenation */
+  { double a[] = {1.0, 3.0, 2.0, 7.0, 5.0, 4.0, 8.0, 6.0};
+    const size_t shape[] = {8};
+    libxs_fprint_t batch, partial;
+    int k;
+    libxs_fprint(&batch, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 3, 0, 0, 0);
+    memset(&partial, 0, sizeof(partial));
+    libxs_fprint_partial(&partial, LIBXS_DATATYPE_F64, a, 4, 3);
+    if (EXIT_SUCCESS != libxs_fprint_partial(&partial, LIBXS_DATATYPE_F64, a + 4, 4, 3)) {
+      FPRINTF(stderr, "ERROR line #%i: partial two-chunk failed\n", __LINE__);
+      exit(EXIT_FAILURE);
+    }
+    if (batch.n != partial.n) {
+      FPRINTF(stderr, "ERROR line #%i: partial n=%d/%d\n",
+        __LINE__, batch.n, partial.n);
+      exit(EXIT_FAILURE);
+    }
+    for (k = 0; k <= batch.order; ++k) {
+      if (1E-10 < LIBXS_DELTA(batch.l2[k], partial.l2[k])) {
+        FPRINTF(stderr, "ERROR line #%i: partial 2-chunk l2[%d]=%.17g vs %.17g\n",
+          __LINE__, k, batch.l2[k], partial.l2[k]);
+        exit(EXIT_FAILURE);
+      }
+      if (1E-10 < LIBXS_DELTA(batch.mean[k], partial.mean[k])) {
+        FPRINTF(stderr, "ERROR line #%i: partial 2-chunk mean[%d]=%.17g vs %.17g\n",
+          __LINE__, k, batch.mean[k], partial.mean[k]);
+        exit(EXIT_FAILURE);
+      }
+    }
+  }
+
+  /* join: merging two halves approximates the full fingerprint */
+  { double a[] = {1.0, 3.0, 2.0, 7.0, 5.0, 4.0, 8.0, 6.0};
+    const size_t s_full[] = {8}, s_half[] = {4};
+    libxs_fprint_t full, fa, fb, joined;
+    double d_full, d_joined;
+    libxs_fprint(&full, LIBXS_DATATYPE_F64, a, 1, s_full, NULL, 3, 0, 0, 0);
+    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, s_half, NULL, 3, 0, 0, 0);
+    libxs_fprint(&fb, LIBXS_DATATYPE_F64, a + 4, 1, s_half, NULL, 3, 0, 0, 0);
+    if (EXIT_SUCCESS != libxs_fprint_join(&joined, &fa, &fb)) {
+      FPRINTF(stderr, "ERROR line #%i: join failed\n", __LINE__);
+      exit(EXIT_FAILURE);
+    }
+    if (8 != joined.n) {
+      FPRINTF(stderr, "ERROR line #%i: join n=%d\n", __LINE__, joined.n);
+      exit(EXIT_FAILURE);
+    }
+    d_full = libxs_fprint_diff(&full, &full, NULL);
+    d_joined = libxs_fprint_diff(&full, &joined, NULL);
+    FPRINTF(stderr, "INFO line #%i: join approx dist=%.6g\n", __LINE__, d_joined);
+    if (d_joined > 10.0) {
+      FPRINTF(stderr, "ERROR line #%i: join too far dist=%.17g\n", __LINE__, d_joined);
+      exit(EXIT_FAILURE);
+    }
+    (void)d_full;
   }
 
   return EXIT_SUCCESS;

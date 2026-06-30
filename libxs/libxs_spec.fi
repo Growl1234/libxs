@@ -42,7 +42,8 @@
         PUBLIC :: libxs_matdiff, libxs_matdiff_reduce
         PUBLIC :: libxs_matdiff_clear, libxs_matdiff_epsilon
         PUBLIC :: libxs_matdiff_combine
-        PUBLIC :: libxs_fprint, libxs_fprint_diff
+        PUBLIC :: libxs_fprint, libxs_fprint_partial
+        PUBLIC :: libxs_fprint_join, libxs_fprint_diff
         PUBLIC :: libxs_registry_create
         PUBLIC :: libxs_registry_destroy
         PUBLIC :: libxs_registry_lock
@@ -221,7 +222,12 @@
           REAL(C_DOUBLE) :: l1(LIBXS_FPRINT_MAXORDER + 1)
           REAL(C_DOUBLE) :: linf(LIBXS_FPRINT_MAXORDER + 1)
           REAL(C_DOUBLE) :: mean(LIBXS_FPRINT_MAXORDER + 1)
+          REAL(C_DOUBLE) :: acc_sq(LIBXS_FPRINT_MAXORDER + 1)
+          REAL(C_DOUBLE) :: acc_abs(LIBXS_FPRINT_MAXORDER + 1)
+          REAL(C_DOUBLE) :: acc_sum(LIBXS_FPRINT_MAXORDER + 1)
+          REAL(C_DOUBLE) :: tail(LIBXS_FPRINT_MAXORDER + 1)
           INTEGER(C_INT) :: order, n
+          INTEGER(C_INT) :: nk(LIBXS_FPRINT_MAXORDER + 1)
           INTEGER(C_INT) :: datatype
         END TYPE
 
@@ -770,6 +776,24 @@
             REAL(C_DOUBLE) :: internal_fprint_diff
           END FUNCTION
 
+          FUNCTION internal_fprint_partial(info,                        &
+     &    datatype, data, n, order)                                     &
+     &    BIND(C, NAME="libxs_fprint_partial")
+            IMPORT :: libxs_fprint_t, C_PTR, C_INT
+            TYPE(libxs_fprint_t), INTENT(INOUT) :: info
+            INTEGER(C_INT), INTENT(IN), VALUE   :: datatype
+            TYPE(C_PTR), INTENT(IN), VALUE      :: data
+            INTEGER(C_INT), INTENT(IN), VALUE   :: n, order
+            INTEGER(C_INT) :: internal_fprint_partial
+          END FUNCTION
+
+          FUNCTION libxs_fprint_join(output, a, b) BIND(C)
+            IMPORT :: libxs_fprint_t, C_INT
+            TYPE(libxs_fprint_t), INTENT(OUT) :: output
+            TYPE(libxs_fprint_t), INTENT(IN)  :: a, b
+            INTEGER(C_INT) :: libxs_fprint_join
+          END FUNCTION
+
           ! internal (use libxs_itrans)
           SUBROUTINE internal_itrans(inout, typesize,                   &
      &    m, n, ldi, ldo, scratch)                                      &
@@ -1040,5 +1064,13 @@
           MODULE PROCEDURE libxs_fprint_f32
           MODULE PROCEDURE libxs_fprint_i32
           MODULE PROCEDURE libxs_fprint_i8
+        END INTERFACE
+
+        !> Streaming fingerprint accumulation.
+        INTERFACE libxs_fprint_partial
+          MODULE PROCEDURE libxs_fprint_partial_f64
+          MODULE PROCEDURE libxs_fprint_partial_f32
+          MODULE PROCEDURE libxs_fprint_partial_i32
+          MODULE PROCEDURE libxs_fprint_partial_i8
         END INTERFACE
 

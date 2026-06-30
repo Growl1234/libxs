@@ -131,7 +131,12 @@ typedef struct libxs_fprint_t {
   double l1[LIBXS_FPRINT_MAXORDER + 1];
   double linf[LIBXS_FPRINT_MAXORDER + 1];
   double mean[LIBXS_FPRINT_MAXORDER + 1];
+  double acc_sq[LIBXS_FPRINT_MAXORDER + 1];
+  double acc_abs[LIBXS_FPRINT_MAXORDER + 1];
+  double acc_sum[LIBXS_FPRINT_MAXORDER + 1];
+  double tail[LIBXS_FPRINT_MAXORDER + 1];
   int order, n;
+  int nk[LIBXS_FPRINT_MAXORDER + 1];
   libxs_data_t datatype;
 } libxs_fprint_t;
 ```
@@ -139,12 +144,17 @@ typedef struct libxs_fprint_t {
 Three norm families and a signed mean are computed per derivative
 order k = 0..order:
 
-| Field      | Description                                    |
-|------------|------------------------------------------------|
-| `l2[k]`   | L2 norm of the k-th finite difference          |
-| `l1[k]`   | Mean absolute value (total variation)          |
-| `linf[k]` | Maximum absolute value (worst-case decay)      |
-| `mean[k]` | Signed mean (sum / count, preserves sign/phase)|
+| Field       | Description                                    |
+|-------------|------------------------------------------------|
+| `l2[k]`    | L2 norm of the k-th finite difference          |
+| `l1[k]`    | Mean absolute value (total variation)          |
+| `linf[k]`  | Maximum absolute value (worst-case decay)      |
+| `mean[k]`  | Signed mean (sum / count, preserves sign/phase)|
+| `acc_sq[k]` | Accumulator: sum of raw squared differences   |
+| `acc_abs[k]`| Accumulator: sum of raw absolute differences  |
+| `acc_sum[k]`| Accumulator: sum of raw signed differences    |
+| `tail[k]`  | Last value at derivative level k (for partial) |
+| `nk[k]`    | Count of differences accumulated at order k    |
 
 All norms are normalized to the unit interval (h = 1/(n-1)).
 The signed mean preserves the dominant direction of the k-th
@@ -259,6 +269,35 @@ info->datatype. If no candidate has r < 1, the function returns
 EXIT_FAILURE. Ties are broken by preferring the smallest element
 width. Float candidates whose maximum absolute value is below
 1e-37 (subnormals) are rejected.
+
+```C
+int libxs_fprint_partial(libxs_fprint_t* info,
+  libxs_data_t datatype, const void* data, int n, int order);
+```
+
+Streaming (incremental) fingerprint accumulation. Processes data
+one chunk at a time and maintains exact junction derivatives across
+calls via the tail buffer. First call: pass a zero-initialized info.
+Subsequent calls: pass the same info with the next contiguous chunk.
+Only 1-D contiguous data is supported. The normalized fields
+(l2, l1, linf, mean) are updated after each call so that
+libxs_fprint_diff can be used at any intermediate point.
+
+For a single chunk of n elements, produces the same result as
+libxs_fprint with ndims=1, shape={n}, stride=NULL.
+
+```C
+int libxs_fprint_join(libxs_fprint_t* output,
+  const libxs_fprint_t* a, const libxs_fprint_t* b);
+```
+
+Approximate merge of two finalized fingerprints. Combines a and b
+into output using the raw accumulators (acc_sq, acc_abs, acc_sum).
+Junction derivatives between the two regions are not recomputed,
+so the result is approximate with error proportional to
+order / min(a->n, b->n). The linf field is the maximum of the
+un-scaled maxima from both sides, re-scaled to the combined length.
+Returns EXIT_FAILURE if either input has n < 1 or combined n < 2.
 
 ```C
 double libxs_fprint_diff(

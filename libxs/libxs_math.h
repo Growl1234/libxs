@@ -168,8 +168,18 @@ LIBXS_EXTERN_C typedef struct libxs_fprint_t {
   double linf[LIBXS_FPRINT_MAXORDER + 1];
   /** Per-order signed mean (sum / count, preserves sign and phase). */
   double mean[LIBXS_FPRINT_MAXORDER + 1];
+  /** Streaming accumulators (un-normalized): sum of squares per order. */
+  double acc_sq[LIBXS_FPRINT_MAXORDER + 1];
+  /** Streaming accumulators: sum of absolute values per order. */
+  double acc_abs[LIBXS_FPRINT_MAXORDER + 1];
+  /** Streaming accumulators: signed sum per order. */
+  double acc_sum[LIBXS_FPRINT_MAXORDER + 1];
+  /** Tail values at each derivative level for junction bridging. */
+  double tail[LIBXS_FPRINT_MAXORDER + 1];
   /** Derivative orders used and original data length. */
   int order, n;
+  /** Number of difference values accumulated per order. */
+  int nk[LIBXS_FPRINT_MAXORDER + 1];
   /** Discovered or given data type. */
   libxs_data_t datatype;
 } libxs_fprint_t;
@@ -201,6 +211,33 @@ LIBXS_API int libxs_fprint(libxs_fprint_t* info,
   libxs_data_t datatype, const void* data,
   int ndims, const size_t shape[], const size_t stride[],
   int order, int axis, int smooth, unsigned int flags);
+
+/**
+ * Streaming (partial/incremental) fingerprint accumulation.
+ * First call: pass a zeroed info with order set to desired maximum.
+ * Subsequent calls: pass the same info with the next chunk of data.
+ * Each call updates the accumulators (acc_sq, acc_abs, acc_sum, linf)
+ * and maintains tail values for exact junction differences.
+ * The normalized fields (l2, l1, mean) are updated after each call
+ * so that libxs_fprint_diff can be used at any point.
+ * Only 1-D contiguous data is supported (ndims=1, stride=NULL).
+ */
+LIBXS_API int libxs_fprint_partial(libxs_fprint_t* info,
+  libxs_data_t datatype, const void* data, int n, int order);
+
+/**
+ * Approximate merge of two finalized fingerprints.
+ * Combines a and b into output using length-weighted statistics:
+ *   l2  = sqrt((a.acc_sq + b.acc_sq) / (na + nb - 1))
+ *   l1  = (a.acc_abs + b.acc_abs) / (na + nb - 1)
+ *   mean = (a.acc_sum + b.acc_sum) / (na + nb - k)
+ *   linf = max(a.linf, b.linf)
+ * Junction derivatives are not recomputed (error ~ order/min(na,nb)).
+ * If accumulators are not populated (legacy fprint), falls back to
+ * weighted-average approximation using the normalized fields.
+ */
+LIBXS_API int libxs_fprint_join(libxs_fprint_t* output,
+  const libxs_fprint_t* a, const libxs_fprint_t* b);
 
 /**
  * Weighted Sobolev distance between two fingerprints:

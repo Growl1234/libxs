@@ -262,6 +262,58 @@
           END IF
         END FUNCTION
 
+        !> Streaming fingerprint for REAL(C_DOUBLE).
+        FUNCTION libxs_fprint_partial_f64(info, data, order)            &
+     &  RESULT(rc)
+          TYPE(libxs_fprint_t), INTENT(INOUT) :: info
+          REAL(C_DOUBLE), INTENT(IN), TARGET :: data(:)
+          INTEGER(C_INT), INTENT(IN), OPTIONAL :: order
+          INTEGER(C_INT) :: rc, oo
+          IF (PRESENT(order)) THEN; oo = order
+          ELSE; oo = LIBXS_FPRINT_MAXORDER; END IF
+          rc = internal_fprint_partial(info, LIBXS_DATATYPE_F64,        &
+     &      C_LOC(data), INT(SIZE(data), C_INT), oo)
+        END FUNCTION
+
+        !> Streaming fingerprint for REAL(C_FLOAT).
+        FUNCTION libxs_fprint_partial_f32(info, data, order)            &
+     &  RESULT(rc)
+          TYPE(libxs_fprint_t), INTENT(INOUT) :: info
+          REAL(C_FLOAT), INTENT(IN), TARGET :: data(:)
+          INTEGER(C_INT), INTENT(IN), OPTIONAL :: order
+          INTEGER(C_INT) :: rc, oo
+          IF (PRESENT(order)) THEN; oo = order
+          ELSE; oo = LIBXS_FPRINT_MAXORDER; END IF
+          rc = internal_fprint_partial(info, LIBXS_DATATYPE_F32,        &
+     &      C_LOC(data), INT(SIZE(data), C_INT), oo)
+        END FUNCTION
+
+        !> Streaming fingerprint for INTEGER(C_INT).
+        FUNCTION libxs_fprint_partial_i32(info, data, order)            &
+     &  RESULT(rc)
+          TYPE(libxs_fprint_t), INTENT(INOUT) :: info
+          INTEGER(C_INT), INTENT(IN), TARGET :: data(:)
+          INTEGER(C_INT), INTENT(IN), OPTIONAL :: order
+          INTEGER(C_INT) :: rc, oo
+          IF (PRESENT(order)) THEN; oo = order
+          ELSE; oo = LIBXS_FPRINT_MAXORDER; END IF
+          rc = internal_fprint_partial(info, LIBXS_DATATYPE_I32,        &
+     &      C_LOC(data), INT(SIZE(data), C_INT), oo)
+        END FUNCTION
+
+        !> Streaming fingerprint for INTEGER(C_INT8_T).
+        FUNCTION libxs_fprint_partial_i8(info, data, order)             &
+     &  RESULT(rc)
+          TYPE(libxs_fprint_t), INTENT(INOUT) :: info
+          INTEGER(C_INT8_T), INTENT(IN), TARGET :: data(:)
+          INTEGER(C_INT), INTENT(IN), OPTIONAL :: order
+          INTEGER(C_INT) :: rc, oo
+          IF (PRESENT(order)) THEN; oo = order
+          ELSE; oo = LIBXS_FPRINT_MAXORDER; END IF
+          rc = internal_fprint_partial(info, LIBXS_DATATYPE_I8,         &
+     &      C_LOC(data), INT(SIZE(data), C_INT), oo)
+        END FUNCTION
+
         !> In-place matrix transpose.
         SUBROUTINE libxs_itrans(inout, typesize,                        &
      &  m, n, ldi, ldo, scratch)

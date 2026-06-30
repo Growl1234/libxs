@@ -37,6 +37,12 @@ libxs_fprint_f32
 libxs_fprint_f64
 libxs_fprint_i32
 libxs_fprint_i8
+libxs_fprint_join
+libxs_fprint_partial
+libxs_fprint_partial_f32
+libxs_fprint_partial_f64
+libxs_fprint_partial_i32
+libxs_fprint_partial_i8
 libxs_fprint_ptr
 libxs_fprint_raw
 libxs_free

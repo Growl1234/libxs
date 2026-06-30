@@ -4,6 +4,7 @@
 LIBXS_API_INTERN void internal_libxs_fprint_core(
   libxs_fprint_t* info, double* buf, double* cur, int n, int kmax)
 {
+  const double invh = 1 < n ? (double)(n - 1) : 1.0;
   const double h = 1 < n ? 1.0 / (n - 1) : 1.0;
   double *prv = (cur == buf) ? buf + n : buf;
   int k, i;
@@ -20,13 +21,19 @@ LIBXS_API_INTERN void internal_libxs_fprint_core(
     info->l1[0] = l1acc * h;
     info->linf[0] = amax;
     info->mean[0] = macc / n;
+    info->acc_sq[0] = l2acc;
+    info->acc_abs[0] = l1acc;
+    info->acc_sum[0] = macc;
+    info->nk[0] = n;
+    info->tail[0] = cur[n > 0 ? n - 1 : 0];
   }
   for (k = 1; k <= kmax; ++k) {
     const int nk = n - k;
     double *tmp, l2acc = 0, l2comp = 0, l1acc = 0, l1comp = 0;
     double macc = 0, mcomp = 0, amax = 0;
+    double scale;
     tmp = prv; prv = cur; cur = tmp;
-    for (i = 0; i < nk; ++i) cur[i] = (prv[i + 1] - prv[i]) / h;
+    for (i = 0; i < nk; ++i) cur[i] = prv[i + 1] - prv[i];
     for (i = 0; i < nk; ++i) {
       const double a = cur[i] < 0 ? -cur[i] : cur[i];
       libxs_kahan_sum(cur[i] * cur[i], &l2acc, &l2comp);
@@ -34,10 +41,16 @@ LIBXS_API_INTERN void internal_libxs_fprint_core(
       libxs_kahan_sum(a, &l1acc, &l1comp);
       if (a > amax) amax = a;
     }
-    info->l2[k] = sqrt(l2acc * h);
-    info->l1[k] = l1acc * h;
-    info->linf[k] = amax;
-    info->mean[k] = macc / nk;
+    info->acc_sq[k] = l2acc;
+    info->acc_abs[k] = l1acc;
+    info->acc_sum[k] = macc;
+    info->nk[k] = nk;
+    info->tail[k] = cur[nk > 0 ? nk - 1 : 0];
+    scale = pow(invh, k);
+    info->l2[k] = sqrt(l2acc * h) * scale;
+    info->l1[k] = l1acc * h * scale;
+    info->linf[k] = amax * scale;
+    info->mean[k] = (nk > 0) ? (macc / nk) * scale : 0;
   }
 }
 
@@ -332,6 +345,145 @@ LIBXS_API double libxs_fprint_decay(const libxs_fprint_t* info)
     return pow(info->l2[k] / info->l2[0], 1.0 / k) / (info->n - 1);
   }
   return 1e30;
+}
+
+
+LIBXS_API int libxs_fprint_partial(libxs_fprint_t* info,
+  libxs_data_t datatype, const void* data, int n, int order)
+{
+  int result = EXIT_FAILURE;
+  int kmax, k, i, pool = 0, first;
+  double *buf = NULL, *cur, *prv, *tmp;
+  if (NULL != info && NULL != data && n >= 1) {
+    first = (0 == info->n);
+    if (0 != first) {
+      memset(info, 0, sizeof(*info));
+      info->datatype = datatype;
+    }
+    kmax = LIBXS_MIN(order, LIBXS_FPRINT_MAXORDER);
+    if (kmax > info->order || 0 != first) info->order = kmax;
+    else kmax = info->order;
+    buf = (double*)LIBXS_MATH_MALLOC(2 * (size_t)(n + 1) * sizeof(double), pool);
+    if (NULL != buf) {
+      cur = buf;
+      result = internal_libxs_fprint_load(cur, datatype, data, 1, n);
+    }
+    if (EXIT_SUCCESS == result) {
+      double raw_linf[LIBXS_FPRINT_MAXORDER + 1];
+      if (0 != first) {
+        for (k = 0; k <= kmax; ++k) raw_linf[k] = 0;
+      }
+      else {
+        const double prev_invh = info->n > 1
+          ? (double)(info->n - 1) : 1.0;
+        raw_linf[0] = info->linf[0];
+        for (k = 1; k <= kmax; ++k) {
+          const double prev_scale = pow(prev_invh, k);
+          raw_linf[k] = (prev_scale > 0)
+            ? info->linf[k] / prev_scale : 0;
+        }
+      }
+      prv = buf + n + 1;
+      for (k = 0; k <= kmax; ++k) {
+        int nk;
+        if (k > 0) {
+          tmp = prv; prv = cur; cur = tmp;
+          nk = n - 1;
+          if (0 == first) {
+            const double d0 = prv[0] - info->tail[k - 1];
+            const double a0 = d0 < 0 ? -d0 : d0;
+            info->acc_sq[k] += d0 * d0;
+            info->acc_abs[k] += a0;
+            info->acc_sum[k] += d0;
+            if (a0 > raw_linf[k]) raw_linf[k] = a0;
+            ++info->nk[k];
+          }
+          for (i = 0; i < nk; ++i) cur[i] = prv[i + 1] - prv[i];
+        }
+        else {
+          nk = n;
+        }
+        for (i = 0; i < nk; ++i) {
+          const double v = cur[i];
+          const double a = v < 0 ? -v : v;
+          info->acc_sq[k] += v * v;
+          info->acc_abs[k] += a;
+          info->acc_sum[k] += v;
+          if (a > raw_linf[k]) raw_linf[k] = a;
+        }
+        info->nk[k] += nk;
+        info->tail[k] = (nk > 0) ? cur[nk - 1] : info->tail[k];
+      }
+      info->n += n;
+      { const double h = info->n > 1 ? 1.0 / (info->n - 1) : 1.0;
+        const double invh = info->n > 1 ? (double)(info->n - 1) : 1.0;
+        for (k = 0; k <= kmax; ++k) {
+          if (info->nk[k] > 0) {
+            const double scale = (k > 0) ? pow(invh, k) : 1.0;
+            info->l2[k] = sqrt(info->acc_sq[k] * h) * scale;
+            info->l1[k] = info->acc_abs[k] * h * scale;
+            info->linf[k] = raw_linf[k] * scale;
+            info->mean[k] = (info->acc_sum[k] / info->nk[k]) * scale;
+          }
+        }
+      }
+    }
+    LIBXS_MATH_FREE(buf, pool);
+  }
+  return result;
+}
+
+
+LIBXS_API int libxs_fprint_join(libxs_fprint_t* output,
+  const libxs_fprint_t* a, const libxs_fprint_t* b)
+{
+  int result = EXIT_FAILURE;
+  if (NULL != output && NULL != a && NULL != b) {
+    memset(output, 0, sizeof(*output));
+    { const int kmax = LIBXS_MIN(a->order, b->order);
+      output->order = kmax;
+      output->n = a->n + b->n;
+      output->datatype = a->datatype;
+      if (output->n >= 2) {
+        const double h = 1.0 / (output->n - 1);
+        const double invh = (double)(output->n - 1);
+        int k;
+        for (k = 0; k <= kmax; ++k) {
+          const double sq = a->acc_sq[k] + b->acc_sq[k];
+          const double ab = a->acc_abs[k] + b->acc_abs[k];
+          const double sm = a->acc_sum[k] + b->acc_sum[k];
+          const int nk_total = a->nk[k] + b->nk[k];
+          const double scale = (k > 0) ? pow(invh, k) : 1.0;
+          double raw_a, raw_b, raw_max;
+          output->acc_sq[k] = sq;
+          output->acc_abs[k] = ab;
+          output->acc_sum[k] = sm;
+          output->nk[k] = nk_total;
+          if (k > 0) {
+            const double sa = (a->n > 1)
+              ? pow((double)(a->n - 1), k) : 1.0;
+            const double sb = (b->n > 1)
+              ? pow((double)(b->n - 1), k) : 1.0;
+            raw_a = (sa > 0) ? a->linf[k] / sa : 0;
+            raw_b = (sb > 0) ? b->linf[k] / sb : 0;
+          }
+          else {
+            raw_a = a->linf[0];
+            raw_b = b->linf[0];
+          }
+          raw_max = raw_a > raw_b ? raw_a : raw_b;
+          output->linf[k] = raw_max * scale;
+          if (nk_total > 0) {
+            output->l2[k] = sqrt(sq * h) * scale;
+            output->l1[k] = ab * h * scale;
+            output->mean[k] = (sm / nk_total) * scale;
+          }
+        }
+        result = EXIT_SUCCESS;
+      }
+    }
+  }
+  return result;
 }
 
 
