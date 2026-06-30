@@ -8,6 +8,7 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 #include <libxs/libxs_reg.h>
+#include <libxs/libxs_mem.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -53,6 +54,7 @@ LIBXS_EXTERN_C typedef struct internal_libxs_regentry_t {
   size_t key_size;      /* actual key size in Bytes */
   size_t value_size;    /* allocated value size in Bytes */
   unsigned char state;  /* INTERNAL_REG_EMPTY|USED|TOMB */
+  unsigned char ext;    /* non-zero: value points into external buffer (no free) */
   char key[LIBXS_REGKEY_MAXSIZE];
 } internal_libxs_regentry_t;
 
@@ -186,18 +188,19 @@ LIBXS_API_INLINE void* internal_libxs_registry_set_impl(
     registry->entries, registry->capacity, key, key_size, &found);
   if (0 != found) { /* key exists: update in place */
     internal_libxs_regentry_t* e = registry->entries + idx;
-    if (value_size > e->value_size) { /* need larger buffer */
+    if (value_size > e->value_size || 0 != e->ext) {
       if (value_size <= sizeof(e->value)) { /* fits inline */
-        if (!INTERNAL_REG_INLINE(e)) free(e->value);
+        if (!INTERNAL_REG_INLINE(e) && 0 == e->ext) free(e->value);
       }
       else { /* heap allocation */
-        void* new_buf = INTERNAL_REG_INLINE(e)
+        void* new_buf = (INTERNAL_REG_INLINE(e) || 0 != e->ext)
             ? malloc(value_size) : realloc(e->value, value_size);
         if (NULL != new_buf) {
           e->value = new_buf;
         }
       }
       e->value_size = value_size;
+      e->ext = 0;
     }
     result = internal_value_ptr(e);
     if (NULL != result && NULL != value_init) {
@@ -257,11 +260,12 @@ LIBXS_API_INLINE void internal_libxs_registry_remove_impl(
     registry->entries, registry->capacity, key, key_size, &found);
   if (0 != found) {
     internal_libxs_regentry_t* e = registry->entries + idx;
-    if (!INTERNAL_REG_INLINE(e)) free(e->value);
+    if (!INTERNAL_REG_INLINE(e) && 0 == e->ext) free(e->value);
     e->value = NULL;
     e->key_size = 0;
     e->value_size = 0;
     e->state = INTERNAL_REG_TOMB;
+    e->ext = 0;
     LIBXS_ASSERT(0 < registry->size);
     --registry->size;
   }
@@ -284,11 +288,12 @@ LIBXS_API_INLINE int internal_libxs_registry_fetch_impl(
       memcpy(value_out, internal_value_ptr(e), n);
     }
     if (0 != remove) {
-      if (!INTERNAL_REG_INLINE(e)) free(e->value);
+      if (!INTERNAL_REG_INLINE(e) && 0 == e->ext) free(e->value);
       e->value = NULL;
       e->key_size = 0;
       e->value_size = 0;
       e->state = INTERNAL_REG_TOMB;
+      e->ext = 0;
       LIBXS_ASSERT(0 < registry->size);
       --registry->size;
     }
@@ -344,7 +349,8 @@ LIBXS_API void libxs_registry_destroy(libxs_registry_t* registry)
       unsigned int i;
       for (i = 0; i < registry->capacity; ++i) {
         if (INTERNAL_REG_USED == registry->entries[i].state
-          && !INTERNAL_REG_INLINE(registry->entries + i))
+          && !INTERNAL_REG_INLINE(registry->entries + i)
+          && 0 == registry->entries[i].ext)
         {
           free(registry->entries[i].value);
         }
@@ -612,7 +618,7 @@ LIBXS_API int libxs_registry_get_copy(const libxs_registry_t* registry,
       LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
     }
     { libxs_registry_t* mutable_reg;
-      memcpy(&mutable_reg, &registry, sizeof(registry));
+      LIBXS_VALUE_ASSIGN(mutable_reg, registry);
       result = internal_libxs_registry_fetch_impl(
         mutable_reg, key, key_size, value_out, value_size, 0/*keep*/);
     }
@@ -639,6 +645,160 @@ LIBXS_API int libxs_registry_info(const libxs_registry_t* registry, libxs_regist
       }
     }
     result = EXIT_SUCCESS;
+  }
+  return result;
+}
+
+
+#define INTERNAL_REG_MAGIC 0x58535247U /* "XSRG" */
+#define INTERNAL_REG_VERSION 1
+
+
+LIBXS_API int libxs_registry_save(const libxs_registry_t* registry,
+  void* buffer, size_t* size)
+{
+  int result = EXIT_FAILURE;
+  if (NULL != registry && NULL != size && NULL != registry->entries) {
+    size_t required = 0, values_size = 0;
+    unsigned int i;
+    required += sizeof(uint32_t) + sizeof(uint32_t); /* magic + version */
+    required += sizeof(uint32_t); /* entry count */
+    for (i = 0; i < registry->capacity; ++i) {
+      if (INTERNAL_REG_USED == registry->entries[i].state) {
+        required += sizeof(uint32_t); /* key_size */
+        required += registry->entries[i].key_size;
+        required += sizeof(uint32_t); /* value_offset (relative to values section) */
+        required += sizeof(uint32_t); /* value_size */
+        values_size += registry->entries[i].value_size;
+      }
+    }
+    required += values_size;
+    if (NULL == buffer) {
+      *size = required;
+      result = EXIT_SUCCESS;
+    }
+    else if (*size < required) {
+      *size = required;
+    }
+    else {
+      unsigned char* dst = (unsigned char*)buffer;
+      uint32_t val;
+      size_t value_offset = 0;
+      unsigned char* values_start;
+      val = INTERNAL_REG_MAGIC; memcpy(dst, &val, 4); dst += 4;
+      val = INTERNAL_REG_VERSION; memcpy(dst, &val, 4); dst += 4;
+      val = (uint32_t)registry->size; memcpy(dst, &val, 4); dst += 4;
+      values_start = dst;
+      for (i = 0; i < registry->capacity; ++i) {
+        if (INTERNAL_REG_USED == registry->entries[i].state) {
+          values_start += sizeof(uint32_t) + registry->entries[i].key_size
+            + sizeof(uint32_t) + sizeof(uint32_t);
+        }
+      }
+      for (i = 0; i < registry->capacity; ++i) {
+        if (INTERNAL_REG_USED == registry->entries[i].state) {
+          internal_libxs_regentry_t* e = registry->entries + i;
+          val = (uint32_t)e->key_size; memcpy(dst, &val, 4); dst += 4;
+          memcpy(dst, e->key, e->key_size); dst += e->key_size;
+          val = (uint32_t)value_offset; memcpy(dst, &val, 4); dst += 4;
+          val = (uint32_t)e->value_size; memcpy(dst, &val, 4); dst += 4;
+          memcpy(values_start + value_offset,
+            internal_value_ptr(e), e->value_size);
+          value_offset += e->value_size;
+        }
+      }
+      *size = required;
+      result = EXIT_SUCCESS;
+    }
+  }
+  return result;
+}
+
+
+LIBXS_API libxs_registry_t* libxs_registry_load(const void* buffer, size_t size)
+{
+  libxs_registry_t* result = NULL;
+  if (NULL != buffer && size >= 3 * sizeof(uint32_t)) {
+    const unsigned char* src = (const unsigned char*)buffer;
+    uint32_t magic = 0, version = 0, count = 0;
+    memcpy(&magic, src, 4); src += 4;
+    memcpy(&version, src, 4); src += 4;
+    memcpy(&count, src, 4); src += 4;
+    if (INTERNAL_REG_MAGIC == magic && INTERNAL_REG_VERSION == version) {
+      result = libxs_registry_create();
+    }
+    if (NULL != result) {
+      const unsigned char* keys_cursor = src;
+      size_t keys_section_size = 0;
+      const unsigned char* values_base;
+      uint32_t n;
+      int ok = EXIT_SUCCESS;
+      for (n = 0; n < count && EXIT_SUCCESS == ok; ++n) {
+        uint32_t ks = 0;
+        const size_t entry_hdr = 3 * sizeof(uint32_t); /* key_size + value_offset + value_size */
+        if (keys_cursor + sizeof(uint32_t) > (const unsigned char*)buffer + size) {
+          ok = EXIT_FAILURE; break;
+        }
+        memcpy(&ks, keys_cursor, 4);
+        if (keys_cursor + entry_hdr + ks > (const unsigned char*)buffer + size) {
+          ok = EXIT_FAILURE; break;
+        }
+        keys_section_size += entry_hdr + ks;
+        keys_cursor += entry_hdr + ks;
+      }
+      values_base = src + keys_section_size;
+      keys_cursor = src;
+      for (n = 0; n < count && EXIT_SUCCESS == ok; ++n) {
+        uint32_t ks = 0, vo = 0, vs = 0;
+        const void* key_ptr;
+        memcpy(&ks, keys_cursor, 4); keys_cursor += 4;
+        key_ptr = keys_cursor; keys_cursor += ks;
+        memcpy(&vo, keys_cursor, 4); keys_cursor += 4;
+        memcpy(&vs, keys_cursor, 4); keys_cursor += 4;
+        if (ks > LIBXS_REGKEY_MAXSIZE || 0 == ks
+          || values_base + vo + vs > (const unsigned char*)buffer + size)
+        {
+          ok = EXIT_FAILURE;
+        }
+        if (EXIT_SUCCESS == ok) {
+          if (result->size * INTERNAL_REG_LOAD_DEN
+            >= result->capacity * INTERNAL_REG_LOAD_NUM)
+          {
+            if (EXIT_SUCCESS != internal_libxs_registry_grow(result)) {
+              ok = EXIT_FAILURE;
+            }
+          }
+        }
+        if (EXIT_SUCCESS == ok) {
+          int found = 0;
+          unsigned int idx;
+          internal_libxs_regentry_t* e;
+          idx = internal_libxs_registry_probe(
+            result->entries, result->capacity, key_ptr, ks, &found);
+          LIBXS_ASSERT(0 == found);
+          e = result->entries + idx;
+          memcpy(e->key, key_ptr, ks);
+          e->key_size = ks;
+          e->value_size = vs;
+          e->state = INTERNAL_REG_USED;
+          if (vs <= sizeof(e->value)) {
+            e->value = NULL;
+            memcpy(&e->value, values_base + vo, vs);
+            e->ext = 0;
+          }
+          else {
+            const void* vp = values_base + vo;
+            LIBXS_VALUE_ASSIGN(e->value, vp);
+            e->ext = 1;
+          }
+          ++result->size;
+        }
+      }
+      if (EXIT_SUCCESS != ok) {
+        libxs_registry_destroy(result);
+        result = NULL;
+      }
+    }
   }
   return result;
 }

@@ -116,6 +116,23 @@ int libxs_registry_extract(libxs_registry_t* registry,
 
 Atomically retrieve and remove a key-value pair. Copies up to `value_size` bytes of the stored value into `value_out` (may be NULL to discard the value), then removes the entry and releases its memory. The lookup, copy, and removal are performed under a single lock hold, eliminating the race that exists when calling `libxs_registry_get` followed by `libxs_registry_remove` separately. Returns non-zero if the key was found, zero otherwise.
 
+## Serialization
+
+```C
+int libxs_registry_save(const libxs_registry_t* registry,
+  void* buffer, size_t* size);
+```
+
+Save the registry to a binary buffer. Pass `buffer = NULL` to query the required size (written to `*size`). On success, `*size` contains the number of bytes written. Returns `EXIT_SUCCESS` or `EXIT_FAILURE`.
+
+```C
+libxs_registry_t* libxs_registry_load(const void* buffer, size_t size);
+```
+
+Load a registry from a binary buffer (previously produced by `libxs_registry_save`). Keys are materialized immediately; values remain in the buffer and are accessed on demand via `libxs_registry_get`. The buffer must remain valid for the lifetime of the returned registry (or until all entries are overwritten via `libxs_registry_set`). Returns a new registry or `NULL` on failure.
+
+Values are stored verbatim; pointers or handles embedded in values will not be valid after load.
+
 ## Status
 
 ```C

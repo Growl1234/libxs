@@ -407,6 +407,132 @@ static int test_value_size(void)
 }
 
 
+static int test_save_load(void)
+{ /* save registry to buffer, load from buffer, verify all entries survive */
+  const int keys[] = { 1, 2, 3, 4, 5 };
+  const char* vals[] = { "alpha", "beta", "gamma", "delta", "epsilon" };
+  const int n = (int)(sizeof(keys) / sizeof(keys[0]));
+  int i;
+  size_t buf_size = 0;
+  void* buf;
+  libxs_registry_t* registry = libxs_registry_create();
+  libxs_registry_t* loaded;
+  TEST_CHECK(NULL != registry);
+
+  for (i = 0; i < n; ++i) {
+    TEST_CHECK(NULL != libxs_registry_set(registry, &keys[i], sizeof(keys[0]),
+      vals[i], strlen(vals[i]) + 1, NULL));
+  }
+
+  /* query required size */
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_save(registry, NULL, &buf_size));
+  TEST_CHECK(0 < buf_size);
+
+  buf = malloc(buf_size);
+  TEST_CHECK(NULL != buf);
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_save(registry, buf, &buf_size));
+
+  /* load from buffer */
+  loaded = libxs_registry_load(buf, buf_size);
+  TEST_CHECK(NULL != loaded);
+
+  /* verify all entries */
+  { libxs_registry_info_t info;
+    TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(loaded, &info));
+    TEST_CHECK(info.size == (size_t)n);
+  }
+  for (i = 0; i < n; ++i) {
+    const char* v = (const char*)libxs_registry_get(loaded, &keys[i], sizeof(keys[0]), NULL);
+    TEST_CHECK(NULL != v);
+    TEST_CHECK(0 == strcmp(v, vals[i]));
+  }
+
+  /* overwrite a loaded entry (transitions from ext to owned) */
+  { const char* newval = "replaced value that is longer";
+    char* v = (char*)libxs_registry_set(loaded, &keys[0], sizeof(keys[0]),
+      newval, strlen(newval) + 1, NULL);
+    TEST_CHECK(NULL != v);
+    TEST_CHECK(0 == strcmp(v, newval));
+  }
+
+  /* remove a loaded entry (ext pointer must not be freed) */
+  libxs_registry_remove(loaded, &keys[1], sizeof(keys[0]), NULL);
+  TEST_CHECK(NULL == libxs_registry_get(loaded, &keys[1], sizeof(keys[0]), NULL));
+
+  libxs_registry_destroy(loaded);
+  free(buf);
+  libxs_registry_destroy(registry);
+  return EXIT_SUCCESS;
+}
+
+
+static int test_save_load_inline(void)
+{ /* values small enough for inline storage round-trip correctly */
+  const int key = 42;
+  const int val = 12345;
+  size_t buf_size = 0;
+  void* buf;
+  libxs_registry_t* registry = libxs_registry_create();
+  libxs_registry_t* loaded;
+  TEST_CHECK(NULL != registry);
+
+  TEST_CHECK(NULL != libxs_registry_set(registry, &key, sizeof(key), &val, sizeof(val), NULL));
+
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_save(registry, NULL, &buf_size));
+  buf = malloc(buf_size);
+  TEST_CHECK(NULL != buf);
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_save(registry, buf, &buf_size));
+
+  loaded = libxs_registry_load(buf, buf_size);
+  TEST_CHECK(NULL != loaded);
+
+  { const int* v = (const int*)libxs_registry_get(loaded, &key, sizeof(key), NULL);
+    TEST_CHECK(NULL != v && *v == val);
+  }
+
+  libxs_registry_destroy(loaded);
+  free(buf);
+  libxs_registry_destroy(registry);
+  return EXIT_SUCCESS;
+}
+
+
+static int test_save_load_empty(void)
+{ /* save/load an empty registry */
+  size_t buf_size = 0;
+  void* buf;
+  libxs_registry_t* registry = libxs_registry_create();
+  libxs_registry_t* loaded;
+  libxs_registry_info_t info;
+  TEST_CHECK(NULL != registry);
+
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_save(registry, NULL, &buf_size));
+  buf = malloc(buf_size);
+  TEST_CHECK(NULL != buf);
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_save(registry, buf, &buf_size));
+
+  loaded = libxs_registry_load(buf, buf_size);
+  TEST_CHECK(NULL != loaded);
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(loaded, &info));
+  TEST_CHECK(0 == info.size);
+
+  libxs_registry_destroy(loaded);
+  free(buf);
+  libxs_registry_destroy(registry);
+  return EXIT_SUCCESS;
+}
+
+
+static int test_load_invalid(void)
+{ /* invalid buffers must return NULL */
+  const char garbage[] = "not a registry";
+  TEST_CHECK(NULL == libxs_registry_load(NULL, 100));
+  TEST_CHECK(NULL == libxs_registry_load(garbage, sizeof(garbage)));
+  TEST_CHECK(NULL == libxs_registry_load(garbage, 0));
+  return EXIT_SUCCESS;
+}
+
+
 int main(int argc, char* argv[])
 {
   int result = EXIT_SUCCESS;
@@ -423,6 +549,10 @@ int main(int argc, char* argv[])
   if (EXIT_SUCCESS == result) result = test_multiple_registries();
   if (EXIT_SUCCESS == result) result = test_has();
   if (EXIT_SUCCESS == result) result = test_value_size();
+  if (EXIT_SUCCESS == result) result = test_save_load();
+  if (EXIT_SUCCESS == result) result = test_save_load_inline();
+  if (EXIT_SUCCESS == result) result = test_save_load_empty();
+  if (EXIT_SUCCESS == result) result = test_load_invalid();
 
   return result;
 }

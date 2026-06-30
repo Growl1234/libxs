@@ -116,6 +116,25 @@ LIBXS_API int libxs_registry_extract(libxs_registry_t* registry, const void* key
 /** Get information about the registry. */
 LIBXS_API int libxs_registry_info(const libxs_registry_t* registry, libxs_registry_info_t* info);
 
+/**
+ * Save registry to a binary buffer.
+ * buffer: destination (may be NULL to query required size).
+ * size: on input, available buffer size in bytes;
+ *       on output, bytes written (or required if buffer is NULL).
+ * Returns EXIT_SUCCESS or EXIT_FAILURE.
+ */
+LIBXS_API int libxs_registry_save(const libxs_registry_t* registry,
+  void* buffer, size_t* size);
+
+/**
+ * Load registry from a binary buffer (previously saved with libxs_registry_save).
+ * Values are loaded lazily: keys are materialized immediately but value data
+ * is read from the buffer on first access (libxs_registry_get). The buffer
+ * must remain valid for the lifetime of the returned registry.
+ * Returns a new registry, or NULL on failure.
+ */
+LIBXS_API libxs_registry_t* libxs_registry_load(const void* buffer, size_t size);
+
 /* header-only: include implementation (deferred from libxs_macros.h) */
 #if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \
  && !defined(LIBXS_GEMM_H) && !defined(LIBXS_PREDICT_H)
