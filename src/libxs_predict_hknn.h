@@ -39,7 +39,7 @@ LIBXS_API_INLINE int internal_libxs_predict_hknn_split(
   int nclasses = 0, result = 1;
   double classes[128];
   double best_score = -1;
-  (void)pts;
+  LIBXS_UNUSED(pts);
   if (band_lo <= band_hi) {
     if (1 == n) {
       for (i = 0; i < count && nclasses < 128; ++i) {

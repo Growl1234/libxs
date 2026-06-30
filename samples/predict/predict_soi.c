@@ -150,7 +150,7 @@ static int load_noaa_slp(const char* filename, double** values, int* count)
           double row[12];
           double year_val = strtod(p, &endptr);
           if (endptr == p) continue;
-          (void)year_val;
+          LIBXS_UNUSED(year_val);
           p = endptr;
           for (col = 0; col < 12; ++col) {
             row[col] = strtod(p, &endptr);
@@ -194,7 +194,7 @@ static void evaluate_forecast(const libxs_predict_t* model,
       inputs[i] = tahiti[t - WINDOW + i];
       inputs[WINDOW + i] = darwin[t - WINDOW + i];
     }
-    (void)decompose;
+    LIBXS_UNUSED(decompose);
     libxs_predict_eval(NULL, model, inputs, outputs, &info, 1);
     for (h = 0; h < HORIZON; ++h) {
       const double err = LIBXS_FABS(outputs[h] - tahiti[t + h]);

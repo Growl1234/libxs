@@ -46,7 +46,7 @@ static int check_sorted_i32(const int* data, int n) {
 static int cmp_by_abs(const void* a, const void* b, void* ctx) {
   const double va = *(const double*)a, vb = *(const double*)b;
   const double aa = (va < 0 ? -va : va), ab = (vb < 0 ? -vb : vb);
-  (void)ctx;
+  LIBXS_UNUSED(ctx);
   return (aa > ab) - (aa < ab);
 }
 

@@ -429,7 +429,7 @@ int main(void)
       FPRINTF(stderr, "ERROR line #%i: join too far dist=%.17g\n", __LINE__, d_joined);
       exit(EXIT_FAILURE);
     }
-    (void)d_full;
+    LIBXS_UNUSED(d_full);
   }
 
   return EXIT_SUCCESS;

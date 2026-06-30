@@ -3,7 +3,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_pair_cmp(
 {
   const double va = ((const internal_libxs_predict_rf_pair_t*)a)->val;
   const double vb = ((const internal_libxs_predict_rf_pair_t*)b)->val;
-  (void)ctx;
+  LIBXS_UNUSED(ctx);
   return (va > vb) - (va < vb);
 }
 
