@@ -715,7 +715,9 @@ LIBXS_API int libxs_registry_save(const libxs_registry_t* registry,
 }
 
 
-LIBXS_API libxs_registry_t* libxs_registry_load(const void* buffer, size_t size)
+LIBXS_API libxs_registry_t* libxs_registry_load(const void* buffer, size_t size,
+  void (*fixup)(void* value, const void* key, size_t key_size, size_t value_size, void* udata),
+  void* udata)
 {
   libxs_registry_t* result = NULL;
   if (NULL != buffer && size >= 3 * sizeof(uint32_t)) {
@@ -781,7 +783,20 @@ LIBXS_API libxs_registry_t* libxs_registry_load(const void* buffer, size_t size)
           e->key_size = ks;
           e->value_size = vs;
           e->state = INTERNAL_REG_USED;
-          if (vs <= sizeof(e->value)) {
+          if (NULL != fixup) {
+            if (vs <= sizeof(e->value)) {
+              e->value = NULL;
+              memcpy(&e->value, values_base + vo, vs);
+            }
+            else {
+              e->value = malloc(vs);
+              if (NULL == e->value) { ok = EXIT_FAILURE; break; }
+              memcpy(e->value, values_base + vo, vs);
+            }
+            e->ext = 0;
+            fixup(internal_value_ptr(e), key_ptr, ks, vs, udata);
+          }
+          else if (vs <= sizeof(e->value)) {
             e->value = NULL;
             memcpy(&e->value, values_base + vo, vs);
             e->ext = 0;

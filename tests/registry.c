@@ -433,7 +433,7 @@ static int test_save_load(void)
   TEST_CHECK(EXIT_SUCCESS == libxs_registry_save(registry, buf, &buf_size));
 
   /* load from buffer */
-  loaded = libxs_registry_load(buf, buf_size);
+  loaded = libxs_registry_load(buf, buf_size, NULL, NULL);
   TEST_CHECK(NULL != loaded);
 
   /* verify all entries */
@@ -483,7 +483,7 @@ static int test_save_load_inline(void)
   TEST_CHECK(NULL != buf);
   TEST_CHECK(EXIT_SUCCESS == libxs_registry_save(registry, buf, &buf_size));
 
-  loaded = libxs_registry_load(buf, buf_size);
+  loaded = libxs_registry_load(buf, buf_size, NULL, NULL);
   TEST_CHECK(NULL != loaded);
 
   { const int* v = (const int*)libxs_registry_get(loaded, &key, sizeof(key), NULL);
@@ -511,7 +511,7 @@ static int test_save_load_empty(void)
   TEST_CHECK(NULL != buf);
   TEST_CHECK(EXIT_SUCCESS == libxs_registry_save(registry, buf, &buf_size));
 
-  loaded = libxs_registry_load(buf, buf_size);
+  loaded = libxs_registry_load(buf, buf_size, NULL, NULL);
   TEST_CHECK(NULL != loaded);
   TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(loaded, &info));
   TEST_CHECK(0 == info.size);
@@ -526,9 +526,71 @@ static int test_save_load_empty(void)
 static int test_load_invalid(void)
 { /* invalid buffers must return NULL */
   const char garbage[] = "not a registry";
-  TEST_CHECK(NULL == libxs_registry_load(NULL, 100));
-  TEST_CHECK(NULL == libxs_registry_load(garbage, sizeof(garbage)));
-  TEST_CHECK(NULL == libxs_registry_load(garbage, 0));
+  TEST_CHECK(NULL == libxs_registry_load(NULL, 100, NULL, NULL));
+  TEST_CHECK(NULL == libxs_registry_load(garbage, sizeof(garbage), NULL, NULL));
+  TEST_CHECK(NULL == libxs_registry_load(garbage, 0, NULL, NULL));
+  return EXIT_SUCCESS;
+}
+
+
+typedef struct test_fixup_entry_t {
+  int data;
+  void (*callback)(int);
+} test_fixup_entry_t;
+
+static int test_fixup_counter;
+
+static void test_fixup_cb(int v)
+{
+  test_fixup_counter += v;
+}
+
+static void test_fixup_fn(void* value, const void* key, size_t key_size,
+  size_t value_size, void* udata)
+{
+  test_fixup_entry_t* e = (test_fixup_entry_t*)value;
+  LIBXS_UNUSED(key); LIBXS_UNUSED(key_size);
+  LIBXS_UNUSED(value_size); LIBXS_UNUSED(udata);
+  e->callback = test_fixup_cb;
+}
+
+static int test_save_load_fixup(void)
+{ /* fixup callback restores function pointers after load */
+  const int key = 1;
+  test_fixup_entry_t entry;
+  size_t buf_size = 0;
+  void* buf;
+  libxs_registry_t* registry = libxs_registry_create();
+  libxs_registry_t* loaded;
+  TEST_CHECK(NULL != registry);
+
+  memset(&entry, 0, sizeof(entry));
+  entry.data = 42;
+  entry.callback = test_fixup_cb;
+  TEST_CHECK(NULL != libxs_registry_set(registry, &key, sizeof(key),
+    &entry, sizeof(entry), NULL));
+
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_save(registry, NULL, &buf_size));
+  buf = malloc(buf_size);
+  TEST_CHECK(NULL != buf);
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_save(registry, buf, &buf_size));
+
+  loaded = libxs_registry_load(buf, buf_size, test_fixup_fn, NULL);
+  TEST_CHECK(NULL != loaded);
+
+  { const test_fixup_entry_t* v = (const test_fixup_entry_t*)libxs_registry_get(
+      loaded, &key, sizeof(key), NULL);
+    TEST_CHECK(NULL != v);
+    TEST_CHECK(42 == v->data);
+    TEST_CHECK(test_fixup_cb == v->callback);
+    test_fixup_counter = 0;
+    v->callback(10);
+    TEST_CHECK(10 == test_fixup_counter);
+  }
+
+  libxs_registry_destroy(loaded);
+  free(buf);
+  libxs_registry_destroy(registry);
   return EXIT_SUCCESS;
 }
 
@@ -553,6 +615,7 @@ int main(int argc, char* argv[])
   if (EXIT_SUCCESS == result) result = test_save_load_inline();
   if (EXIT_SUCCESS == result) result = test_save_load_empty();
   if (EXIT_SUCCESS == result) result = test_load_invalid();
+  if (EXIT_SUCCESS == result) result = test_save_load_fixup();
 
   return result;
 }

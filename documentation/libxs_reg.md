@@ -126,12 +126,13 @@ int libxs_registry_save(const libxs_registry_t* registry,
 Save the registry to a binary buffer. Pass `buffer = NULL` to query the required size (written to `*size`). On success, `*size` contains the number of bytes written. Returns `EXIT_SUCCESS` or `EXIT_FAILURE`.
 
 ```C
-libxs_registry_t* libxs_registry_load(const void* buffer, size_t size);
+libxs_registry_t* libxs_registry_load(const void* buffer, size_t size,
+  void (*fixup)(void* value, const void* key, size_t key_size,
+    size_t value_size, void* udata),
+  void* udata /* = NULL */);
 ```
 
-Load a registry from a binary buffer (previously produced by `libxs_registry_save`). Keys are materialized immediately; values remain in the buffer and are accessed on demand via `libxs_registry_get`. The buffer must remain valid for the lifetime of the returned registry (or until all entries are overwritten via `libxs_registry_set`). Returns a new registry or `NULL` on failure.
-
-Values are stored verbatim; pointers or handles embedded in values will not be valid after load.
+Load a registry from a binary buffer (previously produced by `libxs_registry_save`). Keys are materialized immediately. When `fixup` is NULL, values remain in the buffer and are accessed on demand via `libxs_registry_get`; the buffer must remain valid for the lifetime of the returned registry. When `fixup` is non-NULL, each value is heap-allocated immediately and the callback is invoked once per entry, allowing the caller to restore pointers or handles by key identity. Returns a new registry or `NULL` on failure.
 
 ## Status
 

@@ -128,12 +128,18 @@ LIBXS_API int libxs_registry_save(const libxs_registry_t* registry,
 
 /**
  * Load registry from a binary buffer (previously saved with libxs_registry_save).
- * Values are loaded lazily: keys are materialized immediately but value data
- * is read from the buffer on first access (libxs_registry_get). The buffer
- * must remain valid for the lifetime of the returned registry.
+ * When fixup is NULL, values are loaded lazily: keys are materialized immediately
+ * but value data is read from the buffer on first access (libxs_registry_get);
+ * the buffer must remain valid for the lifetime of the returned registry.
+ * When fixup is non-NULL, each entry is heap-allocated immediately and fixup
+ * is called once per entry, allowing the caller to rewrite values that contain
+ * pointers or handles (e.g., re-registering function pointers by key identity).
  * Returns a new registry, or NULL on failure.
  */
-LIBXS_API libxs_registry_t* libxs_registry_load(const void* buffer, size_t size);
+LIBXS_API libxs_registry_t* libxs_registry_load(const void* buffer, size_t size,
+  void (*fixup)(void* value, const void* key, size_t key_size,
+    size_t value_size, void* udata),
+  void* LIBXS_ARGDEF(udata, NULL));
 
 /* header-only: include implementation (deferred from libxs_macros.h) */
 #if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \
