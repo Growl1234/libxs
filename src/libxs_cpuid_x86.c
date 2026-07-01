@@ -161,8 +161,6 @@ LIBXS_API_INTERN int internal_libxs_cpuid_x86(libxs_cpuid_t* info)
           fclose(selinux);
         }
       }
-# elif defined(MAP_JIT)
-      libxs_se = 1;
 # endif
       LIBXS_CPUID_X86(1, 0/*ecx*/, eax, ebx, ecx, edx);
       if (LIBXS_CPUID_CHECK(ecx, 0x00000001)) { /* SSE3(0x00000001) */

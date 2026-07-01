@@ -565,9 +565,6 @@ LIBXS_API_CTOR void libxs_init(void)
           }
           else {
             libxs_timer_scale = 0;
-#if defined(_DEBUG)
-            libxs_se = 1;
-#endif
           }
         }
         else {

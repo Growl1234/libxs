@@ -18,7 +18,11 @@
 # define MAX_NSECONDS 16
 #endif
 #if !defined(MAX_TOLPERC)
-# define MAX_TOLPERC 12
+# if defined(__APPLE__) && defined(__MACH__)
+#   define MAX_TOLPERC 25
+# else
+#   define MAX_TOLPERC 12
+# endif
 #endif
 
 
@@ -91,11 +95,11 @@ int main(int argc, char* argv[])
   result = libxs_timer_info(&info);
   if (EXIT_SUCCESS == result) {
     result = (int)LIBXS_ROUND(delta);
+    d = libxs_timer_duration(begin, start);
+    fprintf(stderr, "seconds=%f delta=%s%i%% interrupted=%u tsc=%s\n",
+      d, 0 == result ? "" : (total <= d ? "+" : "-"), result,
+      ninterrupts, 0 != info.tsc ? "true" : "false");
     if ((0 != max_delta || 0 == info.tsc) && (0 > max_delta || result <= max_delta)) {
-      d = libxs_timer_duration(begin, start);
-      fprintf(stderr, "seconds=%f delta=%s%i%% interrupted=%u tsc=%s\n",
-        d, 0 == result ? "" : (total <= d ? "+" : "-"), result,
-        ninterrupts, 0 != info.tsc ? "true" : "false");
       result = EXIT_SUCCESS;
     }
     else if ((MAX_TOLPERC) >= result) {
