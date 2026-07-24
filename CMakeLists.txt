@@ -241,6 +241,10 @@ install(
     PATTERN "*.css"
     PATTERN "*.png"
     PATTERN "tests" EXCLUDE
+    PATTERN "libxs_present.md" EXCLUDE
+    PATTERN "libxs_samples.md" EXCLUDE
+    PATTERN "libxs_scripts.md" EXCLUDE
+    PATTERN "libxs_fortran.md" EXCLUDE
 )
 
 # Install Makefile build support files.
