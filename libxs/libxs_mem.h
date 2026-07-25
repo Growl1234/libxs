@@ -47,32 +47,12 @@
   LIBXS_MEM_LOOP(PTR_A, PTR_B, SIZE, LIBXS_MEMSWP_RHS, LIBXS_MEM_NTS); \
 } while (0)
 
-/** Assigns SRC to DST (must be L-values). Can be used to cast const-qualifiers. */
+/**
+ * Assigns SRC to DST (must be L-values). Can be used to cast const-qualifiers.
+ * LIBXS_UNION_ASSIGN, LIBXS_FPTR_ASSIGN, and LIBXS_FPTR_FROM_VPTR moved to
+ * libxs_macros.h (self-contained union type-punning, no mem-loop dependency).
+ */
 #define LIBXS_VALUE_ASSIGN(DST, SRC) LIBXS_ASSIGN(&(DST), &(SRC))
-/** Assign SRC to DST via a union with explicit member types. */
-#define LIBXS_UNION_ASSIGN(DST_TYPE, DST, SRC_TYPE, SRC) do { \
-  union { DST_TYPE dst; SRC_TYPE src; } libxs_union_assign_u_; \
-  LIBXS_ASSERT(sizeof(DST) == sizeof(libxs_union_assign_u_.dst)); \
-  LIBXS_ASSERT(sizeof(libxs_union_assign_u_.dst) == sizeof(libxs_union_assign_u_.src)); \
-  libxs_union_assign_u_.src = (SRC); \
-  (DST) = libxs_union_assign_u_.dst; \
-} while(0)
-/** Assign function pointer via union (avoids object/function pointer cast). */
-#define LIBXS_FPTR_ASSIGN(DST_TYPE, DST, SRC) do { \
-  union { DST_TYPE d; void (*s)(void); } libxs_fptr_u_; \
-  LIBXS_ASSERT(sizeof(DST) == sizeof(void(*)(void))); \
-  LIBXS_ASSERT(sizeof(libxs_fptr_u_.s) == sizeof(libxs_fptr_u_.d)); \
-  libxs_fptr_u_.s = (void(*)(void))(SRC); \
-  (DST) = libxs_fptr_u_.d; \
-} while(0)
-/** Assign void-pointer to function-pointer DST via union (dlsym pattern). */
-#define LIBXS_FPTR_FROM_VPTR(DST_TYPE, DST, VPTR) do { \
-  union { DST_TYPE fn; void* vp; } libxs_fptr_u_; \
-  LIBXS_ASSERT(sizeof(DST) == sizeof(void*)); \
-  LIBXS_ASSERT(sizeof(libxs_fptr_u_.fn) == sizeof(libxs_fptr_u_.vp)); \
-  libxs_fptr_u_.vp = (VPTR); \
-  (DST) = libxs_fptr_u_.fn; \
-} while(0)
 /** Swap two arbitrary-sized values (must be L-values) */
 #define LIBXS_VALUE_SWAP(A, B) do { \
   LIBXS_ASSERT(sizeof(A) == sizeof(B)); \

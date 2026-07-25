@@ -244,6 +244,19 @@
 # endif
 #endif
 
+/** Native IEEE half type.
+ * GCC 12+/Clang provide _Float16 as a scalar storage+conversion type.
+ * LIBXS_F16 is defined when _Float16 is available AND usable without a
+ * pedantic diagnostic: _Float16 is a C23 type (unlike the __bf16 extension
+ * spelling), so strict-ANSI modes below C23 fall back to the portable path.
+ */
+#if !defined(LIBXS_F16)
+# if defined(__FLT16_MANT_DIG__) && (!defined(__STRICT_ANSI__) || \
+     (defined(__STDC_VERSION__) && 202311L <= __STDC_VERSION__))
+#   define LIBXS_F16
+# endif
+#endif
+
 /** Fused multiply-add.
  * LIBXS_FMA is defined when the compiler targets FMA (x86 __FMA__), so that
  * fma() maps to a hardware instruction. FMA rides along with AVX2 in the
@@ -989,6 +1002,37 @@
 # else
 #   define LIBXS_ASSERT_MSG(EXPR, MSG) assert((EXPR) && *MSG)
 # endif
+#endif
+
+/** Assign SRC to DST via a union with explicit member types. */
+#if !defined(LIBXS_UNION_ASSIGN)
+# define LIBXS_UNION_ASSIGN(DST_TYPE, DST, SRC_TYPE, SRC) do { \
+    union { DST_TYPE dst; SRC_TYPE src; } libxs_union_assign_u_; \
+    LIBXS_ASSERT(sizeof(DST) == sizeof(libxs_union_assign_u_.dst)); \
+    LIBXS_ASSERT(sizeof(libxs_union_assign_u_.dst) == sizeof(libxs_union_assign_u_.src)); \
+    libxs_union_assign_u_.src = (SRC); \
+    (DST) = libxs_union_assign_u_.dst; \
+  } while(0)
+#endif
+/** Assign function pointer via union (avoids object/function pointer cast). */
+#if !defined(LIBXS_FPTR_ASSIGN)
+# define LIBXS_FPTR_ASSIGN(DST_TYPE, DST, SRC) do { \
+    union { DST_TYPE d; void (*s)(void); } libxs_fptr_u_; \
+    LIBXS_ASSERT(sizeof(DST) == sizeof(void(*)(void))); \
+    LIBXS_ASSERT(sizeof(libxs_fptr_u_.s) == sizeof(libxs_fptr_u_.d)); \
+    libxs_fptr_u_.s = (void(*)(void))(SRC); \
+    (DST) = libxs_fptr_u_.d; \
+  } while(0)
+#endif
+/** Assign void-pointer to function-pointer DST via union (dlsym pattern). */
+#if !defined(LIBXS_FPTR_FROM_VPTR)
+# define LIBXS_FPTR_FROM_VPTR(DST_TYPE, DST, VPTR) do { \
+    union { DST_TYPE fn; void* vp; } libxs_fptr_u_; \
+    LIBXS_ASSERT(sizeof(DST) == sizeof(void*)); \
+    LIBXS_ASSERT(sizeof(libxs_fptr_u_.fn) == sizeof(libxs_fptr_u_.vp)); \
+    libxs_fptr_u_.vp = (VPTR); \
+    (DST) = libxs_fptr_u_.fn; \
+  } while(0)
 #endif
 
 #if !defined(LIBXS_ELIDE_RESULT)

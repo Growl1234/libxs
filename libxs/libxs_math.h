@@ -86,6 +86,9 @@ LIBXS_EXTERN_C typedef struct libxs_gss_info_t {
 /** BF16 storage type (raw uint16_t encoding: 1 sign + 8 exponent + 7 fraction). */
 typedef uint16_t libxs_bf16_t;
 
+/** IEEE FP16 storage type (raw uint16_t encoding: 1 sign + 5 exponent + 10 fraction). */
+typedef uint16_t libxs_f16_t;
+
 
 /**
  * Utility function to calculate a collection of scalar differences between two matrices (libxs_matdiff_t).
@@ -524,6 +527,120 @@ LIBXS_API_INLINE double libxs_bf16_to_f64(libxs_bf16_t v) {
   return (double)cvt.h;
 #else
   return (double)libxs_bf16_to_f32(v);
+#endif
+}
+
+
+/** Round a single-precision value to IEEE FP16 (round-to-nearest-even). */
+LIBXS_API_INLINE libxs_f16_t libxs_round_f16_f32(float x) {
+#if defined(LIBXS_F16)
+  libxs_f16_t out;
+  LIBXS_UNION_ASSIGN(libxs_f16_t, out, _Float16, (_Float16)x);
+  return out;
+#else
+  uint32_t bits, sign, exp32, mant32;
+  uint32_t result;
+  LIBXS_UNION_ASSIGN(uint32_t, bits, float, x);
+  sign = (bits >> 16) & 0x8000U;
+  exp32 = (bits >> 23) & 0xFFU;
+  mant32 = bits & 0x7FFFFFU;
+  if (0xFFU == exp32) {
+    result = sign | 0x7C00U | (0 != mant32 ? 0x200U : 0U);
+  }
+  else {
+    const int exp16 = (int)exp32 - 127 + 15;
+    if (exp16 >= 0x1F) {
+      result = sign | 0x7C00U;
+    }
+    else if (exp16 <= 0) {
+      if (exp16 < -10) {
+        result = sign;
+      }
+      else {
+        uint32_t mant = mant32 | 0x800000U;
+        const int shift = 14 - exp16;
+        const uint32_t halfbit = (uint32_t)1 << (shift - 1);
+        const uint32_t lower = mant & (((uint32_t)1 << shift) - 1);
+        uint32_t rounded = mant >> shift;
+        if (lower > halfbit || (lower == halfbit && (rounded & 1U))) {
+          ++rounded;
+        }
+        result = sign | rounded;
+      }
+    }
+    else {
+      const uint32_t halfbit = 0x1000U;
+      const uint32_t lower = mant32 & 0x1FFFU;
+      uint32_t rounded = mant32 >> 13;
+      result = sign | ((uint32_t)exp16 << 10) | rounded;
+      if (lower > halfbit || (lower == halfbit && (rounded & 1U))) {
+        ++result;
+      }
+    }
+  }
+  return (libxs_f16_t)result;
+#endif
+}
+
+
+/** Expand an IEEE FP16 encoding to single precision (exact). */
+LIBXS_API_INLINE float libxs_f16_to_f32(libxs_f16_t v) {
+#if defined(LIBXS_F16)
+  _Float16 h;
+  float out;
+  LIBXS_UNION_ASSIGN(_Float16, h, libxs_f16_t, v);
+  out = (float)h;
+  return out;
+#else
+  const uint32_t sign = ((uint32_t)v & 0x8000U) << 16;
+  const uint32_t exp16 = ((uint32_t)v >> 10) & 0x1FU;
+  const uint32_t mant16 = (uint32_t)v & 0x3FFU;
+  uint32_t bits;
+  float out;
+  if (0 == exp16) {
+    if (0 == mant16) {
+      bits = sign;
+    }
+    else {
+      int e = -1;
+      uint32_t m = mant16;
+      do { m <<= 1; ++e; } while (0 == (m & 0x400U));
+      bits = sign | ((uint32_t)(127 - 15 - e) << 23)
+        | ((m & 0x3FFU) << 13);
+    }
+  }
+  else if (0x1FU == exp16) {
+    bits = sign | 0x7F800000U | (mant16 << 13);
+  }
+  else {
+    bits = sign | ((exp16 - 15 + 127) << 23) | (mant16 << 13);
+  }
+  LIBXS_UNION_ASSIGN(float, out, uint32_t, bits);
+  return out;
+#endif
+}
+
+
+/** Round a double-precision value to IEEE FP16 (round-to-nearest-even). */
+LIBXS_API_INLINE libxs_f16_t libxs_round_f16(double x) {
+#if defined(LIBXS_F16)
+  libxs_f16_t out;
+  LIBXS_UNION_ASSIGN(libxs_f16_t, out, _Float16, (_Float16)x);
+  return out;
+#else
+  return libxs_round_f16_f32((float)x);
+#endif
+}
+
+
+/** Expand an IEEE FP16 encoding to double (exact). */
+LIBXS_API_INLINE double libxs_f16_to_f64(libxs_f16_t v) {
+#if defined(LIBXS_F16)
+  _Float16 h;
+  LIBXS_UNION_ASSIGN(_Float16, h, libxs_f16_t, v);
+  return (double)h;
+#else
+  return (double)libxs_f16_to_f32(v);
 #endif
 }
 
