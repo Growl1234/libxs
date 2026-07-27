@@ -264,17 +264,26 @@
 
 /**
  * Fused multiply-add.
- * LIBXS_FMA is defined when the compiler targets FMA (x86 __FMA__) and
- * provides __builtin_fma, so that the error-free product maps to a hardware
- * instruction without relying on a C99 math.h declaration (strict C89).
- * The __GNUC__ predicate covers GCC/Clang/ICX/ICC/nvc, i.e. every compiler
- * that predefines __FMA__ and provides the builtin. FMA rides along with
- * AVX2 in the target attributes (see libxs_utils.h).
+ * LIBXS_FMA_ENABLED is defined when the compiler targets FMA (x86 __FMA__) and
+ * provides __builtin_fma, so that the operation maps to a hardware instruction
+ * without relying on a C99 math.h declaration (strict C89). The __GNUC__
+ * predicate covers GCC/Clang/ICX/ICC/nvc, i.e. every compiler that predefines
+ * __FMA__ and provides the builtin. FMA rides along with AVX2 in the target
+ * attributes (see libxs_utils.h).
+ * LIBXS_FMA(a,b,c) computes a*b+c: a single fused instruction when enabled,
+ * otherwise a plain (rounded-twice) expression. It is NOT error-free in the
+ * fallback -- code needing an exact product (libxs_two_product) must branch on
+ * LIBXS_FMA_ENABLED and use Dekker's split when it is not defined.
  */
-#if !defined(LIBXS_FMA)
+#if !defined(LIBXS_FMA_ENABLED)
 # if defined(__FMA__) && (defined(__GNUC__) || defined(__clang__))
-#   define LIBXS_FMA
+#   define LIBXS_FMA_ENABLED
 # endif
+#endif
+#if defined(LIBXS_FMA_ENABLED)
+# define LIBXS_FMA(A, B, C) __builtin_fma(A, B, C)
+#else
+# define LIBXS_FMA(A, B, C) ((A) * (B) + (C))
 #endif
 
 /**
