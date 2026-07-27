@@ -212,9 +212,22 @@ LIBXS_API_INLINE int oz2_hier_l2_garner(const unsigned int gval[], unsigned int 
   }
 
   is_negative = (d[ngroups - 1] >= (gprod[ngroups - 1] + 1) / 2) ? 1 : 0;
+  /**
+   * Two's-complement the level-2 digits and complete the negation with a +1
+   * carry propagated in integer space, so the Horner evaluation already yields
+   * the magnitude. Adding the 1 to the reconstructed value in floating point
+   * instead would be inexact once the magnitude exceeds 2^53.
+   */
   if (0 != is_negative) {
     for (i = 0; i < ngroups; ++i) {
       d[i] = gprod[i] - 1 - d[i];
+    }
+    for (i = 0; i < ngroups; ++i) {
+      if (d[i] + 1 < gprod[i]) {
+        ++d[i];
+        break;
+      }
+      d[i] = 0;
     }
   }
   return is_negative;
@@ -274,7 +287,7 @@ LIBXS_API_INLINE void oz2_reconstruct_batch(unsigned int batch_res[OZ2_BATCH][OZ
 
     is_negative = oz2_hier_l2_garner(gval, d, l2_garner_inv, gprod, l2_barrett, ngroups);
     r = oz2_hier_horner(d, gprod, ngroups);
-    result[bi] = (0 != is_negative) ? -(r + 1.0) : r;
+    result[bi] = (0 != is_negative) ? -r : r;
   }
 }
 
@@ -363,7 +376,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void oz2_reconstruct_batch_a
     unsigned int d[HIER_NGROUPS_MAX];
     const int is_negative = oz2_hier_l2_garner(gval_all[bi], d, l2_garner_inv, gprod, l2_barrett, ngroups);
     const double r = oz2_hier_horner(d, gprod, ngroups);
-    result[bi] = (0 != is_negative) ? -(r + 1.0) : r;
+    result[bi] = (0 != is_negative) ? -r : r;
   }
 }
 
