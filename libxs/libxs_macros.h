@@ -258,12 +258,15 @@
 #endif
 
 /** Fused multiply-add.
- * LIBXS_FMA is defined when the compiler targets FMA (x86 __FMA__), so that
- * fma() maps to a hardware instruction. FMA rides along with AVX2 in the
- * target attributes (see libxs_utils.h).
+ * LIBXS_FMA is defined when the compiler targets FMA (x86 __FMA__) and
+ * provides __builtin_fma, so that the error-free product maps to a hardware
+ * instruction without relying on a C99 math.h declaration (strict C89).
+ * The __GNUC__ predicate covers GCC/Clang/ICX/ICC/nvc, i.e. every compiler
+ * that predefines __FMA__ and provides the builtin. FMA rides along with
+ * AVX2 in the target attributes (see libxs_utils.h).
  */
 #if !defined(LIBXS_FMA)
-# if defined(__FMA__)
+# if defined(__FMA__) && (defined(__GNUC__) || defined(__clang__))
 #   define LIBXS_FMA
 # endif
 #endif

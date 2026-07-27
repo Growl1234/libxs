@@ -459,13 +459,14 @@ LIBXS_API_INLINE double libxs_fast_two_sum(double a, double b, double* err) {
 /**
  * Error-free transformation of a product (Dekker/Veltkamp TwoProduct).
  * Returns x = fl(a*b) and, via err, the rounding error such that
- * a * b == x + *err (exact when no underflow occurs). Uses fma() when
- * LIBXS_FMA is defined (two flops), otherwise Dekker's split (17 flops).
+ * a * b == x + *err (exact when no underflow occurs). Uses __builtin_fma
+ * when LIBXS_FMA is defined (two flops), otherwise Dekker's split (17 flops).
+ * The builtin avoids relying on a C99 math.h declaration under strict C89.
  */
 LIBXS_API_INLINE double libxs_two_product(double a, double b, double* err) {
   const double x = a * b;
 #if defined(LIBXS_FMA)
-  *err = fma(a, b, -x);
+  *err = __builtin_fma(a, b, -x);
 #else
   const double factor = 134217729.0; /* 2^27 + 1 */
   const double ca = factor * a, cb = factor * b;
