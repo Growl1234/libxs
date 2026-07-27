@@ -57,14 +57,16 @@
 # endif
 #endif
 
-/* Runtime flag-set controlling the Ozaki scheme 1 (OZAKI_FLAGS env var).
+/**
+ * Runtime flag-set controlling the Ozaki scheme 1 (OZAKI_FLAGS env var).
  * Bit 0 (1): TRIANGULAR  - iterate upper triangle of slice-pair matrix
  * Bit 1 (2): SYMMETRIZE  - compute mirror D(sb,sa) for off-diagonal pairs
  * Default 3 = TRIANGULAR + SYMMETRIZE (correct, fewer loop iterations).
  *
  * The trim parameter (OZAKI_TRIM env var) drops the T least significant
  * diagonals: pairs with sa + sb > 2*(S-1) - T are skipped. Default 0
- * means exact (all pairs). Each dropped diagonal loses ~7 bits. */
+ * means exact (all pairs). Each dropped diagonal loses ~7 bits.
+ */
 #define OZ1_TRIANGULAR 1
 #define OZ1_SYMMETRIZE 2
 #define OZ1_DEFAULT (OZ1_TRIANGULAR | OZ1_SYMMETRIZE)
@@ -85,12 +87,14 @@
 # endif
 #endif
 
-/* CPU-side profiling helpers (used inside omp parallel regions).
+/**
+ * CPU-side profiling helpers (used inside omp parallel regions).
  * Per-phase timing (modes 2-4) is only meaningful on GPU where
  * preprocessing and kernel are distinct operations; on CPU the
  * K-group loop interleaves them, so we always measure total time.
  * GEMM_PROFILE_START(TID): record start tick on master thread.
- * GEMM_PROFILE_END(TID, M, N, K): compute duration, push GFLOPS to histogram. */
+ * GEMM_PROFILE_END(TID, M, N, K): compute duration, push GFLOPS to histogram.
+ */
 #define GEMM_PROFILE_DECL \
   libxs_timer_tick_t gemm_profile_start_ = 0; \
   int gemm_profile_pairs_ = 0
@@ -131,10 +135,12 @@
 #define ZGEMM_WRAP LIBXS_CONCATENATE(__wrap_, ZGEMM)
 #define ZGEMM_REAL LIBXS_CONCATENATE(__real_, ZGEMM)
 
-/* Precision-specific type and variable names (enable dual-precision builds).
+/**
+ * Precision-specific type and variable names (enable dual-precision builds).
  * These macros redirect "friendly" names used throughout the implementation
  * to unique symbols, e.g. gemm_original -> dgemm_original (double) or
- * sgemm_original (float). Both precisions can coexist in one binary. */
+ * sgemm_original (float). Both precisions can coexist in one binary.
+ */
 #define gemm_function_t LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_ftype_t)
 #define zgemm_function_t LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm_ftype_t)
 #define gemm_original LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_original)
@@ -172,9 +178,11 @@
 # define gemm_oz_ocl_diff LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz_ocl_diff)
 #endif
 
-/* Scalar int8 GEMM fallback: C[M,N] += A[M,K] * B'[N,K] via per-element
+/**
+ * Scalar int8 GEMM fallback: C[M,N] += A[M,K] * B'[N,K] via per-element
  * dot product. Used for edge tiles where N < BLOCK_N (panel path not
- * applicable). Auto-vectorizable inner loop. */
+ * applicable). Auto-vectorizable inner loop.
+ */
 #define OZAKI_GEMM_INT8_BODY(ELEM_T, DOT_FN) \
   { \
     GEMM_INT_TYPE mi, nj, kb; \
@@ -359,11 +367,13 @@ LIBXS_API_INLINE int32_t ozaki_dot_u8_sw(const uint8_t a[BLOCK_K], const uint8_t
 }
 
 
-/* Panel GEMM kernels: accumulate N=16 output columns simultaneously
+/**
+ * Panel GEMM kernels: accumulate N=16 output columns simultaneously
  * using broadcast-A + VNNI dot-product-accumulate (no horizontal
  * reduction). B is reformatted to VNNI dword packing on the fly:
  * b_vnni[K/4][16] where each int32 holds 4 consecutive K-bytes
- * from one B column. This layout matches AMX tile-B format. */
+ * from one B column. This layout matches AMX tile-B format.
+ */
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
 
 /* s8*s8 panel via DPBSSD (AVX-VNNI-INT8, 512-bit EVEX). */
@@ -423,10 +433,12 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_i8_bss
 # endif /* AVX512_INT8 panel i8 */
 
 
-/* s8*s8 panel via DPBUSD with bias correction (base AVX-512 VNNI).
+/**
+ * s8*s8 panel via DPBUSD with bias correction (base AVX-512 VNNI).
  * DPBUSD computes u8*s8; XOR A with 0x80 converts s8 to u8, then
  * subtract 128 * column_sum(B) to correct. Column sum is computed
- * once across all K using DPBUSD(ones, B). */
+ * once across all K using DPBUSD(ones, B).
+ */
 LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_panel_i8_vnni(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const int8_t* a, GEMM_INT_TYPE lda, const int32_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
@@ -557,9 +569,11 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_u8_buu
 # endif /* AVX512_INT8 panel u8 */
 
 
-/* u8*u8 panel via DPBUSD with bias correction (base AVX-512 VNNI).
+/**
+ * u8*u8 panel via DPBUSD with bias correction (base AVX-512 VNNI).
  * DPBUSD is u8*s8; XOR B with 0x80 converts u8 to s8 during reformat,
- * then add 128 * row_sum(A) to correct. */
+ * then add 128 * row_sum(A) to correct.
+ */
 LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_panel_u8_vnni(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const uint8_t* a, GEMM_INT_TYPE lda, const int32_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
@@ -627,12 +641,14 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_panel_u8_vnni_fus
 #endif /* LIBXS_INTRINSICS_AVX512 && BLOCK_N==16 && BLOCK_K valid */
 
 
-/* AMX tile GEMM kernels: compute full 16x16 output tile via TDPBUSD.
+/**
+ * AMX tile GEMM kernels: compute full 16x16 output tile via TDPBUSD.
  * A is loaded as 16 rows x 64 K-bytes per tile operation.
  * B is reformatted to VNNI layout: b_tile[16][16] int32 where each
  * int32 packs 4 consecutive K-bytes from one column (same as panel B
  * format, but 64 bytes deep = one full AMX tile-B).
- * K is processed in chunks of 64; any K-tail falls through to VNNI. */
+ * K is processed in chunks of 64; any K-tail falls through to VNNI.
+ */
 #if defined(LIBXS_INTRINSICS_AMX) && 16 == BLOCK_M && 16 == BLOCK_N
 
 # define OZAKI_AMX_TILE_C 0
@@ -659,10 +675,12 @@ LIBXS_API_INLINE void ozaki_amx_tilecfg_init(ozaki_amx_tilecfg_t* cfg, int m_row
 }
 
 
-/* AMX u8*u8 panel via TDPBUSD with on-the-fly B reformat + XOR.
+/**
+ * AMX u8*u8 panel via TDPBUSD with on-the-fly B reformat + XOR.
  * B is column-contiguous raw u8 residues (transb='T', ldb=K_grp_pad).
  * Reformats 16 columns x 64 K-bytes into VNNI tile with XOR 0x80,
- * then TDPBUSD (u8*s8). Correct via +128*row_sum(A). */
+ * then TDPBUSD (u8*s8). Correct via +128*row_sum(A).
+ */
 LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_u8_amx(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const uint8_t* a, GEMM_INT_TYPE lda, const int32_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
@@ -719,8 +737,10 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_u8_amx(
 }
 
 
-/* AMX s8*s8 panel via TDPBUSD with on-the-fly A XOR + B reformat.
- * XOR A with 0x80 for TDPBUSD (u8*s8); subtract 128*column_sum(B). */
+/**
+ * AMX s8*s8 panel via TDPBUSD with on-the-fly A XOR + B reformat.
+ * XOR A with 0x80 for TDPBUSD (u8*s8); subtract 128*column_sum(B).
+ */
 LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const int8_t* a, GEMM_INT_TYPE lda, const int32_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
@@ -937,8 +957,10 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx_
 #endif /* LIBXS_INTRINSICS_AMX && BLOCK_M==16 && BLOCK_N==16 */
 
 
-/* Dispatch helpers: select BSSD/BUUD (native int8) vs VNNI (base AVX-512).
- * Arguments are statement blocks (may contain do{}while(0) macros). */
+/**
+ * Dispatch helpers: select BSSD/BUUD (native int8) vs VNNI (base AVX-512).
+ * Arguments are statement blocks (may contain do{}while(0) macros).
+ */
 #if (LIBXS_X86_AVX512_INT8 <= LIBXS_STATIC_TARGET_ARCH) || (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
 # define OZAKI_DISPATCH_I8(BSSD_CALL, VNNI_CALL) \
     if (LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) { BSSD_CALL; } else { VNNI_CALL; }
@@ -1160,8 +1182,10 @@ LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value, int16_t* exp_biase
     exp_raw = (uint16_t)((bits >> OZ_MANT_BITS) & OZ_EXP_MASK);
     frac = bits & ((1ULL << OZ_MANT_BITS) - 1ULL);
 
-    /* exp_raw == 0: subnormal (treated as zero).
-     * exp_raw == OZ_EXP_MASK: Inf (frac==0) or NaN (frac!=0). */
+    /**
+     * exp_raw == 0: subnormal (treated as zero).
+     * exp_raw == OZ_EXP_MASK: Inf (frac==0) or NaN (frac!=0).
+     */
     if (0 == exp_raw || exp_raw == (uint16_t)OZ_EXP_MASK) {
       *exp_biased = 0;
       *mantissa = 0;

@@ -107,7 +107,10 @@
 #define LIBXS_EXPAND(...) __VA_ARGS__
 #define LIBXS_ELIDE(...)
 
- /** Use LIBXS_VERSION2 instead of LIBXS_VERSION3, e.g., if __GNUC_PATCHLEVEL__ or __clang_patchlevel__ is zero (0). */
+/**
+ * Use LIBXS_VERSION2 instead of LIBXS_VERSION3, e.g.,
+ * if __GNUC_PATCHLEVEL__ or __clang_patchlevel__ is zero (0).
+ */
 #define LIBXS_VERSION2(MAJOR, MINOR) ((MAJOR) * 10000 + (MINOR) * 100)
 #define LIBXS_VERSION3(MAJOR, MINOR, UPDATE) (LIBXS_VERSION2(MAJOR, MINOR) + (UPDATE))
 
@@ -234,7 +237,8 @@
 # define LIBXS_EXTENSION
 #endif
 
-/** Native BF16 type.
+/**
+ * Native BF16 type.
  * GCC 13+/Clang 15+ provide __bf16 as a scalar storage+conversion type.
  * LIBXS_BF16 is defined when the __bf16 type is available.
  */
@@ -244,7 +248,8 @@
 # endif
 #endif
 
-/** Native IEEE half type.
+/**
+ * Native IEEE half type.
  * GCC 12+/Clang provide _Float16 as a scalar storage+conversion type.
  * LIBXS_F16 is defined when _Float16 is available AND usable without a
  * pedantic diagnostic: _Float16 is a C23 type (unlike the __bf16 extension
@@ -257,7 +262,8 @@
 # endif
 #endif
 
-/** Fused multiply-add.
+/**
+ * Fused multiply-add.
  * LIBXS_FMA is defined when the compiler targets FMA (x86 __FMA__) and
  * provides __builtin_fma, so that the error-free product maps to a hardware
  * instruction without relying on a C99 math.h declaration (strict C89).
@@ -271,7 +277,8 @@
 # endif
 #endif
 
-/** 128-bit unsigned integer type.
+/**
+ * 128-bit unsigned integer type.
  * GCC/Clang provide unsigned __int128 on 64-bit targets.
  * LIBXS_INT128 is defined when libxs_uint128_t is available.
  */
@@ -578,10 +585,12 @@
 /** Private variable declaration+definition (source). */
 #define LIBXS_APIVAR_DECL_DEFINE(DECL, KIND) LIBXS_APIVAR_DECL_PRIVATE(DECL, KIND); LIBXS_APIVAR_DECL_PRIVATE_DEF(DECL, KIND)
 
-/** LIBXS backward-compatible macros.
+/**
+ * LIBXS backward-compatible macros.
  * The LIBXS_API_VISIBILITY_* macros must be simple token definitions
  * (not function-like macro calls) because LIBXS_API_VISIBILITY(VIS)
- * produces them via ## token pasting. */
+ * produces them via ## token pasting.
+ */
 #if LIBXS_BUILD_KIND == LIBXS_APIKIND_INLINE
 # define LIBXS_API_EXTERN LIBXS_EXTERN
 # define LIBXS_API_TARGET LIBXS_INLINE

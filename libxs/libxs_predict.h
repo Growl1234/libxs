@@ -82,11 +82,12 @@ LIBXS_EXTERN_C typedef struct libxs_predict_query_t {
   int iterations;
   /** Auto-detected differencing order (0 if DIFF not enabled or not needed). */
   int diff_order;
-  /** Effective sliding-window size used at build (0 if series mode off).
-   *  Equals the caller-provided window when set_series was called with a
-   *  positive value; equals the auto-selected window when the sentinel
-   *  LIBXS_PREDICT_AUTO_WINDOW (0) was passed. Read this to size the raw
-   *  window buffer supplied to libxs_predict_eval.
+  /**
+   * Effective sliding-window size used at build (0 if series mode off).
+   * Equals the caller-provided window when set_series was called with a
+   * positive value; equals the auto-selected window when the sentinel
+   * LIBXS_PREDICT_AUTO_WINDOW (0) was passed. Read this to size the raw
+   * window buffer supplied to libxs_predict_eval.
    */
   int window;
 } libxs_predict_query_t;

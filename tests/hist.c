@@ -443,7 +443,8 @@ static int test_commit_arithmetic_avg(void)
   const libxs_hist_update_t update[] = { libxs_hist_update_avg };
   libxs_hist_info_t info;
   int result = EXIT_SUCCESS;
-  /* 1 bucket, nqueue=4: all 4 values land in the same bucket at commit.
+  /**
+   * 1 bucket, nqueue=4: all 4 values land in the same bucket at commit.
    * Arithmetic mean of {10, 20, 30, 40} = 25.0
    */
   hist = libxs_hist_create(1/*nbuckets*/, 1/*nvals*/, update);
@@ -479,7 +480,8 @@ static int test_hybrid_avg_then_welford(void)
   const libxs_hist_update_t update[] = { libxs_hist_update_avg };
   libxs_hist_info_t info;
   int result = EXIT_SUCCESS;
-  /* 1 bucket, nqueue=2: commit produces arithmetic mean,
+  /**
+   * 1 bucket, nqueue=2: commit produces arithmetic mean,
    * then subsequent inserts use Welford.
    * Queue: {10, 30} -> commit: mean=20.0
    * Welford with 40.0 (count=3): 20 + (40-20)/3 = 26.667

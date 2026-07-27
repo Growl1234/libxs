@@ -32,9 +32,11 @@
 #endif
 
 #if !defined(__NO_INTRINSICS)
-  /* AVX10.1/512: compiler defines __AVX10_1_512__ (GCC >= 14, Clang >= 19).
+  /**
+   *  AVX10.1/512: compiler defines __AVX10_1_512__ (GCC >= 14, Clang >= 19).
    * Also requires __AVXVNNIINT8__ since the hierarchy 1200 > 1110 implies INT8.
-   * Without it, fall through to AVX512 (VNNI) or AVX512_INT8 below. */
+   * Without it, fall through to AVX512 (VNNI) or AVX512_INT8 below.
+   */
 # if defined(__AVX10_1_512__) && defined(__AVXVNNIINT8__) && defined(__AVX2__) && defined(__FMA__) && defined(__SSE4_2__) && defined(__SSE3__)
 #   if !defined(LIBXS_STATIC_TARGET_ARCH)
 #     define LIBXS_STATIC_TARGET_ARCH LIBXS_X86_AVX10_512

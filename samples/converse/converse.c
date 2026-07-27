@@ -709,11 +709,13 @@ int main(int argc, char* argv[])
   answer_relation_rules_load_file(converse_path_relation);
   answer_relation_rules_report(stderr);
 
-  /* A warm start reuses the persisted corpus, lexicon, and predictor instead
-     of re-ingesting and re-training: the state is complete when the corpus
-     loaded non-empty, the lexicon is populated, and the predictor loaded.
-     Learn mode (-L) always rebuilds. Only the cheap fact index is rebuilt each
-     run below. */
+  /**
+   * A warm start reuses the persisted corpus, lexicon, and predictor instead
+   * of re-ingesting and re-training: the state is complete when the corpus
+   * loaded non-empty, the lexicon is populated, and the predictor loaded.
+   * Learn mode (-L) always rebuilds. Only the cheap fact index is rebuilt each
+   * run below.
+   */
   { libxs_registry_info_t warm;
     warm.size = 0;
     warm_start = (0 == learn_mode && NULL != answer_model
@@ -796,10 +798,12 @@ int main(int argc, char* argv[])
     libxs_predict_t* token_model = NULL;
     libxs_registry_t* test_corpus = NULL;
     const libxs_registry_t* eval_corpus = corpus;
-    /* A -T prefix supplies a fixed held-out corpus: train on all of the main
-       corpus (holdout forced 0) and evaluate on the separate test set. This
-       keeps the test set identical across training-corpus sizes, so BPC is
-       comparable along a scaling curve. */
+    /**
+     * A -T prefix supplies a fixed held-out corpus: train on all of the main
+     * corpus (holdout forced 0) and evaluate on the separate test set. This
+     * keeps the test set identical across training-corpus sizes, so BPC is
+     * comparable along a scaling curve.
+     */
     if (NULL != test_prefix) {
       test_corpus = libxs_registry_create();
       if (NULL != test_corpus && EXIT_SUCCESS == corpus_ingest_basename(
@@ -879,10 +883,12 @@ int main(int argc, char* argv[])
         while (len > 0 && 0 != isspace((unsigned char)line[len - 1])) --len;
         if (0 == len) { printf("> "); fflush(stdout); continue; }
         is_q = is_question_query(line, len, lexicon, rules, nrules);
-        /* Questions answer from the corpus first (with a continuation on top),
-           independent of the -K generator; only non-questions use the per-kind
-           token generators. The predict/embed kinds lack an n-gram model, so
-           they keep their own completion path. */
+        /**
+         * Questions answer from the corpus first (with a continuation on top),
+         * independent of the -K generator; only non-questions use the per-kind
+         * token generators. The predict/embed kinds lack an n-gram model, so
+         * they keep their own completion path.
+         */
         if (0 != is_q && 0 == use_predict && 0 == use_embed) {
           complete_respond(corpus, lexicon, rules, nrules, answer_model,
             predict_profile, budget, line, (int)len);
@@ -1378,11 +1384,13 @@ static int answer_relation_rule_alias_pos(const char* relation,
 }
 
 
-/* Resolve the per-corpus namespace from the prefix: state and companion files
-   live in the current directory keyed by the prefix basename, so each corpus
-   owns its own converse.dat/eval/relations/... A prefix of "." (the default)
-   takes the working directory's own name, which reproduces the plain
-   "converse.*" layout when run from the sample directory. */
+/**
+ * Resolve the per-corpus namespace from the prefix: state and companion files
+ * live in the current directory keyed by the prefix basename, so each corpus
+ * owns its own converse.dat/eval/relations/... A prefix of "." (the default)
+ * takes the working directory's own name, which reproduces the plain
+ * "converse.*" layout when run from the sample directory.
+ */
 static void converse_namespace_init(const char* prefix)
 {
   char base[CONVERSE_PATH_MAX - 16];
@@ -3396,9 +3404,11 @@ static void answer_docdef_facts_free(void)
 }
 
 
-/* Parse an optional leading "Header: `name`" line and return the byte offset
-   of the definition prose that follows it (0 when absent). Fills header with
-   the base module name (backticks and trailing extension stripped). */
+/**
+ * Parse an optional leading "Header: `name`" line and return the byte offset
+ * of the definition prose that follows it (0 when absent). Fills header with
+ * the base module name (backticks and trailing extension stripped).
+ */
 static int answer_docdef_header(const char* text, int text_len,
   char* header, int header_size, int* header_len)
 {
@@ -3443,10 +3453,12 @@ static int answer_docdef_header(const char* text, int text_len,
 }
 
 
-/* Learn module definitions from Markdown ingest: the first paragraph under a
-   heading becomes that title's definition, with the "Header:" filename kept as
-   an alias. Structural only (no corpus vocabulary), so prose corpora without
-   headings contribute nothing. */
+/**
+ * Learn module definitions from Markdown ingest: the first paragraph under a
+ * heading becomes that title's definition, with the "Header:" filename kept as
+ * an alias. Structural only (no corpus vocabulary), so prose corpora without
+ * headings contribute nothing.
+ */
 static size_t answer_docdef_facts_build(const libxs_registry_t* corpus)
 {
   const void* key = NULL;
@@ -3518,8 +3530,10 @@ static void answer_docdef_facts_report(FILE* stream)
 }
 
 
-/* Extract the subject term from "what is [the] X" or "what does X do",
-   skipping a leading article. Language-generic, no corpus vocabulary. */
+/**
+ * Extract the subject term from "what is [the] X" or "what does X do",
+ * skipping a leading article. Language-generic, no corpus vocabulary.
+ */
 static int answer_docdef_term(const char* query_text, size_t query_len,
   char* term, int term_size)
 {
@@ -3568,8 +3582,10 @@ static int answer_docdef_term(const char* query_text, size_t query_len,
 }
 
 
-/* Answer "What is X?" / "What does X do?" from a learned module definition,
-   matching X against either the heading text or the Header: filename alias. */
+/**
+ * Answer "What is X?" / "What does X do?" from a learned module definition,
+ * matching X against either the heading text or the Header: filename alias.
+ */
 static int answer_docdef_fact_reply(const char* query_text,
   size_t query_len, char* output, size_t output_size)
 {
@@ -3611,9 +3627,11 @@ static void conv_reset(void)
 }
 
 
-/* Remember the subject of a successfully answered question so that a later
-   follow-up can refer back to it. Uses the same subject extraction as the
-   definition path; only a real subject term updates the topic. */
+/**
+ * Remember the subject of a successfully answered question so that a later
+ * follow-up can refer back to it. Uses the same subject extraction as the
+ * definition path; only a real subject term updates the topic.
+ */
 static void conv_remember(const char* query_text, size_t query_len)
 {
   char term[CONV_TOPIC_MAX];
@@ -3648,11 +3666,13 @@ static int conv_word_is_pronoun(const char* word, int len)
 }
 
 
-/* Rewrite a follow-up against the remembered topic. Two grounded moves:
-   substitute a back-reference pronoun (it/its/that/...) with the topic, and,
-   when a question carries no subject of its own, append the topic so the
-   answer path is scoped to it. Returns EXIT_SUCCESS only when a rewrite was
-   made, leaving the original query untouched otherwise. */
+/**
+ * Rewrite a follow-up against the remembered topic. Two grounded moves:
+ * substitute a back-reference pronoun (it/its/that/...) with the topic, and,
+ * when a question carries no subject of its own, append the topic so the
+ * answer path is scoped to it. Returns EXIT_SUCCESS only when a rewrite was
+ * made, leaving the original query untouched otherwise.
+ */
 static int conv_rewrite(const char* query_text, size_t query_len,
   char* out, size_t out_size)
 {
@@ -5627,10 +5647,12 @@ static int eval_converse(const libxs_registry_t* corpus,
 }
 
 
-/* The variable-order n-gram engine now lives in libxs_ngram; the wrappers
-   below adapt converse's call sites (which thread the model's registry and an
-   explicit maxorder) to the single shared model. model == converse_ngram.store
-   and maxorder == converse_ngram.maxorder by construction. */
+/**
+ * The variable-order n-gram engine now lives in libxs_ngram; the wrappers
+ * below adapt converse's call sites (which thread the model's registry and an
+ * explicit maxorder) to the single shared model. model == converse_ngram.store
+ * and maxorder == converse_ngram.maxorder by construction.
+ */
 static void ngramk_observe(libxs_registry_t* model, const unsigned int hist[],
   int hlen, unsigned int succ_id, int maxorder)
 {
@@ -5697,8 +5719,10 @@ static int ngram_native_mode(void)
 }
 
 
-/* Number of prior whole words to carry as sub-word prediction context, or 0
-   (off, byte-identical to piece-only context). Ignored at word/native mode. */
+/**
+ * Number of prior whole words to carry as sub-word prediction context, or 0
+ * (off, byte-identical to piece-only context). Ignored at word/native mode.
+ */
 static int ngram_wordctx(void)
 {
   int result = 0;
@@ -5765,10 +5789,12 @@ static void bpe_free(void)
 }
 
 
-/* Learn byte-pair merges from the training split only. Words are byte runs
-   split on whitespace (a leading-space marker keeps word starts distinct);
-   each iteration adds the most frequent adjacent symbol pair as a new symbol
-   and records its rank so encoding can replay the merges. */
+/**
+ * Learn byte-pair merges from the training split only. Words are byte runs
+ * split on whitespace (a leading-space marker keeps word starts distinct);
+ * each iteration adds the most frequent adjacent symbol pair as a new symbol
+ * and records its rank so encoding can replay the merges.
+ */
 static void bpe_build(const libxs_registry_t* corpus, int holdout)
 {
   int nmerges = BPE_MERGES_DEFAULT;
@@ -5898,10 +5924,12 @@ static void bpe_build(const libxs_registry_t* corpus, int holdout)
 }
 
 
-/* Encode one whitespace-delimited byte run [text,len) into BPE pieces by
-   greedily applying the lowest-rank applicable merge, then intern each piece.
-   Falls back to single bytes for anything the merges do not cover, so the
-   encoder never fails on unseen input. */
+/**
+ * Encode one whitespace-delimited byte run [text,len) into BPE pieces by
+ * greedily applying the lowest-rank applicable merge, then intern each piece.
+ * Falls back to single bytes for anything the merges do not cover, so the
+ * encoder never fails on unseen input.
+ */
 static int bpe_encode_run(const char* text, int len, libxs_token_t tokens[],
   int max, int start, libxs_lexicon_t* lexicon, int create)
 {
@@ -5949,9 +5977,11 @@ static int bpe_encode_run(const char* text, int len, libxs_token_t tokens[],
 }
 
 
-/* Split a word [text,wlen) into syllable pieces by a simple VC|CV heuristic:
-   cut before a consonant that is followed by a vowel, once the current piece
-   already contains a vowel. Caps piece length; always ends at word end. */
+/**
+ * Split a word [text,wlen) into syllable pieces by a simple VC|CV heuristic:
+ * cut before a consonant that is followed by a vowel, once the current piece
+ * already contains a vowel. Caps piece length; always ends at word end.
+ */
 static int ngram_syllable_split(const char* text, int wlen, int piece_begin[],
   int piece_len[], int max)
 {
@@ -5987,12 +6017,14 @@ static int ngram_syllable_split(const char* text, int wlen, int piece_begin[],
 }
 
 
-/* Emits LIBXS_TOKEN_BREAK on a token preceded by whitespace in the source, so
-   libxs_token_word_next groups the pieces of one word. Native granularity cuts
-   fixed-width chunks across word boundaries and hence marks none. When word_ids
-   is non-NULL, each piece receives the whole-word lexicon id of the word it
-   belongs to (its own id for native chunks and standalone punctuation), which
-   lets a caller build word-span context over sub-word emission. */
+/**
+ * Emits LIBXS_TOKEN_BREAK on a token preceded by whitespace in the source, so
+ * libxs_token_word_next groups the pieces of one word. Native granularity cuts
+ * fixed-width chunks across word boundaries and hence marks none. When word_ids
+ * is non-NULL, each piece receives the whole-word lexicon id of the word it
+ * belongs to (its own id for native chunks and standalone punctuation), which
+ * lets a caller build word-span context over sub-word emission.
+ */
 static int ngram_native_tokens(libxs_lexicon_t* lexicon, const char* text,
   int text_len, libxs_token_t tokens[], unsigned int word_ids[], int max,
   int create)
@@ -6119,10 +6151,12 @@ static int ngram_order(void)
 }
 
 
-/* Skip-gram tier: an auxiliary store keyed by the pair (w[-3], w[-1]) that
-   abstracts over the varying middle slot, so an unseen exact context can still
-   match a seen "w ___ w" pattern (analogic generalization, no parameters).
-   Off by default -> bit-exact to the exact-only model. */
+/**
+ * Skip-gram tier: an auxiliary store keyed by the pair (w[-3], w[-1]) that
+ * abstracts over the varying middle slot, so an unseen exact context can still
+ * match a seen "w ___ w" pattern (analogic generalization, no parameters).
+ * Off by default -> bit-exact to the exact-only model.
+ */
 static int ngram_skip(void)
 {
   const char* env = getenv("CONVERSE_SKIP");
@@ -6143,8 +6177,10 @@ static double ngram_skip_mu(void)
 }
 
 
-/* Record a skip-gram observation from a rolling history: keys the pair
-   (hist[hlen-3], hist[hlen-1]) to the successor, requiring hlen >= 3. */
+/**
+ * Record a skip-gram observation from a rolling history: keys the pair
+ * (hist[hlen-3], hist[hlen-1]) to the successor, requiring hlen >= 3.
+ */
 static void ngram_skip_observe(const unsigned int hist[], int hlen,
   unsigned int succ_id)
 {
@@ -6159,8 +6195,10 @@ static void ngram_skip_observe(const unsigned int hist[], int hlen,
 }
 
 
-/* Skip-tier probability of succ given the rolling history, or 0 when the tier
-   is off, the context is too short, or the pattern was never seen. */
+/**
+ * Skip-tier probability of succ given the rolling history, or 0 when the tier
+ * is off, the context is too short, or the pattern was never seen.
+ */
 static double ngram_skip_prob(const unsigned int hist[], int hlen,
   unsigned int succ_id)
 {
@@ -6199,10 +6237,12 @@ static void ngram_hist_push(unsigned int hist[], int* hlen, int cap,
 }
 
 
-/* Word-span context for predicting sub-word token i: the whole-word ids of the
-   preceding wctx words followed by the pieces of the current word emitted so
-   far, kept as the most-recent cap entries. Rebuilt per position so that train
-   and eval derive identical keys; groups are delimited by LIBXS_TOKEN_BREAK. */
+/**
+ * Word-span context for predicting sub-word token i: the whole-word ids of the
+ * preceding wctx words followed by the pieces of the current word emitted so
+ * far, kept as the most-recent cap entries. Rebuilt per position so that train
+ * and eval derive identical keys; groups are delimited by LIBXS_TOKEN_BREAK.
+ */
 static int ngram_wordctx_hist(const libxs_token_t nat[],
   const unsigned int word_ids[], int i, int wctx, unsigned int hist[], int cap)
 {
@@ -6372,8 +6412,10 @@ static libxs_registry_t* ngram_build(const libxs_registry_t* corpus,
 }
 
 
-/* Rank the successors of a single record by count (converse's legacy order-2
-   adapters expose a bare entry; the library ranks internally via predict). */
+/**
+ * Rank the successors of a single record by count (converse's legacy order-2
+ * adapters expose a bare entry; the library ranks internally via predict).
+ */
 static int ngram_topk(const ngram_entry_t* entry, unsigned int out_ids[],
   int k)
 {
@@ -6793,8 +6835,10 @@ static int token_input_vector(unsigned int prev2, unsigned int prev1,
 }
 
 
-/* Number of context tokens summarized into a kNN-LM query vector (>=2; 2 is
-   the historical prev2/prev1 pair, bit-exact). Wider context = longer reach. */
+/**
+ * Number of context tokens summarized into a kNN-LM query vector (>=2; 2 is
+ * the historical prev2/prev1 pair, bit-exact). Wider context = longer reach.
+ */
 static int knnlm_ctxlen(void)
 {
   int result = 2;
@@ -6820,11 +6864,13 @@ static double knnlm_decay(void)
 }
 
 
-/* Build a kNN-LM query vector from a rolling history (most-recent last). The
-   prev1 half is the embedding of the most recent token; the prev2 half is a
-   decayed, L2-normalized sum of the preceding ctxlen-1 tokens. With ctxlen==2
-   this reproduces token_input_vector(prev2, prev1, 1, .) exactly, so the
-   default path is byte-identical to the two-token model. */
+/**
+ * Build a kNN-LM query vector from a rolling history (most-recent last). The
+ * prev1 half is the embedding of the most recent token; the prev2 half is a
+ * decayed, L2-normalized sum of the preceding ctxlen-1 tokens. With ctxlen==2
+ * this reproduces token_input_vector(prev2, prev1, 1, .) exactly, so the
+ * default path is byte-identical to the two-token model.
+ */
 static void knnlm_ctx_vector(const unsigned int hist[], int hlen, int ctxlen,
   double decay, double inputs[])
 {
@@ -6921,9 +6967,11 @@ static void ngram_last_context(libxs_lexicon_t* lexicon,
 }
 
 
-/* Fill hist[] with the trailing content-token ids of the prompt (at most
-   NGRAM_ORDER_MAX), returning the count. Mirrors ngram_last_context but keeps
-   the whole window the deep store can use, not just the final two ids. */
+/**
+ * Fill hist[] with the trailing content-token ids of the prompt (at most
+ * NGRAM_ORDER_MAX), returning the count. Mirrors ngram_last_context but keeps
+ * the whole window the deep store can use, not just the final two ids.
+ */
 static int ngram_history(libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules,
   int nrules, const char* text, int text_len, unsigned int hist[])
 {
@@ -6967,11 +7015,13 @@ static int ngram_gen_minorder(void)
 }
 
 
-/* Mean-order floor a continuation must clear to be shown as attested. The
-   per-step gate (ngram_gen_minorder) is dominated by the low-order seeding
-   transient, so a whole continuation is judged by its MEAN grounding order:
-   at maxorder 2 every run averages 2.0 (pure bigram drift, suppressed); with
-   deeper context (-x) genuinely attested passages average much higher. */
+/**
+ * Mean-order floor a continuation must clear to be shown as attested. The
+ * per-step gate (ngram_gen_minorder) is dominated by the low-order seeding
+ * transient, so a whole continuation is judged by its MEAN grounding order:
+ * at maxorder 2 every run averages 2.0 (pure bigram drift, suppressed); with
+ * deeper context (-x) genuinely attested passages average much higher.
+ */
 static double ngram_gen_contfloor(void)
 {
   double result = 3.0;
@@ -6984,15 +7034,19 @@ static double ngram_gen_contfloor(void)
 }
 
 
-/* Grounded greedy generation over the deep k-context store. Each step takes
-   the top successor from the longest attested context and reports that
-   context order; generation stops when the order falls below the grounding
-   floor (the generative form of "abstain rather than invent"), at a repeat,
-   or at the length budget. Prints the continuation plus the mean/min order
-   that quantifies how well grounded it was. */
-/* Greedy grounded continuation of the prompt into out[] (space-joined words).
-   Returns the number of generated tokens (0 = nothing cleared the grounding
-   floor). Optional order_mean/order_min report how attested the run was. */
+/**
+ * Grounded greedy generation over the deep k-context store. Each step takes
+ * the top successor from the longest attested context and reports that
+ * context order; generation stops when the order falls below the grounding
+ * floor (the generative form of "abstain rather than invent"), at a repeat,
+ * or at the length budget. Prints the continuation plus the mean/min order
+ * that quantifies how well grounded it was.
+ */
+/**
+ * Greedy grounded continuation of the prompt into out[] (space-joined words).
+ * Returns the number of generated tokens (0 = nothing cleared the grounding
+ * floor). Optional order_mean/order_min report how attested the run was.
+ */
 static int ngram_generate(libxs_registry_t* model, libxs_lexicon_t* lexicon,
   const libxs_lexrule_t* rules, int nrules, const char* text, int text_len,
   char* out, size_t out_size, double* order_mean, int* order_min_out)
@@ -7063,11 +7117,13 @@ static void ngram_complete(libxs_registry_t* model, libxs_lexicon_t* lexicon,
 }
 
 
-/* Completion-mode response: for a question, answer from the corpus (facts +
-   retrieval) first, then add a grounded continuation generated over the whole
-   corpus n-gram model and seeded from the ANSWER, so -c is never empty and the
-   continuation extends what was said. Non-questions keep the pure generation
-   probe. Continuation is labeled and its grounding reported. */
+/**
+ * Completion-mode response: for a question, answer from the corpus (facts +
+ * retrieval) first, then add a grounded continuation generated over the whole
+ * corpus n-gram model and seeded from the ANSWER, so -c is never empty and the
+ * continuation extends what was said. Non-questions keep the pure generation
+ * probe. Continuation is labeled and its grounding reported.
+ */
 static void complete_respond(const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
   const libxs_predict_t* answer_model,
@@ -7103,11 +7159,13 @@ static void complete_respond(const libxs_registry_t* corpus,
 }
 
 
-/* Held-out generation quality: seed each test sentence with its first GEN_SEED
-   content tokens, greedily extend, and count how many of the sentence's actual
-   remaining tokens the generator reproduces before diverging. A gradient-free,
-   generation-native counterpart to BPC (which only scores one-step prediction).
-   Also reports the mean grounding order over generated tokens. */
+/**
+ * Held-out generation quality: seed each test sentence with its first GEN_SEED
+ * content tokens, greedily extend, and count how many of the sentence's actual
+ * remaining tokens the generator reproduces before diverging. A gradient-free,
+ * generation-native counterpart to BPC (which only scores one-step prediction).
+ * Also reports the mean grounding order over generated tokens.
+ */
 static int ngram_gen_eval(libxs_registry_t* model,
   const libxs_registry_t* corpus, libxs_lexicon_t* lexicon,
   const libxs_lexrule_t* rules, int nrules, int holdout, const char* kind)
@@ -7901,8 +7959,10 @@ static void knnlm_cache_free(void)
 }
 
 
-/* Approximate NN over the static datastore is enabled by CONVERSE_KNNLM_ANN;
-   default off keeps the exact brute-force scan (bit-identical results). */
+/**
+ * Approximate NN over the static datastore is enabled by CONVERSE_KNNLM_ANN;
+ * default off keeps the exact brute-force scan (bit-identical results).
+ */
 static int knnlm_ann_mode(void)
 {
   const char* env = getenv("CONVERSE_KNNLM_ANN");
@@ -7910,10 +7970,12 @@ static int knnlm_ann_mode(void)
 }
 
 
-/* Quantize a context vector's leading dims to a Hilbert code: locality in the
-   embedding space becomes locality along the 1-D code so a window around the
-   query code holds its near neighbors. Values are the prev1 half of the input
-   (the more predictive token, per the 4x weighting in knnlm_scan). */
+/**
+ * Quantize a context vector's leading dims to a Hilbert code: locality in the
+ * embedding space becomes locality along the 1-D code so a window around the
+ * query code holds its near neighbors. Values are the prev1 half of the input
+ * (the more predictive token, per the 4x weighting in knnlm_scan).
+ */
 static uint64_t knnlm_ann_encode(const double* in)
 {
   unsigned int coords[KNNLM_ANN_DIMS];
@@ -7975,8 +8037,10 @@ static void knnlm_ann_build(void)
 }
 
 
-/* Exact-distance rerank of one candidate against the query into the running
-   top-K (same metric and heap discipline as knnlm_scan). */
+/**
+ * Exact-distance rerank of one candidate against the query into the running
+ * top-K (same metric and heap discipline as knnlm_scan).
+ */
 static void knnlm_ann_consider(const double* in, int idx,
   unsigned int near_next[], double near_dist[], int* nnear)
 {
@@ -8006,9 +8070,11 @@ static void knnlm_ann_consider(const double* in, int idx,
 }
 
 
-/* Retrieve the static-cache neighbors of the query from a window around its
-   Hilbert code, then exact-rerank them. Replaces the O(N) scan of the static
-   cache; the dynamic store is still scanned brute-force by the caller. */
+/**
+ * Retrieve the static-cache neighbors of the query from a window around its
+ * Hilbert code, then exact-rerank them. Replaces the O(N) scan of the static
+ * cache; the dynamic store is still scanned brute-force by the caller.
+ */
 static void knnlm_ann_scan(const double* in, unsigned int near_next[],
   double near_dist[], int* nnear)
 {

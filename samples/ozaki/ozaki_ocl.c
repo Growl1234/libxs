@@ -43,10 +43,12 @@ void* ozaki_ocl_create(int use_double, int kind, int verbosity, int tm, int tn, 
       free(h);
       h = NULL;
     }
-    /* Refuse the handle if fp64 was requested but the device only supports fp32.
+    /**
+     * Refuse the handle if fp64 was requested but the device only supports fp32.
      * Silently downgrading would cause a type mismatch: the host passes double
      * arrays while the OpenCL kernels operate on float, leading to wrong results
-     * and potential memory corruption. */
+     * and potential memory corruption.
+     */
     else if (use_double && !h->ctx.use_double) {
       ozaki_destroy(&h->ctx);
       free(h);
@@ -84,9 +86,11 @@ int ozaki_ocl_gemm(void* handle, char transa, char transb, int M, int N, int K, 
     const unsigned int mxcsr = LIBXS_MXCSR_GET();
     LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &h->lock);
     result = ozaki_gemm(&h->ctx, h->stream, transa, transb, M, N, K, alpha, a, lda, b, ldb, beta, c, ldc, hist, profile, 0);
-    /* BLAS API is synchronous: caller expects result in c upon return.
+    /**
+     * BLAS API is synchronous: caller expects result in c upon return.
      * Must sync all streams including persistent helper streams used
-     * for preprocessing (stream_a, stream_b) to prevent race conditions. */
+     * for preprocessing (stream_a, stream_b) to prevent race conditions.
+     */
     libxstream_stream_sync(h->stream);
     if (NULL != h->ctx.stream_a) libxstream_stream_sync(h->ctx.stream_a);
     if (NULL != h->ctx.stream_b) libxstream_stream_sync(h->ctx.stream_b);
@@ -106,9 +110,11 @@ int ozaki_ocl_gemm_complex(void* handle, char transa, char transb, int M, int N,
     const unsigned int mxcsr = LIBXS_MXCSR_GET();
     LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &h->lock);
     result = ozaki_gemm_complex(&h->ctx, h->stream, transa, transb, M, N, K, alpha, a, lda, b, ldb, beta, c, ldc);
-    /* BLAS API is synchronous: caller expects result in c upon return.
+    /**
+     * BLAS API is synchronous: caller expects result in c upon return.
      * Must sync all streams including persistent helper streams used
-     * for preprocessing (stream_a, stream_b) to prevent race conditions. */
+     * for preprocessing (stream_a, stream_b) to prevent race conditions.
+     */
     libxstream_stream_sync(h->stream);
     if (NULL != h->ctx.stream_a) libxstream_stream_sync(h->ctx.stream_a);
     if (NULL != h->ctx.stream_b) libxstream_stream_sync(h->ctx.stream_b);

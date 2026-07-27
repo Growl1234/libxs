@@ -139,12 +139,16 @@ OZAKI_API_INTERN void gemm_init(void)
       const char* const ozaki_verbose_env = getenv("OZAKI_VERBOSE");
       const char* const ozaki_complex_env = getenv("OZAKI_COMPLEX");
       ozaki = (NULL == ozaki_env ? 2 /*default*/ : atoi(ozaki_env));
-      /* OZAKI_MAXK: max K per preprocessing pass (0=no grouping).
-       * Default: K_GRP (compile-time, typically 32768). */
+      /**
+       * OZAKI_MAXK: max K per preprocessing pass (0=no grouping).
+       * Default: K_GRP (compile-time, typically 32768).
+       */
       ozaki_maxk = (NULL != ozaki_maxk_env ? atoi(ozaki_maxk_env) : K_GRP);
-      /* OZAKI_COMPLEX: 0=original BLAS, 1=CPU, 2=GPU,
+      /**
+       * OZAKI_COMPLEX: 0=original BLAS, 1=CPU, 2=GPU,
        * 3=original ZGEMM + lock out real GEMM during ZGEMM.
-       * Default: 0 if OZAKI=0, else 2 (GPU preferred, CPU fallback). */
+       * Default: 0 if OZAKI=0, else 2 (GPU preferred, CPU fallback).
+       */
       ozaki_complex = (NULL != ozaki_complex_env ? atoi(ozaki_complex_env) : (0 != ozaki ? 2 : 0));
       if (NULL != ozaki_stat_env) ozaki_stat = atoi(ozaki_stat_env);
       if (NULL != ozaki_verbose_env) ozaki_verbose = atoi(ozaki_verbose_env);
@@ -268,15 +272,19 @@ OZAKI_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
 
   gemm_init();
 
-  /* Quick-return for degenerate dimensions (BLAS spec: valid no-op).
-   * Pointers may be NULL when any dimension is zero. */
+  /**
+   * Quick-return for degenerate dimensions (BLAS spec: valid no-op).
+   * Pointers may be NULL when any dimension is zero.
+   */
   if (*m > 0 && *n > 0 && *k > 0) {
     LIBXS_ASSERT(NULL != a && NULL != b && NULL != c);
     LIBXS_ASSERT(NULL != lda && NULL != ldb && NULL != ldc);
-    /* Bypass Ozaki: fall through to original BLAS.
+    /**
+     * Bypass Ozaki: fall through to original BLAS.
      * Used when the reference ZGEMM may internally call sgemm_,
      * which --wrap redirects back into GEMM_WRAP. Without bypass,
-     * the "reference" result would itself be Ozaki-approximate. */
+     * the "reference" result would itself be Ozaki-approximate.
+     */
     if (0 != gemm_nozaki) {
       if (NULL != gemm_original) {
         gemm_original(GEMM_ARGPASS);
@@ -336,9 +344,11 @@ OZAKI_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
           LIBXS_ATOMIC_RELEASE(&gemm_lock, LIBXS_ATOMIC_LOCKORDER);
         }
 #if defined(__LIBXSTREAM)
-        /* Invalidate cache entries matching output C: the CPU path just wrote C,
+        /**
+         * Invalidate cache entries matching output C: the CPU path just wrote C,
          * so any cached preprocessed data keyed by C's pointer is now stale
-         * (C's address may be reused as A or B in a subsequent GEMM call). */
+         * (C's address may be reused as A or B in a subsequent GEMM call).
+         */
         if (NULL != ozaki_ocl_handle) {
           ozaki_ocl_invalidate_cache(ozaki_ocl_handle, c, c);
         }

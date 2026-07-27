@@ -11,7 +11,8 @@
 #include <libxs/libxs_math.h>
 #include <libxs/libxs_mem.h>
 
-/* Two equivalent constructions of the same engineered model:
+/**
+ * Two equivalent constructions of the same engineered model:
  * default (DISCHARGE_USE_API): the engineered features expressed through
  *   the timeseries API (set_series + set_series_deriv + set_series_aux);
  *   the framework transforms the lags, appends the derivatives, and

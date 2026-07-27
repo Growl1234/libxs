@@ -66,8 +66,10 @@ LIBXS_API const char* libxs_typename(libxs_data_t datatype);
 /** Determine the given value in double-precision. */
 LIBXS_API int libxs_dvalue(libxs_data_t datatype, const void* value, double* dvalue);
 
-/* header-only: include implementation when not inside another LIBXS header
- * (deferred to the end of the outermost header that triggered the chain). */
+/**
+ * header-only: include implementation when not inside another LIBXS header
+ * (deferred to the end of the outermost header that triggered the chain).
+ */
 #if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \
  && !defined(LIBXS_MATH_H) && !defined(LIBXS_CPUID_H) && !defined(LIBXS_GEMM_H) \
  && !defined(LIBXS_MHD_H) && !defined(LIBXS_TIMER_H) && !defined(LIBXS_MEM_H) \

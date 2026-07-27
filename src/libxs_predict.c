@@ -1646,7 +1646,8 @@ LIBXS_API_INLINE int internal_libxs_predict_ts_window(
   const int wcap = internal_libxs_predict_ts_window_cap(model, wmax);
   int result = 0;
   if (4 <= wcap) {
-    /* The held-out kNN proxy is faithful only for low-dimensional
+    /**
+     * The held-out kNN proxy is faithful only for low-dimensional
      * (single-series) feature spaces.  For multi-series inputs the proxy
      * is floor-biased and the real pipeline (decomposition, per-channel
      * structure) typically needs a longer window; the library abstains

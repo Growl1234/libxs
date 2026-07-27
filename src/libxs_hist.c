@@ -182,9 +182,11 @@ LIBXS_API void libxs_hist_query(libxs_lock_t* lock, const libxs_hist_t* hist,
     if (0 < h->n && h->n <= h->nqueue) {
       const double w = h->max - h->min;
       if (h->n < h->nbuckets) h->nbuckets = h->n;
-      /* buckets[0..nbuckets-1] are bucket counts; buckets[nbuckets..nqueue-1]
+      /**
+       * buckets[0..nbuckets-1] are bucket counts; buckets[nbuckets..nqueue-1]
        * are zero-initialized flags consumed left-to-right per queued sample.
-       * Swap-on-first-assign relocates displaced values to flagged positions. */
+       * Swap-on-first-assign relocates displaced values to flagged positions.
+       */
       for (i = 1, j = 0; i <= h->nbuckets; j = h->nvals * i++) {
         const double p = h->min + (i - 1) * w / h->nbuckets, q = h->min + i * w / h->nbuckets;
         for (n = 0, m = 0; n < h->n; m = ++n * h->nvals) {

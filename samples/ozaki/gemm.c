@@ -11,9 +11,11 @@
 #include <libxs/libxs_timer.h>
 #include <libxs/libxs_rng.h>
 
-/* Weak references: gemm-blas.x links without the Ozaki library,
+/**
+ * Weak references: gemm-blas.x links without the Ozaki library,
  * so these symbols may be undefined. CHECK should not be used
- * with gemm-blas.x (the variables resolve to zero-address). */
+ * with gemm-blas.x (the variables resolve to zero-address).
+ */
 LIBXS_PRAGMA_WEAK(gemm_original)
 LIBXS_PRAGMA_WEAK(ozaki_verbose)
 LIBXS_PRAGMA_WEAK(gemm_diff)

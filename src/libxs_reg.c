@@ -43,9 +43,11 @@
     ((unsigned int)LIBXS_UP2POT(LIBXS_REGCACHE_NENTRIES) - 1)
 #endif
 
-/* Small-value optimization: values <= sizeof(void*) are stored directly
-   in the 'value' field (reinterpreted as a byte buffer), avoiding heap
-   allocation. */
+/**
+ * Small-value optimization: values <= sizeof(void*) are stored directly
+ * in the 'value' field (reinterpreted as a byte buffer), avoiding heap
+ * allocation.
+ */
 #define INTERNAL_REG_INLINE(E) ((E)->value_size <= sizeof((E)->value))
 
 

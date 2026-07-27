@@ -185,8 +185,10 @@ LIBXS_API_INTERN int internal_libxs_cpuid_x86(libxs_cpuid_t* info)
                   LIBXS_CPUID_X86(7, 1/*ecx*/, eax2, ebx2, ecx3, edx2);
                   if (LIBXS_CPUID_CHECK(eax2, 0x00000010)) { /* AVX_VNNI_INT8 */
                     has_vnni_int8 = 1;
-                    /* keep the level monotone: INT8 (1110) sits above AMX (1105),
-                       so only elevate when AMX is present (fold requirement upward) */
+                    /**
+                     * keep the level monotone: INT8 (1110) sits above AMX (1105),
+                     * so only elevate when AMX is present (fold requirement upward)
+                     */
                     if (LIBXS_X86_AVX512_AMX <= feature_cpu) {
                       feature_cpu = LIBXS_X86_AVX512_INT8;
                     }
@@ -204,8 +206,10 @@ LIBXS_API_INTERN int internal_libxs_cpuid_x86(libxs_cpuid_t* info)
               }
               else {
                 feature_cpu = LIBXS_X86_AVX2;
-                /* AVX10/256 without AVX-512: leaf 7, subleaf 1, EDX bit 19.
-                 * Sierra Forest E-cores: full feature set at 256-bit only. */
+                /**
+                 * AVX10/256 without AVX-512: leaf 7, subleaf 1, EDX bit 19.
+                 * Sierra Forest E-cores: full feature set at 256-bit only.
+                 */
                 { unsigned int eax2, ebx2, ecx3, edx2;
                   LIBXS_CPUID_X86(7, 1/*ecx*/, eax2, ebx2, ecx3, edx2);
                   if (LIBXS_CPUID_CHECK(edx2, 0x00080000)) { /* AVX10 */
@@ -247,8 +251,10 @@ LIBXS_API_INTERN int internal_libxs_cpuid_x86(libxs_cpuid_t* info)
         }
       }
       else if (LIBXS_X86_GENERIC <= feature_cpu) {
-        /* assume FXSAVE-enabled/manual state-saving OS,
-           as it was introduced 1999 even for 32bit */
+        /**
+         * assume FXSAVE-enabled/manual state-saving OS,
+         * as it was introduced 1999 even for 32bit
+         */
         feature_os = LIBXS_X86_SSE42;
       }
       else feature_os = LIBXS_TARGET_ARCH_GENERIC;

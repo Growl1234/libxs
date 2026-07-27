@@ -7,9 +7,11 @@
 * Further information: https://github.com/hfp/libxs/                          *
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
-/* Microbenchmark for the registry (key-value store) dispatch path.
+/**
+ * Microbenchmark for the registry (key-value store) dispatch path.
  * Measures: registration, cold lookup, cached lookup, multi-threaded
- *           reads, contended writes, and mixed read/write scenarios. */
+ * reads, contended writes, and mixed read/write scenarios.
+ */
 
 #include <libxs/libxs_reg.h>
 #include <libxs/libxs_timer.h>

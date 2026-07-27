@@ -121,8 +121,10 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
 #endif
     GEMM_PROFILE_START(tid);
 
-    /* Phase 3: scale C by beta (once, before K-group loop).
-     * Per BLAS spec, beta=0 must zero C unconditionally (NaN/Inf safe). */
+    /**
+     * Phase 3: scale C by beta (once, before K-group loop).
+     * Per BLAS spec, beta=0 must zero C unconditionally (NaN/Inf safe).
+     */
 #if defined(_OPENMP)
 # pragma omp for OZAKI_OMP_SCHEDULE
 #endif
@@ -140,8 +142,10 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
     for (kb_grp = 0; kb_grp < K; kb_grp += K_grp_size) {
       const GEMM_INT_TYPE K_len = LIBXS_MIN(K_grp_size, K - kb_grp);
 
-      /* Compute K-permutation for smoothness (single-threaded).
-       * B is K_len rows x N cols in column-major (non-transposed). */
+      /**
+       * Compute K-permutation for smoothness (single-threaded).
+       * B is K_len rows x N cols in column-major (non-transposed).
+       */
       if (NULL != k_perm) {
 #if defined(_OPENMP)
 # pragma omp single
@@ -228,9 +232,11 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
       }
       /* implicit barrier: preprocessing done */
 
-      /* Adaptive cutoff: find highest occupied slice per side.
+      /**
+       * Adaptive cutoff: find highest occupied slice per side.
        * Slices beyond the maximum non-zero index contribute nothing;
-       * skipping them reduces the GEMM pair count quadratically. */
+       * skipping them reduces the GEMM pair count quadratically.
+       */
       /* Reset adaptive slice bounds (single ensures visibility + barrier) */
 #if defined(_OPENMP)
 # pragma omp single
@@ -269,9 +275,11 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
         GEMM_PROFILE_PAIRS(ozaki_count_pairs(nslices, eff_cutoff, ozaki_flags));
       }
 
-      /* Forward-difference decay diagnostic (first K-group, verbose only).
+      /**
+       * Forward-difference decay diagnostic (first K-group, verbose only).
        * Uses libxs_fprint (1D) on int8 slice buffers to report per-axis Linf
-       * at each derivative order -- characterizes exploitable smoothness. */
+       * at each derivative order -- characterizes exploitable smoothness.
+       */
 #if defined(_OPENMP)
 # pragma omp single nowait
 #endif
@@ -371,11 +379,13 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
       }
 #endif
 
-      /* Phase 4: tile-first GEMM + accumulate for this K-group.
+      /**
+       * Phase 4: tile-first GEMM + accumulate for this K-group.
        * Tiles outermost (single omp for): C stays in a local buffer
        * across all slice pairs -- one load + one store per tile instead
        * of a read-modify-write per pair.  Also eliminates per-pair
-       * omp-for barriers (implicit barrier at end of tile loop suffices). */
+       * omp-for barriers (implicit barrier at end of tile loop suffices).
+       */
 #if defined(_OPENMP)
 # pragma omp for LIBXS_OPENMP_COLLAPSE(2) OZAKI_OMP_SCHEDULE
 #endif

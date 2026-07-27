@@ -131,8 +131,10 @@
   LIBXS_LOCK_ATTR_INIT(LOCK_KIND, &attr); \
   LIBXS_LOCK_INIT(LOCK_KIND, &lock, &attr); \
   LIBXS_LOCK_ATTR_DESTROY(LOCK_KIND, &attr); \
-  /* Warmup: exercise both lock paths so the first timed measurement \
-   * does not include cold cache, branch predictor, or lazy-init costs. */ \
+  /** \
+   * Warmup: exercise both lock paths so the first timed measurement \
+   * does not include cold cache, branch predictor, or lazy-init costs. \
+   */ \
   { int w_; \
     for (w_ = 0; w_ < LIBXS_MIN(NREPEAT_LAT, 1024); ++w_) { \
       LIBXS_LOCK_ACQREAD(LOCK_KIND, &lock); \

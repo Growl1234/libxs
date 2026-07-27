@@ -8,7 +8,8 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 
-/* Template body for libxs_sort_smooth.
+/**
+ * Template body for libxs_sort_smooth.
  * Included once per element type from libxs_perm.c.
  *
  * Required macros:

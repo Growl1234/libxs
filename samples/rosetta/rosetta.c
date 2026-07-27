@@ -8,7 +8,8 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 
-/* Rosetta: recovering structure from opaque bytes.
+/**
+ * Rosetta: recovering structure from opaque bytes.
  *
  * Encodes a table of harmonic-series data as a flat binary blob,
  * then applies the LIBXS hierarchical analysis to rediscover the
@@ -77,9 +78,11 @@ static int field_image_handler(void* dst,
 static void generate_table(double table[NROWS][NFIELDS]);
 /* Level 0: flat 1-D probe -- expected to be inconclusive. */
 static libxs_data_t flat_probe(const void* blob, size_t nbytes);
-/* Stride sweep: for each candidate element width and record stride,
+/**
+ * Stride sweep: for each candidate element width and record stride,
  * fingerprint down the columns and find the (width, stride) pair
- * with the smallest per-column decay. */
+ * with the smallest per-column decay.
+ */
 static int stride_sweep(const void* blob, size_t nbytes,
   libxs_data_t* out_type);
 /* Shuffle stability on the discovered column structure. */
@@ -337,9 +340,11 @@ static libxs_data_t flat_probe(const void* blob, size_t nbytes)
 }
 
 
-/* Stride sweep: for each candidate element width and record stride,
+/**
+ * Stride sweep: for each candidate element width and record stride,
  * fingerprint down the columns and find the (width, stride) pair
- * with the smallest per-column decay. */
+ * with the smallest per-column decay.
+ */
 static int stride_sweep(const void* blob, size_t nbytes,
   libxs_data_t* out_type)
 {

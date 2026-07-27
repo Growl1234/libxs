@@ -43,9 +43,10 @@
   else *((TYPE*)PMIN_INOUT) = *((TYPE*)PMAX_INOUT) = 0; \
 } while(0)
 
-/* Unified element-conversion macro parameterized by IS_FLOAT (compile-time constant).
- * IS_FLOAT=1: float/double source — NaN guard, no intermediate rounding.
- * IS_FLOAT=0: integer source — no NaN, rounds intermediate scaled value.
+/**
+ * Unified element-conversion macro parameterized by IS_FLOAT (compile-time constant).
+ * IS_FLOAT=1: float/double source - NaN guard, no intermediate rounding.
+ * IS_FLOAT=0: integer source - no NaN, rounds intermediate scaled value.
  */
 #define LIBXS_MHD_ELEMENT_CONVERSION_IMPL(SRC_TYPE, IS_FLOAT, DST_TYPE, DST_INFO, DST_MIN, DST_MAX, PDST, SRC_ENUM, PSRC, PSRC_MIN, PSRC_MAX, RESULT) do { \
   const libxs_data_t dst_enum = (NULL == (DST_INFO) ? (SRC_ENUM) : (DST_INFO)->type); \

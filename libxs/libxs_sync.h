@@ -568,7 +568,8 @@ typedef enum libxs_atomic_kind_t {
 #     define LIBXS_LOCK_ATTR_DESTROY_rwlock(ATTR) LIBXS_EXPECT(0 == pthread_rwlockattr_destroy(ATTR))
 #   endif
 # endif
-/* OpenMP based locks need to stay disabled unless both
+/**
+ * OpenMP based locks need to stay disabled unless both
  * libxs and libxsext are built with OpenMP support.
  */
 # if defined(_OPENMP) && defined(LIBXS_SYNC_OMP)

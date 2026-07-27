@@ -177,10 +177,12 @@ OZAKI_API_INTERN void gemm_complex(GEMM_ARGDECL)
 
   if (0 == done) { /* CPU-based block-embedding path (ozaki_complex == 1, or GPU fallback) */
     const GEMM_INT_TYPE M = *m, N = *n, K = *k;
-    /* Physical layout: 'T' and 'C' both store the transposed matrix.
+    /**
+     * Physical layout: 'T' and 'C' both store the transposed matrix.
      * Block signs: 'C' (conjugate transpose) uses the 'N' sign pattern,
      * because A^H = conj(A)^T negates the imaginary part, which exactly
-     * cancels the sign flip that 'T' introduces in the block embedding. */
+     * cancels the sign flip that 'T' introduces in the block embedding.
+     */
     const int ca = ('C' == *transa || 'c' == *transa);
     const int cb = ('C' == *transb || 'c' == *transb);
     const int ta = (*transa != 'N' && *transa != 'n');
@@ -226,12 +228,16 @@ OZAKI_API_INTERN void gemm_complex(GEMM_ARGDECL)
       const GEMM_INT_TYPE ldb_hat = tb ? b_rows : 2 * b_rows;
       const GEMM_INT_TYPE ldc_hat = 2 * M;
 
-      /* 1. Construct A_hat from interleaved complex A.
-       * For 'C': use 'N' sign pattern (ta && !ca = 0) with transposed layout. */
+      /**
+       * 1. Construct A_hat from interleaved complex A.
+       * For 'C': use 'N' sign pattern (ta && !ca = 0) with transposed layout.
+       */
       zgemm_block_construct_a(a, *lda, a_hat, a_rows, a_cols, ta && !ca);
 
-      /* 2. Construct B_hat from interleaved complex B.
-       * For 'C': negate Bi (conjugation). */
+      /**
+       * 2. Construct B_hat from interleaved complex B.
+       * For 'C': negate Bi (conjugation).
+       */
       zgemm_block_construct_b(b, *ldb, b_hat, b_rows, b_cols, tb, cb);
 
       /* 3. Single real GEMM: C_hat = op(A_hat) * op(B_hat) */
@@ -267,9 +273,11 @@ LIBXS_API_INLINE void gemm_complex_diff(GEMM_ARGDECL, libxs_matdiff_t* diff)
     if (0 != ozaki_exit) exit(EXIT_SUCCESS == result ? EXIT_FAILURE : result);
   }
   gemm_dump_inhibit = 0;
-  /* Reference complex BLAS and diff.
+  /**
+   * Reference complex BLAS and diff.
    * Set gemm_nozaki so that any sgemm_ calls BLAS CGEMM makes
-   * internally bypass Ozaki (--wrap redirects them to GEMM_WRAP). */
+   * internally bypass Ozaki (--wrap redirects them to GEMM_WRAP).
+   */
   if (NULL != c_ref) {
     const libxs_data_t dt = (GEMM_IS_DOUBLE ? LIBXS_DATATYPE_C64 : LIBXS_DATATYPE_C32);
     gemm_nozaki = 1;
@@ -299,9 +307,11 @@ OZAKI_API_INTERN LIBXS_ATTRIBUTE_WEAK void ZGEMM_WRAP(GEMM_ARGDECL)
   gemm_init();
   if (*m > 0 && *n > 0 && *k > 0) {
     if (3 <= ozaki_complex) {
-      /* Mode 3: lock out real GEMM interception, use original ZGEMM.
+      /**
+       * Mode 3: lock out real GEMM interception, use original ZGEMM.
        * DGEMMs from BLAS internal ZGEMM implementation use original BLAS.
-       * On exit, real GEMM interception (Ozaki) is restored. */
+       * On exit, real GEMM interception (Ozaki) is restored.
+       */
       gemm_nozaki = 1;
       if (NULL != zgemm_original) {
         zgemm_original(GEMM_ARGPASS);

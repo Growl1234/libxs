@@ -127,14 +127,16 @@ int main(int argc, char* argv[])
         LIBXS_MIN(elsize, sizeof(size_t)));
     }
 
-    /* Prepare writing MHD-image files.
+    /**
+     * Prepare writing MHD-image files.
      * A 1D coprime shuffle has stride C ~ sqrt(N). Reshaping to a
      * sqrt(N) x sqrt(N) image creates diagonal ghost patterns because
      * the stride and image width are commensurate. To break this, we
      * apply an independent 2D coprime scatter: the linear pixel index
      * i is mapped to row = (Cr * i) mod H, col = (Cc * i) mod W with
      * Cr coprime to H and Cc coprime to W. This redistributes the 1D
-     * periodicity across both image axes independently. */
+     * periodicity across both image axes independently.
+     */
     y = (size_t)libxs_isqrt_u64(mhdsize);
     if (0 == y) y = 1;
     shape[0] = mhdsize / y; shape[1] = y;

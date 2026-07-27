@@ -78,8 +78,10 @@ LIBXS_API void libxs_rng_seq(void* data, size_t nbytes)
 
 LIBXS_API double libxs_rng_f64(void)
 {
-  /* Use top 53 bits of a 64-bit value for full double mantissa precision.
-   * Result is in [0, 1). */
+  /**
+   * Use top 53 bits of a 64-bit value for full double mantissa precision.
+   * Result is in [0, 1).
+   */
   return (double)(internal_libxs_rng_splitmix64(&internal_libxs_rng_state) >> 11)
     * (1.0 / 9007199254740992.0); /* 1 / 2^53 */
 }

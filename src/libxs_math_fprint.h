@@ -1,6 +1,8 @@
-/** Compute fingerprint from double values already in cur[0..n-1].
+/**
+ * Compute fingerprint from double values already in cur[0..n-1].
  * buf must point to an allocation of at least 2*n doubles;
- * cur must equal buf or buf+n. */
+ * cur must equal buf or buf+n.
+ */
 LIBXS_API_INTERN void internal_libxs_fprint_core(
   libxs_fprint_t* info, double* buf, double* cur, int n, int kmax)
 {
