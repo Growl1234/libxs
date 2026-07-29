@@ -28,13 +28,36 @@ void* ozaki_ocl_create(int use_double, int kind, int verbosity, int tm, int tn, 
   int maxk, int profiling)
 {
   ozaki_ocl_handle_t* h = NULL;
+  /**
+   * Reason the handle could not be created, reported so that an explicit
+   * OZAKI_OCL request never degrades to the CPU path unremarked: a silent
+   * fallback looks like a working offload that is merely slow, which
+   * misattributes both performance and any subsequent measurement.
+   *
+   * Classified as a warning rather than an error: the GEMM still computes a
+   * correct result on the CPU, so nothing failed from the caller's point of
+   * view -- only the requested resource was unavailable. Reported at the
+   * warning level (verbosity 2+, or any negative value) because this is
+   * library code and must stay silent unless asked, whereas the successful
+   * case is mere confirmation and belongs at the info level (3+).
+   */
+  const char* reason = NULL;
+  const int warn = (0 > verbosity || 1 < verbosity);
+  const int info = (0 > verbosity || 2 < verbosity);
   int ndevices = 0;
-  if (EXIT_SUCCESS == libxstream_init() &&
-      EXIT_SUCCESS == libxstream_device_count(&ndevices)
-      /* MPI: avoid activating a particular device */
-      && 0 < ndevices)
-  {
+  if (EXIT_SUCCESS != libxstream_init()) {
+    reason = "ACC/OpenCL initialization failed";
+  }
+  else if (EXIT_SUCCESS != libxstream_device_count(&ndevices)) {
+    reason = "could not query the ACC/OpenCL device count";
+  }
+  /* MPI: avoid activating a particular device */
+  else if (0 >= ndevices) {
+    reason = "no ACC/OpenCL device found";
+  }
+  else {
     h = (ozaki_ocl_handle_t*)calloc(1, sizeof(*h));
+    if (NULL == h) reason = "out of memory";
   }
   if (NULL != h) {
     if (EXIT_SUCCESS !=
@@ -42,6 +65,7 @@ void* ozaki_ocl_create(int use_double, int kind, int verbosity, int tm, int tn, 
     {
       free(h);
       h = NULL;
+      reason = "kernel setup failed";
     }
     /**
      * Refuse the handle if fp64 was requested but the device only supports fp32.
@@ -53,6 +77,7 @@ void* ozaki_ocl_create(int use_double, int kind, int verbosity, int tm, int tn, 
       ozaki_destroy(&h->ctx);
       free(h);
       h = NULL;
+      reason = "FP64 requested but the device supports FP32 only";
     }
     else if (EXIT_SUCCESS != libxstream_stream_create(
                                &h->stream, "ozaki_wrap", profiling ? LIBXSTREAM_STREAM_PROFILING : LIBXSTREAM_STREAM_DEFAULT))
@@ -60,7 +85,15 @@ void* ozaki_ocl_create(int use_double, int kind, int verbosity, int tm, int tn, 
       ozaki_destroy(&h->ctx);
       free(h);
       h = NULL;
+      reason = "stream creation failed";
     }
+  }
+  if (NULL != h) {
+    if (0 != info) fprintf(stderr, "INFO OZAKI: ACC/OpenCL offload enabled\n");
+  }
+  else if (0 != warn) {
+    fprintf(stderr, "WARN OZAKI: OZAKI_OCL requested but %s; using the CPU implementation\n",
+      NULL != reason ? reason : "the device is unavailable");
   }
   return h;
 }
