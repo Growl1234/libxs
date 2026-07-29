@@ -47,7 +47,7 @@ jobs:
         run: make ${{ matrix.flags }} test
 
   CMake:
-    runs-on: macos-latest
+    runs-on: macos-15
 
     strategy:
       matrix:
