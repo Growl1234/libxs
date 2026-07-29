@@ -485,14 +485,7 @@ ifneq (,$(filter-out 0,$(OCL) $(CUDA) $(HIP)))
           IFLAGS += -I$(abspath $(dir $(firstword $(CLINC)))/..)
         endif
       endif
-      OCL_ICD_LOADER := $(firstword $(wildcard $(foreach DIR,$(LIBRARY_PATHS) /usr/*/lib,$(DIR)/libOpenCL.so.*)))
-      ifneq (,$(OCL_ICD_LOADER))
-        FLDFLAGS += $(OCL_ICD_LOADER) $(if $(shell ldd $(OCL_ICD_LOADER) | grep "libintlc"),-lintlc)
-        LDFLAGS += $(OCL_ICD_LOADER) $(if $(shell ldd $(OCL_ICD_LOADER) | grep "libintlc"),-lintlc)
-      else # fallback
-        FLDFLAGS += -l:libOpenCL.so.1
-        LDFLAGS += -l:libOpenCL.so.1
-      endif
+      # the ICD loader is linked later (libpath is not yet defined)
     endif
     ACCFLAGS += $(CFLAGS)
     USE_ACCEL := opencl
@@ -1181,6 +1174,24 @@ else
   LIBM := $(call ldclib,$(LD),$(SLDFLAGS),m)
 endif
 LIBC := $(call ldclib,$(LD),$(SLDFLAGS),c)
+
+# OpenCL ICD loader: resolve the file actually selected by the linker,
+# i.e. honoring the -L flags established above (e.g. oneAPI).
+ifeq (opencl,$(USE_ACCEL))
+ifneq (Darwin,$(UNAME))
+  OCL_ICD_LOADER := $(call libpath,$(LD),$(LDFLAGS),OpenCL)
+  ifneq (,$(OCL_ICD_LOADER))
+    # oneAPI ships an ICD loader built with the Intel Compiler
+    OCL_ICD_LINK := $(OCL_ICD_LOADER) \
+      $(if $(shell ldd $(OCL_ICD_LOADER) 2>/dev/null | $(GREP) "libintlc"),-lintlc)
+    FLDFLAGS += $(OCL_ICD_LINK)
+    LDFLAGS += $(OCL_ICD_LINK)
+  else # fallback
+    FLDFLAGS += -l:libOpenCL.so.1
+    LDFLAGS += -l:libOpenCL.so.1
+  endif
+endif
+endif
 
 # fallback
 ifeq (,$(LIBM))
