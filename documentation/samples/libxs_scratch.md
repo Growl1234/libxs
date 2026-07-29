@@ -10,7 +10,7 @@ compares `libxs_malloc` against Fortran ALLOCATE / DEALLOCATE.
 
 ```bash
 cd samples/scratch
-make GNU=1
+make
 ```
 
 Produces `scratch.x` (C) and, if a Fortran compiler is found,

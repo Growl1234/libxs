@@ -9,7 +9,7 @@ is mapped to real GEMM internally.
 
 ```bash
 cd samples/ozaki
-make GNU=1 -j $(nproc)
+make -j $(nproc)
 ```
 
 LIBXS must be built first from the repository root. When a sibling

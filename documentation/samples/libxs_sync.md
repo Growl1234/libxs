@@ -19,7 +19,7 @@ conditionally compiled depending on platform support.
 
 ```bash
 cd samples/sync
-make GNU=1
+make
 ```
 
 OpenMP is enabled by default (OMP=1) for multi-threaded tests.

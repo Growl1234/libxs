@@ -16,7 +16,7 @@ written as an MHD image file or analyzed for randomness quality.
 
 ```bash
 cd samples/shuffle
-make GNU=1
+make
 ```
 
 ## Usage

@@ -9,7 +9,7 @@ and optionally validate results via `libxs_matdiff`.
 
 ```bash
 cd samples/gemm
-make GNU=1
+make
 ```
 
 LIBXS must be built first from the repository root.

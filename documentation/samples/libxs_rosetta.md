@@ -55,7 +55,7 @@ Total: 64 records x 6 fields = 384 doubles = 3072 bytes.
 
 ```bash
 cd samples/rosetta
-make GNU=1
+make
 ```
 
 ## Usage

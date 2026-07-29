@@ -89,7 +89,7 @@ git clone https://github.com/hfp/libxstream.git
 git clone https://github.com/hfp/libxs.git
 
 cd libxs/samples/ozaki
-make GNU=1 -j $(nproc)
+make -j $(nproc)
 ```
 
 Produces `libwrap.so`, `libwrap.a`, and test drivers
@@ -355,7 +355,7 @@ ldd ./app | grep libwrap
 
 ## Checklist
 
-1. **Build**: `cd libxs/samples/ozaki && make GNU=1 -j`
+1. **Build**: `cd libxs/samples/ozaki && make -j`
 2. **Deploy**: `mpirun -np N env LD_PRELOAD=./libwrap.so ./app`
 3. **Validate**: `OZAKI_VERBOSE=1 OZAKI_RSQ=0.95`
 4. **Monitor**: `OZAKI_VERBOSE=1000 OZAKI_EXIT=0`

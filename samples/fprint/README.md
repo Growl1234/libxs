@@ -30,7 +30,7 @@ The sample writes:
 
 ```bash
 cd samples/fprint
-make GNU=1
+make
 ```
 
 ## Use From The Paper

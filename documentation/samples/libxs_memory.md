@@ -9,7 +9,7 @@ against Fortran array intrinsics.
 
 ```bash
 cd samples/memory
-make GNU=1
+make
 ```
 
 Produces `memcmp.x` (C) and, if a Fortran compiler is found,

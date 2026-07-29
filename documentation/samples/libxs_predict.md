@@ -26,7 +26,7 @@ Eight executables demonstrating fingerprint-guided prediction:
 
 Or from the LIBXS root:
 
-    make GNU=1 samples/predict
+    make samples/predict
 ## predict_params
 
 Train a prediction model from a CSV file and save it for later use.

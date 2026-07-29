@@ -22,7 +22,7 @@ Build libxs first so that `lib/libxs.so` exists:
 
 ```bash
 cd ../..
-make GNU=1 PEDANTIC=2
+make PEDANTIC=2
 cd samples/spatial
 make
 ```

@@ -8,7 +8,7 @@ paper figures and for quick local proxy runs.
 
 ```bash
 cd samples/setdiff
-make GNU=1
+make
 ```
 
 ## Usage

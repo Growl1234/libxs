@@ -52,7 +52,7 @@ See also: [Fortran Interface](documentation/libxs_fortran.md),
 ## Build
 
 ```bash
-make GNU=1
+make
 ```
 
 The library is compiled for SSE4.2 by default but dynamically
@@ -61,7 +61,7 @@ Use `SSE=0` to compile natively for the build host.
 
 | Variable | Default | Description                                 |
 |----------|---------|---------------------------------------------|
-| GNU      | 0       | Use GNU GCC-compatible compiler             |
+| GNU      | 1       | GNU GCC-compatible compiler (0: Intel)      |
 | DBG      | 0       | Debug build                                 |
 | SYM      | 0       | Include debug symbols (-g)                  |
 | SSE      | 1       | x86 baseline: 0=native, 1=SSE4.2 (portable) |
@@ -78,7 +78,7 @@ cmake --build build
 Install into a chosen prefix:
 
 ```bash
-make GNU=1 -j $(nproc) install PREFIX=$HOME/libxs
+make -j $(nproc) install PREFIX=$HOME/libxs
 ```
 
 This installs headers, the Fortran module, the static and shared

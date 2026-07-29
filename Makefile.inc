@@ -343,8 +343,8 @@ ifneq (,$(ICXBIN))
 endif
 
 # Automatically pickup the environment (make -e is not required),
-# or pickup the Intel Compiler (if available).
-GNU ?= 0
+# or pickup the Intel Compiler (GNU=0, if available).
+GNU ?= 1
 ifeq (0,$(GNU))
   ifeq (,$(shell echo "$${CXX}"))
     ifneq (,$(filter icpc icpc1,$(call qndir,$(call which,icpc))$(INTEL)))
@@ -360,13 +360,23 @@ ifeq (0,$(GNU))
       CC := icx
     endif
   endif
-else # GNU
+else ifneq (file,$(origin GNU)) # GNU requested
   ifneq (,$(filter environment%,$(origin CC) $(origin CXX) $(origin FC)))
     $(info WARNING: GNU=$(GNU) given but CC, CXX, or FC are specified by environment!)
   endif
   FC := gfortran
   CC := gcc
   CXX := g++
+else # GNU by default, hence the environment takes precedence
+  ifeq (,$(shell echo "$${FC}"))
+    FC := gfortran
+  endif
+  ifeq (,$(shell echo "$${CC}"))
+    CC := gcc
+  endif
+  ifeq (,$(shell echo "$${CXX}"))
+    CXX := g++
+  endif
 endif
 
 # adopt extra flags from C if not set individually

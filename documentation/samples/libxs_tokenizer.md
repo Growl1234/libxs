@@ -29,15 +29,15 @@ Build the library first so that the sample can link against it:
 
 ```bash
 cd ../..
-make GNU=1 PEDANTIC=2
+make PEDANTIC=2
 cd samples/tokenizer
-make GNU=1 PEDANTIC=2
+make PEDANTIC=2
 ```
 
 Or from the `libxs` root:
 
 ```bash
-make GNU=1 PEDANTIC=2 samples/tokenizer
+make PEDANTIC=2 samples/tokenizer
 ```
 
 ## Usage

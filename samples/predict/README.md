@@ -28,7 +28,7 @@ Eight executables demonstrating fingerprint-guided prediction:
 
 Or from the LIBXS root:
 
-    make GNU=1 samples/predict
+    make samples/predict
 
 
 ## predict_params
