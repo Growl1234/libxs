@@ -2938,10 +2938,20 @@ LIBXS_API void libxs_predict_query(
     int c;
     for (c = 0; c < model->nclusters; ++c) {
       const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
-      int j;
       compressed += model->ninputs;
-      for (j = 0; j < model->noutputs; ++j) {
-        compressed += cl->order[j] + 1;
+      /**
+       * Per-output polynomials exist only where the model kind has them: an
+       * hkNN model predicts from neighbours, so its clusters carry no order
+       * array at all (nor does its serialized form store one). Clusters left
+       * empty by the builder are likewise not populated. Counting only the
+       * centroid for those keeps the ratio meaningful instead of dereferencing
+       * a NULL that a polynomial model would always have provided.
+       */
+      if (NULL != cl->order) {
+        int j;
+        for (j = 0; j < model->noutputs; ++j) {
+          compressed += cl->order[j] + 1;
+        }
       }
     }
     info->compression = (compressed > 0) ? (raw / compressed) : 0;
