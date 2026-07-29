@@ -336,7 +336,7 @@ void* ozaki_ocl_create(int use_double, int kind, int verbosity, int tm, int tn, 
   int maxk, int profiling);
 void ozaki_ocl_release(void* handle);
 int ozaki_ocl_gemm(void* handle, char transa, char transb, int M, int N, int K, double alpha, const void* a, int lda, const void* b,
-  int ldb, double beta, void* c, int ldc, libxs_hist_t* hist, int profile);
+  int ldb, double beta, void* c, int ldc);
 int ozaki_ocl_gemm_complex(void* handle, char transa, char transb, int M, int N, int K, const double* alpha, const void* a, int lda,
   const void* b, int ldb, const double* beta, void* c, int ldc);
 int ozaki_ocl_supports_gemm_complex(void* handle);

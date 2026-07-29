@@ -111,14 +111,14 @@ void ozaki_ocl_release(void* handle)
 
 
 int ozaki_ocl_gemm(void* handle, char transa, char transb, int M, int N, int K, double alpha, const void* a, int lda, const void* b,
-  int ldb, double beta, void* c, int ldc, libxs_hist_t* hist, int profile)
+  int ldb, double beta, void* c, int ldc)
 {
   int result = EXIT_FAILURE;
   ozaki_ocl_handle_t* h = (ozaki_ocl_handle_t*)handle;
   if (NULL != h) {
     const unsigned int mxcsr = LIBXS_MXCSR_GET();
     LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &h->lock);
-    result = ozaki_gemm(&h->ctx, h->stream, transa, transb, M, N, K, alpha, a, lda, b, ldb, beta, c, ldc, hist, profile, 0);
+    result = ozaki_gemm(&h->ctx, h->stream, transa, transb, M, N, K, alpha, a, lda, b, ldb, beta, c, ldc, 0);
     /**
      * BLAS API is synchronous: caller expects result in c upon return.
      * Must sync all streams including persistent helper streams used

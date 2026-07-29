@@ -57,22 +57,29 @@ OZAKI_API_INTERN void gemm_atexit(void)
     if (NULL != ozaki_hist) {
       const char* const kind = GEMM_IS_DOUBLE ? "DP" : "SP";
       double median[2] = {0, 0};
-      int ngemms_static;
       libxs_hist_query_median(NULL /*lock*/, ozaki_hist, median);
-      ngemms_static = (1 == ozaki)
-        ? ozaki_count_pairs(ozaki_n, 2 * (ozaki_n - 1) - ozaki_trim, ozaki_flags)
-        : ozaki_n;
-      fprintf(stderr, "OZAKI PROF: %.0f %s-GFLOPS/s", median[0], kind);
-      if (0 < ngemms_static) {
-        const double tops = median[0] * ngemms_static * 1E-3;
-        fprintf(stderr, " (%.1f INT8-TOPS/s, %dx)", tops, ngemms_static);
+      /**
+       * These are host-timed figures from the CPU kernels. An offloaded run
+       * records nothing here (device timings come from LIBXSTREAM_PROFILE), so
+       * a zero median means "no CPU GEMM was profiled" and must not be printed
+       * as a measured rate.
+       */
+      if (0 < median[0]) {
+        const int ngemms_static = (1 == ozaki)
+          ? ozaki_count_pairs(ozaki_n, 2 * (ozaki_n - 1) - ozaki_trim, ozaki_flags)
+          : ozaki_n;
+        fprintf(stderr, "OZAKI PROF: %.0f %s-GFLOPS/s", median[0], kind);
+        if (0 < ngemms_static) {
+          const double tops = median[0] * ngemms_static * 1E-3;
+          fprintf(stderr, " (%.1f INT8-TOPS/s, %dx)", tops, ngemms_static);
+        }
+        if (0 < median[1] && median[1] < ngemms_static) {
+          fprintf(stderr, " pairs=%.0f/%d (%.0f%% saved)",
+            median[1], ngemms_static,
+            100.0 * (1.0 - median[1] / ngemms_static));
+        }
+        fprintf(stderr, "\n");
       }
-      if (0 < median[1] && median[1] < ngemms_static) {
-        fprintf(stderr, " pairs=%.0f/%d (%.0f%% saved)",
-          median[1], ngemms_static,
-          100.0 * (1.0 - median[1] / ngemms_static));
-      }
-      fprintf(stderr, "\n");
       libxs_hist_destroy(ozaki_hist);
       ozaki_hist = NULL;
     }
@@ -115,9 +122,14 @@ LIBXS_API_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb, c
     c_ref = (GEMM_REAL_TYPE*)libxs_malloc(gemm_pool, c_size, 0);
     if (NULL != c_ref) memcpy(c_ref, c, c_size);
   }
-  /* Compute result on OpenCL device */
-  ozaki_ocl_gemm(ozaki_ocl_handle, *transa, *transb, *m, *n, *k, (double)*alpha, a, *lda, b, *ldb, (double)*beta, c, *ldc,
-    ozaki_hist, ozaki_profile);
+  /**
+   * Compute result on OpenCL device. Device-side timings are collected by
+   * LIBXSTREAM per kernel (LIBXSTREAM_PROFILE), not derived here: ozaki_hist
+   * holds host-timed GFLOPS from the CPU kernels, and feeding wall-clock
+   * figures from an offloaded call into the same histogram would mix two
+   * different measurements under one median.
+   */
+  ozaki_ocl_gemm(ozaki_ocl_handle, *transa, *transb, *m, *n, *k, (double)*alpha, a, *lda, b, *ldb, (double)*beta, c, *ldc);
   /* Reference BLAS and diff comparison */
   if (NULL != c_ref) {
     ozaki_diff_reference(GEMM_ARGPASS, c_ref, c_size, diff);
