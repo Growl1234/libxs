@@ -35,7 +35,7 @@ metadata, and CMake package files for developing applications that use LIBXS.
 
 %package doc
 Summary:        Documentation for %{name}
-Requires:       %{name}%{?_isa} = %{version}-%{release}
+Requires:       %{name} = %{version}-%{release}
 BuildArch:      noarch
 
 %description doc
