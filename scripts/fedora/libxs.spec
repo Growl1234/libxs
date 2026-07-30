@@ -57,6 +57,10 @@ This package contains the API and usage documentation for LIBXS.
 %install
 %cmake_install
 
+# The license is packaged via %%license from the source tree; drop the
+# redundant copy below %%{_docdir} rather than listing the file twice.
+rm -f %{buildroot}%{_docdir}/%{name}/LICENSE.md
+
 %check
 %if %{with tests}
 %ctest --output-on-failure
@@ -76,8 +80,7 @@ This package contains the API and usage documentation for LIBXS.
 %{_datadir}/%{name}/
 
 %files doc
-%dir %{_docdir}/%{name}
-%license %{_docdir}/%{name}/LICENSE.md
+%license LICENSE.md
 %doc %{_docdir}/%{name}/
 
 %changelog
