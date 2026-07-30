@@ -606,6 +606,126 @@ static int test_median_null(void)
 }
 
 
+/**
+ * Bimodal data must not yield a reading that belongs to no sample. Two tight
+ * clusters far apart leave empty buckets between them; interpolating towards one
+ * reads storage no sample ever wrote, and the result then varies with the bucket
+ * count alone. Both clusters share a rate-forming pair (amount, duration), so the
+ * queried ratio has to match one of them.
+ */
+static int test_query_bimodal(void)
+{
+  const libxs_hist_update_t update[] = { libxs_hist_update_avg, libxs_hist_update_avg, libxs_hist_update_avg };
+  int result = EXIT_SUCCESS;
+  int nbuckets;
+  for (nbuckets = 2; nbuckets <= 12 && EXIT_SUCCESS == result; ++nbuckets) {
+    libxs_hist_t* const hist = libxs_hist_create(nbuckets, 3/*nvals*/, update);
+    double med[3] = { 0 }, mod[3] = { 0 };
+    int i;
+    if (NULL == hist) return EXIT_FAILURE;
+    for (i = 0; i < 40; ++i) { /* alternating: 100/10 and 10/5 */
+      const double lo[] = { 10.0, 10.0, 5.0 }, hi[] = { 100.0, 100.0, 10.0 };
+      libxs_hist_push(NULL, hist, (0 == (i & 1)) ? hi : lo);
+    }
+    /* the mode always reports a populated bucket, hence an observed ratio */
+    libxs_hist_query_mode(NULL, hist, mod);
+    if (0 >= mod[2] || (fabs(mod[1] / mod[2] - 10.0) > TOLERANCE && fabs(mod[1] / mod[2] - 2.0) > TOLERANCE)) {
+      FPRINTF(stderr, "ERROR line #%i: nbuckets=%i mode ratio %f is neither 10.0 nor 2.0\n", __LINE__, nbuckets,
+        0 < mod[2] ? (mod[1] / mod[2]) : 0.0);
+      result = EXIT_FAILURE;
+    }
+    /**
+     * The median may legitimately blend when both neighbours are populated (at
+     * nbuckets=2 the two clusters are adjacent), but must never mix across an
+     * empty bucket: with a gap the ratio has to be one of the two observed.
+     */
+    libxs_hist_query_median(NULL, hist, med);
+    if (EXIT_SUCCESS == result && 2 < nbuckets) {
+      if (0 >= med[2] || (fabs(med[1] / med[2] - 10.0) > TOLERANCE && fabs(med[1] / med[2] - 2.0) > TOLERANCE)) {
+        FPRINTF(stderr, "ERROR line #%i: nbuckets=%i median ratio %f is neither 10.0 nor 2.0\n", __LINE__, nbuckets,
+          0 < med[2] ? (med[1] / med[2]) : 0.0);
+        result = EXIT_FAILURE;
+      }
+    }
+    libxs_hist_destroy(hist);
+  }
+  return result;
+}
+
+
+/** The mode reports the most populated bucket, which a skewed sample set pins. */
+static int test_mode_skewed(void)
+{
+  const libxs_hist_update_t update[] = { libxs_hist_update_avg, libxs_hist_update_avg };
+  libxs_hist_t* hist = NULL;
+  int result = EXIT_SUCCESS;
+  double vals[2] = { 0 };
+  int i;
+  hist = libxs_hist_create(4/*nbuckets*/, 2/*nvals*/, update);
+  if (NULL == hist) return EXIT_FAILURE;
+  for (i = 0; i < 40; ++i) { /* 36 samples at 10.0, 4 at 100.0 */
+    const double lo[] = { 10.0, 7.0 }, hi[] = { 100.0, 70.0 };
+    libxs_hist_push(NULL, hist, (0 == (i % 10)) ? hi : lo);
+  }
+  libxs_hist_query_mode(NULL, hist, vals);
+  if (fabs(vals[1] - 7.0) > TOLERANCE) {
+    FPRINTF(stderr, "ERROR line #%i: expected mode aux 7.0 (dominant cluster), got %f\n", __LINE__, vals[1]);
+    result = EXIT_FAILURE;
+  }
+  libxs_hist_destroy(hist);
+  return result;
+}
+
+
+/** Uniform data: mode and median agree, and both are exact. */
+static int test_mode_uniform(void)
+{
+  const libxs_hist_update_t update[] = { libxs_hist_update_avg, libxs_hist_update_avg };
+  libxs_hist_t* hist = NULL;
+  int result = EXIT_SUCCESS;
+  double med[2] = { 0 }, mod[2] = { 0 };
+  int i;
+  hist = libxs_hist_create(4/*nbuckets*/, 2/*nvals*/, update);
+  if (NULL == hist) return EXIT_FAILURE;
+  for (i = 0; i < 20; ++i) {
+    const double v[] = { 42.0, 13.0 };
+    libxs_hist_push(NULL, hist, v);
+  }
+  libxs_hist_query_median(NULL, hist, med);
+  libxs_hist_query_mode(NULL, hist, mod);
+  if (fabs(mod[1] - 13.0) > TOLERANCE || fabs(med[1] - 13.0) > TOLERANCE) {
+    FPRINTF(stderr, "ERROR line #%i: expected 13.0 for both, got mode %f median %f\n", __LINE__, mod[1], med[1]);
+    result = EXIT_FAILURE;
+  }
+  libxs_hist_destroy(hist);
+  return result;
+}
+
+
+/** Empty and NULL histograms leave the caller's values untouched. */
+static int test_mode_empty_null(void)
+{
+  const libxs_hist_update_t update[] = { libxs_hist_update_avg, libxs_hist_update_avg };
+  libxs_hist_t* hist = NULL;
+  int result = EXIT_SUCCESS;
+  double vals[2] = { -1.0, -1.0 };
+  libxs_hist_query_mode(NULL, NULL, vals);
+  if (fabs(vals[0] - (-1.0)) > TOLERANCE || fabs(vals[1] - (-1.0)) > TOLERANCE) {
+    FPRINTF(stderr, "ERROR line #%i: NULL hist must leave vals untouched\n", __LINE__);
+    result = EXIT_FAILURE;
+  }
+  hist = libxs_hist_create(4/*nbuckets*/, 2/*nvals*/, update);
+  if (NULL == hist) return EXIT_FAILURE;
+  libxs_hist_query_mode(NULL, hist, vals);
+  if (EXIT_SUCCESS == result && (fabs(vals[0] - (-1.0)) > TOLERANCE || fabs(vals[1] - (-1.0)) > TOLERANCE)) {
+    FPRINTF(stderr, "ERROR line #%i: empty hist must leave vals untouched\n", __LINE__);
+    result = EXIT_FAILURE;
+  }
+  libxs_hist_destroy(hist);
+  return result;
+}
+
+
 static int test_percentile_vals(void)
 {
   libxs_hist_t* hist = NULL;
@@ -719,6 +839,22 @@ int main(void)
   }
   if (EXIT_SUCCESS != test_percentile_vals()) {
     FPRINTF(stderr, "FAILED: test_percentile_vals\n");
+    result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS != test_query_bimodal()) {
+    FPRINTF(stderr, "FAILED: test_query_bimodal\n");
+    result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS != test_mode_skewed()) {
+    FPRINTF(stderr, "FAILED: test_mode_skewed\n");
+    result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS != test_mode_uniform()) {
+    FPRINTF(stderr, "FAILED: test_mode_uniform\n");
+    result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS != test_mode_empty_null()) {
+    FPRINTF(stderr, "FAILED: test_mode_empty_null\n");
     result = EXIT_FAILURE;
   }
 

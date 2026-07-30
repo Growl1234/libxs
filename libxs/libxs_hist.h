@@ -57,6 +57,17 @@ LIBXS_API void libxs_hist_query_percentile(libxs_lock_t* lock, const libxs_hist_
 LIBXS_API void libxs_hist_query_median(libxs_lock_t* lock, const libxs_hist_t* hist,
   double vals[]);
 
+/**
+ * Query the values of the most populated bucket ("modal"), without
+ * interpolation; commits queued items if pending. Preferable to the median for a
+ * multi-modal distribution: the median can fall between clusters and describe no
+ * observation, whereas the mode always reports a bucket that samples landed in.
+ * Ties resolve to the first such bucket. vals[0] receives the bucket's upper
+ * bound, the remaining entries its aggregated values.
+ */
+LIBXS_API void libxs_hist_query_mode(libxs_lock_t* lock, const libxs_hist_t* hist,
+  double vals[]);
+
 /** Print histogram to ostream (NULL ostream is accepted). */
 LIBXS_API void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist, const int prec[],
   const char fmt[], ...);

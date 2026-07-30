@@ -245,8 +245,19 @@ LIBXS_API void libxs_hist_query_percentile(libxs_lock_t* lock, const libxs_hist_
         if (target <= cumulative) {
           const double fraction = (0 < info.buckets[i])
             ? (1.0 - (cumulative - target) / info.buckets[i]) : 0.5;
-          const int ia = i * info.nvals, ib = (fraction < 0.5 && 0 < i)
-            ? (i - 1) * info.nvals : ((fraction >= 0.5 && i + 1 < info.nbuckets)
+          /**
+           * Interpolate only towards a *populated* neighbour. An empty bucket
+           * carries no value at all - the storage is uninitialized until a
+           * sample lands in it - so blending towards one produced a reading
+           * that belonged to no sample, and with sparse data (clusters far
+           * apart, as when transfer sizes are bimodal) it varied with the bucket
+           * count alone. Values are per-bucket aggregates rather than samples on
+           * a continuum, so smearing them across a gap is not meaningful even
+           * when the neighbour happens to be populated by unrelated data.
+           */
+          const int ia = i * info.nvals;
+          const int ib = (fraction < 0.5 && 0 < i && 0 < info.buckets[i - 1])
+            ? (i - 1) * info.nvals : ((fraction >= 0.5 && i + 1 < info.nbuckets && 0 < info.buckets[i + 1])
             ? (i + 1) * info.nvals : ia);
           int k = 1;
           const double t = (ia != ib
@@ -275,6 +286,28 @@ LIBXS_API void libxs_hist_query_median(libxs_lock_t* lock, const libxs_hist_t* h
   double vals[])
 {
   libxs_hist_query_percentile(lock, hist, vals, 0.5);
+}
+
+
+LIBXS_API void libxs_hist_query_mode(libxs_lock_t* lock, const libxs_hist_t* hist,
+  double vals[])
+{
+  libxs_hist_info_t info;
+  LIBXS_ASSERT(NULL != vals);
+  libxs_hist_query(lock, hist, &info);
+  if (NULL != info.buckets && 0 < info.nbuckets && NULL != info.vals) {
+    int best = -1, i;
+    for (i = 0; i < info.nbuckets; ++i) {
+      if (0 < info.buckets[i] && (0 > best || info.buckets[best] < info.buckets[i])) best = i;
+    }
+    if (0 <= best) {
+      const double w = info.range[1] - info.range[0];
+      const int j = best * info.nvals;
+      int k = 1;
+      vals[0] = info.range[0] + (best + 1) * w / info.nbuckets;
+      for (; k < info.nvals; ++k) vals[k] = info.vals[j + k];
+    }
+  }
 }
 
 
