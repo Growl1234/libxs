@@ -335,19 +335,23 @@ LIBXS_API void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist, const i
     for (; i <= info.nbuckets; j = info.nvals * i++) {
       const double q = info.range[0] + i * w / info.nbuckets;
       const int c = info.buckets[i - 1];
+      /**
+       * Skip empty buckets: a bucket holds no sample and hence no value to
+       * report, so printing it states a range that nothing occupied. Bucket
+       * numbers stay tied to the range (they are not renumbered), which is what
+       * makes a gap in the sequence readable as "nothing fell here".
+       */
+      if (0 == c) continue;
       if (NULL != prec) {
         if (0 > prec[0]) continue;
-        fprintf(ostream, "\t#%i <= %.*f: %i", i, prec[0], q, c);
+        fprintf(ostream, "\t#%i <= %.*f: %i ->", i, prec[0], q, c);
       }
-      else fprintf(ostream, "\t#%i <= %f: %i", i, q, c);
-      if (0 != c) {
-        fprintf(ostream, " ->");
-        for (k = 0; k < info.nvals; ++k) {
-          const double value = info.vals[j + k];
-          if (NULL != prec && 0 > prec[k]) continue;
-          if (NULL != prec) fprintf(ostream, " %.*f", prec[k], value);
-          else fprintf(ostream, " %f", value);
-        }
+      else fprintf(ostream, "\t#%i <= %f: %i ->", i, q, c);
+      for (k = 0; k < info.nvals; ++k) {
+        const double value = info.vals[j + k];
+        if (NULL != prec && 0 > prec[k]) continue;
+        if (NULL != prec) fprintf(ostream, " %.*f", prec[k], value);
+        else fprintf(ostream, " %f", value);
       }
       fprintf(ostream, "\n");
     }
