@@ -39,8 +39,12 @@
 # define TOKEN_EMB_DIM 16
 #endif
 #define TOKEN_EMB_CTX 256
-#define TOKEN_EMB_WINDOW 2
-#define TOKEN_EMB_ITER 24
+#if !defined(TOKEN_EMB_WINDOW)
+# define TOKEN_EMB_WINDOW 4
+#endif
+#if !defined(TOKEN_EMB_ITER)
+# define TOKEN_EMB_ITER 24
+#endif
 #define TOKEN_EMB_BACKFILL_MIN 3
 #define TOKEN_EMB_BACKFILL_REF 5
 #define KNNLM_K 24
@@ -6523,7 +6527,10 @@ static void token_emb_cooc_text(double* cooc, double* rowcnt,
       &stream, (const unsigned char*)text, (size_t)text_len, rules, nrules,
       NULL, 0, 0))
   {
-    unsigned int window[2 * TOKEN_EMB_WINDOW + 1];
+    /* Trailing buffer of the last TOKEN_EMB_WINDOW ids: each token pairs with
+       every buffered predecessor and both directions are counted, so the union
+       over positions is a symmetric window of that same radius (no 2*W+1). */
+    unsigned int window[TOKEN_EMB_WINDOW];
     int fill = 0;
     size_t pos;
     for (pos = 0; pos <= stream.size; ++pos) {
@@ -6541,7 +6548,7 @@ static void token_emb_cooc_text(double* cooc, double* rowcnt,
           cooc[(size_t)lex->id * TOKEN_EMB_CTX + token_emb_hash(other)] += 1.0;
           cooc[(size_t)other * TOKEN_EMB_CTX + token_emb_hash(lex->id)] += 1.0;
         }
-        if (fill < 2 * TOKEN_EMB_WINDOW) {
+        if (fill < TOKEN_EMB_WINDOW) {
           window[fill] = lex->id;
           ++fill;
         }
