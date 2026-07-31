@@ -12,6 +12,7 @@
 #include <libxs/libxs_str.h>
 #include <libxs/libxs_malloc.h>
 #include <libxs/libxs_gemm.h>
+#include <libxs/libxs_hash.h>
 #include "libxs_main.h"
 
 #if !defined(LIBXS_PREDICT_MAXITER)
@@ -555,6 +556,8 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
     dpts = cl->kd_tan;
     dm = cl->tdim;
   }
+  /* recency weighting needs sorted_idx, which a loaded flat model lacks */
+  if (NULL == cl->sorted_idx) extrapolate = 0;
   if (nc > 0 && NULL != cl->raw_outputs) {
     best_val = cl->raw_outputs[output_j];
     if (0 != extrapolate) {
@@ -570,7 +573,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
         const double age = 1.0 - (double)cl->sorted_idx[i] / (double)max_idx;
         d2 *= 1.0 + 0.5 * age;
       }
-      if (NULL != po_groups && query_group >= 0
+      if (NULL != po_groups && NULL != cl->sorted_idx && query_group >= 0
         && po_groups[cl->sorted_idx[i]] != query_group)
       {
         continue;
@@ -2374,7 +2377,7 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
           {
             const int pg = (NULL != model->hknn_po_groups)
               ? model->hknn_po_groups[j] : j;
-            if (pg < model->hknn_ngroups
+            if (pg < model->hknn_ngroups && NULL != cl->sorted_idx
               && NULL != model->hknn_po_clusters[pg]
               && NULL != model->hknn_po_assignments[pg])
             {

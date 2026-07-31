@@ -1,3 +1,13 @@
+LIBXS_API_INLINE int internal_libxs_predict_crc(const void* buffer,
+  size_t size, uint32_t* crc)
+{
+  int result = EXIT_SUCCESS;
+  if (size > (size_t)0xFFFFFFFFU) result = EXIT_FAILURE;
+  else *crc = (uint32_t)libxs_hash_iso3309(buffer, (unsigned int)size, 0);
+  return result;
+}
+
+
 LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
   const libxs_predict_t* model, void* buffer, size_t* size)
 {
@@ -22,6 +32,7 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     required += (size_t)cl->nentries * sizeof(uint16_t);
   }
   required += 1;
+  required += sizeof(uint32_t); /* trailing CRC32 */
   if (NULL != model->hknn_po_assignments && NULL != model->hknn_po_clusters) {
     const int ng = (model->hknn_ngroups > 0) ? model->hknn_ngroups : n;
     required += (size_t)p * (size_t)ng * sizeof(uint16_t);
@@ -121,12 +132,17 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     else {
       WRITE_U8(0);
     }
+    { uint32_t crc = 0;
+      result = internal_libxs_predict_crc(buffer,
+        (size_t)(dst - (unsigned char*)buffer), &crc);
+      if (EXIT_SUCCESS == result) WRITE_U32(crc);
+    }
 #undef WRITE_U32
 #undef WRITE_U16
 #undef WRITE_U8
 #undef WRITE_F64
 #undef WRITE_BLK
-    *size = (size_t)(dst - (unsigned char*)buffer);
+    if (EXIT_SUCCESS == result) *size = (size_t)(dst - (unsigned char*)buffer);
   }
   return result;
 }
@@ -180,6 +196,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
         required += (size_t)model->rf->trees[c].nnodes * (2 + 8 + 2 + 2 + 1);
       }
     }
+    required += sizeof(uint32_t); /* trailing CRC32 */
     if (NULL == buffer) {
       *size = required;
     }
@@ -274,12 +291,17 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
           }
         }
       }
+      { uint32_t crc = 0;
+        result = internal_libxs_predict_crc(buffer,
+          (size_t)(dst - (unsigned char*)buffer), &crc);
+        if (EXIT_SUCCESS == result) WRITE_U32(crc);
+      }
 #undef WRITE_U32
 #undef WRITE_U16
 #undef WRITE_U8
 #undef WRITE_F64
 #undef WRITE_BLK
-      *size = (size_t)(dst - (unsigned char*)buffer);
+      if (EXIT_SUCCESS == result) *size = (size_t)(dst - (unsigned char*)buffer);
     }
   }
   return result;
@@ -297,6 +319,20 @@ LIBXS_API_INLINE int internal_libxs_predict_read(
     memcpy(dst, *src, sz);
     *src += sz;
   }
+  return result;
+}
+
+
+/**
+ * Reject a file-supplied element count that cannot be covered by the remaining
+ * payload before it is used to size an allocation: the division avoids the
+ * overflow that a plain nelem*esz product would incur for hostile counts.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_avail(const unsigned char* src,
+  const unsigned char* end, size_t nelem, size_t esz)
+{
+  int result = EXIT_SUCCESS;
+  if (src > end || nelem > (size_t)(end - src) / esz) result = EXIT_FAILURE;
   return result;
 }
 
@@ -372,6 +408,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     if (EXIT_SUCCESS == ok) {
       ok = internal_libxs_predict_read(&src, end, &ke, 1);
       cl->k_eff = (int)ke;
+      if (EXIT_SUCCESS == ok && cl->k_eff > LIBXS_PREDICT_KNN) ok = EXIT_FAILURE;
     }
     for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
       uint8_t v = 0;
@@ -384,11 +421,19 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
       cl->ndistinct[j] = (int)v;
     }
     if (EXIT_SUCCESS == ok) {
+      ok = internal_libxs_predict_avail(src, end,
+        (size_t)ne * (size_t)ninp, sizeof(double));
+    }
+    if (EXIT_SUCCESS == ok) {
       cl->kd_pts = (double*)malloc(
         (size_t)ne * (size_t)ninp * sizeof(double));
       if (NULL == cl->kd_pts) ok = EXIT_FAILURE;
       else ok = internal_libxs_predict_read(&src, end,
         cl->kd_pts, (size_t)ne * (size_t)ninp * sizeof(double));
+    }
+    if (EXIT_SUCCESS == ok) {
+      ok = internal_libxs_predict_avail(src, end,
+        (size_t)ne * (size_t)nout, sizeof(double));
     }
     if (EXIT_SUCCESS == ok) {
       cl->raw_outputs = (double*)malloc(
@@ -404,6 +449,9 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
         cl->out_rms, (size_t)nout * sizeof(double));
     }
     if (EXIT_SUCCESS == ok) {
+      ok = internal_libxs_predict_avail(src, end, (size_t)ne, sizeof(uint16_t));
+    }
+    if (EXIT_SUCCESS == ok) {
       cl->sorted_idx = (int*)malloc((size_t)ne * sizeof(int));
       if (NULL == cl->sorted_idx) ok = EXIT_FAILURE;
       else {
@@ -412,6 +460,21 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
           ok = internal_libxs_predict_read(&src, end, &v, 2);
           cl->sorted_idx[k] = (int)v;
         }
+      }
+    }
+  }
+  /**
+   * sorted_idx indexes the global entry set and the per-output assignments,
+   * so it can only be bounded once every cluster contributed its count.
+   */
+  if (EXIT_SUCCESS == ok) {
+    int total = 0;
+    for (c = 0; c < (int)nclust; ++c) total += model->clusters[c].nentries;
+    for (c = 0; c < (int)nclust && EXIT_SUCCESS == ok; ++c) {
+      const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
+      int k;
+      for (k = 0; k < cl->nentries && EXIT_SUCCESS == ok; ++k) {
+        if (cl->sorted_idx[k] >= total) ok = EXIT_FAILURE;
       }
     }
   }
@@ -424,10 +487,13 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     model->hknn_po_nclusters = (int*)calloc((size_t)nout, sizeof(int));
     if (NULL != model->hknn_po_assignments) {
       for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
-        model->hknn_po_assignments[j] = (int*)malloc(
-          (size_t)p * sizeof(int));
-        if (NULL == model->hknn_po_assignments[j]) ok = EXIT_FAILURE;
-        else {
+        ok = internal_libxs_predict_avail(src, end, (size_t)p, sizeof(uint16_t));
+        if (EXIT_SUCCESS == ok) {
+          model->hknn_po_assignments[j] = (int*)malloc(
+            (size_t)p * sizeof(int));
+          if (NULL == model->hknn_po_assignments[j]) ok = EXIT_FAILURE;
+        }
+        if (EXIT_SUCCESS == ok) {
           for (i = 0; i < p && EXIT_SUCCESS == ok; ++i) {
             uint16_t v = 0;
             ok = internal_libxs_predict_read(&src, end, &v, 2);
@@ -463,6 +529,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
             if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &md, 1);
             if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &nd, 2);
             if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &cls[ci].dmax, 8);
+            if (EXIT_SUCCESS == ok && ke > LIBXS_PREDICT_KNN) ok = EXIT_FAILURE;
             if (EXIT_SUCCESS == ok) {
               cls[ci].nentries = (int)ne;
               cls[ci].k_eff = (int)ke;
@@ -481,12 +548,16 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
                 cls[ci].centroid, (size_t)ninp * sizeof(double));
             }
             if (EXIT_SUCCESS == ok && ne > 0) {
-              cls[ci].kd_pts = (double*)malloc(
-                (size_t)ne * (size_t)ninp * sizeof(double));
-              cls[ci].raw_outputs = (double*)malloc(
-                (size_t)ne * sizeof(double));
-              if (NULL == cls[ci].kd_pts || NULL == cls[ci].raw_outputs) {
-                ok = EXIT_FAILURE;
+              ok = internal_libxs_predict_avail(src, end,
+                (size_t)ne * ((size_t)ninp + 1), sizeof(double));
+              if (EXIT_SUCCESS == ok) {
+                cls[ci].kd_pts = (double*)malloc(
+                  (size_t)ne * (size_t)ninp * sizeof(double));
+                cls[ci].raw_outputs = (double*)malloc(
+                  (size_t)ne * sizeof(double));
+                if (NULL == cls[ci].kd_pts || NULL == cls[ci].raw_outputs) {
+                  ok = EXIT_FAILURE;
+                }
               }
               if (EXIT_SUCCESS == ok) {
                 ok = internal_libxs_predict_read(&src, end,
@@ -498,6 +569,17 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
               }
             }
           }
+        }
+      }
+    }
+    /* an assignment selects a per-output cluster, so it must index one */
+    if (EXIT_SUCCESS == ok && NULL != model->hknn_po_clusters) {
+      for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
+        const int po_nc = model->hknn_po_nclusters[j];
+        if (NULL == model->hknn_po_assignments[j]
+          || NULL == model->hknn_po_clusters[j]) continue;
+        for (i = 0; i < p && EXIT_SUCCESS == ok; ++i) {
+          if (model->hknn_po_assignments[j][i] >= po_nc) ok = EXIT_FAILURE;
         }
       }
     }
@@ -516,18 +598,25 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
 LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
 {
   libxs_predict_t* model = NULL;
-  if (NULL != buffer && size >= sizeof(uint32_t) + 4 * sizeof(uint16_t)) {
+  int hknn = 0;
+  if (NULL != buffer
+    && size >= 2 * sizeof(uint32_t) + 4 * sizeof(uint16_t))
+  {
     const unsigned char* src = (const unsigned char*)buffer;
-    const unsigned char* end = src + size;
-    uint32_t magic = 0;
+    const unsigned char* end = src + size - sizeof(uint32_t);
+    uint32_t magic = 0, crc = 0, expected = 0;
     uint16_t version = 0, ninp = 0, nout = 0, nclust = 0;
-    int ok = EXIT_SUCCESS;
+    int ok = internal_libxs_predict_crc(buffer, size - sizeof(uint32_t), &crc);
+    if (EXIT_SUCCESS == ok) memcpy(&expected, end, sizeof(uint32_t));
+    if (EXIT_SUCCESS == ok && crc != expected) ok = EXIT_FAILURE;
     if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &magic, 4);
     if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &version, 2);
     if (EXIT_SUCCESS == ok && LIBXS_PREDICT_MAGIC_HKNN == magic
       && LIBXS_PREDICT_VERSION == version)
     {
-      return internal_libxs_predict_load_hknn(src, end);
+      hknn = 1;
+      model = internal_libxs_predict_load_hknn(src, end);
+      ok = EXIT_FAILURE;
     }
     if (EXIT_SUCCESS == ok && (magic != LIBXS_PREDICT_MAGIC
       || version != LIBXS_PREDICT_VERSION)) ok = EXIT_FAILURE;
@@ -654,16 +743,24 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         if (EXIT_SUCCESS == ok) {
           ok = internal_libxs_predict_read(&src, end, &mo, 1);
           if (EXIT_SUCCESS == ok) cl->maxorder = (int)mo;
+          if (EXIT_SUCCESS == ok && cl->maxorder > LIBXS_FPRINT_MAXORDER) {
+            ok = EXIT_FAILURE;
+          }
         }
         if (EXIT_SUCCESS == ok) {
           uint8_t ke = 0;
           ok = internal_libxs_predict_read(&src, end, &ke, 1);
           if (EXIT_SUCCESS == ok) cl->k_eff = (int)ke;
+          if (EXIT_SUCCESS == ok && cl->k_eff > LIBXS_PREDICT_KNN) {
+            ok = EXIT_FAILURE;
+          }
         }
+        /* coeffs is sized by maxorder: order[j] beyond it would overflow it */
         for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
           uint8_t v = 0;
           ok = internal_libxs_predict_read(&src, end, &v, 1);
-          cl->order[j] = (int)v;
+          if (EXIT_SUCCESS == ok && (int)v > cl->maxorder) ok = EXIT_FAILURE;
+          if (EXIT_SUCCESS == ok) cl->order[j] = (int)v;
         }
         for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
           uint8_t v = 0;
@@ -691,6 +788,10 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
             cl->out_rms, (size_t)nout * sizeof(double));
         }
         if (EXIT_SUCCESS == ok) {
+          ok = internal_libxs_predict_avail(src, end,
+            (size_t)cl->nentries * (size_t)ninp, sizeof(double));
+        }
+        if (EXIT_SUCCESS == ok) {
           cl->kd_pts = (double*)malloc(
             (size_t)cl->nentries * (size_t)ninp * sizeof(double));
           if (NULL == cl->kd_pts) ok = EXIT_FAILURE;
@@ -698,6 +799,10 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
             ok = internal_libxs_predict_read(&src, end,
               cl->kd_pts, (size_t)cl->nentries * (size_t)ninp * sizeof(double));
           }
+        }
+        if (EXIT_SUCCESS == ok) {
+          ok = internal_libxs_predict_avail(src, end,
+            (size_t)cl->nentries * (size_t)nout, sizeof(double));
         }
         if (EXIT_SUCCESS == ok) {
           cl->raw_outputs = (double*)malloc(
@@ -725,6 +830,8 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
       int j;
       ok = internal_libxs_predict_read(&src, end, &rf_ntrees, 2);
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &rf_nouts, 2);
+      /* eval indexes trees[output_idx * ntrees + t] for output_idx < noutputs */
+      if (EXIT_SUCCESS == ok && rf_nouts != nout) ok = EXIT_FAILURE;
       if (EXIT_SUCCESS == ok && rf_ntrees > 0 && rf_nouts > 0) {
         internal_libxs_predict_rf_t* rf = (internal_libxs_predict_rf_t*)calloc(
           1, sizeof(internal_libxs_predict_rf_t));
@@ -747,10 +854,14 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
               int k;
               ok = internal_libxs_predict_read(&src, end, &nn, 2);
               if (EXIT_SUCCESS == ok && nn > 0) {
-                rf->trees[ti].nodes = (internal_libxs_predict_rf_node_t*)malloc(
-                  (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
-                rf->trees[ti].nnodes = (int)nn;
-                if (NULL == rf->trees[ti].nodes) ok = EXIT_FAILURE;
+                ok = internal_libxs_predict_avail(src, end, (size_t)nn,
+                  2 + 8 + 2 + 2 + 1);
+                if (EXIT_SUCCESS == ok) {
+                  rf->trees[ti].nodes = (internal_libxs_predict_rf_node_t*)malloc(
+                    (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
+                  rf->trees[ti].nnodes = (int)nn;
+                  if (NULL == rf->trees[ti].nodes) ok = EXIT_FAILURE;
+                }
                 for (k = 0; k < (int)nn && EXIT_SUCCESS == ok; ++k) {
                   int16_t f = 0, l = 0, r = 0;
                   uint8_t lab = 0;
@@ -762,10 +873,17 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
                   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &l, 2);
                   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &r, 2);
                   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &lab, 1);
-                  rf->trees[ti].nodes[k].feature = (int)f;
-                  rf->trees[ti].nodes[k].left = (int)l;
-                  rf->trees[ti].nodes[k].right = (int)r;
-                  rf->trees[ti].nodes[k].label = (int)lab;
+                  /* traversal dereferences inputs[feature] and descends into
+                     left/right, hence both must stay in range (-1 is a leaf) */
+                  if (EXIT_SUCCESS == ok && (f >= (int16_t)ninp || f < -1
+                    || l >= (int16_t)nn || l < -1
+                    || r >= (int16_t)nn || r < -1)) ok = EXIT_FAILURE;
+                  if (EXIT_SUCCESS == ok) {
+                    rf->trees[ti].nodes[k].feature = (int)f;
+                    rf->trees[ti].nodes[k].left = (int)l;
+                    rf->trees[ti].nodes[k].right = (int)r;
+                    rf->trees[ti].nodes[k].label = (int)lab;
+                  }
                 }
               }
             }
@@ -784,6 +902,8 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         }
       }
     }
+    /* the writer sizes the payload exactly: a remainder signals layout drift */
+    if (EXIT_SUCCESS == ok && src != end) ok = EXIT_FAILURE;
     if (EXIT_SUCCESS == ok) {
       const char* tenv = getenv("LIBXS_PREDICT_TANGENT");
       if (NULL != tenv) model->tangent = atoi(tenv);
@@ -796,7 +916,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
       }
       model->built = 1;
     }
-    else if (NULL != model) {
+    else if (0 == hknn && NULL != model) {
       libxs_predict_destroy(model);
       model = NULL;
     }
