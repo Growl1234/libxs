@@ -324,6 +324,44 @@ static int test_tls_cache(void)
 }
 
 
+static int test_tls_cache_growth(void)
+{ /* growth rehashes and frees the entry table: cached pointers to inline
+     values pointed into it, so a stale cache hit would be use-after-free */
+  const int hot = 999;
+  double* p;
+  unsigned int i;
+  double one = 1.0;
+  libxs_registry_t* registry = libxs_registry_create();
+  TEST_CHECK(NULL != registry);
+  TEST_CHECK(sizeof(one) <= sizeof(void*)); /* value must be stored inline */
+
+  TEST_CHECK(NULL != libxs_registry_set(registry, &hot, sizeof(hot),
+    &one, sizeof(one), NULL));
+  p = (double*)libxs_registry_get(registry, &hot, sizeof(hot), NULL);
+  TEST_CHECK(NULL != p); /* seeds the TLS cache */
+
+  /* insert other keys one at a time (crossing several growth thresholds) and
+     re-read the cached key after each: the entry moves, so every get must
+     return the CURRENT location, never the freed one */
+  for (i = 1; i < 4000; ++i) {
+    const unsigned int k = 100000 + i;
+    double v = 1.0;
+    TEST_CHECK(NULL != libxs_registry_set(registry, &k, sizeof(k),
+      &v, sizeof(v), NULL));
+    p = (double*)libxs_registry_get(registry, &hot, sizeof(hot), NULL);
+    TEST_CHECK(NULL != p);
+    *p += 1.0;
+  }
+  /* no increment was lost to a stale pointer into the old table */
+  p = (double*)libxs_registry_get(registry, &hot, sizeof(hot), NULL);
+  TEST_CHECK(NULL != p);
+  TEST_CHECK(4000.0 == *p);
+
+  libxs_registry_destroy(registry);
+  return EXIT_SUCCESS;
+}
+
+
 static int test_multiple_registries(void)
 { /* two independent registries with same keys must not interfere */
   const int key = 1;
@@ -608,6 +646,7 @@ int main(int argc, char* argv[])
   if (EXIT_SUCCESS == result) result = test_growth();
   if (EXIT_SUCCESS == result) result = test_struct_key();
   if (EXIT_SUCCESS == result) result = test_tls_cache();
+  if (EXIT_SUCCESS == result) result = test_tls_cache_growth();
   if (EXIT_SUCCESS == result) result = test_multiple_registries();
   if (EXIT_SUCCESS == result) result = test_has();
   if (EXIT_SUCCESS == result) result = test_value_size();

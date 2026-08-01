@@ -183,6 +183,11 @@ LIBXS_API_INLINE int internal_libxs_registry_grow(libxs_registry_t* registry)
     free(registry->entries);
     registry->entries = new_entries;
     registry->capacity = new_cap;
+#if defined(INTERNAL_REG_CACHE)
+    /* Rehashing moved every entry and freed the old table; cached pointers to
+       inline-stored values pointed into it, so they must not be reused. */
+    internal_libxs_registry_cache_invalidate(registry);
+#endif
     result = EXIT_SUCCESS;
   }
   return result;
