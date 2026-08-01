@@ -1,0 +1,19 @@
+# English normalization (opt-in): rewrites what the tokenizer interns, so
+# it changes the token stream every model is built from -- omit this file to
+# reproduce results measured without normalization.
+# A norm| rule must not map a negator onto its affirmative form, or it would
+# erase the polarity the negate| rules detect after encoding.
+# Grammar: norm|from|to
+norm|isn|is not
+norm|wasn|was not
+norm|aren|are not
+norm|weren|were not
+norm|doesn|does not
+norm|didn|did not
+norm|don|do not
+norm|couldn|could not
+norm|wouldn|would not
+norm|shouldn|should not
+norm|hasn|has not
+norm|haven|have not
+norm|won|will not

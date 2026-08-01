@@ -18,9 +18,25 @@
 #define BRIDGE_FILE "converse.bridges"
 #define BRIDGE_LINE_MAX 2048
 #define RELATION_FILE "converse.relations"
+/**
+ * Language rules, shared by every corpus of that language and committed to the
+ * repository (unlike the per-corpus .relations file). Kept language-neutral in
+ * name so it can be a symlink to the actual language, e.g. english.rules.
+ */
+#define LANGUAGE_FILE "converse.rules"
+/**
+ * Normalization rules, kept apart from the interpretive rules because they are
+ * a different kind: they rewrite what the tokenizer interns and therefore alter
+ * the token stream every model is built from. Separating them keeps prediction
+ * results independent of a change motivated by question answering, and keeps
+ * the effect measurable by loading or omitting one file.
+ */
+#define NORM_FILE "converse.norms"
 #define RELATION_LINE_MAX 1024
 #define EVAL_FILE "converse.eval"
 #define EVAL_LINE_MAX 2048
+/** Fact-field marker: this expectation depends on loaded rules. */
+#define EVAL_RULE_GOVERNED "-"
 #define NGRAM_FILE "converse.ngram"
 #define NGRAM_SUCC_MAX LIBXS_NGRAM_SUCC_MAX
 #define NGRAM_TOPK 3
@@ -38,7 +54,6 @@
 #if !defined(TOKEN_EMB_DIM)
 # define TOKEN_EMB_DIM 16
 #endif
-#define TOKEN_EMB_CTX 256
 #if !defined(TOKEN_EMB_WINDOW)
 # define TOKEN_EMB_WINDOW 4
 #endif
@@ -89,7 +104,8 @@ typedef struct answer_bridge_t {
   double score;
 } answer_bridge_t;
 
-enum { RELATION_RULE_ALIAS = 1, RELATION_RULE_PERSON, RELATION_RULE_SKIP };
+enum { RELATION_RULE_ALIAS = 1, RELATION_RULE_PERSON, RELATION_RULE_SKIP,
+  RELATION_RULE_NEGATE, RELATION_RULE_NORM };
 
 typedef struct answer_relation_rule_t {
   int kind;
@@ -160,6 +176,11 @@ typedef struct ngram_key_t {
 typedef libxs_ngram_succ_t ngram_succ_t;
 typedef libxs_ngram_entry_t ngram_entry_t;
 
+typedef struct token_emb_pair_t {
+  unsigned int center;
+  unsigned int context;
+} token_emb_pair_t;
+
 typedef struct bpe_symbol_t {
   int len;
   char bytes[BPE_SYMBOL_MAX];
@@ -197,12 +218,19 @@ static char converse_path_lexicon[CONVERSE_PATH_MAX] = LEXICON_FILE;
 static char converse_path_predict[CONVERSE_PATH_MAX] = PREDICT_FILE;
 static char converse_path_bridge[CONVERSE_PATH_MAX] = BRIDGE_FILE;
 static char converse_path_relation[CONVERSE_PATH_MAX] = RELATION_FILE;
+static char converse_path_language[CONVERSE_PATH_MAX] = LANGUAGE_FILE;
+static char converse_path_norm[CONVERSE_PATH_MAX] = NORM_FILE;
 static char converse_path_eval[CONVERSE_PATH_MAX] = EVAL_FILE;
 static char converse_path_predict_eval[CONVERSE_PATH_MAX] = PREDICT_EVAL_FILE;
 static answer_bridge_t* answer_bridge_loaded = NULL;
 static size_t answer_bridge_loaded_size = 0;
 static answer_relation_rule_t* answer_relation_rules = NULL;
 static size_t answer_relation_rules_size = 0;
+static libxs_lexnorm_t* answer_lexnorms = NULL;
+static int answer_lexnorms_size = 0;
+static libxs_lexicon_t* answer_negate_lexicon = NULL;
+static const libxs_lexrule_t* answer_negate_rules = NULL;
+static int answer_negate_nrules = 0;
 static answer_relation_fact_t* answer_relation_facts = NULL;
 static size_t answer_relation_facts_size = 0;
 static answer_identity_fact_t* answer_identity_facts = NULL;
@@ -233,6 +261,8 @@ static void answer_bridge_free_loaded(void);
 static size_t answer_bridge_load_file(const char* path);
 static void answer_bridge_report(FILE* stream);
 static void answer_relation_rules_free(void);
+static void answer_lexnorms_build(void);
+static int answer_query_is_negated(const char* query_text, size_t query_len);
 static size_t answer_relation_rules_load_file(const char* path);
 static void answer_relation_rules_report(FILE* stream);
 static int answer_relation_rule_has_term(int kind, const char* text,
@@ -551,6 +581,7 @@ int main(int argc, char* argv[])
       "  CONVERSE_GEN_CONTORDER=F -c continuation mean-order floor (default 3).\n"
       "  CONVERSE_BPE_MERGES=N    BPE merge budget (default 750).\n"
       "  CONVERSE_HOLDOUT_TAIL=1  held-out split is a contiguous tail.\n"
+      "  CONVERSE_SHUFFLE=1       shuffle words in each sentence (control).\n"
       "  CONVERSE_EVAL_STRIDE=N   evaluate 1-in-N test items (default 40).\n"
       "  CONVERSE_GEN_EVAL=1      -E reports generation reproduction.\n"
       "  CONVERSE_NGRAM_STATS=1   print per-order n-gram footprint.\n"
@@ -559,6 +590,9 @@ int main(int argc, char* argv[])
       "  CONVERSE_KNNLM_ANN=1     Hilbert-indexed kNN-LM retrieval (faster).\n"
       "  CONVERSE_KNNLM_CTX=N     kNN-LM context tokens 2..8 (default 2).\n"
       "  CONVERSE_KNNLM_DECAY=F   kNN-LM context decay 0..1 (default 0.5).\n"
+      "  CONVERSE_KNNLM_WEIGHTS=L per-position context weights (overrides decay).\n"
+      "  CONVERSE_KNNLM_ORDERPROBE=1 report context order sensitivity.\n"
+      "  CONVERSE_KNNLM_CONTROL=N control vote: 1=unigram, 2=arbitrary nbrs.\n"
       "  CONVERSE_SKIP=1          add skip-gram (w _ w) generalization tier.\n"
       "  CONVERSE_SKIP_MU=F       skip-gram interpolation weight (default 0.3).\n"
       "  CONVERSE_EMB_PROBE=w1,w2 print nearest embedding neighbors.\n"
@@ -700,6 +734,9 @@ int main(int argc, char* argv[])
   if (NULL == lexicon) lexicon = libxs_lexicon_create();
   answer_model = converse_predict_load();
   nrules = libxs_lexrule_defaults(rules, 96);
+  answer_negate_lexicon = lexicon;
+  answer_negate_rules = rules;
+  answer_negate_nrules = nrules;
   if (NULL == corpus || NULL == lexicon || nrules <= 0) {
     libxs_registry_destroy(corpus);
     libxs_lexicon_destroy(lexicon);
@@ -710,6 +747,15 @@ int main(int argc, char* argv[])
 
   answer_bridge_load_file(converse_path_bridge);
   answer_bridge_report(stderr);
+  /**
+   * Rules layer: the language file (committed, shared by every corpus of that
+   * language) is loaded first, then the optional per-corpus file extends it.
+   * Loading appends, so a corpus adds its own vocabulary without restating the
+   * language's function words, and neither file contains anything the source
+   * needs to know about.
+   */
+  answer_relation_rules_load_file(converse_path_language);
+  answer_relation_rules_load_file(converse_path_norm);
   answer_relation_rules_load_file(converse_path_relation);
   answer_relation_rules_report(stderr);
 
@@ -1212,6 +1258,9 @@ static void answer_relation_rules_free(void)
   free(answer_relation_rules);
   answer_relation_rules = NULL;
   answer_relation_rules_size = 0;
+  free(answer_lexnorms);
+  answer_lexnorms = NULL;
+  answer_lexnorms_size = 0;
 }
 
 
@@ -1236,6 +1285,8 @@ static int answer_relation_rule_kind(const char* text)
     if (0 == strcmp(text, "alias")) result = RELATION_RULE_ALIAS;
     else if (0 == strcmp(text, "person")) result = RELATION_RULE_PERSON;
     else if (0 == strcmp(text, "skip")) result = RELATION_RULE_SKIP;
+    else if (0 == strcmp(text, "negate")) result = RELATION_RULE_NEGATE;
+    else if (0 == strcmp(text, "norm")) result = RELATION_RULE_NORM;
   }
   return result;
 }
@@ -1248,7 +1299,7 @@ static int answer_relation_rule_append(int kind, const char* relation,
   answer_relation_rule_t* rules;
   if (kind > 0 && NULL != term && '\0' != term[0]
     && strlen(term) < sizeof(answer_relation_rules[0].term)
-    && (RELATION_RULE_ALIAS != kind
+    && ((RELATION_RULE_ALIAS != kind && RELATION_RULE_NORM != kind)
       || (NULL != relation && '\0' != relation[0]
         && strlen(relation) < sizeof(answer_relation_rules[0].relation))))
   {
@@ -1294,10 +1345,12 @@ static int answer_relation_rule_parse_line(char* line)
   }
   if (NULL != fields[0] && NULL != fields[1]) {
     int kind = answer_relation_rule_kind(fields[0]);
-    if (RELATION_RULE_ALIAS == kind && NULL != fields[2]) {
+    if ((RELATION_RULE_ALIAS == kind || RELATION_RULE_NORM == kind)
+      && NULL != fields[2])
+    {
       result = answer_relation_rule_append(kind, fields[1], fields[2]);
     }
-    else if (RELATION_RULE_ALIAS != kind) {
+    else if (RELATION_RULE_ALIAS != kind && RELATION_RULE_NORM != kind) {
       result = answer_relation_rule_append(kind, NULL, fields[1]);
     }
   }
@@ -1310,7 +1363,7 @@ static size_t answer_relation_rules_load_file(const char* path)
   size_t result = 0;
   FILE* file;
   if (NULL == path) return 0;
-  answer_relation_rules_free();
+  /* Appends: successive files layer (language rules, then per-corpus rules). */
   file = fopen(path, "r");
   if (NULL != file) {
     char line[RELATION_LINE_MAX];
@@ -1329,6 +1382,7 @@ static size_t answer_relation_rules_load_file(const char* path)
     }
     fclose(file);
   }
+  answer_lexnorms_build();
   return result;
 }
 
@@ -1338,6 +1392,37 @@ static void answer_relation_rules_report(FILE* stream)
   if (NULL != stream) {
     fprintf(stream, "relation rules: %lu loaded\n",
       (unsigned long)answer_relation_rules_size);
+  }
+}
+
+
+/**
+ * Materialize the `norm|from|to` rules as a libxs_lexnorm_t table, which the
+ * tokenizer applies during encoding. This is the library's data-only
+ * normalization facility: the mechanism is language-agnostic, the vocabulary
+ * lives in the caller-owned rule file. Rebuilt whenever rules are (re)loaded;
+ * with no norm rules the table is empty and encoding is bit-identical.
+ */
+static void answer_lexnorms_build(void)
+{
+  size_t rule_pos;
+  free(answer_lexnorms);
+  answer_lexnorms = NULL;
+  answer_lexnorms_size = 0;
+  if (0 == answer_relation_rules_size) return;
+  answer_lexnorms = (libxs_lexnorm_t*)calloc(answer_relation_rules_size,
+    sizeof(*answer_lexnorms));
+  if (NULL == answer_lexnorms) return;
+  for (rule_pos = 0; rule_pos < answer_relation_rules_size; ++rule_pos) {
+    const answer_relation_rule_t* rule = answer_relation_rules + rule_pos;
+    if (RELATION_RULE_NORM == rule->kind
+      && strlen(rule->relation) <= LIBXS_LEXEME_MAXBYTES
+      && strlen(rule->term) <= LIBXS_LEXEME_MAXBYTES)
+    {
+      strcpy(answer_lexnorms[answer_lexnorms_size].from, rule->relation);
+      strcpy(answer_lexnorms[answer_lexnorms_size].to, rule->term);
+      ++answer_lexnorms_size;
+    }
   }
 }
 
@@ -1675,7 +1760,7 @@ static int is_question_query(const char* text, size_t length,
   if (NULL != lexicon && nrules > 0
     && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &stream,
       (const unsigned char*)text, length, rules, nrules,
-      NULL, 0, 1))
+      answer_lexnorms, answer_lexnorms_size, 1))
   {
     for (lexeme_pos = 0; lexeme_pos < stream.size && 0 == result;
       ++lexeme_pos)
@@ -1838,6 +1923,58 @@ static int query_type_prefers_sentence(int query_type)
 }
 
 
+/**
+ * Destroy word order inside each sentence while keeping the multiset of words
+ * (CONVERSE_SHUFFLE=1). A language model must degrade sharply; a model that is
+ * really counting unigrams and local collocations will barely notice. Applied
+ * at ingest so training and evaluation see the identical transformed text.
+ * The permutation is a coprime affine map of the word index -- reproducible,
+ * and derived from the sentence length so different sentences permute
+ * differently.
+ */
+static int corpus_shuffle_words(unsigned char* text, int len)
+{
+  int begin[COMPOSE_MAXTEXT / 2], length[COMPOSE_MAXTEXT / 2];
+  unsigned char copy[COMPOSE_MAXTEXT];
+  int nwords = 0, pos = 0, out = 0, i;
+  size_t stride;
+  if (len <= 0 || len > COMPOSE_MAXTEXT) return EXIT_FAILURE;
+  while (pos < len && nwords < (int)(sizeof(begin) / sizeof(*begin))) {
+    int wlen = 0;
+    while (pos + wlen < len && 0 == isspace(text[pos + wlen])) ++wlen;
+    if (wlen > 0) {
+      begin[nwords] = pos;
+      length[nwords] = wlen;
+      ++nwords;
+    }
+    pos += (wlen > 0) ? wlen : 1;
+    while (pos < len && 0 != isspace(text[pos])) ++pos;
+  }
+  if (nwords < 2) return EXIT_FAILURE;
+  stride = libxs_coprime_bias((size_t)nwords, -1.0);
+  for (i = 0; i < nwords && out < len; ++i) {
+    const size_t pick = LIBXS_SHUFFLE_INDEX(i, (size_t)nwords, stride, 1);
+    const int w = (int)pick;
+    if (out > 0 && out < len) copy[out++] = ' ';
+    if (out + length[w] > len) break;
+    memcpy(copy + out, text + begin[w], (size_t)length[w]);
+    out += length[w];
+  }
+  if (out > 0) {
+    memcpy(text, copy, (size_t)out);
+    while (out < len) text[out++] = ' ';
+  }
+  return (out > 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
+
+static int corpus_shuffle_mode(void)
+{
+  const char* env = getenv("CONVERSE_SHUFFLE");
+  return (NULL != env && '0' != *env) ? 1 : 0;
+}
+
+
 static int corpus_entry_build(corpus_entry_t* entry,
   const unsigned char* text, int len, unsigned char scale,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules)
@@ -1845,9 +1982,14 @@ static int corpus_entry_build(corpus_entry_t* entry,
   int result = EXIT_FAILURE;
   const size_t shape = (size_t)len;
   libxs_lexeme_stream_t stream;
+  unsigned char shuffled[COMPOSE_MAXTEXT];
   size_t lexeme_pos;
   libxs_lexeme_stream_init(&stream);
   if (NULL == entry || NULL == text || len <= 0) return EXIT_FAILURE;
+  if (0 != corpus_shuffle_mode() && len <= COMPOSE_MAXTEXT) {
+    memcpy(shuffled, text, (size_t)len);
+    if (EXIT_SUCCESS == corpus_shuffle_words(shuffled, len)) text = shuffled;
+  }
   memset(entry, 0, sizeof(*entry));
   if (EXIT_SUCCESS == libxs_fprint(&entry->fprint, LIBXS_DATATYPE_U8,
     text, 1, &shape, NULL, FPRINT_ORDER, 0, 0, 0))
@@ -1861,7 +2003,7 @@ static int corpus_entry_build(corpus_entry_t* entry,
   if (EXIT_SUCCESS == result && NULL != lexicon && NULL != rules
     && nrules > 0 && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon,
       &stream, text, (size_t)len, rules, nrules,
-      NULL, 0, 1))
+      answer_lexnorms, answer_lexnorms_size, 1))
   {
     for (lexeme_pos = 0; lexeme_pos < stream.size; ++lexeme_pos) {
       const libxs_lexeme_t* lexeme = stream.data + lexeme_pos;
@@ -4380,7 +4522,7 @@ static int answer_bridge_query_group_match(
       result = lexeme_stream_has_text(query, lexicon, term);
       if (0 == result && term_len >= 5) {
         result = lexeme_stream_has_similar_text(query, lexicon, term,
-          term_len, (term_len >= 7) ? 2 : 1);
+          term_len, 1);
       }
     }
     start = end + 1;
@@ -4502,6 +4644,7 @@ static double lexical_score(const libxs_lexeme_stream_t* query,
   int matches = 0, use_sketch = 0;
   int entry_stream_ready = 0;
   int long_terms = 0, long_matches = 0;
+  int query_terms = 0, term_matches = 0, exact_matches = 0;
   int entry_words;
   double bridge_score;
   const answer_bridge_t* bridge;
@@ -4515,7 +4658,7 @@ static double lexical_score(const libxs_lexeme_stream_t* query,
   }
   else if (EXIT_SUCCESS != libxs_lexeme_stream_encode(lexicon, &entry_stream,
       (const unsigned char*)entry->text, (size_t)entry->text_len,
-      rules, nrules, NULL, 0, 1))
+      rules, nrules, answer_lexnorms, answer_lexnorms_size, 1))
   {
     libxs_lexeme_stream_release(&entry_stream);
     return 0.0;
@@ -4528,13 +4671,15 @@ static double lexical_score(const libxs_lexeme_stream_t* query,
     {
       double weight = (lexeme->length >= 6) ? 1.5 : 1.0;
       int long_term = (lexeme->length >= 6) ? 1 : 0;
-      int matched;
+      int matched, exact;
       total += weight;
+      ++query_terms;
       if (0 != long_term) ++long_terms;
       matched = ((0 != use_sketch && 0 != entry_sketch_has_id(entry,
           lexeme->id))
         || (0 == use_sketch && 0 != lexeme_stream_has_id(&entry_stream,
           lexeme->id))) ? 1 : 0;
+      exact = matched;
       if (0 == matched && lexeme->length >= 5) {
         int term_len = 0;
         const char* term = libxs_lexicon_text(lexicon, lexeme->id,
@@ -4542,13 +4687,13 @@ static double lexical_score(const libxs_lexeme_stream_t* query,
         if (0 == entry_stream_ready
           && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon,
             &entry_stream, (const unsigned char*)entry->text,
-            (size_t)entry->text_len, rules, nrules, NULL, 0, 1))
+            (size_t)entry->text_len, rules, nrules, answer_lexnorms, answer_lexnorms_size, 1))
         {
           entry_stream_ready = 1;
         }
         if (0 != entry_stream_ready
           && 0 != lexeme_stream_has_similar_text(&entry_stream, lexicon,
-            term, term_len, (lexeme->length >= 7) ? 2 : 1))
+            term, term_len, 1))
         {
           matched = 1;
         }
@@ -4556,6 +4701,8 @@ static double lexical_score(const libxs_lexeme_stream_t* query,
       if (0 != matched) {
         score += weight;
         ++matches;
+        ++term_matches;
+        if (0 != exact) ++exact_matches;
         if (0 != long_term) ++long_matches;
       }
     }
@@ -4576,6 +4723,17 @@ static double lexical_score(const libxs_lexeme_stream_t* query,
   if (QUERY_GENERIC != query_type) min_overlap = 0.40;
   overlap = score / total;
   if (bridge_score > 0.0 && overlap < bridge_score) overlap = bridge_score;
+  /**
+   * A question with a single content term ("what is the X") scores a perfect
+   * overlap as soon as that one term matches, so the ratio cannot distinguish
+   * a real hit from a passage that merely mentions something spelled like X.
+   * Require the lone term to match EXACTLY: an approximate match on the only
+   * term the query carries is how an entity absent from the corpus gets a
+   * confident reply.
+   */
+  if (query_terms <= 1 && term_matches > 0 && 0 == exact_matches) {
+    return 0.0;
+  }
   if (overlap < min_overlap && !(total <= 1.5 && matches >= 1)) {
     return 0.0;
   }
@@ -4632,6 +4790,13 @@ static int answer_select(const libxs_registry_t* corpus,
   int query_type = QUERY_GENERIC;
   int result = 0;
   int limit = budget;
+  /**
+   * Evidence selection scores term overlap, which is blind to polarity: a
+   * negated question overlaps the affirmative sentence on every content word
+   * and would rank it first. Abstain instead -- the corpus states positives,
+   * so a complement is not answerable from it by selection either.
+   */
+  int negated = answer_query_is_negated(query_text, query_len);
   const libxs_predict_t* predictor = answer_model;
   libxs_predict_t* query_predictor = NULL;
   char query_section[ENTRY_SECTION_MAX];
@@ -4662,10 +4827,10 @@ static int answer_select(const libxs_registry_t* corpus,
     entries[slot] = NULL;
     scores[slot] = 0.0;
   }
-  if (NULL != lexicon && nrules > 0
+  if (0 == negated && NULL != lexicon && nrules > 0
     && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &query,
       (const unsigned char*)rank_query_text, rank_query_len, rules, nrules,
-      NULL, 0, 1))
+      answer_lexnorms, answer_lexnorms_size, 1))
   {
     query_type = query_type_of(&query, lexicon);
     query_be_len = answer_query_be_word(rank_query_text, rank_query_len,
@@ -4918,7 +5083,7 @@ static int answer_frame_keywords_after(char* output, size_t output_size,
       && '?' != text[end]) ++end;
     if (end > start && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon,
       &stream, (const unsigned char*)text + start, (size_t)(end - start),
-      rules, nrules, NULL, 0, 1))
+      rules, nrules, answer_lexnorms, answer_lexnorms_size, 1))
     {
       for (lexeme_pos = 0; lexeme_pos < stream.size && used_size < 32;
         ++lexeme_pos)
@@ -5118,7 +5283,7 @@ static int answer_reply(const char* query_text, size_t query_len,
   if (NULL != lexicon && NULL != rules && nrules > 0
     && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &query,
       (const unsigned char*)query_text, query_len, rules, nrules,
-      NULL, 0, 1))
+      answer_lexnorms, answer_lexnorms_size, 1))
   {
     query_type = query_type_of(&query, lexicon);
     bridge = answer_bridge_match(&query, lexicon, entry);
@@ -5170,7 +5335,7 @@ static int answer_evidence_sentence(const char* query_text, size_t query_len,
   answer_strip_heading_prefix(&text, &text_len);
   if (EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &query,
     (const unsigned char*)query_text, query_len, rules, nrules,
-    NULL, 0, 1))
+    answer_lexnorms, answer_lexnorms_size, 1))
   {
     int pos;
     for (pos = 0; pos <= text_len; ++pos) {
@@ -5227,11 +5392,62 @@ static int answer_evidence_sentence(const char* query_text, size_t query_len,
 }
 
 
+/**
+ * Non-zero if the query carries a negator, per the caller-owned `negate|`
+ * rules. The extractors answer affirmative questions only: they find what the
+ * corpus asserts, never what it denies, and a complement ("who is NOT the
+ * witch") is not groundable from evidence that states only positives. The
+ * vocabulary stays in the rule file -- no negation words in the source -- and
+ * with no rules loaded the check is inert, exactly like the other rule kinds.
+ */
+static int answer_query_is_negated(const char* query_text, size_t query_len)
+{
+  int result = 0;
+  size_t rule_pos;
+  libxs_lexeme_stream_t query;
+  libxs_lexeme_stream_init(&query);
+  /**
+   * RULE ORDER: normalization first, interpretation second. The negators are
+   * matched against the ENCODED query, so any `norm|` rewriting has already
+   * been applied and the two rule kinds compose in a defined order instead of
+   * inspecting different representations of the same text. A consequence worth
+   * stating: a `norm|` rule must not map a negator onto its affirmative form,
+   * or it would erase the polarity this check depends on.
+   */
+  if (NULL != answer_negate_lexicon && answer_negate_nrules > 0
+    && NULL != query_text && query_len > 0
+    && EXIT_SUCCESS == libxs_lexeme_stream_encode(answer_negate_lexicon,
+      &query, (const unsigned char*)query_text, query_len,
+      answer_negate_rules, answer_negate_nrules,
+      answer_lexnorms, answer_lexnorms_size, 0))
+  {
+    for (rule_pos = 0; rule_pos < answer_relation_rules_size && 0 == result;
+      ++rule_pos)
+    {
+      const answer_relation_rule_t* rule = answer_relation_rules + rule_pos;
+      if (RELATION_RULE_NEGATE == rule->kind
+        && 0 != lexeme_stream_has_text(&query, answer_negate_lexicon,
+          rule->term))
+      {
+        result = 1;
+      }
+    }
+  }
+  else { /* no lexicon available yet: fall back to raw-text matching */
+    result = answer_relation_rule_has_term(RELATION_RULE_NEGATE, query_text,
+      (int)query_len);
+  }
+  libxs_lexeme_stream_release(&query);
+  return result;
+}
+
+
 static int answer_fact_reply(const libxs_registry_t* corpus,
   const char* query_text, size_t query_len, char* output, size_t output_size)
 {
   int result = EXIT_FAILURE;
-  if (EXIT_SUCCESS == answer_relation_fact_reply(query_text, query_len,
+  if (0 == answer_query_is_negated(query_text, query_len)
+    && (EXIT_SUCCESS == answer_relation_fact_reply(query_text, query_len,
       output, output_size)
     || EXIT_SUCCESS == answer_relation_aggregate_reply(corpus, query_text,
       query_len, output, output_size)
@@ -5240,7 +5456,7 @@ static int answer_fact_reply(const libxs_registry_t* corpus,
     || EXIT_SUCCESS == answer_describe_fact_reply(query_text, query_len,
       output, output_size)
     || EXIT_SUCCESS == answer_docdef_fact_reply(query_text, query_len,
-      output, output_size))
+      output, output_size)))
   {
     result = EXIT_SUCCESS;
   }
@@ -5574,7 +5790,8 @@ static int eval_converse(const libxs_registry_t* corpus,
     qlen = strlen(qtext);
     fact_pass = 1;
     fact_checked = (have_facts && NULL != fields[3]
-      && 0 == eval_terms_empty(fields[3])) ? 1 : 0;
+      && 0 == eval_terms_empty(fields[3])
+      && 0 != strcmp(fields[3], EVAL_RULE_GOVERNED)) ? 1 : 0;
     if (0 != fact_checked) {
       if (EXIT_SUCCESS == answer_fact_reply(corpus, qtext, qlen,
         reply, sizeof(reply)))
@@ -5599,13 +5816,45 @@ static int eval_converse(const libxs_registry_t* corpus,
           fields[0]);
         if (0 != fact_pass) ++nfact;
       }
-      else if (NULL != fields[3] && 0 == eval_terms_empty(fields[3])) {
+      else if (NULL != fields[3] && 0 == eval_terms_empty(fields[3])
+        && 0 != strcmp(fields[3], EVAL_RULE_GOVERNED))
+      {
         fprintf(stdout, "SKIP fact %s\n", fields[0]);
         --ncases;
         continue;
       }
+      /**
+       * A lone EVAL_RULE_GOVERNED marker in the fact field means the expected
+       * abstention depends on loaded rules (negation, for instance, is a rule
+       * kind): check it when rules are present, skip it when they are not.
+       * This keeps one fixture valid in both configurations -- the property
+       * that proves no language vocabulary is compiled into the source --
+       * without pretending a rule-driven capability works without rules.
+       */
+      else if (NULL != fields[3]
+        && 0 == strcmp(fields[3], EVAL_RULE_GOVERNED)
+        && 0 == answer_relation_rules_size)
+      {
+        fprintf(stdout, "SKIP rules %s\n", fields[0]);
+        --ncases;
+        continue;
+      }
       else {
-        pass = (0 == nanswers) ? 1 : 0;
+        /**
+         * An abstention case must abstain on EVERY path an interactive query
+         * would take, not merely on evidence selection: the fact and
+         * definition resolvers answer first and are the ones that can
+         * fabricate, so a check that only looked at answer_select would pass
+         * a question the engine actually answers.
+         */
+        char probe[COMPOSE_MAXTEXT];
+        int answered = (0 != nanswers) ? 1 : 0;
+        if (EXIT_SUCCESS == answer_fact_reply(corpus, qtext, qlen,
+          probe, sizeof(probe)))
+        {
+          answered = 1;
+        }
+        pass = (0 == answered) ? 1 : 0;
         fprintf(stdout, "%s abstain %s\n", (0 != pass) ? "PASS" : "FAIL",
           fields[0]);
       }
@@ -5695,13 +5944,6 @@ static int ngramk_predict_order(libxs_registry_t* model,
 {
   LIBXS_UNUSED(model); LIBXS_UNUSED(maxorder);
   return libxs_ngram_predict(&converse_ngram, hist, hlen, out_ids, k, order);
-}
-
-
-static int ngramk_predict(libxs_registry_t* model, const unsigned int hist[],
-  int hlen, int maxorder, unsigned int out_ids[], int k)
-{
-  return ngramk_predict_order(model, hist, hlen, maxorder, out_ids, k, NULL);
 }
 
 
@@ -6330,7 +6572,7 @@ static void ngram_train_text(libxs_registry_t* model,
     if (NULL != model && NULL != lexicon && NULL != rules && nrules > 0
       && text_len > 0 && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon,
         &stream, (const unsigned char*)text, (size_t)text_len, rules, nrules,
-        NULL, 0, 1))
+        answer_lexnorms, answer_lexnorms_size, 1))
     {
       size_t pos;
       unsigned int hist[NGRAM_ORDER_MAX];
@@ -6510,22 +6752,49 @@ static const double* token_emb_get(unsigned int id)
 }
 
 
-static unsigned int token_emb_hash(unsigned int id)
+/**
+ * Non-zero if the id has no usable embedding: out of range, or an all-zero row
+ * (a word that never occurred in the training split has an empty PPMI row, so
+ * it contributes nothing to a retrieval query). This is the headroom available
+ * to subword composition.
+ */
+static int token_emb_isnull(unsigned int id)
 {
-  return (id * 2654435761u) % TOKEN_EMB_CTX;
+  const double* emb = token_emb_get(id);
+  int d, result = 1;
+  for (d = 0; d < TOKEN_EMB_DIM && 0 != result; ++d) {
+    if (0.0 != emb[d]) result = 0;
+  }
+  return result;
 }
 
 
-static void token_emb_cooc_text(double* cooc, double* rowcnt,
+static void token_emb_pair_observe(libxs_registry_t* pairs,
+  unsigned int center, unsigned int context)
+{
+  token_emb_pair_t key;
+  double* count;
+  key.center = center;
+  key.context = context;
+  count = (double*)libxs_registry_get(pairs, &key, sizeof(key), NULL);
+  if (NULL != count) *count += 1.0;
+  else {
+    double one = 1.0;
+    libxs_registry_set(pairs, &key, sizeof(key), &one, sizeof(one), NULL);
+  }
+}
+
+
+static void token_emb_cooc_text(libxs_registry_t* pairs, double* rowcnt,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
   const char* text, int text_len)
 {
   libxs_lexeme_stream_t stream;
   libxs_lexeme_stream_init(&stream);
-  if (NULL != cooc && NULL != lexicon && NULL != rules && nrules > 0
+  if (NULL != pairs && NULL != lexicon && NULL != rules && nrules > 0
     && text_len > 0 && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon,
       &stream, (const unsigned char*)text, (size_t)text_len, rules, nrules,
-      NULL, 0, 0))
+      answer_lexnorms, answer_lexnorms_size, 0))
   {
     /* Trailing buffer of the last TOKEN_EMB_WINDOW ids: each token pairs with
        every buffered predecessor and both directions are counted, so the union
@@ -6544,9 +6813,8 @@ static void token_emb_cooc_text(double* cooc, double* rowcnt,
       {
         int i;
         for (i = 0; i < fill; ++i) {
-          unsigned int other = window[i];
-          cooc[(size_t)lex->id * TOKEN_EMB_CTX + token_emb_hash(other)] += 1.0;
-          cooc[(size_t)other * TOKEN_EMB_CTX + token_emb_hash(lex->id)] += 1.0;
+          token_emb_pair_observe(pairs, lex->id, window[i]);
+          token_emb_pair_observe(pairs, window[i], lex->id);
         }
         if (fill < TOKEN_EMB_WINDOW) {
           window[fill] = lex->id;
@@ -6565,77 +6833,104 @@ static void token_emb_cooc_text(double* cooc, double* rowcnt,
 }
 
 
-static void token_emb_reduce(double* cooc, unsigned int vocab)
+/* Multiply the sparse PPMI matrix (CSR) by a dense (vocab+1) x DIM block:
+   out = A * in when transpose is zero, out = A^T * in otherwise. */
+static void token_emb_spmm(const size_t* rowptr, const unsigned int* colidx,
+  const double* val, unsigned int vocab, const double* in, int transpose,
+  double* out)
 {
-  static double gram[TOKEN_EMB_CTX * TOKEN_EMB_CTX];
-  static double basis[TOKEN_EMB_CTX * TOKEN_EMB_DIM];
-  static double next[TOKEN_EMB_CTX * TOKEN_EMB_DIM];
-  unsigned int id, i, j, d, e, iter;
-  for (i = 0; i < TOKEN_EMB_CTX * TOKEN_EMB_CTX; ++i) gram[i] = 0.0;
+  size_t n = ((size_t)vocab + 1) * TOKEN_EMB_DIM, k;
+  unsigned int id;
+  for (k = 0; k < n; ++k) out[k] = 0.0;
   for (id = 1; id <= vocab; ++id) {
-    const double* row = cooc + (size_t)id * TOKEN_EMB_CTX;
-    for (i = 0; i < TOKEN_EMB_CTX; ++i) {
-      if (0.0 != row[i]) {
-        for (j = 0; j < TOKEN_EMB_CTX; ++j) {
-          gram[i * TOKEN_EMB_CTX + j] += row[i] * row[j];
-        }
+    size_t nz;
+    for (nz = rowptr[id]; nz < rowptr[id + 1]; ++nz) {
+      const double v = val[nz];
+      if (0.0 != v) {
+        const size_t src = (size_t)(0 != transpose ? id : colidx[nz])
+          * TOKEN_EMB_DIM;
+        const size_t dst = (size_t)(0 != transpose ? colidx[nz] : id)
+          * TOKEN_EMB_DIM;
+        int d;
+        for (d = 0; d < TOKEN_EMB_DIM; ++d) out[dst + d] += v * in[src + d];
       }
     }
   }
-  for (i = 0; i < TOKEN_EMB_CTX; ++i) {
-    for (d = 0; d < TOKEN_EMB_DIM; ++d) {
-      unsigned int state = (i + 1) * 2654435761u + (d + 1) * 40503u;
-      state ^= state >> 13; state *= 1274126177u; state ^= state >> 16;
-      basis[i * TOKEN_EMB_DIM + d] = ((double)(state % 2000003u)
-        / 1000001.5) - 1.0;
-    }
-  }
-  for (iter = 0; iter < TOKEN_EMB_ITER; ++iter) {
-    for (i = 0; i < TOKEN_EMB_CTX; ++i) {
-      for (d = 0; d < TOKEN_EMB_DIM; ++d) {
-        double acc = 0.0;
-        for (j = 0; j < TOKEN_EMB_CTX; ++j) {
-          acc += gram[i * TOKEN_EMB_CTX + j] * basis[j * TOKEN_EMB_DIM + d];
-        }
-        next[i * TOKEN_EMB_DIM + d] = acc;
-      }
-    }
-    for (d = 0; d < TOKEN_EMB_DIM; ++d) {
-      double norm = 0.0;
-      for (e = 0; e < d; ++e) {
-        double dot = 0.0;
-        for (i = 0; i < TOKEN_EMB_CTX; ++i) {
-          dot += next[i * TOKEN_EMB_DIM + d] * next[i * TOKEN_EMB_DIM + e];
-        }
-        for (i = 0; i < TOKEN_EMB_CTX; ++i) {
-          next[i * TOKEN_EMB_DIM + d] -= dot * next[i * TOKEN_EMB_DIM + e];
-        }
-      }
-      for (i = 0; i < TOKEN_EMB_CTX; ++i) {
-        norm += next[i * TOKEN_EMB_DIM + d] * next[i * TOKEN_EMB_DIM + d];
-      }
-      norm = (norm > 0.0) ? (1.0 / sqrt(norm)) : 0.0;
-      for (i = 0; i < TOKEN_EMB_CTX; ++i) {
-        next[i * TOKEN_EMB_DIM + d] *= norm;
-      }
-    }
-    for (i = 0; i < TOKEN_EMB_CTX * TOKEN_EMB_DIM; ++i) basis[i] = next[i];
-  }
-  for (id = 1; id <= vocab; ++id) {
-    const double* row = cooc + (size_t)id * TOKEN_EMB_CTX;
-    double* emb = token_emb + (size_t)id * TOKEN_EMB_DIM;
+}
+
+
+/* Gram-Schmidt orthonormalization of the DIM columns of a (vocab+1) x DIM
+   block, in place. */
+static void token_emb_orthonormalize(double* block, unsigned int vocab)
+{
+  const size_t rows = (size_t)vocab + 1;
+  int d, e;
+  for (d = 0; d < TOKEN_EMB_DIM; ++d) {
     double norm = 0.0;
-    for (d = 0; d < TOKEN_EMB_DIM; ++d) {
-      double acc = 0.0;
-      for (i = 0; i < TOKEN_EMB_CTX; ++i) {
-        if (0.0 != row[i]) acc += row[i] * basis[i * TOKEN_EMB_DIM + d];
+    size_t i;
+    for (e = 0; e < d; ++e) {
+      double dot = 0.0;
+      for (i = 0; i < rows; ++i) {
+        dot += block[i * TOKEN_EMB_DIM + d] * block[i * TOKEN_EMB_DIM + e];
       }
-      emb[d] = acc;
-      norm += acc * acc;
+      for (i = 0; i < rows; ++i) {
+        block[i * TOKEN_EMB_DIM + d] -= dot * block[i * TOKEN_EMB_DIM + e];
+      }
+    }
+    for (i = 0; i < rows; ++i) {
+      norm += block[i * TOKEN_EMB_DIM + d] * block[i * TOKEN_EMB_DIM + d];
     }
     norm = (norm > 0.0) ? (1.0 / sqrt(norm)) : 0.0;
-    for (d = 0; d < TOKEN_EMB_DIM; ++d) emb[d] *= norm;
+    for (i = 0; i < rows; ++i) block[i * TOKEN_EMB_DIM + d] *= norm;
   }
+}
+
+
+/**
+ * Truncated SVD of the sparse PPMI matrix by subspace iteration on A^T A,
+ * which is never materialized: each iteration applies A and then A^T, so the
+ * cost is O(nnz * DIM) and the full context vocabulary is carried exactly.
+ * Embeddings are the projected rows A*V (that is U*Sigma), row-normalized.
+ */
+static int token_emb_reduce(const size_t* rowptr, const unsigned int* colidx,
+  const double* val, unsigned int vocab)
+{
+  int result = EXIT_FAILURE;
+  const size_t block = ((size_t)vocab + 1) * TOKEN_EMB_DIM;
+  double* basis = (double*)malloc(block * sizeof(double));
+  double* work = (double*)malloc(block * sizeof(double));
+  if (NULL != basis && NULL != work) {
+    /* Symmetry-breaking start: LIBXS_SHUFFLE_INDEX is a coprime affine map,
+       hence a bijection onto [0, block), so the values are an evenly spread
+       (not clustered) permutation and reproducible across runs. */
+    const size_t stride = libxs_coprime_bias(block, -1.0);
+    unsigned int id, iter;
+    size_t i;
+    int d;
+    for (i = 0; i < block; ++i) {
+      const size_t k = LIBXS_SHUFFLE_INDEX(i, block, stride, 1);
+      basis[i] = (2.0 * (double)k / (double)block) - 1.0;
+    }
+    token_emb_orthonormalize(basis, vocab);
+    for (iter = 0; iter < TOKEN_EMB_ITER; ++iter) {
+      token_emb_spmm(rowptr, colidx, val, vocab, basis, 0, work);
+      token_emb_spmm(rowptr, colidx, val, vocab, work, 1, basis);
+      token_emb_orthonormalize(basis, vocab);
+    }
+    token_emb_spmm(rowptr, colidx, val, vocab, basis, 0, work);
+    for (id = 1; id <= vocab; ++id) {
+      const double* row = work + (size_t)id * TOKEN_EMB_DIM;
+      double* emb = token_emb + (size_t)id * TOKEN_EMB_DIM;
+      double norm = 0.0;
+      for (d = 0; d < TOKEN_EMB_DIM; ++d) norm += row[d] * row[d];
+      norm = (norm > 0.0) ? (1.0 / sqrt(norm)) : 0.0;
+      for (d = 0; d < TOKEN_EMB_DIM; ++d) emb[d] = row[d] * norm;
+    }
+    result = EXIT_SUCCESS;
+  }
+  free(basis);
+  free(work);
+  return result;
 }
 
 
@@ -6760,61 +7055,94 @@ static void token_emb_build(const libxs_registry_t* corpus,
   unsigned int vocab = (NULL != lexicon) ? libxs_lexicon_size(lexicon) : 0;
   token_emb_free();
   if (NULL != corpus && vocab > 0) {
-    double* cooc = (double*)calloc((size_t)(vocab + 1) * TOKEN_EMB_CTX,
-      sizeof(double));
-    double* rowcnt = (double*)calloc((size_t)(vocab + 1), sizeof(double));
+    libxs_registry_t* pairs = libxs_registry_create();
+    double* rowcnt = (double*)calloc((size_t)vocab + 1, sizeof(double));
+    double* rowsum = (double*)calloc((size_t)vocab + 1, sizeof(double));
+    double* colsum = (double*)calloc((size_t)vocab + 1, sizeof(double));
+    size_t* rowptr = (size_t*)calloc((size_t)vocab + 2, sizeof(size_t));
     token_emb = (double*)calloc((size_t)(vocab + 1) * TOKEN_EMB_DIM,
       sizeof(double));
-    if (NULL != cooc && NULL != rowcnt && NULL != token_emb) {
-      double colsum[TOKEN_EMB_CTX];
+    if (NULL != pairs && NULL != rowcnt && NULL != rowsum && NULL != colsum
+      && NULL != rowptr && NULL != token_emb)
+    {
       double total = 0.0;
       const void* key = NULL;
-      size_t cursor = 0;
+      size_t cursor = 0, nnz = 0;
       long index = 0;
-      unsigned int id, i;
-      const char* env;
+      unsigned int id;
       void* value = libxs_registry_begin(corpus, &key, &cursor);
       token_emb_size = vocab;
       while (NULL != value) {
         const corpus_entry_t* entry = (const corpus_entry_t*)value;
         if (0 == predict_is_test(index, holdout)) {
-          token_emb_cooc_text(cooc, rowcnt, lexicon, rules, nrules,
+          token_emb_cooc_text(pairs, rowcnt, lexicon, rules, nrules,
             entry->text, entry->text_len);
         }
         ++index;
         value = libxs_registry_next(corpus, &key, &cursor);
       }
-      for (i = 0; i < TOKEN_EMB_CTX; ++i) colsum[i] = 0.0;
-      for (id = 1; id <= vocab; ++id) {
-        const double* row = cooc + (size_t)id * TOKEN_EMB_CTX;
-        for (i = 0; i < TOKEN_EMB_CTX; ++i) {
-          colsum[i] += row[i];
-          total += row[i];
+      key = NULL;
+      cursor = 0;
+      value = libxs_registry_begin(pairs, &key, &cursor);
+      while (NULL != value) {
+        const token_emb_pair_t* pair = (const token_emb_pair_t*)key;
+        const double count = *(const double*)value;
+        if (pair->center <= vocab && pair->context <= vocab) {
+          rowsum[pair->center] += count;
+          colsum[pair->context] += count;
+          total += count;
+          ++rowptr[pair->center + 1];
+          ++nnz;
         }
+        value = libxs_registry_next(pairs, &key, &cursor);
       }
-      if (total > 0.0) {
-        for (id = 1; id <= vocab; ++id) {
-          double* row = cooc + (size_t)id * TOKEN_EMB_CTX;
-          double rowsum = 0.0;
-          for (i = 0; i < TOKEN_EMB_CTX; ++i) rowsum += row[i];
-          for (i = 0; i < TOKEN_EMB_CTX; ++i) {
-            if (row[i] > 0.0 && rowsum > 0.0 && colsum[i] > 0.0) {
-              double pmi = log((row[i] * total) / (rowsum * colsum[i]));
-              row[i] = (pmi > 0.0) ? pmi : 0.0;
+      for (id = 1; id <= vocab + 1; ++id) rowptr[id] += rowptr[id - 1];
+      if (total > 0.0 && nnz > 0) {
+        unsigned int* colidx = (unsigned int*)malloc(nnz * sizeof(*colidx));
+        double* val = (double*)malloc(nnz * sizeof(*val));
+        size_t* fill = (size_t*)malloc(((size_t)vocab + 1) * sizeof(*fill));
+        if (NULL != colidx && NULL != val && NULL != fill) {
+          const char* env;
+          for (id = 0; id <= vocab; ++id) fill[id] = rowptr[id];
+          key = NULL;
+          cursor = 0;
+          value = libxs_registry_begin(pairs, &key, &cursor);
+          while (NULL != value) {
+            const token_emb_pair_t* pair = (const token_emb_pair_t*)key;
+            const double count = *(const double*)value;
+            if (pair->center <= vocab && pair->context <= vocab
+              && rowsum[pair->center] > 0.0 && colsum[pair->context] > 0.0)
+            {
+              const double pmi = log((count * total)
+                / (rowsum[pair->center] * colsum[pair->context]));
+              const size_t at = fill[pair->center]++;
+              colidx[at] = pair->context;
+              val[at] = (pmi > 0.0) ? pmi : 0.0;
             }
-            else row[i] = 0.0;
+            value = libxs_registry_next(pairs, &key, &cursor);
+          }
+          fprintf(stderr, "embedding: vocab=%u nnz=%lu density=%.4f%%"
+            " dim=%d window=%d\n", vocab, (unsigned long)nnz,
+            100.0 * (double)nnz / ((double)vocab * (double)vocab),
+            TOKEN_EMB_DIM, TOKEN_EMB_WINDOW);
+          if (EXIT_SUCCESS == token_emb_reduce(rowptr, colidx, val, vocab)) {
+            env = getenv("CONVERSE_EMB_BACKFILL");
+            if (NULL == env || '0' != *env) {
+              token_emb_backfill(lexicon, rowcnt, vocab);
+            }
+            token_emb_probe(lexicon, vocab);
           }
         }
-        token_emb_reduce(cooc, vocab);
-        env = getenv("CONVERSE_EMB_BACKFILL");
-        if (NULL == env || '0' != *env) {
-          token_emb_backfill(lexicon, rowcnt, vocab);
-        }
-        token_emb_probe(lexicon, vocab);
+        free(colidx);
+        free(val);
+        free(fill);
       }
     }
-    free(cooc);
+    libxs_registry_destroy(pairs);
     free(rowcnt);
+    free(rowsum);
+    free(colsum);
+    free(rowptr);
   }
 }
 
@@ -6878,10 +7206,36 @@ static double knnlm_decay(void)
  * this reproduces token_input_vector(prev2, prev1, 1, .) exactly, so the
  * default path is byte-identical to the two-token model.
  */
+/**
+ * Per-position weights for the summarized half, replacing the geometric decay
+ * when CONVERSE_KNNLM_WEIGHTS is set (comma-separated, nearest position first).
+ * Returns the number parsed, or 0 to keep the geometric profile. A weight
+ * profile is the scalar case of a position-specific projection: if position
+ * identity carries usable signal, an explicit profile must beat the geometric
+ * one, which is a far cheaper test than fitting matrices.
+ */
+static int knnlm_weights(double out[], int max)
+{
+  const char* env = getenv("CONVERSE_KNNLM_WEIGHTS");
+  int result = 0;
+  if (NULL != env && '\0' != *env) {
+    const char* p = env;
+    while (result < max && '\0' != *p) {
+      out[result++] = atof(p);
+      while ('\0' != *p && ',' != *p) ++p;
+      if (',' == *p) ++p;
+    }
+  }
+  return result;
+}
+
+
 static void knnlm_ctx_vector(const unsigned int hist[], int hlen, int ctxlen,
   double decay, double inputs[])
 {
   const double* emb1 = token_emb_get((hlen > 0) ? hist[hlen - 1] : 0);
+  double profile[TOKEN_CTX_MAX];
+  int nprofile = knnlm_weights(profile, TOKEN_CTX_MAX);
   int dim, back;
   double weight = 1.0, norm = 0.0;
   for (dim = 0; dim < TOKEN_EMB_DIM; ++dim) {
@@ -6892,7 +7246,8 @@ static void knnlm_ctx_vector(const unsigned int hist[], int hlen, int ctxlen,
     int idx = hlen - back;
     if (idx >= 0) {
       const double* emb = token_emb_get(hist[idx]);
-      for (dim = 0; dim < TOKEN_EMB_DIM; ++dim) inputs[dim] += weight * emb[dim];
+      const double w = (back - 2) < nprofile ? profile[back - 2] : weight;
+      for (dim = 0; dim < TOKEN_EMB_DIM; ++dim) inputs[dim] += w * emb[dim];
     }
     weight *= decay;
   }
@@ -6900,6 +7255,56 @@ static void knnlm_ctx_vector(const unsigned int hist[], int hlen, int ctxlen,
   if (norm > 0.0) {
     double inv = 1.0 / sqrt(norm);
     for (dim = 0; dim < TOKEN_EMB_DIM; ++dim) inputs[dim] *= inv;
+  }
+}
+
+
+static double knnlm_cosine(const double* a, const double* b, int n)
+{
+  double dot = 0.0, na = 0.0, nb = 0.0;
+  int i;
+  for (i = 0; i < n; ++i) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  return (na > 0.0 && nb > 0.0) ? (dot / (sqrt(na) * sqrt(nb))) : 0.0;
+}
+
+
+/**
+ * Quantify how much word order survives in a query vector: for each evaluated
+ * context, compare the vector against the one built from the SAME tokens in a
+ * swapped order. Cosine 1.0 means order was discarded entirely; lower means the
+ * representation distinguishes the permutation. Reports the mean over contexts,
+ * separately for a swap inside the summarized half (positions 2 and 3) and for
+ * a swap that crosses into the most-recent slot (positions 1 and 2).
+ */
+static void knnlm_order_probe(const unsigned int hist[], int hlen, int ctxlen,
+  double decay, double* sum_inner, double* sum_cross, long* n_inner,
+  long* n_cross)
+{
+  double base[2 * TOKEN_EMB_DIM], perm[2 * TOKEN_EMB_DIM];
+  unsigned int swapped[TOKEN_CTX_MAX];
+  int i;
+  if (hlen < 2) return;
+  for (i = 0; i < hlen && i < TOKEN_CTX_MAX; ++i) swapped[i] = hist[i];
+  knnlm_ctx_vector(hist, hlen, ctxlen, decay, base);
+  if (hlen >= 3 && ctxlen >= 3 && hist[hlen - 2] != hist[hlen - 3]) {
+    swapped[hlen - 2] = hist[hlen - 3];
+    swapped[hlen - 3] = hist[hlen - 2];
+    knnlm_ctx_vector(swapped, hlen, ctxlen, decay, perm);
+    *sum_inner += knnlm_cosine(base, perm, 2 * TOKEN_EMB_DIM);
+    ++*n_inner;
+    swapped[hlen - 2] = hist[hlen - 2];
+    swapped[hlen - 3] = hist[hlen - 3];
+  }
+  if (hist[hlen - 1] != hist[hlen - 2]) {
+    swapped[hlen - 1] = hist[hlen - 2];
+    swapped[hlen - 2] = hist[hlen - 1];
+    knnlm_ctx_vector(swapped, hlen, ctxlen, decay, perm);
+    *sum_cross += knnlm_cosine(base, perm, 2 * TOKEN_EMB_DIM);
+    ++*n_cross;
   }
 }
 
@@ -6955,7 +7360,7 @@ static void ngram_last_context(libxs_lexicon_t* lexicon,
   if (NULL != lexicon && NULL != rules && nrules > 0 && text_len > 0
     && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &stream,
       (const unsigned char*)text, (size_t)text_len, rules, nrules,
-      NULL, 0, 0))
+      answer_lexnorms, answer_lexnorms_size, 0))
   {
     size_t pos;
     for (pos = 0; pos < stream.size; ++pos) {
@@ -6988,7 +7393,7 @@ static int ngram_history(libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules,
   if (NULL != lexicon && NULL != rules && nrules > 0 && text_len > 0
     && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &stream,
       (const unsigned char*)text, (size_t)text_len, rules, nrules,
-      NULL, 0, 0))
+      answer_lexnorms, answer_lexnorms_size, 0))
   {
     size_t pos;
     for (pos = 0; pos < stream.size; ++pos) {
@@ -7180,6 +7585,7 @@ static int ngram_gen_eval(libxs_registry_t* model,
   enum { GEN_SEED = 3, GEN_LOOK = 20 };
   int result = EXIT_FAILURE;
   long nsent = 0, sum_repro = 0, gen_tokens = 0, order_sum = 0, index = 0;
+  long nsent_att = 0, sum_repro_att = 0, nsent_nov = 0, sum_repro_nov = 0;
   int maxorder = ngram_order();
   int minorder = ngram_gen_minorder();
   const void* key = NULL;
@@ -7195,7 +7601,7 @@ static int ngram_gen_eval(libxs_registry_t* model,
     if (0 != is_test && entry->text_len > 0
       && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &stream,
         (const unsigned char*)entry->text, (size_t)entry->text_len,
-        rules, nrules, NULL, 0, 0))
+        rules, nrules, answer_lexnorms, answer_lexnorms_size, 0))
     {
       unsigned int truth[GEN_SEED + GEN_LOOK];
       int ntruth = 0;
@@ -7210,13 +7616,22 @@ static int ngram_gen_eval(libxs_registry_t* model,
       }
       if (ntruth > GEN_SEED) {
         unsigned int hist[NGRAM_ORDER_MAX];
-        int hlen = 0, t, repro = 0, diverged = 0;
+        const int seedcap = (GEN_SEED < maxorder) ? GEN_SEED : maxorder;
+        int hlen = 0, t, repro = 0, diverged = 0, seed_attested = -1;
         for (t = 0; t < GEN_SEED; ++t) hist[hlen++] = truth[t];
         for (t = GEN_SEED; t < ntruth && 0 == diverged; ++t) {
           unsigned int ids[1];
           int got_order = 0;
           int n = ngramk_predict_order(model, hist, hlen, maxorder, ids, 1,
             &got_order);
+          /**
+           * Classify the sentence by its SEED context only, before any token is
+           * generated, so the split cannot be influenced by how far generation
+           * then runs: was the whole seed attested as a context in training?
+           */
+          if (seed_attested < 0) {
+            seed_attested = (n > 0 && got_order >= seedcap) ? 1 : 0;
+          }
           if (n <= 0 || got_order < minorder) break;
           ++gen_tokens;
           order_sum += got_order;
@@ -7231,6 +7646,14 @@ static int ngram_gen_eval(libxs_registry_t* model,
         }
         sum_repro += repro;
         ++nsent;
+        if (1 == seed_attested) {
+          sum_repro_att += repro;
+          ++nsent_att;
+        }
+        else {
+          sum_repro_nov += repro;
+          ++nsent_nov;
+        }
       }
     }
     libxs_lexeme_stream_release(&stream);
@@ -7245,6 +7668,12 @@ static int ngram_gen_eval(libxs_registry_t* model,
       (double)sum_repro / (double)nsent,
       (gen_tokens > 0) ? (double)order_sum / (double)gen_tokens : 0.0,
       minorder);
+    fprintf(stderr, "  seed split: attested %.1f%% of sentences"
+      " (mean-reproduced=%.2f) | novel %.1f%% (mean-reproduced=%.2f)\n",
+      100.0 * (double)nsent_att / (double)nsent,
+      (nsent_att > 0) ? (double)sum_repro_att / (double)nsent_att : 0.0,
+      100.0 * (double)nsent_nov / (double)nsent,
+      (nsent_nov > 0) ? (double)sum_repro_nov / (double)nsent_nov : 0.0);
     result = EXIT_SUCCESS;
   }
   return result;
@@ -7257,6 +7686,9 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
 {
   int result = EXIT_FAILURE;
   long npairs = 0, ntop1 = 0, ntopk = 0, index = 0;
+  long ndeep = 0, ndeep_top1 = 0, nshallow = 0, nshallow_top1 = 0;
+  double deep_bits = 0.0, deep_bytes = 0.0;
+  double shallow_bits = 0.0, shallow_bytes = 0.0;
   double sum_bits = 0.0, sum_bytes = 0.0;
   const double inv_log2 = 1.0 / log(2.0);
   const void* key = NULL;
@@ -7274,7 +7706,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
     if (0 != is_test && entry->text_len > 0
       && (0 != native || EXIT_SUCCESS == libxs_lexeme_stream_encode(
       lexicon, &stream, (const unsigned char*)entry->text,
-      (size_t)entry->text_len, rules, nrules, NULL, 0, 0)))
+      (size_t)entry->text_len, rules, nrules, answer_lexnorms, answer_lexnorms_size, 0)))
     {
       int wctx = ngram_wordctx();
       libxs_token_t nat[COMPOSE_MAXTEXT];
@@ -7310,19 +7742,44 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
         if (0 != is_content) {
           if (hlen > 0) {
             unsigned int ids[NGRAM_TOPK];
-            int n = ngramk_predict(model, hist, hlen, maxorder, ids,
-              NGRAM_TOPK);
+            int matched = 0;
+            int n = ngramk_predict_order(model, hist, hlen, maxorder, ids,
+              NGRAM_TOPK, &matched);
             double p = ngramk_prob(model, hist, hlen, maxorder, cur);
-            int rank;
+            double bits = -log(p) * inv_log2;
+            int rank, top1 = 0;
+            int deep = (matched >= maxorder && hlen >= maxorder) ? 1 : 0;
             ++npairs;
-            sum_bits += -log(p) * inv_log2;
+            sum_bits += bits;
             sum_bytes += (curlen > 0) ? (double)curlen : 1.0;
             for (rank = 0; rank < n; ++rank) {
               if (ids[rank] == cur) {
-                if (0 == rank) ++ntop1;
+                if (0 == rank) {
+                  ++ntop1;
+                  top1 = 1;
+                }
                 ++ntopk;
                 break;
               }
+            }
+            /**
+             * Split by whether the FULL-ORDER context was attested in training.
+             * The store is built from non-test entries only, so a match at the
+             * maximum order means this exact context recurs verbatim; those
+             * positions are recall, not generalization. Reported separately so
+             * the depth result cannot be read as generalization it is not.
+             */
+            if (0 != deep) {
+              ++ndeep;
+              ndeep_top1 += top1;
+              deep_bits += bits;
+              deep_bytes += (curlen > 0) ? (double)curlen : 1.0;
+            }
+            else {
+              ++nshallow;
+              nshallow_top1 += top1;
+              shallow_bits += bits;
+              shallow_bytes += (curlen > 0) ? (double)curlen : 1.0;
             }
           }
           if (0 == wctx) ngram_hist_push(hist, &hlen, NGRAM_ORDER_MAX, cur);
@@ -7344,6 +7801,14 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
       100.0 * (double)ntop1 / (double)npairs, NGRAM_TOPK,
       100.0 * (double)ntopk / (double)npairs, npairs,
       (sum_bytes > 0.0) ? sum_bits / sum_bytes : 0.0);
+    fprintf(stderr, "  attested-context split: verbatim %.1f%% of positions"
+      " (top1=%.1f%% bpc=%.3f) | novel %.1f%% (top1=%.1f%% bpc=%.3f)\n",
+      100.0 * (double)ndeep / (double)npairs,
+      (ndeep > 0) ? 100.0 * (double)ndeep_top1 / (double)ndeep : 0.0,
+      (deep_bytes > 0.0) ? deep_bits / deep_bytes : 0.0,
+      100.0 * (double)nshallow / (double)npairs,
+      (nshallow > 0) ? 100.0 * (double)nshallow_top1 / (double)nshallow : 0.0,
+      (shallow_bytes > 0.0) ? shallow_bits / shallow_bytes : 0.0);
     result = EXIT_SUCCESS;
   }
   file = fopen(converse_path_predict_eval, "r");
@@ -7433,7 +7898,7 @@ static libxs_predict_t* token_predict_build(const libxs_registry_t* corpus,
       if (0 != is_train && entry->text_len > 0
         && EXIT_SUCCESS == libxs_lexeme_stream_encode(
         lexicon, &stream, (const unsigned char*)entry->text,
-        (size_t)entry->text_len, rules, nrules, NULL, 0, 0))
+        (size_t)entry->text_len, rules, nrules, answer_lexnorms, answer_lexnorms_size, 0))
       {
         size_t pos;
         unsigned int prev1 = 0, prev2 = 0;
@@ -7521,7 +7986,7 @@ static int token_predict_eval(const libxs_predict_t* model,
     if (0 != is_test && entry->text_len > 0
       && EXIT_SUCCESS == libxs_lexeme_stream_encode(
       lexicon, &stream, (const unsigned char*)entry->text,
-      (size_t)entry->text_len, rules, nrules, NULL, 0, 0))
+      (size_t)entry->text_len, rules, nrules, answer_lexnorms, answer_lexnorms_size, 0))
     {
       size_t pos;
       unsigned int prev1 = 0, prev2 = 0;
@@ -7714,7 +8179,7 @@ static libxs_predict_t* rerank_build(const libxs_registry_t* corpus,
       if (0 != is_train && entry->text_len > 0
         && EXIT_SUCCESS == libxs_lexeme_stream_encode(
         lexicon, &stream, (const unsigned char*)entry->text,
-        (size_t)entry->text_len, rules, nrules, NULL, 0, 0))
+        (size_t)entry->text_len, rules, nrules, answer_lexnorms, answer_lexnorms_size, 0))
       {
         size_t pos;
         unsigned int prev1 = 0, prev2 = 0;
@@ -7837,7 +8302,7 @@ static int rerank_eval(libxs_registry_t* ngram,
     if (0 != is_test && entry->text_len > 0
       && EXIT_SUCCESS == libxs_lexeme_stream_encode(
       lexicon, &stream, (const unsigned char*)entry->text,
-      (size_t)entry->text_len, rules, nrules, NULL, 0, 0))
+      (size_t)entry->text_len, rules, nrules, answer_lexnorms, answer_lexnorms_size, 0))
     {
       size_t pos;
       unsigned int prev1 = 0, prev2 = 0;
@@ -8220,6 +8685,95 @@ static void knnlm_cache_build(const libxs_predict_t* store)
 }
 
 
+/**
+ * Control distributions replacing the retrieved vote, to test whether the
+ * kNN-LM gain comes from the learned metric or merely from interpolating some
+ * smoother distribution into a sparse backoff estimator.
+ * 1 = global unigram prior (no context, no retrieval at all).
+ * 2 = K neighbors drawn by a coprime stride over the datastore (retrieval
+ *     machinery and vote arithmetic intact, metric replaced by an arbitrary
+ *     but reproducible selection).
+ */
+static int knnlm_control(void)
+{
+  const char* env = getenv("CONVERSE_KNNLM_CONTROL");
+  int result = 0;
+  if (NULL != env && '\0' != *env) {
+    int v = atoi(env);
+    if (v >= 0 && v <= 2) result = v;
+  }
+  return result;
+}
+
+
+static int knnlm_vote_control(int mode, unsigned int position,
+  unsigned int vote_ids[], double vote_p[], int maxvote)
+{
+  int result = 0;
+  if (1 == mode) {
+    const unsigned int vocab = converse_ngram.unifreq_size;
+    unsigned int id;
+    double total = 0.0;
+    for (id = 1; id <= vocab; ++id) {
+      const double p = ngram_unigram_prior(id);
+      if (p > 0.0) {
+        int slot = (result < maxvote) ? result : (maxvote - 1);
+        if (result < maxvote) ++result;
+        else if (vote_p[slot] >= p) continue;
+        while (slot > 0 && vote_p[slot - 1] < p) {
+          vote_ids[slot] = vote_ids[slot - 1];
+          vote_p[slot] = vote_p[slot - 1];
+          --slot;
+        }
+        vote_ids[slot] = id;
+        vote_p[slot] = p;
+      }
+    }
+    for (id = 0; id < (unsigned int)result; ++id) total += vote_p[id];
+    if (total > 0.0) {
+      for (id = 0; id < (unsigned int)result; ++id) vote_p[id] /= total;
+    }
+  }
+  else if (2 == mode && knnlm_cache_size > 0) {
+    const size_t stride = libxs_coprime_bias((size_t)knnlm_cache_size, -1.0);
+    unsigned int uniq_id[KNNLM_K];
+    double uniq_w[KNNLM_K];
+    int nuniq = 0, i, j;
+    double wtotal = 0.0;
+    for (i = 0; i < KNNLM_K; ++i) {
+      const size_t at = (stride * (position + (unsigned int)i) + 1)
+        % (size_t)knnlm_cache_size;
+      const unsigned int next = knnlm_cache_next[at];
+      if (0 == next) continue;
+      for (j = 0; j < nuniq; ++j) {
+        if (uniq_id[j] == next) break;
+      }
+      if (j == nuniq) {
+        uniq_id[j] = next;
+        uniq_w[j] = 0.0;
+        ++nuniq;
+      }
+      uniq_w[j] += 1.0;
+      wtotal += 1.0;
+    }
+    while (result < maxvote && result < nuniq) {
+      int best = -1;
+      for (j = 0; j < nuniq; ++j) {
+        if (0.0 <= uniq_w[j] && (best < 0 || uniq_w[j] > uniq_w[best])) {
+          best = j;
+        }
+      }
+      if (best < 0 || uniq_w[best] <= 0.0) break;
+      vote_ids[result] = uniq_id[best];
+      vote_p[result] = uniq_w[best] / wtotal;
+      uniq_w[best] = -1.0;
+      ++result;
+    }
+  }
+  return result;
+}
+
+
 static int knnlm_vote(const libxs_predict_t* store, const unsigned int hist[],
   int hlen, int ctxlen, unsigned int vote_ids[], double vote_p[], int maxvote)
 {
@@ -8235,47 +8789,56 @@ static int knnlm_vote(const libxs_predict_t* store, const unsigned int hist[],
     int nnear = 0, nuniq = 0, i, j;
     double wtotal = 0.0;
     int ann = knnlm_ann_mode();
+    const int control = knnlm_control();
     if (knnlm_cache_model != store) {
       knnlm_cache_build(store);
       if (0 != ann) knnlm_ann_build();
     }
-    if (ctxlen > 2) knnlm_ctx_vector(hist, hlen, ctxlen, knnlm_decay(), in);
-    else token_input_vector(prev2, prev1, 1, in);
-    if (0 != ann) {
-      knnlm_ann_scan(in, near_next, near_dist, &nnear);
+    if (0 != control) {
+      result = knnlm_vote_control(control, prev1 + 31u * prev2, vote_ids,
+        vote_p, maxvote);
+      nnear = 0;
+      nuniq = 0;
     }
     else {
-      knnlm_scan(in, knnlm_cache_in, knnlm_cache_next, knnlm_cache_size,
+      if (ctxlen > 2) knnlm_ctx_vector(hist, hlen, ctxlen, knnlm_decay(), in);
+      else token_input_vector(prev2, prev1, 1, in);
+      if (0 != ann) {
+        knnlm_ann_scan(in, near_next, near_dist, &nnear);
+      }
+      else {
+        knnlm_scan(in, knnlm_cache_in, knnlm_cache_next, knnlm_cache_size,
+          near_next, near_dist, &nnear);
+      }
+      knnlm_scan(in, knnlm_dyn_in, knnlm_dyn_next, knnlm_dyn_size,
         near_next, near_dist, &nnear);
-    }
-    knnlm_scan(in, knnlm_dyn_in, knnlm_dyn_next, knnlm_dyn_size,
-      near_next, near_dist, &nnear);
-    for (i = 0; i < nnear; ++i) {
-      unsigned int next = near_next[i];
-      double w = 1.0 / (0.05 + near_dist[i]);
-      for (j = 0; j < nuniq; ++j) {
-        if (uniq_id[j] == next) break;
-      }
-      if (j == nuniq) {
-        uniq_id[j] = next;
-        uniq_w[j] = 0.0;
-        ++nuniq;
-      }
-      uniq_w[j] += w;
-      wtotal += w;
-    }
-    while (result < maxvote && result < nuniq) {
-      int best = -1;
-      for (j = 0; j < nuniq; ++j) {
-        if (0.0 <= uniq_w[j] && (best < 0 || uniq_w[j] > uniq_w[best])) {
-          best = j;
+      for (i = 0; i < nnear; ++i) {
+        unsigned int next = near_next[i];
+        double w = 1.0 / (0.05 + near_dist[i]);
+        for (j = 0; j < nuniq; ++j) {
+          if (uniq_id[j] == next) break;
         }
+        if (j == nuniq) {
+          uniq_id[j] = next;
+          uniq_w[j] = 0.0;
+          ++nuniq;
+        }
+        uniq_w[j] += w;
+        wtotal += w;
       }
-      if (best < 0 || uniq_w[best] <= 0.0) break;
-      vote_ids[result] = uniq_id[best];
-      vote_p[result] = uniq_w[best] / wtotal;
-      uniq_w[best] = -1.0;
-      ++result;
+      while (result < maxvote && result < nuniq) {
+        int best = -1;
+        for (j = 0; j < nuniq; ++j) {
+          if (0.0 <= uniq_w[j] && (best < 0 || uniq_w[j] > uniq_w[best])) {
+            best = j;
+          }
+        }
+        if (best < 0 || uniq_w[best] <= 0.0) break;
+        vote_ids[result] = uniq_id[best];
+        vote_p[result] = uniq_w[best] / wtotal;
+        uniq_w[best] = -1.0;
+        ++result;
+      }
     }
   }
   return result;
@@ -8356,6 +8919,11 @@ static int knnlm_eval(libxs_registry_t* ngram, const libxs_predict_t* store,
 {
   int result = EXIT_FAILURE;
   long npairs = 0, ntop1 = 0, ntopk = 0, seen = 0, index = 0;
+  long nnullq = 0, nnulltgt = 0;
+  double ord_inner = 0.0, ord_cross = 0.0;
+  long nord_inner = 0, nord_cross = 0;
+  const char* ord_env = getenv("CONVERSE_KNNLM_ORDERPROBE");
+  int order_probe = (NULL != ord_env && '0' != ord_env[0]) ? 1 : 0;
   int stride = predict_eval_stride();
   int ctxlen = knnlm_ctxlen();
   const char* dyn_env = getenv("CONVERSE_KNNLM_DYN");
@@ -8376,7 +8944,7 @@ static int knnlm_eval(libxs_registry_t* ngram, const libxs_predict_t* store,
     if (0 != is_test && entry->text_len > 0
       && EXIT_SUCCESS == libxs_lexeme_stream_encode(
       lexicon, &stream, (const unsigned char*)entry->text,
-      (size_t)entry->text_len, rules, nrules, NULL, 0, 0))
+      (size_t)entry->text_len, rules, nrules, answer_lexnorms, answer_lexnorms_size, 0))
     {
       size_t pos;
       unsigned int hist[TOKEN_CTX_MAX];
@@ -8393,6 +8961,12 @@ static int knnlm_eval(libxs_registry_t* ngram, const libxs_predict_t* store,
                 NGRAM_TOPK);
               int rank;
               ++npairs;
+              if (0 != token_emb_isnull(hist[hlen - 1])) ++nnullq;
+              if (0 != token_emb_isnull(lex->id)) ++nnulltgt;
+              if (0 != order_probe) {
+                knnlm_order_probe(hist, hlen, ctxlen, knnlm_decay(),
+                  &ord_inner, &ord_cross, &nord_inner, &nord_cross);
+              }
               for (rank = 0; rank < n; ++rank) {
                 if (ids[rank] == lex->id) {
                   if (0 == rank) ++ntop1;
@@ -8420,6 +8994,16 @@ static int knnlm_eval(libxs_registry_t* ngram, const libxs_predict_t* store,
       100.0 * (double)ntop1 / (double)npairs, NGRAM_TOPK,
       100.0 * (double)ntopk / (double)npairs, npairs,
       stride);
+    fprintf(stderr, "embedding coverage: null query vectors %.2f%%,"
+      " null targets %.2f%% (n=%ld)\n",
+      100.0 * (double)nnullq / (double)npairs,
+      100.0 * (double)nnulltgt / (double)npairs, npairs);
+    if (0 != order_probe && nord_cross > 0) {
+      fprintf(stderr, "order sensitivity (cosine of swapped context, 1.0 ="
+        " order discarded): inner=%.4f (n=%ld) cross=%.4f (n=%ld)\n",
+        (nord_inner > 0) ? (ord_inner / (double)nord_inner) : 1.0, nord_inner,
+        ord_cross / (double)nord_cross, nord_cross);
+    }
     result = EXIT_SUCCESS;
   }
   return result;

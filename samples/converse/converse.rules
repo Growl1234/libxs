@@ -1,0 +1,48 @@
+# Language rules for English: function words, role nouns, negators and
+# per-corpus vocabulary belongs in <corpus>.relations, which extends this.
+# Grammar: alias|query-relation|evidence-verb, person|term, skip|term,
+#          negate|term, norm|from|to
+person|grandmother
+person|grandfather
+person|mother
+person|father
+person|brother
+person|sister
+person|child
+person|girl
+person|boy
+person|woman
+person|man
+skip|and
+skip|the
+skip|this
+skip|a
+skip|an
+skip|s
+skip|he
+skip|she
+skip|her
+skip|him
+skip|me
+skip|them
+skip|to
+skip|of
+skip|in
+skip|out
+skip|called
+skip|might
+skip|could
+skip|would
+skip|should
+skip|will
+skip|have
+skip|had
+skip|been
+skip|on
+skip|if
+negate|not
+negate|never
+negate|neither
+negate|nor
+negate|without
+negate|cannot
