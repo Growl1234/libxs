@@ -228,6 +228,14 @@ static answer_relation_rule_t* answer_relation_rules = NULL;
 static size_t answer_relation_rules_size = 0;
 static libxs_lexnorm_t* answer_lexnorms = NULL;
 static int answer_lexnorms_size = 0;
+/**
+ * Section of the most recent fact reply, so a citation can be printed without
+ * threading an out-parameter through five resolver signatures. Cleared by
+ * answer_fact_reply before dispatch and set by whichever resolver answered;
+ * empty means the fact carried no section and no citation is printed.
+ */
+static char answer_fact_section[ENTRY_SECTION_MAX];
+static int answer_fact_section_len = 0;
 static libxs_lexicon_t* answer_negate_lexicon = NULL;
 static const libxs_lexrule_t* answer_negate_rules = NULL;
 static int answer_negate_nrules = 0;
@@ -263,6 +271,8 @@ static void answer_bridge_report(FILE* stream);
 static void answer_relation_rules_free(void);
 static void answer_lexnorms_build(void);
 static int answer_query_is_negated(const char* query_text, size_t query_len);
+static void answer_fact_section_set(const char* section, int section_len);
+static void answer_fact_section_set(const char* section, int section_len);
 static size_t answer_relation_rules_load_file(const char* path);
 static void answer_relation_rules_report(FILE* stream);
 static int answer_relation_rule_has_term(int kind, const char* text,
@@ -593,6 +603,8 @@ int main(int argc, char* argv[])
       "  CONVERSE_KNNLM_WEIGHTS=L per-position context weights (overrides decay).\n"
       "  CONVERSE_KNNLM_ORDERPROBE=1 report context order sensitivity.\n"
       "  CONVERSE_KNNLM_CONTROL=N control vote: 1=unigram, 2=arbitrary nbrs.\n"
+      "  CONVERSE_KNNLM_TEMP=F    softmax temperature (0=inverse distance).\n"
+      "  CONVERSE_KNNLM_HEADS=N   retrieval heads over embedding subspaces.\n"
       "  CONVERSE_SKIP=1          add skip-gram (w _ w) generalization tier.\n"
       "  CONVERSE_SKIP_MU=F       skip-gram interpolation weight (default 0.3).\n"
       "  CONVERSE_EMB_PROBE=w1,w2 print nearest embedding neighbors.\n"
@@ -2085,6 +2097,12 @@ static int corpus_title_prefix(const unsigned char* text, int len,
   int title_begin = 0, title_end;
   if (NULL == text || NULL == title || title_size <= 0 || len <= 0) return 0;
   title[0] = '\0';
+  /**
+   * A heading starts with a letter. Requiring that rejects all-caps text that
+   * merely opens with punctuation -- a quoted letter signature in dialogue, for
+   * instance -- which otherwise looks exactly like a title to this prober.
+   */
+  if (0 == isalpha(text[0])) return 0;
   for (pos = 0; pos < len; ++pos) {
     unsigned char ch = text[pos];
     if (0 != islower(ch) || '.' == ch || ',' == ch || ';' == ch
@@ -3332,6 +3350,7 @@ static int answer_identity_fact_reply(const char* query_text,
     }
   }
   if (NULL != best) {
+    answer_fact_section_set(best->section, best->section_len);
     result = answer_reply_role(output, output_size, best->name,
       best->name_len, best->role);
   }
@@ -3532,6 +3551,7 @@ static int answer_describe_fact_reply(const char* query_text,
     }
   }
   if (NULL != best && (size_t)best->text_len + 2 <= output_size) {
+    answer_fact_section_set(best->section, best->section_len);
     memcpy(output, best->text, (size_t)best->text_len);
     output[0] = (char)toupper((unsigned char)output[0]);
     output[best->text_len] = '.';
@@ -3758,6 +3778,7 @@ static int answer_docdef_fact_reply(const char* query_text,
     }
   }
   if (NULL != best && (size_t)best->text_len + 1 <= output_size) {
+    answer_fact_section_set(best->title, best->title_len);
     memcpy(output, best->text, (size_t)best->text_len);
     output[best->text_len] = '\0';
     result = EXIT_SUCCESS;
@@ -5446,6 +5467,7 @@ static int answer_fact_reply(const libxs_registry_t* corpus,
   const char* query_text, size_t query_len, char* output, size_t output_size)
 {
   int result = EXIT_FAILURE;
+  answer_fact_section_set(NULL, 0);
   if (0 == answer_query_is_negated(query_text, query_len)
     && (EXIT_SUCCESS == answer_relation_fact_reply(query_text, query_len,
       output, output_size)
@@ -5461,6 +5483,34 @@ static int answer_fact_reply(const libxs_registry_t* corpus,
     result = EXIT_SUCCESS;
   }
   return result;
+}
+
+
+/**
+ * Print the section an answer came from, when the corpus supplies one. Sections
+ * are the story titles or Markdown headings recorded per entry at ingest, so a
+ * citation is only emitted when the corpus actually carries that structure --
+ * never invented, and silently omitted for flat text.
+ */
+static void answer_print_citation(const char* section, int section_len)
+{
+  if (NULL != section && section_len > 0 && '\0' != section[0]) {
+    printf("citation: %.*s\n", section_len, section);
+  }
+}
+
+
+static void answer_fact_section_set(const char* section, int section_len)
+{
+  answer_fact_section_len = 0;
+  answer_fact_section[0] = '\0';
+  if (NULL != section && section_len > 0
+    && section_len < (int)sizeof(answer_fact_section))
+  {
+    memcpy(answer_fact_section, section, (size_t)section_len);
+    answer_fact_section[section_len] = '\0';
+    answer_fact_section_len = section_len;
+  }
 }
 
 
@@ -5481,6 +5531,7 @@ static int answer_query(const libxs_registry_t* corpus,
     reply, sizeof(reply)))
   {
     printf("%s\n", reply);
+    answer_print_citation(answer_fact_section, answer_fact_section_len);
     if (NULL != out_reply && out_size > 0) {
       size_t rn = strlen(reply);
       if (rn >= out_size) rn = out_size - 1;
@@ -5496,6 +5547,7 @@ static int answer_query(const libxs_registry_t* corpus,
       lexicon, rules, nrules, reply, sizeof(reply)))
   {
     printf("%s\n", reply);
+    answer_print_citation(entries[0]->section, entries[0]->section_len);
     if (NULL != out_reply && out_size > 0) {
       size_t rn = strlen(reply);
       if (rn >= out_size) rn = out_size - 1;
@@ -5513,6 +5565,8 @@ static int answer_query(const libxs_registry_t* corpus,
     {
       if (slot > 0) printf("\n");
       printf("%s\n", reply);
+      answer_print_citation(entries[slot]->section,
+        entries[slot]->section_len);
       continue;
     }
     while (text_len > 0 && 0 != isspace((unsigned char)*text)) {
@@ -8626,9 +8680,29 @@ static void knnlm_dyn_insert(const unsigned int hist[], int hlen, int ctxlen,
 }
 
 
-static void knnlm_scan(const double* in, const double* cin,
-  const unsigned int* cnext, int count, unsigned int near_next[],
-  double near_dist[], int* nnear)
+/**
+ * Number of retrieval heads (CONVERSE_KNNLM_HEADS, default 1 = bit-exact). With
+ * h heads the embedding is split into h contiguous subspaces of TOKEN_EMB_DIM/h
+ * dimensions; each head retrieves its own top-K over its own subspace distance,
+ * and the votes are summed. This is multi-head attention's decomposition minus
+ * the learned projections: the subspaces are fixed slices of the factorization
+ * rather than anything W_Q/W_K could rotate into place.
+ */
+static int knnlm_heads(void)
+{
+  int result = 1;
+  const char* env = getenv("CONVERSE_KNNLM_HEADS");
+  if (NULL != env && '\0' != *env) {
+    int v = atoi(env);
+    if (v >= 1 && v <= TOKEN_EMB_DIM && 0 == (TOKEN_EMB_DIM % v)) result = v;
+  }
+  return result;
+}
+
+
+static void knnlm_scan_head(const double* in, const double* cin,
+  const unsigned int* cnext, int count, int dim_begin, int dim_end,
+  unsigned int near_next[], double near_dist[], int* nnear)
 {
   int i, dim;
   for (i = 0; i < count; ++i) {
@@ -8636,7 +8710,7 @@ static void knnlm_scan(const double* in, const double* cin,
     double dist = 0.0;
     int slot;
     if (0 == cnext[i]) continue;
-    for (dim = 0; dim < TOKEN_EMB_DIM; ++dim) {
+    for (dim = dim_begin; dim < dim_end; ++dim) {
       double d2 = in[dim] - entry[dim];
       double d1 = in[TOKEN_EMB_DIM + dim] - entry[TOKEN_EMB_DIM + dim];
       dist += d2 * d2 + 4.0 * d1 * d1;
@@ -8653,6 +8727,156 @@ static void knnlm_scan(const double* in, const double* cin,
       near_next[slot] = cnext[i];
       near_dist[slot] = dist;
       if (*nnear < KNNLM_K) ++*nnear;
+    }
+  }
+}
+
+
+/**
+ * Diagonal learned projection for retrieval (CONVERSE_KNNLM_PROJ=1, default off
+ * and bit-exact). Retrieval wants contexts that share a next token close and
+ * contexts with different next tokens far, which is Fisher's criterion: weight
+ * each dimension by sqrt(between-class / within-class scatter) over next-token
+ * classes. Regression onto token ids would be meaningless -- ids carry no metric
+ * -- so the objective is discriminative, not least-squares. Fitted from the
+ * TRAINING entries only (the datastore already excludes held-out text) and
+ * applied to BOTH the query and the stored keys, since a distance is only
+ * meaningful when both sides live in one space.
+ *
+ * Diagonal first by design: it tests whether reweighting dimensions by
+ * discriminative power helps at all, before paying for the symmetric generalized
+ * eigenproblem a full matrix needs (no such solver exists in libxs_math). A
+ * rotation can only add over a diagonal if the informative directions are
+ * misaligned with the axes, and the PPMI factorization already delivers
+ * variance-ordered axes.
+ */
+static double token_proj[2 * TOKEN_EMB_DIM];
+static int token_proj_ready = 0;
+
+
+static int token_proj_mode(void)
+{
+  const char* env = getenv("CONVERSE_KNNLM_PROJ");
+  return (NULL != env && '0' != *env) ? 1 : 0;
+}
+
+
+static void token_proj_apply(double* vec)
+{
+  if (0 != token_proj_ready) {
+    int d;
+    for (d = 0; d < 2 * TOKEN_EMB_DIM; ++d) vec[d] *= token_proj[d];
+  }
+}
+
+
+static void token_proj_build(const libxs_predict_t* store)
+{
+  enum { PROJ_CLASS_MAX = 256, PROJ_MINCOUNT = 20 };
+  const int dims = 2 * TOKEN_EMB_DIM;
+  libxs_predict_query_t stats;
+  token_proj_ready = 0;
+  if (0 == token_proj_mode() || NULL == store) return;
+  libxs_predict_query(store, &stats);
+  if (stats.nentries < PROJ_CLASS_MAX) return;
+  { /* two passes: class means, then scatter about them */
+    static double mean[PROJ_CLASS_MAX][2 * TOKEN_EMB_DIM];
+    static double grand[2 * TOKEN_EMB_DIM];
+    static double between[2 * TOKEN_EMB_DIM], within[2 * TOKEN_EMB_DIM];
+    unsigned int class_id[PROJ_CLASS_MAX];
+    long count[PROJ_CLASS_MAX];
+    long freq_total = 0;
+    int nclasses = 0, ci, d, i;
+    /**
+     * Class granularity: a next token becomes its own class only once it recurs
+     * often enough to estimate a mean; everything rarer is pooled into class 0.
+     * With thousands of distinct next tokens over tens of thousands of pairs the
+     * within-class scatter would otherwise be estimated from single members and
+     * be degenerate.
+     */
+    memset(mean, 0, sizeof(mean));
+    memset(grand, 0, sizeof(grand));
+    memset(between, 0, sizeof(between));
+    memset(within, 0, sizeof(within));
+    memset(count, 0, sizeof(count));
+    class_id[0] = 0; /* pooled rare-token class */
+    nclasses = 1;
+    for (i = 0; i < stats.nentries; ++i) {
+      double in[2 * TOKEN_EMB_DIM], out[1] = { 0 };
+      unsigned int next;
+      long seen;
+      libxs_predict_get(store, i, in, out);
+      next = (out[0] > 0.0) ? (unsigned int)(out[0] + 0.5) : 0;
+      if (0 == next) continue;
+      seen = (long)(ngram_unigram_prior(next) * (double)stats.nentries);
+      ci = 0;
+      if (seen >= PROJ_MINCOUNT) {
+        int found = 0;
+        for (ci = 1; ci < nclasses; ++ci) {
+          if (class_id[ci] == next) { found = 1; break; }
+        }
+        if (0 == found) {
+          if (nclasses < PROJ_CLASS_MAX) {
+            class_id[nclasses] = next;
+            ci = nclasses++;
+          }
+          else ci = 0;
+        }
+      }
+      ++count[ci];
+      ++freq_total;
+      for (d = 0; d < dims; ++d) {
+        mean[ci][d] += in[d];
+        grand[d] += in[d];
+      }
+    }
+    if (freq_total < PROJ_CLASS_MAX || nclasses < 2) return;
+    for (ci = 0; ci < nclasses; ++ci) {
+      if (count[ci] > 0) {
+        for (d = 0; d < dims; ++d) mean[ci][d] /= (double)count[ci];
+      }
+    }
+    for (d = 0; d < dims; ++d) grand[d] /= (double)freq_total;
+    for (ci = 0; ci < nclasses; ++ci) {
+      for (d = 0; d < dims; ++d) {
+        const double diff = mean[ci][d] - grand[d];
+        between[d] += (double)count[ci] * diff * diff;
+      }
+    }
+    for (i = 0; i < stats.nentries; ++i) {
+      double in[2 * TOKEN_EMB_DIM], out[1] = { 0 };
+      unsigned int next;
+      long seen;
+      libxs_predict_get(store, i, in, out);
+      next = (out[0] > 0.0) ? (unsigned int)(out[0] + 0.5) : 0;
+      if (0 == next) continue;
+      seen = (long)(ngram_unigram_prior(next) * (double)stats.nentries);
+      ci = 0;
+      if (seen >= PROJ_MINCOUNT) {
+        for (ci = 1; ci < nclasses; ++ci) {
+          if (class_id[ci] == next) break;
+        }
+        if (ci >= nclasses) ci = 0;
+      }
+      for (d = 0; d < dims; ++d) {
+        const double diff = in[d] - mean[ci][d];
+        within[d] += diff * diff;
+      }
+    }
+    { double wmax = 0.0;
+      for (d = 0; d < dims; ++d) {
+        const double ratio = (within[d] > 0.0) ? (between[d] / within[d]) : 0.0;
+        token_proj[d] = sqrt(ratio);
+        if (token_proj[d] > wmax) wmax = token_proj[d];
+      }
+      if (wmax <= 0.0) return;
+      for (d = 0; d < dims; ++d) token_proj[d] /= wmax;
+      token_proj_ready = 1;
+      fprintf(stderr, "projection: %d classes, weights", nclasses);
+      for (d = 0; d < dims; d += TOKEN_EMB_DIM / 4) {
+        fprintf(stderr, " %.2f", token_proj[d]);
+      }
+      fprintf(stderr, " (every %d dims)\n", TOKEN_EMB_DIM / 4);
     }
   }
 }
@@ -8679,6 +8903,14 @@ static void knnlm_cache_build(const libxs_predict_t* store)
       }
       knnlm_cache_size = stats.nentries;
       knnlm_cache_model = store;
+      /* Fit the projection from the datastore, then map the keys into it; the
+         query is mapped in knnlm_vote so both sides share one space. */
+      token_proj_build(store);
+      if (0 != token_proj_ready) {
+        for (i = 0; i < stats.nentries; ++i) {
+          token_proj_apply(knnlm_cache_in + (size_t)i * 2 * TOKEN_EMB_DIM);
+        }
+      }
     }
     else knnlm_cache_free();
   }
@@ -8694,6 +8926,26 @@ static void knnlm_cache_build(const libxs_predict_t* store)
  *     machinery and vote arithmetic intact, metric replaced by an arbitrary
  *     but reproducible selection).
  */
+/**
+ * Softmax temperature for the retrieval vote (CONVERSE_KNNLM_TEMP). Zero keeps
+ * the historical inverse-distance kernel 1/(eps+d), bit-exact. A positive value
+ * weights neighbor i by exp(-d_i/T) after subtracting the minimum distance for
+ * numerical stability, which is attention's weighting rather than an ad-hoc
+ * one: the temperature then controls how peaked the vote is, exactly as it
+ * does in a transformer's attention.
+ */
+static double knnlm_temp(void)
+{
+  double result = 0.0;
+  const char* env = getenv("CONVERSE_KNNLM_TEMP");
+  if (NULL != env && '\0' != *env) {
+    double v = atof(env);
+    if (v > 0.0) result = v;
+  }
+  return result;
+}
+
+
 static int knnlm_control(void)
 {
   const char* env = getenv("CONVERSE_KNNLM_CONTROL");
@@ -8787,7 +9039,8 @@ static int knnlm_vote(const libxs_predict_t* store, const unsigned int hist[],
     unsigned int uniq_id[KNNLM_K];
     double uniq_w[KNNLM_K];
     int nnear = 0, nuniq = 0, i, j;
-    double wtotal = 0.0;
+    double wtotal = 0.0, dmin = 0.0;
+    const double temp = knnlm_temp();
     int ann = knnlm_ann_mode();
     const int control = knnlm_control();
     if (knnlm_cache_model != store) {
@@ -8801,30 +9054,55 @@ static int knnlm_vote(const libxs_predict_t* store, const unsigned int hist[],
       nuniq = 0;
     }
     else {
+      const int heads = knnlm_heads();
+      const int span = TOKEN_EMB_DIM / heads;
+      int head;
       if (ctxlen > 2) knnlm_ctx_vector(hist, hlen, ctxlen, knnlm_decay(), in);
       else token_input_vector(prev2, prev1, 1, in);
-      if (0 != ann) {
-        knnlm_ann_scan(in, near_next, near_dist, &nnear);
-      }
-      else {
-        knnlm_scan(in, knnlm_cache_in, knnlm_cache_next, knnlm_cache_size,
-          near_next, near_dist, &nnear);
-      }
-      knnlm_scan(in, knnlm_dyn_in, knnlm_dyn_next, knnlm_dyn_size,
-        near_next, near_dist, &nnear);
-      for (i = 0; i < nnear; ++i) {
-        unsigned int next = near_next[i];
-        double w = 1.0 / (0.05 + near_dist[i]);
-        for (j = 0; j < nuniq; ++j) {
-          if (uniq_id[j] == next) break;
+      token_proj_apply(in);
+      /**
+       * One retrieval per head over its own subspace, votes accumulated into
+       * the shared distribution. With heads==1 the loop performs exactly the
+       * single full-width scan it replaced (and keeps using the ANN index,
+       * which is built over the full vector).
+       */
+      for (head = 0; head < heads; ++head) {
+        nnear = 0;
+        if (1 == heads && 0 != ann) {
+          knnlm_ann_scan(in, near_next, near_dist, &nnear);
         }
-        if (j == nuniq) {
-          uniq_id[j] = next;
-          uniq_w[j] = 0.0;
-          ++nuniq;
+        else {
+          knnlm_scan_head(in, knnlm_cache_in, knnlm_cache_next,
+            knnlm_cache_size, head * span, (head + 1) * span,
+            near_next, near_dist, &nnear);
         }
-        uniq_w[j] += w;
-        wtotal += w;
+        knnlm_scan_head(in, knnlm_dyn_in, knnlm_dyn_next, knnlm_dyn_size,
+          head * span, (head + 1) * span, near_next, near_dist, &nnear);
+        /* Softmax needs the minimum distance first (stability); the historical
+           inverse-distance kernel needs no such pass. */
+        if (temp > 0.0) {
+          for (i = 0; i < nnear; ++i) {
+            if (i == 0 || near_dist[i] < dmin) dmin = near_dist[i];
+          }
+        }
+        for (i = 0; i < nnear; ++i) {
+          unsigned int next = near_next[i];
+          double w = (temp > 0.0)
+            ? exp(-(near_dist[i] - dmin) / temp)
+            : (1.0 / (0.05 + near_dist[i]));
+          for (j = 0; j < nuniq; ++j) {
+            if (uniq_id[j] == next) break;
+          }
+          if (j == nuniq && nuniq < KNNLM_K) {
+            uniq_id[j] = next;
+            uniq_w[j] = 0.0;
+            ++nuniq;
+          }
+          if (j < nuniq) {
+            uniq_w[j] += w;
+            wtotal += w;
+          }
+        }
       }
       while (result < maxvote && result < nuniq) {
         int best = -1;
