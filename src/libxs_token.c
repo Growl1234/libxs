@@ -126,12 +126,20 @@ int internal_libxs_lexeme_normalize_word(char* out, int out_size,
 }
 
 
+/**
+ * Apply a whole-token normalization. The replacement may expand to several
+ * tokens by separating them with LIBXS_LEXNORM_SEPARATOR; the text is rewritten
+ * with the separator retained and split_out receives the offset of the first
+ * separator (or the resulting length when there is none), so the caller can
+ * emit one token per piece. Returns the total rewritten length.
+ */
 LIBXS_API_INLINE
 int internal_libxs_lexeme_apply_norm(char* text, int text_size, int length,
-  const libxs_lexnorm_t* norms, int nnorms)
+  const libxs_lexnorm_t* norms, int nnorms, int* split_out)
 {
   int result = length;
   int norm_pos;
+  if (NULL != split_out) *split_out = length;
   if (NULL != text && text_size > 0 && NULL != norms && nnorms > 0) {
     for (norm_pos = 0; norm_pos < nnorms; ++norm_pos) {
       const char* from = norms[norm_pos].from;
@@ -144,6 +152,10 @@ int internal_libxs_lexeme_apply_norm(char* text, int text_size, int length,
         memcpy(text, to, (size_t)to_len);
         text[to_len] = '\0';
         result = to_len;
+        if (NULL != split_out) {
+          const char* sep = strchr(text, LIBXS_LEXNORM_SEPARATOR);
+          *split_out = (NULL != sep) ? (int)(sep - text) : result;
+        }
         break;
       }
     }
@@ -531,7 +543,7 @@ LIBXS_API int libxs_token_stream_encode(libxs_lexicon_t* lexicon,
     size_t token_start, token_len;
     unsigned int flags = 0;
     char normalized[LIBXS_LEXEME_MAXBYTES + 1];
-    int normalized_len = 0;
+    int normalized_len = 0, normalized_split = 0;
     while (text_pos < size && 0 != isspace(text[text_pos])) {
       have_break = 1;
       ++text_pos;
@@ -548,7 +560,8 @@ LIBXS_API int libxs_token_stream_encode(libxs_lexicon_t* lexicon,
       normalized_len = internal_libxs_lexeme_normalize_word(normalized,
         (int)sizeof(normalized), text + token_start, token_len);
       normalized_len = internal_libxs_lexeme_apply_norm(normalized,
-        (int)sizeof(normalized), normalized_len, norms, nnorms);
+        (int)sizeof(normalized), normalized_len, norms, nnorms,
+        &normalized_split);
       flags = LIBXS_LEXEME_WORD;
     }
     else if (0 != isdigit(text[text_pos])) {
@@ -582,23 +595,44 @@ LIBXS_API int libxs_token_stream_encode(libxs_lexicon_t* lexicon,
     }
     if (0 != have_break) flags |= LIBXS_LEXEME_BREAK;
     have_break = 0;
-    if (normalized_len > 0) {
-      libxs_lexrule_ctx_t ctx;
-      libxs_lexeme_t lexeme;
-      memset(&ctx, 0, sizeof(ctx));
-      ctx.text = text + token_start;
-      ctx.length = (int)token_len;
-      ctx.flags = flags;
-      ctx.hash = (0 != (flags & LIBXS_LEXEME_WORD))
-        ? libxs_textrule_wordhash((const unsigned char*)normalized,
-          normalized_len) : 0;
-      flags = libxs_lexrule_eval(&ctx, rules, nrules);
-      memset(&lexeme, 0, sizeof(lexeme));
-      lexeme.id = libxs_lexicon_id(lexicon, normalized,
-        normalized_len, flags, create);
-      lexeme.length = (unsigned short)token_len;
-      lexeme.flags = (unsigned short)flags;
-      result = libxs_lexeme_stream_push(stream, &lexeme);
+    /**
+     * A normalization may expand into several tokens. Emit one per piece: the
+     * first keeps the source byte length and the break flag, continuations get
+     * length zero, so the stream's byte total and word grouping are unchanged.
+     */
+    { int piece_begin = 0;
+      const unsigned int base_flags = flags;
+      while (EXIT_SUCCESS == result && piece_begin < normalized_len) {
+        libxs_lexrule_ctx_t ctx;
+        libxs_lexeme_t lexeme;
+        int piece_len = normalized_split - piece_begin;
+        if (piece_len <= 0 || piece_begin + piece_len > normalized_len) {
+          piece_len = normalized_len - piece_begin;
+        }
+        flags = base_flags;
+        if (0 != piece_begin) flags &= ~(unsigned int)LIBXS_LEXEME_BREAK;
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.text = text + token_start;
+        ctx.length = (int)token_len;
+        ctx.flags = flags;
+        ctx.hash = (0 != (flags & LIBXS_LEXEME_WORD))
+          ? libxs_textrule_wordhash(
+            (const unsigned char*)(normalized + piece_begin), piece_len) : 0;
+        flags = libxs_lexrule_eval(&ctx, rules, nrules);
+        memset(&lexeme, 0, sizeof(lexeme));
+        lexeme.id = libxs_lexicon_id(lexicon, normalized + piece_begin,
+          piece_len, flags, create);
+        lexeme.length = (unsigned short)((0 == piece_begin) ? token_len : 0);
+        lexeme.flags = (unsigned short)flags;
+        result = libxs_lexeme_stream_push(stream, &lexeme);
+        piece_begin += piece_len;
+        while (piece_begin < normalized_len
+          && LIBXS_LEXNORM_SEPARATOR == normalized[piece_begin])
+        {
+          ++piece_begin;
+        }
+        normalized_split = normalized_len;
+      }
     }
   }
   return result;

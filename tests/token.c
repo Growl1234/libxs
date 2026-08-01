@@ -196,6 +196,59 @@ int main(int argc, char* argv[])
       result = EXIT_FAILURE;
     }
   }
+  if (EXIT_SUCCESS == result) { /* multi-token normalization */
+    libxs_lexnorm_t norms[1];
+    libxs_lexeme_stream_t norm_stream;
+    const char* const norm_text = "who isn't fat";
+    memset(norms, 0, sizeof(norms));
+    strcpy(norms[0].from, "isn");
+    strcpy(norms[0].to, "is not");
+    libxs_lexeme_stream_init(&norm_stream);
+    result = libxs_lexeme_stream_encode(lexicon, &norm_stream,
+      (const unsigned char*)norm_text, strlen(norm_text),
+      lexrules, lexrule_count, norms, 1, 1);
+    if (EXIT_SUCCESS == result) {
+      size_t k, nbytes = 0, nlen0 = 0;
+      int saw_is = 0, saw_not = 0;
+      for (k = 0; k < norm_stream.size; ++k) {
+        int len = 0;
+        const char* text = libxs_lexicon_text(lexicon,
+          norm_stream.data[k].id, &len, NULL);
+        nbytes += norm_stream.data[k].length;
+        if (0 == norm_stream.data[k].length) ++nlen0;
+        if (NULL != text && 2 == len && 0 == memcmp(text, "is", 2)) saw_is = 1;
+        if (NULL != text && 3 == len && 0 == memcmp(text, "not", 3)) {
+          saw_not = 1;
+          /* the continuation must not start a new word */
+          if (0 != (norm_stream.data[k].flags & LIBXS_TOKEN_BREAK)
+            || 0 != norm_stream.data[k].length)
+          {
+            result = EXIT_FAILURE;
+          }
+        }
+      }
+      /* one source token expanded to two ids, byte total still the source */
+      if (0 == saw_is || 0 == saw_not || 1 != nlen0
+        || nbytes != strlen(norm_text) - 2 /* two spaces are not tokens */)
+      {
+        result = EXIT_FAILURE;
+      }
+      if (EXIT_SUCCESS == result) { /* the pair groups as ONE word */
+        size_t pos = 0, n, ngroups = 0;
+        while (0 != (n = libxs_token_word_next(norm_stream.data,
+          norm_stream.size, pos)))
+        {
+          ++ngroups;
+          pos += n;
+        }
+        if (ngroups != 3) result = EXIT_FAILURE; /* who | isn't | fat */
+      }
+      if (EXIT_SUCCESS != result) {
+        FPRINTF(stderr, "ERROR line #%i: multi-token norm\n", __LINE__);
+      }
+    }
+    libxs_lexeme_stream_release(&norm_stream);
+  }
   if (EXIT_SUCCESS == result) {
     result = libxs_lexicon_save(lexicon, NULL, &lexicon_buffer_size);
     if (EXIT_SUCCESS == result && lexicon_buffer_size > 0) {

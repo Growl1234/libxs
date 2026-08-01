@@ -155,6 +155,15 @@ LIBXS_EXTERN_C typedef struct libxs_lexrule_ctx_t {
   unsigned int hash;
 } libxs_lexrule_ctx_t;
 
+/**
+ * Separator for a multi-token normalization target: `to` may expand one source
+ * token into several tokens, e.g. "is not". Only the first emitted token
+ * carries the source byte length (and the word-break flag); the continuations
+ * carry length zero, so byte accounting over a stream is unchanged by
+ * normalization and libxs_token_word_next keeps grouping them as one word.
+ */
+#define LIBXS_LEXNORM_SEPARATOR ' '
+
 /** Data-only lexical normalization: map normalized `from` text to `to`. */
 LIBXS_EXTERN_C typedef struct libxs_lexnorm_t {
   char from[LIBXS_LEXEME_MAXBYTES + 1];
