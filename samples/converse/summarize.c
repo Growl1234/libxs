@@ -30,12 +30,12 @@ static int word_in_sentence(const unsigned char* word, int wlen,
   const unsigned char* sent, int slen);
 static int is_sentence_end_text(const unsigned char* text, size_t size,
   size_t pos);
-static int token_is_content(const libxs_token_t* token);
-static int token_stream_has_id(const libxs_token_stream_t* stream,
+static int token_is_content(const libxs_lexeme_t* token);
+static int token_stream_has_id(const libxs_lexeme_stream_t* stream,
   unsigned int id);
-static double compose_lexical_score(const libxs_token_stream_t* target,
-  const libxs_token_stream_t* candidate,
-  const libxs_token_stream_t* generated);
+static double compose_lexical_score(const libxs_lexeme_stream_t* target,
+  const libxs_lexeme_stream_t* candidate,
+  const libxs_lexeme_stream_t* generated);
 static int split_sentences(document_t* doc);
 static int fingerprint_sentences(document_t* doc);
 static double sentence_redundancy(const document_t* doc, int a, int b);
@@ -395,12 +395,12 @@ static int is_sentence_end_text(const unsigned char* text, size_t size,
 }
 
 
-static int token_is_content(const libxs_token_t* token)
+static int token_is_content(const libxs_lexeme_t* token)
 {
   int result = 0;
   if (NULL != token
-    && 0 != (token->flags & (LIBXS_TOKEN_WORD | LIBXS_TOKEN_NUMBER))
-    && 0 == (token->flags & LIBXS_TOKEN_STOP))
+    && 0 != (token->flags & (LIBXS_LEXEME_WORD | LIBXS_LEXEME_NUMBER))
+    && 0 == (token->flags & LIBXS_LEXEME_STOP))
   {
     result = 1;
   }
@@ -408,7 +408,7 @@ static int token_is_content(const libxs_token_t* token)
 }
 
 
-static int token_stream_has_id(const libxs_token_stream_t* stream,
+static int token_stream_has_id(const libxs_lexeme_stream_t* stream,
   unsigned int id)
 {
   int result = 0;
@@ -424,16 +424,16 @@ static int token_stream_has_id(const libxs_token_stream_t* stream,
 }
 
 
-static double compose_lexical_score(const libxs_token_stream_t* target,
-  const libxs_token_stream_t* candidate,
-  const libxs_token_stream_t* generated)
+static double compose_lexical_score(const libxs_lexeme_stream_t* target,
+  const libxs_lexeme_stream_t* candidate,
+  const libxs_lexeme_stream_t* generated)
 {
   double covered = 0.0, total = 0.0;
   int repeated = 0, ncontent = 0;
   size_t token_pos;
   if (NULL == target || NULL == candidate) return 0.0;
   for (token_pos = 0; token_pos < target->size; ++token_pos) {
-    const libxs_token_t* token = target->data + token_pos;
+    const libxs_lexeme_t* token = target->data + token_pos;
     if (0 != token_is_content(token)) {
       double weight = (token->length >= 6) ? 1.5 : 1.0;
       total += weight;
@@ -443,7 +443,7 @@ static double compose_lexical_score(const libxs_token_stream_t* target,
     }
   }
   for (token_pos = 0; token_pos < candidate->size; ++token_pos) {
-    const libxs_token_t* token = candidate->data + token_pos;
+    const libxs_lexeme_t* token = candidate->data + token_pos;
     if (0 != token_is_content(token)) {
       ++ncontent;
       if (NULL != generated
@@ -1001,8 +1001,8 @@ static int compose_document(const libxs_registry_t* corpus,
   int result = EXIT_SUCCESS;
   libxs_fprint_t running;
   libxs_lexicon_t* lexicon = NULL;
-  libxs_token_stream_t target_tokens;
-  libxs_token_stream_t generated_tokens;
+  libxs_lexeme_stream_t target_tokens;
+  libxs_lexeme_stream_t generated_tokens;
   libxs_lexrule_t rules[96];
   char output[65536];
   size_t out_pos = 0;
@@ -1011,8 +1011,8 @@ static int compose_document(const libxs_registry_t* corpus,
   int step;
   libxs_registry_info_t rinfo;
 
-  libxs_token_stream_init(&target_tokens);
-  libxs_token_stream_init(&generated_tokens);
+  libxs_lexeme_stream_init(&target_tokens);
+  libxs_lexeme_stream_init(&generated_tokens);
   if (NULL == corpus || NULL == target) return EXIT_FAILURE;
   memset(&rinfo, 0, sizeof(rinfo));
   libxs_registry_info(corpus, &rinfo);
@@ -1025,12 +1025,12 @@ static int compose_document(const libxs_registry_t* corpus,
   nrules = libxs_lexrule_defaults(rules, 96);
   if (NULL == lexicon || nrules <= 0
     || NULL == target_text || 0 == target_size
-    || EXIT_SUCCESS != libxs_token_stream_encode(lexicon, &target_tokens,
+    || EXIT_SUCCESS != libxs_lexeme_stream_encode(lexicon, &target_tokens,
       target_text, target_size, rules, nrules, NULL, 0, 1))
   {
     libxs_lexicon_destroy(lexicon);
-    libxs_token_stream_release(&target_tokens);
-    libxs_token_stream_release(&generated_tokens);
+    libxs_lexeme_stream_release(&target_tokens);
+    libxs_lexeme_stream_release(&generated_tokens);
     return EXIT_FAILURE;
   }
 
@@ -1067,15 +1067,15 @@ static int compose_document(const libxs_registry_t* corpus,
           }
           if (0 == skip) {
             libxs_fprint_t trial;
-            libxs_token_stream_t candidate_tokens;
+            libxs_lexeme_stream_t candidate_tokens;
             double d, score, lex_score = 0.0;
             trial = running;
-            libxs_token_stream_init(&candidate_tokens);
+            libxs_lexeme_stream_init(&candidate_tokens);
             libxs_fprint_partial(&trial, LIBXS_DATATYPE_U8,
               e->text, e->text_len, FPRINT_ORDER);
             d = compose_distance(&trial, target);
             score = d;
-            if (EXIT_SUCCESS == libxs_token_stream_encode(lexicon,
+            if (EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon,
               &candidate_tokens, (const unsigned char*)e->text,
               (size_t)e->text_len, rules, nrules, NULL, 0, 1))
             {
@@ -1091,7 +1091,7 @@ static int compose_document(const libxs_registry_t* corpus,
               best_lex_score = lex_score;
               best_entry = e;
             }
-            libxs_token_stream_release(&candidate_tokens);
+            libxs_lexeme_stream_release(&candidate_tokens);
           }
         }
         iter_val = libxs_registry_next(corpus, &iter_key, &cursor);
@@ -1121,7 +1121,7 @@ static int compose_document(const libxs_registry_t* corpus,
 
       libxs_fprint_partial(&running, LIBXS_DATATYPE_U8,
         best_entry->text, best_entry->text_len, FPRINT_ORDER);
-      libxs_token_stream_encode(lexicon, &generated_tokens,
+      libxs_lexeme_stream_encode(lexicon, &generated_tokens,
         (const unsigned char*)best_entry->text, (size_t)best_entry->text_len,
         rules, nrules, NULL, 0, 1);
       prev_fprint = best_entry->fprint;
@@ -1139,8 +1139,8 @@ static int compose_document(const libxs_registry_t* corpus,
     fprintf(stderr, "\ncomposed (%d sentences):\n", step);
     printf("%.*s\n", (int)out_pos, output);
   }
-  libxs_token_stream_release(&generated_tokens);
-  libxs_token_stream_release(&target_tokens);
+  libxs_lexeme_stream_release(&generated_tokens);
+  libxs_lexeme_stream_release(&target_tokens);
   libxs_lexicon_destroy(lexicon);
   return result;
 }

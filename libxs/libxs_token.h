@@ -14,38 +14,39 @@
 
 /** Fixed token size in bytes. */
 #define LIBXS_TOKEN_BYTES 8
+#define LIBXS_TOKEN_PAYLOAD_BYTES 7
+#define LIBXS_TOKEN_LENGTH_MASK 0x07u
+#define LIBXS_TOKEN_CONTINUED 0x08u
+#define LIBXS_TOKEN_KIND_SHIFT 4
+#define LIBXS_TOKEN_KIND_MASK 0x70u
+#define LIBXS_TOKEN_SENTENCE 0x80u
+
 /** Maximum normalized text bytes per token. */
-#define LIBXS_TOKEN_MAXBYTES 63
+#define LIBXS_LEXEME_BYTES 8
+#define LIBXS_LEXEME_MAXBYTES 63
 
-#define LIBXS_TOKEN_WORD     0x0001u
-#define LIBXS_TOKEN_NUMBER   0x0002u
-#define LIBXS_TOKEN_PUNCT    0x0004u
-#define LIBXS_TOKEN_MARKUP   0x0008u
-#define LIBXS_TOKEN_SENTENCE 0x0010u
-#define LIBXS_TOKEN_QUESTION 0x0020u
-#define LIBXS_TOKEN_STOP     0x0040u
-#define LIBXS_TOKEN_ENTITY   0x0080u
-#define LIBXS_TOKEN_BREAK    0x0100u
-
-#define LIBXS_LEXEME_BYTES LIBXS_TOKEN_BYTES
-#define LIBXS_LEXEME_MAXBYTES LIBXS_TOKEN_MAXBYTES
-#define LIBXS_LEXEME_WORD LIBXS_TOKEN_WORD
-#define LIBXS_LEXEME_NUMBER LIBXS_TOKEN_NUMBER
-#define LIBXS_LEXEME_PUNCT LIBXS_TOKEN_PUNCT
-#define LIBXS_LEXEME_MARKUP LIBXS_TOKEN_MARKUP
-#define LIBXS_LEXEME_SENTENCE LIBXS_TOKEN_SENTENCE
-#define LIBXS_LEXEME_QUESTION LIBXS_TOKEN_QUESTION
-#define LIBXS_LEXEME_STOP LIBXS_TOKEN_STOP
-#define LIBXS_LEXEME_ENTITY LIBXS_TOKEN_ENTITY
-#define LIBXS_LEXEME_BREAK LIBXS_TOKEN_BREAK
+#define LIBXS_LEXEME_WORD     0x0001u
+#define LIBXS_LEXEME_NUMBER   0x0002u
+#define LIBXS_LEXEME_PUNCT    0x0004u
+#define LIBXS_LEXEME_MARKUP   0x0008u
+#define LIBXS_LEXEME_SENTENCE 0x0010u
+#define LIBXS_LEXEME_QUESTION 0x0020u
+#define LIBXS_LEXEME_STOP     0x0040u
+#define LIBXS_LEXEME_ENTITY   0x0080u
+#define LIBXS_LEXEME_BREAK    0x0100u
 
 
-/** Fixed-width token ID: vocabulary id, source byte length, and class flags. */
+/** Physical cell of a variable-length metatoken: control byte plus payload. */
 LIBXS_EXTERN_C typedef struct libxs_token_t {
+  unsigned char raw[LIBXS_TOKEN_BYTES];
+} libxs_token_t;
+
+/** Vocabulary-backed lexical occurrence used by interpretive consumers. */
+LIBXS_EXTERN_C typedef struct libxs_lexeme_t {
   unsigned int id;
   unsigned short length;
   unsigned short flags;
-} libxs_token_t;
+} libxs_lexeme_t;
 
 /** Growable array of tokens. */
 LIBXS_EXTERN_C typedef struct libxs_token_stream_t {
@@ -56,12 +57,44 @@ LIBXS_EXTERN_C typedef struct libxs_token_stream_t {
 
 /** Opaque lexical vocabulary. Token id 0 is reserved for unknown. */
 LIBXS_EXTERN_C typedef struct libxs_lexicon_t libxs_lexicon_t;
+/** Opaque metatoken encoder configuration. */
+LIBXS_EXTERN_C typedef struct libxs_tokenizer_t libxs_tokenizer_t;
 
-typedef libxs_token_t libxs_lexeme_t;
-typedef libxs_token_stream_t libxs_lexeme_stream_t;
+/** Growable array of lexical occurrences. */
+LIBXS_EXTERN_C typedef struct libxs_lexeme_stream_t {
+  libxs_lexeme_t* data;
+  size_t size;
+  size_t capacity;
+} libxs_lexeme_stream_t;
 
-/** Decoded token properties. */
+enum libxs_token_kind_t {
+  LIBXS_TOKEN_LITERAL = 0,
+  LIBXS_TOKEN_TEXT = 1,
+  LIBXS_TOKEN_NUMBER = 2,
+  LIBXS_TOKEN_SPACE = 3,
+  LIBXS_TOKEN_PUNCT = 4,
+  LIBXS_TOKEN_MARKUP = 5,
+  LIBXS_TOKEN_REFERENCE = 6,
+  LIBXS_TOKEN_CONTROL = 7
+};
+
+enum libxs_token_granularity_t {
+  LIBXS_TOKEN_GRANULARITY_NATIVE = 0,
+  LIBXS_TOKEN_GRANULARITY_WORD = 1,
+  LIBXS_TOKEN_GRANULARITY_SYLLABLE = 2
+};
+
+/** Decoded properties of one physical metatoken cell. */
 LIBXS_EXTERN_C typedef struct libxs_token_info_t {
+  size_t length;
+  size_t cells;
+  int kind;
+  int continued;
+  int is_sentence;
+} libxs_token_info_t;
+
+/** Decoded properties of one lexical occurrence. */
+LIBXS_EXTERN_C typedef struct libxs_lexeme_info_t {
   unsigned int id;
   size_t length;
   unsigned int flags;
@@ -74,7 +107,7 @@ LIBXS_EXTERN_C typedef struct libxs_token_info_t {
   int is_stop;
   int is_entity;
   int is_markup;
-} libxs_token_info_t;
+} libxs_lexeme_info_t;
 
 /**
  * Text rule template IDs: positional match patterns.
@@ -143,8 +176,8 @@ LIBXS_EXTERN_C typedef struct libxs_textrule_ctx_t {
   const unsigned char* text;
   size_t text_size;
   int byte_pos;
-  const libxs_token_t* token;
-  const libxs_token_t* prev_token;
+  const libxs_lexeme_t* token;
+  const libxs_lexeme_t* prev_token;
 } libxs_textrule_ctx_t;
 
 /** Context passed to lexical rule evaluation. */
@@ -160,7 +193,7 @@ LIBXS_EXTERN_C typedef struct libxs_lexrule_ctx_t {
  * token into several tokens, e.g. "is not". Only the first emitted token
  * carries the source byte length (and the word-break flag); the continuations
  * carry length zero, so byte accounting over a stream is unchanged by
- * normalization and libxs_token_word_next keeps grouping them as one word.
+ * normalization and libxs_lexeme_word_next groups them as one word.
  */
 #define LIBXS_LEXNORM_SEPARATOR ' '
 
@@ -171,19 +204,27 @@ LIBXS_EXTERN_C typedef struct libxs_lexnorm_t {
 } libxs_lexnorm_t;
 
 
-/** Decode all token properties into an info struct. */
+/** Decode the control byte of one physical metatoken cell. */
 LIBXS_API void libxs_token_info(const libxs_token_t* token,
   libxs_token_info_t* info);
 
 /**
- * Number of tokens forming the word that starts at pos, i.e. the run reaching
- * up to (excluding) the next token flagged LIBXS_TOKEN_BREAK. Returns zero
- * once pos is beyond the stream, which iterates words spanning several
- * sub-word tokens: for (p = 0; 0 != (n = word_next(t, nt, p)); p += n).
- * Granularities that do not mark boundaries yield a single run.
+ * Number of physical cells occupied by the logical metatoken at pos. Returns
+ * zero for an invalid position or malformed continuation chain. payload_size
+ * receives the logical payload size when non-NULL.
  */
-LIBXS_API size_t libxs_token_word_next(const libxs_token_t* tokens,
-  size_t ntokens, size_t pos);
+LIBXS_API size_t libxs_token_span(const libxs_token_t* tokens,
+  size_t ntokens, size_t pos, size_t* payload_size);
+
+/**
+ * Read one logical metatoken beginning at pos. payload may be NULL to query
+ * metadata only; otherwise capacity must cover info.length bytes. Physical
+ * cell count, logical byte length, kind, and final sentence flag are returned
+ * through info. Returns EXIT_SUCCESS only for a complete, valid chain.
+ */
+LIBXS_API int libxs_token_read(const libxs_token_t* tokens,
+  size_t ntokens, size_t pos, unsigned char* payload, size_t capacity,
+  libxs_token_info_t* info);
 
 /** Initialize an empty token stream. */
 LIBXS_API void libxs_token_stream_init(libxs_token_stream_t* stream);
@@ -198,6 +239,38 @@ LIBXS_API int libxs_token_stream_push(libxs_token_stream_t* stream,
 
 /** Release all memory held by the stream (the stream struct itself is not freed). */
 LIBXS_API void libxs_token_stream_release(libxs_token_stream_t* stream);
+
+/** Create a metatoken encoder with one segmentation policy. */
+LIBXS_API libxs_tokenizer_t* libxs_tokenizer_create(int granularity);
+
+/** Destroy a metatoken encoder (NULL is accepted). */
+LIBXS_API void libxs_tokenizer_destroy(libxs_tokenizer_t* tokenizer);
+
+/** Change the segmentation policy used by subsequent encode calls. */
+LIBXS_API int libxs_tokenizer_set_granularity(libxs_tokenizer_t* tokenizer,
+  int granularity);
+
+/** Return the configured segmentation policy, or -1 for NULL. */
+LIBXS_API int libxs_tokenizer_granularity(const libxs_tokenizer_t* tokenizer);
+
+/**
+ * Encode source bytes using the tokenizer's configured segmentation policy.
+ * Every policy preserves every source byte and decoding needs no tokenizer.
+ */
+LIBXS_API int libxs_token_stream_encode(const libxs_tokenizer_t* tokenizer,
+  libxs_token_stream_t* stream, const unsigned char* text, size_t size);
+
+/** Decode a metatoken stream to an allocated, zero-terminated byte sequence. */
+LIBXS_API int libxs_token_stream_decode(const libxs_token_stream_t* stream,
+  unsigned char** text, size_t* size);
+
+/** Decode all lexical occurrence properties into an info struct. */
+LIBXS_API void libxs_lexeme_info(const libxs_lexeme_t* lexeme,
+  libxs_lexeme_info_t* info);
+
+/** Number of lexical pieces in the source word beginning at pos. */
+LIBXS_API size_t libxs_lexeme_word_next(const libxs_lexeme_t* lexemes,
+  size_t nlexemes, size_t pos);
 
 /** Create a lexical vocabulary. */
 LIBXS_API libxs_lexicon_t* libxs_lexicon_create(void);
@@ -248,12 +321,6 @@ LIBXS_API int libxs_lexeme_stream_encode(libxs_lexicon_t* lexicon,
   const libxs_lexrule_t* rules, int nrules,
   const libxs_lexnorm_t* norms, int nnorms, int create);
 
-/** Encode text into initialized stream of 8-byte token IDs. */
-LIBXS_API int libxs_token_stream_encode(libxs_lexicon_t* lexicon,
-  libxs_token_stream_t* stream, const unsigned char* text, size_t size,
-  const libxs_lexrule_t* rules, int nrules,
-  const libxs_lexnorm_t* norms, int nnorms, int create);
-
 /**
  * Evaluate a ruleset against a context. Returns 1 (sentence boundary
  * confirmed) or 0 (suppressed). If the token lacks the sentence-end flag,
@@ -300,29 +367,51 @@ LIBXS_API int libxs_lexrule_defaults(libxs_lexrule_t* rules, int max_rules);
 LIBXS_API int libxs_text_reflow(const unsigned char* text, size_t size,
   unsigned char** out, size_t* out_size);
 
-/** Return non-zero if the token is a copy (back-reference). */
-/** Return the number of bytes this token represents (1..14). */
+/** Return the payload bytes stored in this physical cell (1..7). */
 LIBXS_API_INLINE size_t libxs_token_len(const libxs_token_t* token)
 {
-  return (NULL != token) ? (size_t)token->length : 0;
+  return (NULL != token)
+    ? (size_t)(token->raw[0] & LIBXS_TOKEN_LENGTH_MASK) : 0;
 }
 
-/** Return non-zero if a preferred break (word/punctuation boundary) follows. */
-LIBXS_API_INLINE int libxs_token_has_break(const libxs_token_t* token)
+/** Return the metatoken kind carried by this physical cell. */
+LIBXS_API_INLINE int libxs_token_kind(const libxs_token_t* token)
 {
-  return (NULL != token && 0 != (token->flags & LIBXS_TOKEN_BREAK)) ? 1 : 0;
+  return (NULL != token)
+    ? (int)((token->raw[0] & LIBXS_TOKEN_KIND_MASK)
+      >> LIBXS_TOKEN_KIND_SHIFT) : LIBXS_TOKEN_CONTROL;
 }
 
-/** Return non-zero if this token is structural markup (not content). */
-LIBXS_API_INLINE int libxs_token_is_markup(const libxs_token_t* token)
+/** Return non-zero when the next cell continues the same logical metatoken. */
+LIBXS_API_INLINE int libxs_token_is_continued(const libxs_token_t* token)
 {
-  return (NULL != token && 0 != (token->flags & LIBXS_TOKEN_MARKUP)) ? 1 : 0;
+  return (NULL != token && 0 != (token->raw[0] & LIBXS_TOKEN_CONTINUED))
+    ? 1 : 0;
 }
 
-/** Return non-zero if this token ends a sentence (raw signal, pre-rules). */
+/** Return non-zero if this physical cell terminates a sentence. */
 LIBXS_API_INLINE int libxs_token_is_sentence_end(const libxs_token_t* token)
 {
-  return (NULL != token && 0 != (token->flags & LIBXS_TOKEN_SENTENCE)) ? 1 : 0;
+  return (NULL != token && 0 != (token->raw[0] & LIBXS_TOKEN_SENTENCE))
+    ? 1 : 0;
+}
+
+LIBXS_API_INLINE size_t libxs_lexeme_len(const libxs_lexeme_t* lexeme)
+{
+  return (NULL != lexeme) ? (size_t)lexeme->length : 0;
+}
+
+LIBXS_API_INLINE int libxs_lexeme_has_break(const libxs_lexeme_t* lexeme)
+{
+  return (NULL != lexeme && 0 != (lexeme->flags & LIBXS_LEXEME_BREAK))
+    ? 1 : 0;
+}
+
+LIBXS_API_INLINE int libxs_lexeme_is_sentence_end(
+  const libxs_lexeme_t* lexeme)
+{
+  return (NULL != lexeme && 0 != (lexeme->flags & LIBXS_LEXEME_SENTENCE))
+    ? 1 : 0;
 }
 
 /* header-only: include implementation */

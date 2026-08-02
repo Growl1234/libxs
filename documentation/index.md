@@ -15,7 +15,7 @@ of [LIBXSMM](https://github.com/libxsmm/libxsmm).
 | [Malloc][dmal]   | `libxs_malloc.h`   | Pool allocator (no system calls at steady) |
 | [Memory][dmem]   | `libxs_mem.h`      | Byte compare, matrix copy/transpose        |
 | [String][dstr]   | `libxs_str.h`      | Edit distance, substring, similarity       |
-| [Token][dtok]    | `libxs_token.h`    | Fixed-width 8-byte tokenizer               |
+| [Token][dtok]    | `libxs_token.h`    | Reversible metatokens and lexical IDs      |
 | [Timer][dtmr]    | `libxs_timer.h`    | High-resolution timing via calibrated TSC  |
 | [CPUID][dcpu]    | `libxs_cpuid.h`    | CPU feature detection (SSE..AVX-512, etc.) |
 | [Utils][dutil]   | `libxs_utils.h`    | ISA gates, bit-scan, SIMD helpers          |
@@ -127,7 +127,7 @@ USE :: libxs, ONLY: libxs_memcmp
 
 | Sample        | Description                                     |
 |---------------|-------------------------------------------------|
-| [tokenizer]   | Reversible byte-level tokenizer                 |
+| [tokenizer]   | Reversible configurable metatokenizer           |
 | [converse]    | Extractive summarization via tokenized fprints  |
 | [registry]    | Registry dispatch microbenchmark                |
 | [predict]     | Fingerprint-guided parameter prediction         |

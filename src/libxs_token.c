@@ -24,6 +24,10 @@ struct libxs_lexicon_t {
   unsigned int size;
 };
 
+struct libxs_tokenizer_t {
+  int granularity;
+};
+
 
 LIBXS_API_INLINE
 int internal_libxs_lexicon_reserve(libxs_lexicon_t* lexicon,
@@ -203,6 +207,89 @@ int internal_libxs_token_is_sentence_char(unsigned char ch)
 
 
 LIBXS_API_INLINE
+int internal_libxs_token_is_word_char(unsigned char ch)
+{
+  int result = 0;
+  if (0 != isalpha(ch) || '_' == ch || 0x80u <= ch) result = 1;
+  return result;
+}
+
+
+LIBXS_API_INLINE
+int internal_libxs_token_is_vowel(unsigned char ch)
+{
+  int result = 0;
+  const unsigned char lower = (unsigned char)tolower(ch);
+  if ('a' == lower || 'e' == lower || 'i' == lower
+    || 'o' == lower || 'u' == lower || 'y' == lower)
+  {
+    result = 1;
+  }
+  return result;
+}
+
+
+LIBXS_API_INLINE
+size_t internal_libxs_token_syllable_end(const unsigned char* text,
+  size_t start, size_t end)
+{
+  size_t result = end;
+  size_t pos = start;
+  int seen_vowel = 0;
+  while (pos < end) {
+    const unsigned char ch = text[pos];
+    size_t step = internal_libxs_token_codepoint_size(text, end, pos);
+    if (1 == step && pos > start && 0 != seen_vowel
+      && 0 == internal_libxs_token_is_vowel(ch)
+      && pos + 1 < end && 0 != internal_libxs_token_is_vowel(text[pos + 1]))
+    {
+      result = pos;
+      pos = end;
+    }
+    else {
+      if (1 == step && 0 != internal_libxs_token_is_vowel(ch)) seen_vowel = 1;
+      pos += step;
+    }
+  }
+  return result;
+}
+
+
+LIBXS_API_INLINE
+int internal_libxs_token_emit(libxs_token_stream_t* stream,
+  const unsigned char* text, size_t length, int kind, int sentence)
+{
+  int result = EXIT_FAILURE;
+  if (NULL != stream && NULL != text && length > 0
+    && kind >= LIBXS_TOKEN_LITERAL && kind <= LIBXS_TOKEN_CONTROL)
+  {
+    size_t offset = 0;
+    result = EXIT_SUCCESS;
+    while (EXIT_SUCCESS == result && offset < length) {
+      libxs_token_t token;
+      size_t chunk = length - offset;
+      if (chunk > LIBXS_TOKEN_PAYLOAD_BYTES) chunk = LIBXS_TOKEN_PAYLOAD_BYTES;
+      while (chunk > 1 && offset + chunk < length
+        && 0x80u <= text[offset + chunk]
+        && text[offset + chunk] < 0xC0u)
+      {
+        --chunk;
+      }
+      memset(&token, 0, sizeof(token));
+      token.raw[0] = (unsigned char)(chunk & LIBXS_TOKEN_LENGTH_MASK);
+      token.raw[0] |= (unsigned char)(kind << LIBXS_TOKEN_KIND_SHIFT);
+      if (offset + chunk < length) token.raw[0] |= LIBXS_TOKEN_CONTINUED;
+      else if (0 != sentence) token.raw[0] |= LIBXS_TOKEN_SENTENCE;
+      memcpy(token.raw + 1, text + offset, chunk);
+      result = libxs_token_stream_push(stream, &token);
+      offset += chunk;
+    }
+  }
+  return result;
+}
+
+
+LIBXS_API_INLINE
 int internal_libxs_token_detect_markup(const unsigned char* text,
   size_t size, size_t pos, size_t len)
 {
@@ -264,47 +351,76 @@ LIBXS_API void libxs_token_info(const libxs_token_t* token,
 {
   if (NULL != info) {
     if (NULL != token) {
-      info->id = token->id;
-      info->length = (size_t)token->length;
-      info->flags = token->flags;
-      info->is_word = (0 != (token->flags & LIBXS_TOKEN_WORD)) ? 1 : 0;
-      info->is_number = (0 != (token->flags & LIBXS_TOKEN_NUMBER)) ? 1 : 0;
-      info->is_punct = (0 != (token->flags & LIBXS_TOKEN_PUNCT)) ? 1 : 0;
-      info->has_break = (0 != (token->flags & LIBXS_TOKEN_BREAK)) ? 1 : 0;
-      info->is_sentence = (0 != (token->flags & LIBXS_TOKEN_SENTENCE)) ? 1 : 0;
-      info->is_question = (0 != (token->flags & LIBXS_TOKEN_QUESTION)) ? 1 : 0;
-      info->is_stop = (0 != (token->flags & LIBXS_TOKEN_STOP)) ? 1 : 0;
-      info->is_entity = (0 != (token->flags & LIBXS_TOKEN_ENTITY)) ? 1 : 0;
-      info->is_markup = (0 != (token->flags & LIBXS_TOKEN_MARKUP)) ? 1 : 0;
+      info->length = libxs_token_len(token);
+      info->cells = 1;
+      info->kind = libxs_token_kind(token);
+      info->continued = libxs_token_is_continued(token);
+      info->is_sentence = libxs_token_is_sentence_end(token);
     }
     else {
-      info->id = 0;
       info->length = 0;
-      info->flags = 0;
-      info->is_word = 0;
-      info->is_number = 0;
-      info->is_punct = 0;
-      info->has_break = 0;
+      info->cells = 0;
+      info->kind = LIBXS_TOKEN_CONTROL;
+      info->continued = 0;
       info->is_sentence = 0;
-      info->is_question = 0;
-      info->is_stop = 0;
-      info->is_entity = 0;
-      info->is_markup = 0;
     }
   }
 }
 
 
-LIBXS_API size_t libxs_token_word_next(const libxs_token_t* tokens,
-  size_t ntokens, size_t pos)
+LIBXS_API int libxs_token_read(const libxs_token_t* tokens,
+  size_t ntokens, size_t pos, unsigned char* payload, size_t capacity,
+  libxs_token_info_t* info)
+{
+  int result = EXIT_FAILURE;
+  size_t payload_size = 0;
+  size_t cells = libxs_token_span(tokens, ntokens, pos, &payload_size);
+  if (NULL != info) memset(info, 0, sizeof(*info));
+  if (cells > 0 && (NULL == payload || capacity >= payload_size)) {
+    size_t cell;
+    size_t offset = 0;
+    if (NULL != payload) {
+      for (cell = 0; cell < cells; ++cell) {
+        const libxs_token_t* token = tokens + pos + cell;
+        const size_t length = libxs_token_len(token);
+        memcpy(payload + offset, token->raw + 1, length);
+        offset += length;
+      }
+    }
+    if (NULL != info) {
+      info->length = payload_size;
+      info->cells = cells;
+      info->kind = libxs_token_kind(tokens + pos);
+      info->continued = (cells > 1) ? 1 : 0;
+      info->is_sentence = libxs_token_is_sentence_end(
+        tokens + pos + cells - 1);
+    }
+    result = EXIT_SUCCESS;
+  }
+  return result;
+}
+
+
+LIBXS_API size_t libxs_token_span(const libxs_token_t* tokens,
+  size_t ntokens, size_t pos, size_t* payload_size)
 {
   size_t result = 0;
+  size_t total = 0;
   if (NULL != tokens && pos < ntokens) {
-    size_t end = pos + 1;
-    while (end < ntokens
-      && 0 == (tokens[end].flags & LIBXS_TOKEN_BREAK)) ++end;
-    result = end - pos;
+    const int kind = libxs_token_kind(tokens + pos);
+    size_t at = pos;
+    int more = 1;
+    while (at < ntokens && 0 != more
+      && kind == libxs_token_kind(tokens + at)
+      && libxs_token_len(tokens + at) > 0)
+    {
+      total += libxs_token_len(tokens + at);
+      more = libxs_token_is_continued(tokens + at);
+      ++at;
+    }
+    if (0 == more) result = at - pos;
   }
+  if (NULL != payload_size) *payload_size = (0 != result) ? total : 0;
   return result;
 }
 
@@ -365,6 +481,182 @@ LIBXS_API void libxs_token_stream_release(libxs_token_stream_t* stream)
     free(stream->data);
     libxs_token_stream_init(stream);
   }
+}
+
+
+LIBXS_API libxs_tokenizer_t* libxs_tokenizer_create(int granularity)
+{
+  libxs_tokenizer_t* result = NULL;
+  if (granularity >= LIBXS_TOKEN_GRANULARITY_NATIVE
+    && granularity <= LIBXS_TOKEN_GRANULARITY_SYLLABLE)
+  {
+    result = (libxs_tokenizer_t*)malloc(sizeof(*result));
+    if (NULL != result) result->granularity = granularity;
+  }
+  return result;
+}
+
+
+LIBXS_API void libxs_tokenizer_destroy(libxs_tokenizer_t* tokenizer)
+{
+  free(tokenizer);
+}
+
+
+LIBXS_API int libxs_tokenizer_set_granularity(libxs_tokenizer_t* tokenizer,
+  int granularity)
+{
+  int result = EXIT_FAILURE;
+  if (NULL != tokenizer
+    && granularity >= LIBXS_TOKEN_GRANULARITY_NATIVE
+    && granularity <= LIBXS_TOKEN_GRANULARITY_SYLLABLE)
+  {
+    tokenizer->granularity = granularity;
+    result = EXIT_SUCCESS;
+  }
+  return result;
+}
+
+
+LIBXS_API int libxs_tokenizer_granularity(const libxs_tokenizer_t* tokenizer)
+{
+  return (NULL != tokenizer) ? tokenizer->granularity : -1;
+}
+
+
+LIBXS_API int libxs_token_stream_encode(const libxs_tokenizer_t* tokenizer,
+  libxs_token_stream_t* stream, const unsigned char* text, size_t size)
+{
+  int result = EXIT_FAILURE;
+  if (NULL != tokenizer && NULL != stream && NULL != text
+    && tokenizer->granularity >= LIBXS_TOKEN_GRANULARITY_NATIVE
+    && tokenizer->granularity <= LIBXS_TOKEN_GRANULARITY_SYLLABLE)
+  {
+    const int granularity = tokenizer->granularity;
+    size_t pos = 0;
+    result = EXIT_SUCCESS;
+    while (EXIT_SUCCESS == result && pos < size) {
+      size_t end = pos + 1;
+      int kind = LIBXS_TOKEN_LITERAL;
+      int sentence = 0;
+      if (LIBXS_TOKEN_GRANULARITY_NATIVE == granularity) {
+        end = pos;
+        while (end < size && end - pos < LIBXS_TOKEN_PAYLOAD_BYTES) {
+          size_t step = internal_libxs_token_codepoint_size(text, size, end);
+          if (end + step - pos > LIBXS_TOKEN_PAYLOAD_BYTES) break;
+          end += step;
+          if (0 != isspace(text[end - 1]) || 0 != ispunct(text[end - 1])) break;
+        }
+        if (end <= pos) end = pos + 1;
+      }
+      else if (0 != isspace(text[pos])) {
+        kind = LIBXS_TOKEN_SPACE;
+        while (end < size && 0 != isspace(text[end])) ++end;
+      }
+      else if (0 != internal_libxs_token_is_word_char(text[pos])) {
+        size_t word_end;
+        while (end < size && 0 != internal_libxs_token_is_word_char(text[end])) {
+          ++end;
+        }
+        word_end = end;
+        if (LIBXS_TOKEN_GRANULARITY_SYLLABLE == granularity) {
+          end = internal_libxs_token_syllable_end(text, pos, word_end);
+        }
+        kind = LIBXS_TOKEN_TEXT;
+      }
+      else if (0 != isdigit(text[pos])) {
+        kind = LIBXS_TOKEN_NUMBER;
+        while (end < size && 0 != isdigit(text[end])) ++end;
+      }
+      else {
+        end = pos + internal_libxs_token_codepoint_size(text, size, pos);
+        kind = (0 != internal_libxs_token_detect_markup(text, size,
+          pos, end - pos)) ? LIBXS_TOKEN_MARKUP : LIBXS_TOKEN_PUNCT;
+        if (1 == end - pos
+          && 0 != internal_libxs_token_is_sentence_char(text[pos]))
+        {
+          size_t next = end;
+          while (next < size && ('"' == text[next] || '\'' == text[next]
+            || ')' == text[next] || ']' == text[next])) ++next;
+          if (next == size || 0 != isspace(text[next])) sentence = 1;
+        }
+      }
+      result = internal_libxs_token_emit(stream, text + pos, end - pos,
+        kind, sentence);
+      pos = end;
+    }
+  }
+  return result;
+}
+
+
+LIBXS_API int libxs_token_stream_decode(const libxs_token_stream_t* stream,
+  unsigned char** text, size_t* size)
+{
+  int result = EXIT_FAILURE;
+  if (NULL != stream && NULL != text && NULL != size) {
+    size_t total = 0;
+    size_t token_pos;
+    for (token_pos = 0; token_pos < stream->size; ++token_pos) {
+      const size_t length = libxs_token_len(stream->data + token_pos);
+      if (0 == length || length > LIBXS_TOKEN_PAYLOAD_BYTES) break;
+      total += length;
+    }
+    if (token_pos == stream->size) {
+      unsigned char* buffer = (unsigned char*)malloc(total + 1);
+      if (NULL != buffer) {
+        size_t offset = 0;
+        result = EXIT_SUCCESS;
+        for (token_pos = 0; token_pos < stream->size; ++token_pos) {
+          const libxs_token_t* token = stream->data + token_pos;
+          const size_t length = libxs_token_len(token);
+          memcpy(buffer + offset, token->raw + 1, length);
+          offset += length;
+        }
+        buffer[total] = 0;
+        *text = buffer;
+        *size = total;
+      }
+    }
+  }
+  return result;
+}
+
+
+LIBXS_API void libxs_lexeme_info(const libxs_lexeme_t* lexeme,
+  libxs_lexeme_info_t* info)
+{
+  if (NULL != info) {
+    memset(info, 0, sizeof(*info));
+    if (NULL != lexeme) {
+      info->id = lexeme->id;
+      info->length = (size_t)lexeme->length;
+      info->flags = lexeme->flags;
+      info->is_word = (0 != (lexeme->flags & LIBXS_LEXEME_WORD)) ? 1 : 0;
+      info->is_number = (0 != (lexeme->flags & LIBXS_LEXEME_NUMBER)) ? 1 : 0;
+      info->is_punct = (0 != (lexeme->flags & LIBXS_LEXEME_PUNCT)) ? 1 : 0;
+      info->has_break = (0 != (lexeme->flags & LIBXS_LEXEME_BREAK)) ? 1 : 0;
+      info->is_sentence = (0 != (lexeme->flags & LIBXS_LEXEME_SENTENCE)) ? 1 : 0;
+      info->is_question = (0 != (lexeme->flags & LIBXS_LEXEME_QUESTION)) ? 1 : 0;
+      info->is_stop = (0 != (lexeme->flags & LIBXS_LEXEME_STOP)) ? 1 : 0;
+      info->is_entity = (0 != (lexeme->flags & LIBXS_LEXEME_ENTITY)) ? 1 : 0;
+      info->is_markup = (0 != (lexeme->flags & LIBXS_LEXEME_MARKUP)) ? 1 : 0;
+    }
+  }
+}
+
+
+LIBXS_API size_t libxs_lexeme_word_next(const libxs_lexeme_t* lexemes,
+  size_t nlexemes, size_t pos)
+{
+  size_t result = 0;
+  if (NULL != lexemes && pos < nlexemes) {
+    size_t end = pos + 1;
+    while (end < nlexemes
+      && 0 == (lexemes[end].flags & LIBXS_LEXEME_BREAK)) ++end;
+    result = end - pos;
+  }
+  return result;
 }
 
 
@@ -530,8 +822,8 @@ LIBXS_API void libxs_lexeme_stream_release(libxs_lexeme_stream_t* stream)
 }
 
 
-LIBXS_API int libxs_token_stream_encode(libxs_lexicon_t* lexicon,
-  libxs_token_stream_t* stream, const unsigned char* text, size_t size,
+LIBXS_API int libxs_lexeme_stream_encode(libxs_lexicon_t* lexicon,
+  libxs_lexeme_stream_t* stream, const unsigned char* text, size_t size,
   const libxs_lexrule_t* rules, int nrules,
   const libxs_lexnorm_t* norms, int nnorms, int create)
 {
@@ -635,16 +927,5 @@ LIBXS_API int libxs_token_stream_encode(libxs_lexicon_t* lexicon,
       }
     }
   }
-  return result;
-}
-
-
-LIBXS_API int libxs_lexeme_stream_encode(libxs_lexicon_t* lexicon,
-  libxs_lexeme_stream_t* stream, const unsigned char* text, size_t size,
-  const libxs_lexrule_t* rules, int nrules,
-  const libxs_lexnorm_t* norms, int nnorms, int create)
-{
-  int result = libxs_token_stream_encode(lexicon, stream, text, size,
-    rules, nrules, norms, nnorms, create);
   return result;
 }

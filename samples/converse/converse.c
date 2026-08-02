@@ -77,7 +77,8 @@
 
 enum { PROFILE_PROSE = 0, PROFILE_MARKDOWN = 1 };
 
-enum { GRAN_WORD = 0, GRAN_NATIVE = 1, GRAN_SYLLABLE = 2, GRAN_BPE = 3 };
+enum { GRAN_WORD = 0, GRAN_NATIVE = 1, GRAN_SYLLABLE = 2, GRAN_BPE = 3,
+  GRAN_META_NATIVE = 4, GRAN_META_WORD = 5, GRAN_META_SYLLABLE = 6 };
 
 enum { QUERY_GENERIC = 0, QUERY_WHO, QUERY_WHAT, QUERY_WHERE,
   QUERY_WHEN, QUERY_WHY, QUERY_HOW, QUERY_YESNO };
@@ -486,7 +487,7 @@ static int predict_is_test(long index, int holdout);
 static int bpe_add_symbol(const char* bytes, int len);
 static void bpe_free(void);
 static void bpe_build(const libxs_registry_t* corpus, int holdout);
-static int bpe_encode_run(const char* text, int len, libxs_token_t tokens[],
+static int bpe_encode_run(const char* text, int len, libxs_lexeme_t tokens[],
   int max, int start, libxs_lexicon_t* lexicon, int create);
 static void token_emb_build(const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
@@ -586,7 +587,8 @@ int main(int argc, char* argv[])
       "  -b PREFIX: ingest matching files next to PREFIX.\n"
       "Environment variables (override defaults):\n"
       "  CONVERSE_NGRAM_ORDER=N   n-gram context order 1..%d (default 2; -x=%d).\n"
-      "  CONVERSE_GRAN=UNIT       token unit: word|native|syllable|bpe.\n"
+      "  CONVERSE_GRAN=UNIT       token unit: word|native|syllable|bpe|"
+      "meta-native|meta-word|meta-syllable.\n"
       "  CONVERSE_GEN_MINORDER=N  generation grounding floor (default 2).\n"
       "  CONVERSE_GEN_CONTORDER=F -c continuation mean-order floor (default 3).\n"
       "  CONVERSE_BPE_MERGES=N    BPE merge budget (default 750).\n"
@@ -6008,6 +6010,9 @@ static int ngram_gran_mode(void)
     if (0 == strcmp(env, "native")) return GRAN_NATIVE;
     if (0 == strcmp(env, "syllable")) return GRAN_SYLLABLE;
     if (0 == strcmp(env, "bpe")) return GRAN_BPE;
+    if (0 == strcmp(env, "meta-native")) return GRAN_META_NATIVE;
+    if (0 == strcmp(env, "meta-word")) return GRAN_META_WORD;
+    if (0 == strcmp(env, "meta-syllable")) return GRAN_META_SYLLABLE;
   }
   return GRAN_WORD;
 }
@@ -6230,7 +6235,7 @@ static void bpe_build(const libxs_registry_t* corpus, int holdout)
  * Falls back to single bytes for anything the merges do not cover, so the
  * encoder never fails on unseen input.
  */
-static int bpe_encode_run(const char* text, int len, libxs_token_t tokens[],
+static int bpe_encode_run(const char* text, int len, libxs_lexeme_t tokens[],
   int max, int start, libxs_lexicon_t* lexicon, int create)
 {
   int result = start;
@@ -6269,8 +6274,8 @@ static int bpe_encode_run(const char* text, int len, libxs_token_t tokens[],
     if (0 == i && 0 != marker && nbytes > 0) --nbytes;
     tokens[result].id = id;
     tokens[result].length = (unsigned short)nbytes;
-    tokens[result].flags = (unsigned short)(LIBXS_TOKEN_WORD
-      | ((0 == i && 0 != marker) ? LIBXS_TOKEN_BREAK : 0));
+    tokens[result].flags = (unsigned short)(LIBXS_LEXEME_WORD
+      | ((0 == i && 0 != marker) ? LIBXS_LEXEME_BREAK : 0));
     ++result;
   }
   return result;
@@ -6317,22 +6322,124 @@ static int ngram_syllable_split(const char* text, int wlen, int piece_begin[],
 }
 
 
+static int ngram_metatoken_granularity(int mode)
+{
+  int result = -1;
+  if (GRAN_META_NATIVE == mode) result = LIBXS_TOKEN_GRANULARITY_NATIVE;
+  else if (GRAN_META_WORD == mode) result = LIBXS_TOKEN_GRANULARITY_WORD;
+  else if (GRAN_META_SYLLABLE == mode) {
+    result = LIBXS_TOKEN_GRANULARITY_SYLLABLE;
+  }
+  return result;
+}
+
+
+static unsigned int ngram_metatoken_flags(int kind, int sentence,
+  int have_break)
+{
+  unsigned int result = 0;
+  if (LIBXS_TOKEN_TEXT == kind) {
+    result = LIBXS_LEXEME_WORD;
+  }
+  else if (LIBXS_TOKEN_NUMBER == kind) result = LIBXS_LEXEME_NUMBER;
+  else result = LIBXS_LEXEME_PUNCT;
+  if (LIBXS_TOKEN_MARKUP == kind || LIBXS_TOKEN_SPACE == kind) {
+    result |= LIBXS_LEXEME_MARKUP;
+  }
+  if (0 != sentence) result |= LIBXS_LEXEME_SENTENCE;
+  if (0 != have_break) result |= LIBXS_LEXEME_BREAK;
+  return result;
+}
+
+
+static int ngram_metatoken_tokens(libxs_lexicon_t* lexicon,
+  const char* text, int text_len, libxs_lexeme_t tokens[],
+  unsigned int word_ids[], int max, int create, int granularity)
+{
+  int result = 0;
+  libxs_token_stream_t stream;
+  libxs_tokenizer_t* tokenizer = libxs_tokenizer_create(granularity);
+  size_t token_pos = 0;
+  int have_break = 0;
+  libxs_token_stream_init(&stream);
+  if (NULL != tokenizer && NULL != lexicon && NULL != text && text_len > 0
+    && EXIT_SUCCESS == libxs_token_stream_encode(tokenizer, &stream,
+      (const unsigned char*)text, (size_t)text_len))
+  {
+    const char bos = '\1';
+    unsigned int bos_id = libxs_lexicon_id(lexicon, &bos, 1,
+      LIBXS_LEXEME_MARKUP, create);
+    if (0 == bos_id && 0 == create) {
+      bos_id = libxs_lexicon_id(lexicon, &bos, 1,
+        LIBXS_LEXEME_MARKUP, 1);
+    }
+    if (0 != bos_id && result < max) {
+      tokens[result].id = bos_id;
+      tokens[result].length = 0;
+      tokens[result].flags = LIBXS_LEXEME_MARKUP;
+      if (NULL != word_ids) word_ids[result] = bos_id;
+      ++result;
+    }
+    while (token_pos < stream.size && result < max) {
+      size_t payload_size = 0;
+      size_t cells = libxs_token_span(stream.data, stream.size, token_pos,
+        &payload_size);
+      unsigned char payload[LIBXS_LEXEME_MAXBYTES];
+      libxs_token_info_t info;
+      if (0 == cells || 0 == payload_size
+        || payload_size > sizeof(payload)
+        || EXIT_SUCCESS != libxs_token_read(stream.data, stream.size,
+          token_pos, payload, sizeof(payload), &info))
+      {
+        break;
+      }
+      else {
+        unsigned int flags = ngram_metatoken_flags(info.kind,
+          info.is_sentence, have_break);
+        unsigned int id = libxs_lexicon_id(lexicon, (const char*)payload,
+          (int)payload_size, flags, create);
+        if (0 == id && 0 == create) {
+          id = libxs_lexicon_id(lexicon, (const char*)payload,
+            (int)payload_size, flags, 1);
+        }
+        if (0 == id) break;
+        tokens[result].id = id;
+        tokens[result].length = (unsigned short)payload_size;
+        tokens[result].flags = (unsigned short)flags;
+        if (NULL != word_ids) word_ids[result] = id;
+        ++result;
+        have_break = (LIBXS_TOKEN_SPACE == info.kind) ? 1 : 0;
+        token_pos += cells;
+      }
+    }
+  }
+  libxs_token_stream_release(&stream);
+  libxs_tokenizer_destroy(tokenizer);
+  return result;
+}
+
+
 /**
- * Emits LIBXS_TOKEN_BREAK on a token preceded by whitespace in the source, so
- * libxs_token_word_next groups the pieces of one word. Native granularity cuts
+ * Emits LIBXS_LEXEME_BREAK on a token preceded by whitespace in the source, so
+ * libxs_lexeme_word_next groups the pieces of one word. Native granularity cuts
  * fixed-width chunks across word boundaries and hence marks none. When word_ids
  * is non-NULL, each piece receives the whole-word lexicon id of the word it
  * belongs to (its own id for native chunks and standalone punctuation), which
  * lets a caller build word-span context over sub-word emission.
  */
 static int ngram_native_tokens(libxs_lexicon_t* lexicon, const char* text,
-  int text_len, libxs_token_t tokens[], unsigned int word_ids[], int max,
+  int text_len, libxs_lexeme_t tokens[], unsigned int word_ids[], int max,
   int create)
 {
   int result = 0;
   int pos = 0;
   int have_break = 0;
   int mode = ngram_gran_mode();
+  int meta_granularity = ngram_metatoken_granularity(mode);
+  if (meta_granularity >= 0) {
+    return ngram_metatoken_tokens(lexicon, text, text_len, tokens, word_ids,
+      max, create, meta_granularity);
+  }
   if (GRAN_BPE == mode) {
     while (pos < text_len && result < max) {
       int wlen = 0;
@@ -6377,7 +6484,7 @@ static int ngram_native_tokens(libxs_lexicon_t* lexicon, const char* text,
       if (0 == id) break;
       tokens[result].id = id;
       tokens[result].length = (unsigned short)len;
-      tokens[result].flags = LIBXS_TOKEN_WORD;
+      tokens[result].flags = LIBXS_LEXEME_WORD;
       if (NULL != word_ids) word_ids[result] = id;
       ++result;
       pos += len;
@@ -6392,8 +6499,8 @@ static int ngram_native_tokens(libxs_lexicon_t* lexicon, const char* text,
       if (0 == id) break;
       tokens[result].id = id;
       tokens[result].length = 1;
-      tokens[result].flags = (unsigned short)(LIBXS_TOKEN_PUNCT
-        | ((0 != have_break) ? LIBXS_TOKEN_BREAK : 0));
+      tokens[result].flags = (unsigned short)(LIBXS_LEXEME_PUNCT
+        | ((0 != have_break) ? LIBXS_LEXEME_BREAK : 0));
       if (NULL != word_ids) word_ids[result] = id;
       ++result;
       have_break = (0 != isspace(c)) ? 1 : 0;
@@ -6426,8 +6533,8 @@ static int ngram_native_tokens(libxs_lexicon_t* lexicon, const char* text,
         if (0 == id) break;
         tokens[result].id = id;
         tokens[result].length = (unsigned short)piece_len[pi];
-        tokens[result].flags = (unsigned short)(LIBXS_TOKEN_WORD
-          | ((0 == pi && 0 != have_break) ? LIBXS_TOKEN_BREAK : 0));
+        tokens[result].flags = (unsigned short)(LIBXS_LEXEME_WORD
+          | ((0 == pi && 0 != have_break) ? LIBXS_LEXEME_BREAK : 0));
         if (NULL != word_ids) word_ids[result] = wid;
         ++result;
       }
@@ -6541,20 +6648,20 @@ static void ngram_hist_push(unsigned int hist[], int* hlen, int cap,
  * Word-span context for predicting sub-word token i: the whole-word ids of the
  * preceding wctx words followed by the pieces of the current word emitted so
  * far, kept as the most-recent cap entries. Rebuilt per position so that train
- * and eval derive identical keys; groups are delimited by LIBXS_TOKEN_BREAK.
+ * and eval derive identical keys; groups are delimited by LIBXS_LEXEME_BREAK.
  */
-static int ngram_wordctx_hist(const libxs_token_t nat[],
+static int ngram_wordctx_hist(const libxs_lexeme_t nat[],
   const unsigned int word_ids[], int i, int wctx, unsigned int hist[], int cap)
 {
   int hlen = 0;
   int wstart = i;
   unsigned int words[NGRAM_ORDER_MAX];
   int nw = 0, p, k;
-  while (wstart > 0 && 0 == (nat[wstart].flags & LIBXS_TOKEN_BREAK)) --wstart;
+  while (wstart > 0 && 0 == (nat[wstart].flags & LIBXS_LEXEME_BREAK)) --wstart;
   p = wstart;
   while (p > 0 && nw < wctx && nw < (int)(sizeof(words) / sizeof(*words))) {
     int ws = p - 1;
-    while (ws > 0 && 0 == (nat[ws].flags & LIBXS_TOKEN_BREAK)) --ws;
+    while (ws > 0 && 0 == (nat[ws].flags & LIBXS_LEXEME_BREAK)) --ws;
     words[nw++] = word_ids[ws];
     p = ws;
   }
@@ -6601,7 +6708,7 @@ static void ngram_train_text(libxs_registry_t* model,
   int maxorder = ngram_order();
   if (0 != ngram_native_mode()) {
     int wctx = ngram_wordctx();
-    libxs_token_t nat[COMPOSE_MAXTEXT];
+    libxs_lexeme_t nat[COMPOSE_MAXTEXT];
     unsigned int word_ids[COMPOSE_MAXTEXT];
     int ntok = ngram_native_tokens(lexicon, text, text_len, nat,
       (0 != wctx) ? word_ids : NULL, COMPOSE_MAXTEXT, 1);
@@ -7763,7 +7870,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
       (size_t)entry->text_len, rules, nrules, answer_lexnorms, answer_lexnorms_size, 0)))
     {
       int wctx = ngram_wordctx();
-      libxs_token_t nat[COMPOSE_MAXTEXT];
+      libxs_lexeme_t nat[COMPOSE_MAXTEXT];
       unsigned int word_ids[COMPOSE_MAXTEXT];
       int ntok = (0 != native)
         ? ngram_native_tokens(lexicon, entry->text, entry->text_len,

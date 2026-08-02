@@ -5,21 +5,15 @@
 static int read_stdin(unsigned char** data, size_t* size);
 static int join_args(int argc, char* argv[], unsigned char** data, size_t* size);
 static void print_tokens(const libxs_token_stream_t* stream);
-static void print_tokens_with_text(const libxs_token_stream_t* stream,
-  const libxs_lexicon_t* lexicon);
+static int verify_stream(const unsigned char* input, size_t input_size,
+  int granularity, const char* name);
 
 
 int main(int argc, char* argv[])
 {
-  libxs_token_stream_t stream;
-  libxs_lexrule_t lexrules[96];
-  libxs_lexicon_t* lexicon = NULL;
   unsigned char* input = NULL;
   size_t input_size = 0;
-  int lexrule_count = 0;
   int result = EXIT_FAILURE;
-
-  libxs_token_stream_init(&stream);
 
   if (1 < argc && 0 == strcmp(argv[1], "-")) {
     result = read_stdin(&input, &input_size);
@@ -37,28 +31,20 @@ int main(int argc, char* argv[])
   }
 
   if (EXIT_SUCCESS == result) {
-    lexicon = libxs_lexicon_create();
-    lexrule_count = libxs_lexrule_defaults(lexrules, 96);
-    if (NULL == lexicon || lexrule_count <= 0) result = EXIT_FAILURE;
+    result = verify_stream(input, input_size,
+      LIBXS_TOKEN_GRANULARITY_NATIVE, "native");
   }
   if (EXIT_SUCCESS == result) {
-    result = libxs_token_stream_encode(lexicon, &stream,
-      input, input_size, lexrules, lexrule_count, NULL, 0, 1);
+    result = verify_stream(input, input_size,
+      LIBXS_TOKEN_GRANULARITY_WORD, "word");
   }
   if (EXIT_SUCCESS == result) {
-    printf("input-bytes: %lu\n", (unsigned long)input_size);
-    printf("tokens: %lu\n", (unsigned long)stream.size);
-    print_tokens(&stream);
-    printf("vocab: %u\n", libxs_lexicon_size(lexicon));
-    print_tokens_with_text(&stream, lexicon);
+    result = verify_stream(input, input_size,
+      LIBXS_TOKEN_GRANULARITY_SYLLABLE, "syllable");
   }
-  else {
-    fprintf(stderr, "tokenizer: failed\n");
-  }
+  if (EXIT_SUCCESS != result) fprintf(stderr, "tokenizer: failed\n");
 
   free(input);
-  libxs_lexicon_destroy(lexicon);
-  libxs_token_stream_release(&stream);
   return result;
 }
 
@@ -133,35 +119,51 @@ static int join_args(int argc, char* argv[], unsigned char** data, size_t* size)
 
 static void print_tokens(const libxs_token_stream_t* stream)
 {
-  size_t i;
+  size_t token_pos = 0;
   if (NULL != stream) {
-    for (i = 0; i < stream->size; ++i) {
-      const libxs_token_t* token = stream->data + i;
-      libxs_token_info_t info;
-      libxs_token_info(token, &info);
-      printf("  %02lu id=%u len=%lu flags=0x%04X break=%d sentence=%d\n",
-        (unsigned long)i, info.id, (unsigned long)info.length,
-        info.flags, info.has_break, info.is_sentence);
+    while (token_pos < stream->size) {
+      size_t payload_size = 0;
+      size_t ncells = libxs_token_span(stream->data, stream->size,
+        token_pos, &payload_size);
+      const libxs_token_t* token = stream->data + token_pos;
+      if (0 == ncells) break;
+      printf("  %02lu kind=%d bytes=%lu cells=%lu sentence=%d\n",
+        (unsigned long)token_pos, libxs_token_kind(token),
+        (unsigned long)payload_size, (unsigned long)ncells,
+        libxs_token_is_sentence_end(token + ncells - 1));
+      token_pos += ncells;
     }
   }
 }
 
 
-static void print_tokens_with_text(const libxs_token_stream_t* stream,
-  const libxs_lexicon_t* lexicon)
+static int verify_stream(const unsigned char* input, size_t input_size,
+  int granularity, const char* name)
 {
-  size_t token_pos;
-  if (NULL != stream && NULL != lexicon) {
-    for (token_pos = 0; token_pos < stream->size; ++token_pos) {
-      const libxs_token_t* token = stream->data + token_pos;
-      int length = 0;
-      unsigned int flags = 0;
-      const char* text = libxs_lexicon_text(lexicon, token->id,
-        &length, &flags);
-      printf("  %02lu id=%u flags=0x%04X len=%u text=\"%.*s\"\n",
-        (unsigned long)token_pos, token->id,
-        (unsigned int)token->flags, (unsigned int)token->length, length,
-        (NULL != text) ? text : "");
-    }
+  int result = EXIT_FAILURE;
+  libxs_token_stream_t stream;
+  libxs_tokenizer_t* tokenizer = libxs_tokenizer_create(granularity);
+  unsigned char* decoded = NULL;
+  size_t decoded_size = 0;
+  libxs_token_stream_init(&stream);
+  if (NULL != tokenizer
+    && EXIT_SUCCESS == libxs_token_stream_encode(tokenizer, &stream,
+      input, input_size)
+    && EXIT_SUCCESS == libxs_token_stream_decode(&stream, &decoded,
+      &decoded_size)
+    && decoded_size == input_size
+    && 0 == memcmp(decoded, input, input_size))
+  {
+    printf("%s: input-bytes=%lu cells=%lu\n", name,
+      (unsigned long)input_size, (unsigned long)stream.size);
+    print_tokens(&stream);
+    result = EXIT_SUCCESS;
   }
+  else {
+    fprintf(stderr, "%s: roundtrip mismatch\n", name);
+  }
+  free(decoded);
+  libxs_tokenizer_destroy(tokenizer);
+  libxs_token_stream_release(&stream);
+  return result;
 }

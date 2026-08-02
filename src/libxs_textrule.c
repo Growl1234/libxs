@@ -63,8 +63,8 @@ int internal_textrule_match(const libxs_textrule_t* rule,
     } break;
     case LIBXS_TRULE_NEXT_CHAR_UPPER: {
       int npos = ctx->byte_pos;
-      const libxs_token_t* t = ctx->token;
-      if (NULL != t) npos += (int)libxs_token_len(t);
+      const libxs_lexeme_t* token = ctx->token;
+      if (NULL != token) npos += (int)libxs_lexeme_len(token);
       while (npos < (int)ctx->text_size
         && 0 != isspace(ctx->text[npos])) ++npos;
       if (npos < (int)ctx->text_size
@@ -72,8 +72,8 @@ int internal_textrule_match(const libxs_textrule_t* rule,
     } break;
     case LIBXS_TRULE_NEXT_CHAR_LOWER: {
       int npos = ctx->byte_pos;
-      const libxs_token_t* t = ctx->token;
-      if (NULL != t) npos += (int)libxs_token_len(t);
+      const libxs_lexeme_t* token = ctx->token;
+      if (NULL != token) npos += (int)libxs_lexeme_len(token);
       while (npos < (int)ctx->text_size
         && 0 != isspace(ctx->text[npos])) ++npos;
       if (npos < (int)ctx->text_size
@@ -81,7 +81,7 @@ int internal_textrule_match(const libxs_textrule_t* rule,
     } break;
     case LIBXS_TRULE_PREV_TOKEN_BREAK: {
       if (NULL != ctx->prev_token
-        && 0 != libxs_token_has_break(ctx->prev_token)) result = 1;
+        && 0 != libxs_lexeme_has_break(ctx->prev_token)) result = 1;
     } break;
     case LIBXS_TRULE_INSIDE_DELIMITERS: {
       unsigned char open_ch = (unsigned char)(rule->argument & 0xFFu);
@@ -109,7 +109,7 @@ LIBXS_API int libxs_textrule_eval(const libxs_textrule_ctx_t* ctx,
 {
   int result, i;
   if (NULL == ctx || NULL == ctx->token) return 0;
-  if (0 == libxs_token_is_sentence_end(ctx->token)) return 0;
+  if (0 == libxs_lexeme_is_sentence_end(ctx->token)) return 0;
   result = 1;
   if (NULL != rules) {
     for (i = 0; i < nrules; ++i) {

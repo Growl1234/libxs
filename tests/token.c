@@ -25,10 +25,15 @@
 int main(int argc, char* argv[])
 {
   static const unsigned char input[] = "Who is Alice? Alice saw 123.";
+  static const unsigned char meta_input[] =
+    "M\xC3\xA9" "tatokenization carries syllables exactly.";
   const size_t input_size = sizeof(input) - 1;
-  libxs_token_stream_t stream;
-  libxs_token_stream_t inflect_stream;
-  libxs_token_stream_t plain_stream;
+  const size_t meta_input_size = sizeof(meta_input) - 1;
+  libxs_token_stream_t meta_stream;
+  libxs_tokenizer_t* tokenizer = NULL;
+  libxs_lexeme_stream_t stream;
+  libxs_lexeme_stream_t inflect_stream;
+  libxs_lexeme_stream_t plain_stream;
   libxs_lexrule_t lexrules[96];
   libxs_lexnorm_t lexnorms[4];
   libxs_lexicon_t* lexicon = NULL;
@@ -40,12 +45,14 @@ int main(int argc, char* argv[])
   int lexrule_count = 0;
   int saw_question = 0, saw_entity = 0, saw_stop = 0, saw_number = 0;
   unsigned int first_alice = 0, second_alice = 0;
+  int granularity;
   int result = EXIT_SUCCESS;
   LIBXS_UNUSED(argc); LIBXS_UNUSED(argv);
 
-  libxs_token_stream_init(&stream);
-  libxs_token_stream_init(&inflect_stream);
-  libxs_token_stream_init(&plain_stream);
+  libxs_token_stream_init(&meta_stream);
+  libxs_lexeme_stream_init(&stream);
+  libxs_lexeme_stream_init(&inflect_stream);
+  libxs_lexeme_stream_init(&plain_stream);
   if (0 != stream.size || 0 != stream.capacity || NULL != stream.data) {
     FPRINTF(stderr, "ERROR line #%i: token stream init\n", __LINE__);
     result = EXIT_FAILURE;
@@ -56,8 +63,93 @@ int main(int argc, char* argv[])
     FPRINTF(stderr, "ERROR line #%i: token size\n", __LINE__);
     result = EXIT_FAILURE;
   }
+  if (EXIT_SUCCESS == result
+    && sizeof(libxs_lexeme_t) != (size_t)LIBXS_LEXEME_BYTES)
+  {
+    FPRINTF(stderr, "ERROR line #%i: lexeme size\n", __LINE__);
+    result = EXIT_FAILURE;
+  }
+  for (granularity = LIBXS_TOKEN_GRANULARITY_NATIVE;
+    granularity <= LIBXS_TOKEN_GRANULARITY_SYLLABLE
+      && EXIT_SUCCESS == result; ++granularity)
+  {
+    unsigned char* decoded = NULL;
+    size_t decoded_size = 0, token_pos = 0;
+    int saw_continued = 0, saw_kind = 0, saw_space = 0, saw_sentence_meta = 0;
+    if (NULL == tokenizer) tokenizer = libxs_tokenizer_create(granularity);
+    else result = libxs_tokenizer_set_granularity(tokenizer, granularity);
+    if (NULL == tokenizer
+      || granularity != libxs_tokenizer_granularity(tokenizer))
+    {
+      result = EXIT_FAILURE;
+    }
+    if (EXIT_SUCCESS == result) {
+      result = libxs_token_stream_encode(tokenizer, &meta_stream, meta_input,
+        meta_input_size);
+    }
+    if (EXIT_SUCCESS == result) {
+      result = libxs_token_stream_decode(&meta_stream, &decoded,
+        &decoded_size);
+    }
+    if (EXIT_SUCCESS == result
+      && (decoded_size != meta_input_size
+        || 0 != memcmp(decoded, meta_input, meta_input_size)))
+    {
+      result = EXIT_FAILURE;
+    }
+    while (EXIT_SUCCESS == result && token_pos < meta_stream.size) {
+      size_t payload_size = 0;
+      size_t ncells = libxs_token_span(meta_stream.data, meta_stream.size,
+        token_pos, &payload_size);
+      const libxs_token_t* token = meta_stream.data + token_pos;
+      unsigned char payload[LIBXS_LEXEME_MAXBYTES + 1];
+      libxs_token_info_t info;
+      if (0 == ncells || 0 == payload_size
+        || EXIT_SUCCESS != libxs_token_read(meta_stream.data,
+          meta_stream.size, token_pos, payload, sizeof(payload), &info)
+        || info.cells != ncells || info.length != payload_size
+        || info.kind != libxs_token_kind(token))
+      {
+        result = EXIT_FAILURE;
+      }
+      else {
+        const int kind = libxs_token_kind(token);
+        if (ncells > 1) saw_continued = 1;
+        if ((LIBXS_TOKEN_GRANULARITY_WORD == granularity
+          || LIBXS_TOKEN_GRANULARITY_SYLLABLE == granularity)
+          && LIBXS_TOKEN_TEXT == kind)
+        {
+          saw_kind = 1;
+        }
+        if (LIBXS_TOKEN_SPACE == kind) saw_space = 1;
+        if (0 != libxs_token_is_sentence_end(token + ncells - 1)) {
+          saw_sentence_meta = 1;
+        }
+        token_pos += ncells;
+      }
+    }
+    if (EXIT_SUCCESS == result
+      && LIBXS_TOKEN_GRANULARITY_NATIVE != granularity
+      && (0 == saw_kind || 0 == saw_space || 0 == saw_sentence_meta))
+    {
+      result = EXIT_FAILURE;
+    }
+    if (EXIT_SUCCESS == result
+      && LIBXS_TOKEN_GRANULARITY_WORD == granularity
+      && 0 == saw_continued)
+    {
+      result = EXIT_FAILURE;
+    }
+    if (EXIT_SUCCESS != result) {
+      FPRINTF(stderr, "ERROR line #%i: metatoken granularity %i\n",
+        __LINE__, granularity);
+    }
+    free(decoded);
+    libxs_token_stream_release(&meta_stream);
+  }
+  libxs_tokenizer_destroy(tokenizer);
   if (EXIT_SUCCESS == result) {
-    result = libxs_token_stream_reserve(&stream, 2);
+    result = libxs_lexeme_stream_reserve(&stream, 2);
     if (EXIT_SUCCESS != result || stream.capacity < 2) {
       FPRINTF(stderr, "ERROR line #%i: token stream reserve\n", __LINE__);
       result = EXIT_FAILURE;
@@ -72,7 +164,7 @@ int main(int argc, char* argv[])
     }
   }
   if (EXIT_SUCCESS == result) {
-    result = libxs_token_stream_encode(lexicon, &stream,
+    result = libxs_lexeme_stream_encode(lexicon, &stream,
       input, input_size, lexrules, lexrule_count, NULL, 0, 1);
     if (EXIT_SUCCESS != result || stream.size < 7
       || libxs_lexicon_size(lexicon) < 6)
@@ -87,10 +179,10 @@ int main(int argc, char* argv[])
       unsigned int text_flags = 0;
       const char* text = libxs_lexicon_text(lexicon, stream.data[i].id,
         &text_len, &text_flags);
-      libxs_token_info_t info;
-      const libxs_token_t* const token = stream.data + i;
-      libxs_token_info(token, &info);
-      if (info.length != libxs_token_len(token)) {
+      libxs_lexeme_info_t info;
+      const libxs_lexeme_t* const token = stream.data + i;
+      libxs_lexeme_info(token, &info);
+      if (info.length != libxs_lexeme_len(token)) {
         FPRINTF(stderr, "ERROR line #%i: token info length\n", __LINE__);
         result = EXIT_FAILURE;
         break;
@@ -135,7 +227,7 @@ int main(int argc, char* argv[])
     memcpy(lexnorms[2].to, "count", 6);
     memcpy(lexnorms[3].from, "stretched", 10);
     memcpy(lexnorms[3].to, "stretch", 8);
-    result = libxs_token_stream_encode(lexicon, &inflect_stream,
+    result = libxs_lexeme_stream_encode(lexicon, &inflect_stream,
       inflect, sizeof(inflect) - 1, lexrules, lexrule_count,
       lexnorms, 4, 1);
     if (EXIT_SUCCESS != result || 7 != inflect_stream.size
@@ -150,7 +242,7 @@ int main(int argc, char* argv[])
   }
   if (EXIT_SUCCESS == result) {
     static const unsigned char plain[] = "stretch stretched";
-    result = libxs_token_stream_encode(lexicon, &plain_stream,
+    result = libxs_lexeme_stream_encode(lexicon, &plain_stream,
       plain, sizeof(plain) - 1, lexrules, lexrule_count, NULL, 0, 1);
     if (EXIT_SUCCESS != result || 2 != plain_stream.size
       || plain_stream.data[0].id == plain_stream.data[1].id)
@@ -161,11 +253,11 @@ int main(int argc, char* argv[])
   }
   if (EXIT_SUCCESS == result) {
     size_t pos = 0, ngroups = 0, ncovered = 0, n;
-    libxs_token_t pieces[4];
-    while (0 != (n = libxs_token_word_next(stream.data, stream.size, pos))) {
+    libxs_lexeme_t pieces[4];
+    while (0 != (n = libxs_lexeme_word_next(stream.data, stream.size, pos))) {
       size_t k;
       for (k = pos + 1; k < pos + n; ++k) {
-        if (0 != (stream.data[k].flags & LIBXS_TOKEN_BREAK)) {
+        if (0 != (stream.data[k].flags & LIBXS_LEXEME_BREAK)) {
           FPRINTF(stderr, "ERROR line #%i: word group break\n", __LINE__);
           result = EXIT_FAILURE;
         }
@@ -175,22 +267,22 @@ int main(int argc, char* argv[])
       pos += n;
     }
     if (ncovered != stream.size || ngroups < 2 || ngroups >= stream.size
-      || 0 != libxs_token_word_next(stream.data, stream.size, stream.size)
-      || 0 != libxs_token_word_next(NULL, 4, 0))
+      || 0 != libxs_lexeme_word_next(stream.data, stream.size, stream.size)
+      || 0 != libxs_lexeme_word_next(NULL, 4, 0))
     {
       FPRINTF(stderr, "ERROR line #%i: word iteration\n", __LINE__);
       result = EXIT_FAILURE;
     }
     memset(pieces, 0, sizeof(pieces));
-    pieces[0].flags = LIBXS_TOKEN_WORD | LIBXS_TOKEN_BREAK;
-    pieces[1].flags = LIBXS_TOKEN_WORD;
-    pieces[2].flags = LIBXS_TOKEN_WORD | LIBXS_TOKEN_BREAK;
-    pieces[3].flags = LIBXS_TOKEN_WORD;
+    pieces[0].flags = LIBXS_LEXEME_WORD | LIBXS_LEXEME_BREAK;
+    pieces[1].flags = LIBXS_LEXEME_WORD;
+    pieces[2].flags = LIBXS_LEXEME_WORD | LIBXS_LEXEME_BREAK;
+    pieces[3].flags = LIBXS_LEXEME_WORD;
     if (EXIT_SUCCESS == result
-      && (2 != libxs_token_word_next(pieces, 4, 0)
-        || 1 != libxs_token_word_next(pieces, 4, 1)
-        || 2 != libxs_token_word_next(pieces, 4, 2)
-        || 1 != libxs_token_word_next(pieces, 1, 0)))
+      && (2 != libxs_lexeme_word_next(pieces, 4, 0)
+        || 1 != libxs_lexeme_word_next(pieces, 4, 1)
+        || 2 != libxs_lexeme_word_next(pieces, 4, 2)
+        || 1 != libxs_lexeme_word_next(pieces, 1, 0)))
     {
       FPRINTF(stderr, "ERROR line #%i: sub-word grouping\n", __LINE__);
       result = EXIT_FAILURE;
@@ -220,7 +312,7 @@ int main(int argc, char* argv[])
         if (NULL != text && 3 == len && 0 == memcmp(text, "not", 3)) {
           saw_not = 1;
           /* the continuation must not start a new word */
-          if (0 != (norm_stream.data[k].flags & LIBXS_TOKEN_BREAK)
+          if (0 != (norm_stream.data[k].flags & LIBXS_LEXEME_BREAK)
             || 0 != norm_stream.data[k].length)
           {
             result = EXIT_FAILURE;
@@ -235,7 +327,7 @@ int main(int argc, char* argv[])
       }
       if (EXIT_SUCCESS == result) { /* the pair groups as ONE word */
         size_t pos = 0, n, ngroups = 0;
-        while (0 != (n = libxs_token_word_next(norm_stream.data,
+        while (0 != (n = libxs_lexeme_word_next(norm_stream.data,
           norm_stream.size, pos)))
         {
           ++ngroups;
@@ -273,9 +365,9 @@ int main(int argc, char* argv[])
   free(lexicon_buffer);
   libxs_lexicon_destroy(loaded_lexicon);
   libxs_lexicon_destroy(lexicon);
-  libxs_token_stream_release(&plain_stream);
-  libxs_token_stream_release(&inflect_stream);
-  libxs_token_stream_release(&stream);
+  libxs_lexeme_stream_release(&plain_stream);
+  libxs_lexeme_stream_release(&inflect_stream);
+  libxs_lexeme_stream_release(&stream);
   if (EXIT_SUCCESS == result
     && (0 != stream.size || 0 != stream.capacity || NULL != stream.data))
   {
