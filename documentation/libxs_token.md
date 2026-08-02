@@ -25,6 +25,14 @@ require a larger struct or an external vocabulary. `libxs_token_span` validates
 the continuation chain, while `libxs_token_read` reconstructs its payload and
 metadata.
 
+Encoder-produced cells are zero-initialized, including unused payload bytes.
+Binary comparison therefore remains deterministic when control metadata matters.
+For content matching, use `libxs_token_payload_equal` on physical cells or
+`libxs_token_payload_match` on complete logical metatokens. These functions
+compare declared payload length and bytes while ignoring kind, continuation,
+sentence flags, unused trailing bytes, and (for logical matching) cell layout.
+Do not infer payload length from trailing zeros; zero is a valid payload byte.
+
 Payload kinds are independent of segmentation policy: word and syllable
 settings both emit `LIBXS_TOKEN_TEXT`. Their boundaries differ, but consumers
 use the same read and decode APIs.

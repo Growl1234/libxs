@@ -114,6 +114,16 @@ int main(int argc, char* argv[])
       }
       else {
         const int kind = libxs_token_kind(token);
+        size_t cell_pos;
+        for (cell_pos = 0; cell_pos < ncells; ++cell_pos) {
+          const libxs_token_t* cell = token + cell_pos;
+          size_t payload_pos;
+          for (payload_pos = 1 + libxs_token_len(cell);
+            payload_pos < LIBXS_TOKEN_BYTES; ++payload_pos)
+          {
+            if (0 != cell->raw[payload_pos]) result = EXIT_FAILURE;
+          }
+        }
         if (ncells > 1) saw_continued = 1;
         if ((LIBXS_TOKEN_GRANULARITY_WORD == granularity
           || LIBXS_TOKEN_GRANULARITY_SYLLABLE == granularity)
@@ -148,6 +158,44 @@ int main(int argc, char* argv[])
     libxs_token_stream_release(&meta_stream);
   }
   libxs_tokenizer_destroy(tokenizer);
+  if (EXIT_SUCCESS == result) {
+    libxs_token_t lhs[2], rhs[1], prefix[1], longer[1];
+    memset(lhs, 0, sizeof(lhs));
+    memset(rhs, 0, sizeof(rhs));
+    memset(prefix, 0, sizeof(prefix));
+    memset(longer, 0, sizeof(longer));
+    lhs[0].raw[0] = (unsigned char)(3 | LIBXS_TOKEN_CONTINUED
+      | (LIBXS_TOKEN_TEXT << LIBXS_TOKEN_KIND_SHIFT));
+    lhs[1].raw[0] = (unsigned char)(3
+      | (LIBXS_TOKEN_TEXT << LIBXS_TOKEN_KIND_SHIFT));
+    rhs[0].raw[0] = (unsigned char)(6 | LIBXS_TOKEN_SENTENCE
+      | (LIBXS_TOKEN_PUNCT << LIBXS_TOKEN_KIND_SHIFT));
+    prefix[0].raw[0] = (unsigned char)(3 | LIBXS_TOKEN_SENTENCE
+      | (LIBXS_TOKEN_MARKUP << LIBXS_TOKEN_KIND_SHIFT));
+    longer[0].raw[0] = (unsigned char)(4
+      | (LIBXS_TOKEN_TEXT << LIBXS_TOKEN_KIND_SHIFT));
+    memcpy(lhs[0].raw + 1, "abc", 3);
+    memcpy(lhs[1].raw + 1, "def", 3);
+    memcpy(rhs[0].raw + 1, "abcdef", 6);
+    memcpy(prefix[0].raw + 1, "abc", 3);
+    memcpy(longer[0].raw + 1, "abc", 3);
+    prefix[0].raw[7] = 0xA5u;
+    if (0 == libxs_token_payload_equal(lhs, prefix)
+      || 0 != libxs_token_payload_equal(lhs, longer)
+      || 0 == libxs_token_payload_match(lhs, 2, 0, rhs, 1, 0)
+      || 0 != libxs_token_payload_match(lhs, 1, 0, rhs, 1, 0))
+    {
+      FPRINTF(stderr, "ERROR line #%i: payload matching\n", __LINE__);
+      result = EXIT_FAILURE;
+    }
+    rhs[0].raw[6] = (unsigned char)'x';
+    if (EXIT_SUCCESS == result
+      && 0 != libxs_token_payload_match(lhs, 2, 0, rhs, 1, 0))
+    {
+      FPRINTF(stderr, "ERROR line #%i: payload mismatch\n", __LINE__);
+      result = EXIT_FAILURE;
+    }
+  }
   if (EXIT_SUCCESS == result) {
     result = libxs_lexeme_stream_reserve(&stream, 2);
     if (EXIT_SUCCESS != result || stream.capacity < 2) {

@@ -425,6 +425,66 @@ LIBXS_API size_t libxs_token_span(const libxs_token_t* tokens,
 }
 
 
+LIBXS_API int libxs_token_payload_equal(const libxs_token_t* lhs,
+  const libxs_token_t* rhs)
+{
+  int result = 0;
+  if (NULL != lhs && NULL != rhs) {
+    const size_t lhs_length = libxs_token_len(lhs);
+    const size_t rhs_length = libxs_token_len(rhs);
+    if (lhs_length == rhs_length && lhs_length > 0
+      && 0 == memcmp(lhs->raw + 1, rhs->raw + 1, lhs_length))
+    {
+      result = 1;
+    }
+  }
+  return result;
+}
+
+
+LIBXS_API int libxs_token_payload_match(const libxs_token_t* lhs,
+  size_t nlhs, size_t lhs_pos, const libxs_token_t* rhs,
+  size_t nrhs, size_t rhs_pos)
+{
+  int result = 0;
+  size_t lhs_size = 0, rhs_size = 0;
+  const size_t lhs_cells = libxs_token_span(lhs, nlhs, lhs_pos, &lhs_size);
+  const size_t rhs_cells = libxs_token_span(rhs, nrhs, rhs_pos, &rhs_size);
+  if (lhs_cells > 0 && rhs_cells > 0 && lhs_size == rhs_size) {
+    size_t lhs_cell = 0, rhs_cell = 0;
+    size_t lhs_offset = 0, rhs_offset = 0;
+    size_t compared = 0;
+    result = 1;
+    while (compared < lhs_size && 0 != result) {
+      const libxs_token_t* lhs_token = lhs + lhs_pos + lhs_cell;
+      const libxs_token_t* rhs_token = rhs + rhs_pos + rhs_cell;
+      const size_t lhs_left = libxs_token_len(lhs_token) - lhs_offset;
+      const size_t rhs_left = libxs_token_len(rhs_token) - rhs_offset;
+      const size_t length = (lhs_left < rhs_left) ? lhs_left : rhs_left;
+      if (0 != memcmp(lhs_token->raw + 1 + lhs_offset,
+        rhs_token->raw + 1 + rhs_offset, length))
+      {
+        result = 0;
+      }
+      else {
+        compared += length;
+        lhs_offset += length;
+        rhs_offset += length;
+        if (lhs_offset == libxs_token_len(lhs_token)) {
+          ++lhs_cell;
+          lhs_offset = 0;
+        }
+        if (rhs_offset == libxs_token_len(rhs_token)) {
+          ++rhs_cell;
+          rhs_offset = 0;
+        }
+      }
+    }
+  }
+  return result;
+}
+
+
 LIBXS_API void libxs_token_stream_init(libxs_token_stream_t* stream)
 {
   if (NULL != stream) {

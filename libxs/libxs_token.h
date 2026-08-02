@@ -226,6 +226,23 @@ LIBXS_API int libxs_token_read(const libxs_token_t* tokens,
   size_t ntokens, size_t pos, unsigned char* payload, size_t capacity,
   libxs_token_info_t* info);
 
+/**
+ * Compare the declared payload of two physical cells. Length and payload bytes
+ * must match; kind, continuation, sentence, and unused trailing bytes are
+ * ignored. This is the content-matching operation, not binary token equality.
+ */
+LIBXS_API int libxs_token_payload_equal(const libxs_token_t* lhs,
+  const libxs_token_t* rhs);
+
+/**
+ * Compare two complete logical metatoken payloads without allocation. Control
+ * metadata and physical cell boundaries are ignored. Invalid chains, unequal
+ * logical lengths, or unequal payload bytes return zero.
+ */
+LIBXS_API int libxs_token_payload_match(const libxs_token_t* lhs,
+  size_t nlhs, size_t lhs_pos, const libxs_token_t* rhs,
+  size_t nrhs, size_t rhs_pos);
+
 /** Initialize an empty token stream. */
 LIBXS_API void libxs_token_stream_init(libxs_token_stream_t* stream);
 
