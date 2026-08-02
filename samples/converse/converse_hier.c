@@ -159,6 +159,57 @@ struct converse_hier_t {
 static const int hier_skip_distance[HIER_SKIP_COUNT] = { 2, 3, 5 };
 
 
+/**
+ * Escape estimator: 0 = method C (escape mass distinct/(total+distinct)),
+ * 1 = method D (escape distinct/(2*total), symbol (2c-1)/(2*total)). Both are
+ * normalized; D is the usual choice on text because it charges a novel symbol
+ * half a count instead of a whole one. Exclusion is unaffected: the escaped mass
+ * is still redistributed over symbols unseen at this order via backoff_norm.
+ */
+/**
+ * Logarithmic (logit-domain) pooling of the expert distributions instead of the
+ * linear pool. A linear pool cannot be more confident than its most confident
+ * expert; a logarithmic pool compounds independent agreement, which is what the
+ * word, syllable and skip experts often provide. It requires a normalizer over
+ * the whole alphabet, hence the byte budget below: unlike the linear pool, which
+ * is evaluated at the target symbol only, this costs 256 expert evaluations per
+ * position.
+ */
+static int hier_ppm_logit(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_HIER_LOGIT");
+    cached = (NULL != env && '0' != *env) ? 1 : 0;
+  }
+  return cached;
+}
+
+
+/** Cap on evaluated test bytes (0 = all), for affordable A/B comparisons. */
+static long hier_eval_max(void)
+{
+  static long cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_HIER_EVAL_MAX");
+    cached = (NULL != env && '\0' != *env) ? atol(env) : 0;
+    if (cached < 0) cached = 0;
+  }
+  return cached;
+}
+
+
+static int hier_ppm_escape_d(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_HIER_PPM_D");
+    cached = (NULL != env && '0' != *env) ? 1 : 0;
+  }
+  return cached;
+}
+
+
 static int hier_skip_history(const unsigned int raw_history[], int raw_length,
   int distance, unsigned int history[])
 {
@@ -336,8 +387,15 @@ static double hier_ppm_prob_order(const hier_ppm_t* model,
     count = (const unsigned int*)libxs_registry_get(model->pairs,
       &pair, sizeof(pair), NULL);
     if (NULL != stats && stats->total > 0) {
-      const double denom = (double)stats->total + (double)stats->distinct;
-      if (NULL != count) result = (double)*count / denom;
+      const int method_d = hier_ppm_escape_d();
+      const double denom = (0 != method_d)
+        ? (2.0 * (double)stats->total)
+        : ((double)stats->total + (double)stats->distinct);
+      if (NULL != count) {
+        result = (0 != method_d)
+          ? ((2.0 * (double)*count - 1.0) / denom)
+          : ((double)*count / denom);
+      }
       else if (stats->backoff_norm > 0.0) {
         result = ((double)stats->distinct / denom)
           * lower / stats->backoff_norm;
@@ -547,6 +605,65 @@ static void hier_expert_update(double weight[], const double probability[],
         + share * uniform;
     }
   }
+}
+
+
+/**
+ * Logarithmic pool over the whole alphabet: p(x) proportional to
+ * prod_i q_i(x)^{w_i}, i.e. a weighted geometric mean, evaluated in the log
+ * domain and normalized. Returns the pooled probability of the target symbol.
+ * Weights are the same fixed-share weights the linear pool uses, so the two
+ * differ only in how the experts are combined.
+ */
+static double hier_expert_logit_mix(const converse_hier_t* model,
+  const hier_clock_eval_t* evaluation, const unsigned int raw_history[],
+  int raw_length, unsigned int target,
+  const unsigned int word_history[], int word_length,
+  const unsigned int syllable_history[], int syllable_length,
+  const unsigned int syllable_role_history[], int syllable_role_length,
+  unsigned int skip_history[HIER_SKIP_COUNT][2])
+{
+  double logits[257];
+  double total = 0.0, best = 0.0;
+  unsigned int id;
+  int have_best = 0;
+  for (id = 1; id <= 256; ++id) {
+    double accum = 0.0;
+    int expert_order, skip;
+    for (expert_order = 0; expert_order <= model->expert_order;
+      ++expert_order)
+    {
+      const int effective = (expert_order < raw_length)
+        ? expert_order : raw_length;
+      const double q = hier_ppm_prob_order(&model->expert_ppm, raw_history,
+        raw_length, id, effective);
+      accum += evaluation->expert_weight[expert_order]
+        * log(q > 1e-300 ? q : 1e-300);
+    }
+    accum += evaluation->expert_weight[HIER_EXPERT_WORD]
+      * log(LIBXS_MAX(hier_ppm_prob(&model->word_clock_ppm, word_history,
+        word_length, id), 1e-300));
+    accum += evaluation->expert_weight[HIER_EXPERT_SYLLABLE]
+      * log(LIBXS_MAX(hier_ppm_prob(&model->syllable_clock_ppm,
+        syllable_history, syllable_length, id), 1e-300));
+    accum += evaluation->expert_weight[HIER_EXPERT_SYLLABLE_ROLE]
+      * log(LIBXS_MAX(hier_ppm_prob(&model->syllable_role_ppm,
+        syllable_role_history, syllable_role_length, id), 1e-300));
+    for (skip = 0; skip < HIER_SKIP_COUNT; ++skip) {
+      const int skip_length = hier_skip_history(raw_history, raw_length,
+        hier_skip_distance[skip], skip_history[skip]);
+      accum += evaluation->expert_weight[HIER_EXPERT_SKIP2 + skip]
+        * log(LIBXS_MAX(hier_ppm_prob(&model->skip_ppm[skip],
+          skip_history[skip], skip_length, id), 1e-300));
+    }
+    logits[id] = accum;
+    if (0 == have_best || accum > best) { best = accum; have_best = 1; }
+  }
+  for (id = 1; id <= 256; ++id) {
+    logits[id] = exp(logits[id] - best);
+    total += logits[id];
+  }
+  return (total > 0.0) ? (logits[target] / total) : 0.0;
 }
 
 
@@ -1178,7 +1295,10 @@ static void hier_score_clock_text(converse_hier_t* model,
       model->syllable_tokenizer, model->syllables,
       HIER_CLOCK_SYLLABLE_BASE, syllable_role_state, 1))
   {
-    for (pos = 0; pos < text_length; ++pos) {
+    const long eval_max = hier_eval_max();
+    const int eval_stop = (0 < eval_max && eval_max < (long)text_length)
+      ? (int)eval_max : text_length;
+    for (pos = 0; pos < eval_stop; ++pos) {
       unsigned int history[LIBXS_NGRAM_ORDER_MAX];
       unsigned int raw_ids[1], context_ids[1];
       const unsigned int id = (unsigned int)(unsigned char)text[pos] + 1u;
@@ -1269,6 +1389,12 @@ static void hier_score_clock_text(converse_hier_t* model,
           &model->skip_ppm[skip], skip_history[skip], skip_length, id);
         expert_mixture += evaluation->expert_weight[HIER_EXPERT_SKIP2 + skip]
           * expert_probability[HIER_EXPERT_SKIP2 + skip];
+      }
+      if (0 != hier_ppm_logit()) {
+        expert_mixture = hier_expert_logit_mix(model, evaluation, raw_history,
+          raw_length, id, word_history, word_length, syllable_history,
+          syllable_length, syllable_role_history, syllable_role_length,
+          skip_history);
       }
       for (expert_order = 0; expert_order <= model->clock_order;
         ++expert_order)
