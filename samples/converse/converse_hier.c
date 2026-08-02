@@ -23,6 +23,19 @@
 #define HIER_RECURRENT_DIM 8
 #define HIER_RECURRENT_RAW 2
 #define HIER_RECURRENT_ORDER 3
+#define HIER_EXPERT_WORD (LIBXS_NGRAM_ORDER_MAX + 1)
+#define HIER_EXPERT_SYLLABLE (LIBXS_NGRAM_ORDER_MAX + 2)
+#define HIER_EXPERT_SYLLABLE_ROLE (LIBXS_NGRAM_ORDER_MAX + 3)
+#define HIER_EXPERT_SKIP2 (LIBXS_NGRAM_ORDER_MAX + 4)
+#define HIER_EXPERT_SKIP3 (LIBXS_NGRAM_ORDER_MAX + 5)
+#define HIER_EXPERT_SKIP5 (LIBXS_NGRAM_ORDER_MAX + 6)
+#define HIER_EXPERT_LAST HIER_EXPERT_SKIP5
+#define HIER_EXPERT_MAX (HIER_EXPERT_LAST + 1)
+#define HIER_SKIP_COUNT 3
+#define HIER_ROLE_SINGLE 0
+#define HIER_ROLE_BEGIN 1
+#define HIER_ROLE_MIDDLE 2
+#define HIER_ROLE_END 3
 
 
 typedef struct hier_symbol_t {
@@ -58,6 +71,10 @@ typedef struct hier_clock_eval_t {
   long nppm_top3;
   long nadaptive_top1;
   long nadaptive_top3;
+  long nexpert_top1;
+  long nexpert_top3;
+  long nadaptive_expert_top1;
+  long nadaptive_expert_top3;
   long ndeep;
   long nshallow;
   double raw_bits;
@@ -72,6 +89,12 @@ typedef struct hier_clock_eval_t {
   double recurrent_mix_bits;
   double frozen_interp_bits;
   double adaptive_bits;
+  double expert_bits[HIER_EXPERT_MAX];
+  double expert_mix_bits;
+  double expert_weight[HIER_EXPERT_MAX];
+  double adaptive_expert_bits[HIER_EXPERT_MAX];
+  double adaptive_expert_mix_bits;
+  double adaptive_expert_weight[HIER_EXPERT_MAX];
 } hier_clock_eval_t;
 
 typedef struct hier_ppm_key_t {
@@ -102,6 +125,7 @@ typedef struct hier_ppm_t {
 struct converse_hier_t {
   libxs_registry_t* symbols;
   libxs_registry_t* syllables;
+  libxs_registry_t* syllable_payloads;
   libxs_tokenizer_t* word_tokenizer;
   libxs_tokenizer_t* syllable_tokenizer;
   libxs_ngram_t word_model;
@@ -113,15 +137,45 @@ struct converse_hier_t {
   hier_ppm_t clock_ppm;
   hier_ppm_t recurrent_ppm;
   hier_ppm_t adaptive_ppm;
+  hier_ppm_t expert_ppm;
+  hier_ppm_t word_clock_ppm;
+  hier_ppm_t syllable_clock_ppm;
+  hier_ppm_t syllable_role_ppm;
+  hier_ppm_t skip_ppm[HIER_SKIP_COUNT];
   unsigned int word_vocab;
   unsigned int syllable_vocab;
   int maxorder;
   int clock_order;
   int mincount;
   int top_stride;
+  int expert_order;
+  double expert_rate;
+  double expert_share;
   double recurrent_decay;
   int ready;
 };
+
+
+static const int hier_skip_distance[HIER_SKIP_COUNT] = { 2, 3, 5 };
+
+
+static int hier_skip_history(const unsigned int raw_history[], int raw_length,
+  int distance, unsigned int history[])
+{
+  history[0] = raw_history[raw_length - 1];
+  history[1] = (raw_length >= distance)
+    ? raw_history[raw_length - distance] : HIER_CLOCK_BYTE_START;
+  return 2;
+}
+
+
+static int hier_struct_history(unsigned int state,
+  const unsigned int raw_history[], int raw_length, unsigned int history[])
+{
+  history[0] = state;
+  history[1] = raw_history[raw_length - 1];
+  return 2;
+}
 
 
 static unsigned int hier_recurrent_code(const double state[])
@@ -337,14 +391,16 @@ static double hier_ppm_prob(const hier_ppm_t* model,
 }
 
 
-static double hier_ppm_interp_prob(const hier_ppm_t* model,
-  const unsigned int history[], int history_length, unsigned int next)
+static double hier_ppm_interp_prob_order(const hier_ppm_t* model,
+  const unsigned int history[], int history_length, unsigned int next,
+  int maxorder)
 {
   double result;
   int order;
   if (NULL == model || NULL == history || next < 1 || next > 256) return 0.0;
   result = hier_ppm_unigram(model, next);
-  for (order = 1; order <= model->maxorder && order <= history_length;
+  if (maxorder > model->maxorder) maxorder = model->maxorder;
+  for (order = 1; order <= maxorder && order <= history_length;
     ++order)
   {
     hier_ppm_key_t key;
@@ -365,6 +421,14 @@ static double hier_ppm_interp_prob(const hier_ppm_t* model,
     }
   }
   return result;
+}
+
+
+static double hier_ppm_interp_prob(const hier_ppm_t* model,
+  const unsigned int history[], int history_length, unsigned int next)
+{
+  return hier_ppm_interp_prob_order(model, history, history_length, next,
+    model->maxorder);
 }
 
 
@@ -398,6 +462,91 @@ static int hier_ppm_rank(const hier_ppm_t* model,
   else if (best_id[1] == target) result = 2;
   else if (best_id[2] == target) result = 3;
   return result;
+}
+
+
+static double hier_expert_probability(const hier_ppm_t* model,
+  const unsigned int history[], int history_length, unsigned int next,
+  const double weight[], int maxorder, int interpolate)
+{
+  double result = 0.0;
+  int order;
+  for (order = 0; order <= maxorder; ++order) {
+    const int effective = (order < history_length) ? order : history_length;
+    const double probability = (0 != interpolate)
+      ? hier_ppm_interp_prob_order(model, history, history_length, next,
+          effective)
+      : hier_ppm_prob_order(model, history, history_length, next, effective);
+    result += weight[order] * probability;
+  }
+  return result;
+}
+
+
+static int hier_expert_rank(const hier_ppm_t* model,
+  const hier_ppm_t* word_model, const hier_ppm_t* syllable_model,
+  const hier_ppm_t* syllable_role_model,
+  const hier_ppm_t skip_model[HIER_SKIP_COUNT],
+  const unsigned int history[], int history_length, unsigned int target,
+  const unsigned int word_history[], const unsigned int syllable_history[],
+  const unsigned int syllable_role_history[],
+  unsigned int skip_history[HIER_SKIP_COUNT][2],
+  const double weight[], int maxorder, int interpolate)
+{
+  unsigned int best_id[3] = { 0, 0, 0 };
+  double best_probability[3] = { -1.0, -1.0, -1.0 };
+  unsigned int id;
+  int result = 0, skip, slot;
+  for (id = 1; id <= 256; ++id) {
+    double probability = hier_expert_probability(model, history,
+      history_length, id, weight, maxorder, interpolate)
+      + weight[HIER_EXPERT_WORD] * hier_ppm_prob(word_model, word_history, 2, id)
+      + weight[HIER_EXPERT_SYLLABLE]
+        * hier_ppm_prob(syllable_model, syllable_history, 2, id)
+      + weight[HIER_EXPERT_SYLLABLE_ROLE]
+        * hier_ppm_prob(syllable_role_model, syllable_role_history, 2, id);
+    for (skip = 0; skip < HIER_SKIP_COUNT; ++skip) {
+      probability += weight[HIER_EXPERT_SKIP2 + skip]
+        * hier_ppm_prob(skip_model + skip, skip_history[skip], 2, id);
+    }
+    for (slot = 0; slot < 3; ++slot) {
+      if (probability > best_probability[slot]) break;
+    }
+    if (slot < 3) {
+      int move;
+      for (move = 2; move > slot; --move) {
+        best_probability[move] = best_probability[move - 1];
+        best_id[move] = best_id[move - 1];
+      }
+      best_probability[slot] = probability;
+      best_id[slot] = id;
+    }
+  }
+  if (best_id[0] == target) result = 1;
+  else if (best_id[1] == target) result = 2;
+  else if (best_id[2] == target) result = 3;
+  return result;
+}
+
+
+static void hier_expert_update(double weight[], const double probability[],
+  int maxorder, double mixture, double rate, double share)
+{
+  double total = 0.0;
+  int order;
+  for (order = 0; order <= maxorder; ++order) {
+    const double relative = (mixture > 0.0)
+      ? probability[order] / mixture : 1.0;
+    weight[order] *= pow(relative, rate);
+    total += weight[order];
+  }
+  if (total > 0.0) {
+    const double uniform = 1.0 / (double)(maxorder + 1);
+    for (order = 0; order <= maxorder; ++order) {
+      weight[order] = (1.0 - share) * weight[order] / total
+        + share * uniform;
+    }
+  }
 }
 
 
@@ -553,11 +702,34 @@ static int hier_read(const libxs_token_stream_t* stream, size_t token_pos,
 }
 
 
+static int hier_role_kind(const libxs_token_stream_t* stream,
+  size_t token_pos, const libxs_token_info_t* info, int previous_kind)
+{
+  int result = info->kind;
+  if (LIBXS_TOKEN_TEXT == info->kind) {
+    const size_t next_pos = token_pos + info->cells;
+    int next_kind = LIBXS_TOKEN_CONTROL;
+    int begin = (LIBXS_TOKEN_TEXT != previous_kind) ? 1 : 0;
+    int end = 1;
+    if (next_pos < stream->size) {
+      next_kind = libxs_token_kind(stream->data + next_pos);
+      if (LIBXS_TOKEN_TEXT == next_kind) end = 0;
+    }
+    if (0 != begin && 0 != end) result += 8 * HIER_ROLE_SINGLE;
+    else if (0 != begin) result += 8 * HIER_ROLE_BEGIN;
+    else if (0 != end) result += 8 * HIER_ROLE_END;
+    else result += 8 * HIER_ROLE_MIDDLE;
+  }
+  return result;
+}
+
+
 static void hier_count_word(converse_hier_t* model,
   const unsigned char* payload, size_t length)
 {
   libxs_token_stream_t stream;
   size_t token_pos = 0;
+  int previous_kind = LIBXS_TOKEN_CONTROL;
   libxs_token_stream_init(&stream);
   if (EXIT_SUCCESS == libxs_token_stream_encode(model->syllable_tokenizer,
     &stream, payload, length))
@@ -565,8 +737,13 @@ static void hier_count_word(converse_hier_t* model,
     while (token_pos < stream.size) {
       unsigned char syllable[COMPOSE_MAXTEXT];
       libxs_token_info_t info;
+      int kind;
       if (EXIT_SUCCESS != hier_read(&stream, token_pos, syllable, &info)) break;
-      hier_symbol_observe(model->syllables, info.kind, syllable, info.length);
+      kind = hier_role_kind(&stream, token_pos, &info, previous_kind);
+      hier_symbol_observe(model->syllables, kind, syllable, info.length);
+      hier_symbol_observe(model->syllable_payloads, info.kind, syllable,
+        info.length);
+      previous_kind = info.kind;
       token_pos += info.cells;
     }
   }
@@ -621,6 +798,7 @@ static void hier_train_word(converse_hier_t* model,
   unsigned int history[LIBXS_NGRAM_ORDER_MAX];
   int history_length = 1;
   size_t token_pos = 0;
+  int previous_kind = LIBXS_TOKEN_CONTROL;
   history[0] = HIER_HISTORY_START;
   libxs_token_stream_init(&stream);
   if (EXIT_SUCCESS == libxs_token_stream_encode(model->syllable_tokenizer,
@@ -630,11 +808,14 @@ static void hier_train_word(converse_hier_t* model,
       unsigned char syllable[COMPOSE_MAXTEXT];
       libxs_token_info_t info;
       unsigned int id;
+      int kind;
       if (EXIT_SUCCESS != hier_read(&stream, token_pos, syllable, &info)) break;
-      id = hier_symbol_find(model->syllables, info.kind, syllable, info.length);
+      kind = hier_role_kind(&stream, token_pos, &info, previous_kind);
+      id = hier_symbol_find(model->syllables, kind, syllable, info.length);
       if (0 == id) id = HIER_SYLLABLE_ESCAPE;
       hier_ngram_observe(&model->syllable_model, history, &history_length, id);
       hier_train_bytes(model, syllable, info.length);
+      previous_kind = info.kind;
       token_pos += info.cells;
     }
     hier_ngram_observe(&model->syllable_model, history, &history_length,
@@ -697,12 +878,13 @@ static unsigned int hier_clock_symbol(const converse_hier_t* model,
 static int hier_clock_states(const converse_hier_t* model,
   const char* text, int text_length, const libxs_tokenizer_t* tokenizer,
   const libxs_registry_t* symbols, unsigned int base,
-  unsigned int states[])
+  unsigned int states[], int role_aware)
 {
   int result = EXIT_FAILURE;
   libxs_token_stream_t stream;
   size_t token_pos = 0, byte_pos = 0;
   unsigned int previous = base;
+  int previous_kind = LIBXS_TOKEN_CONTROL;
   libxs_token_stream_init(&stream);
   if (NULL != model && NULL != text && text_length >= 0
     && NULL != tokenizer && NULL != symbols && NULL != states
@@ -715,11 +897,14 @@ static int hier_clock_states(const converse_hier_t* model,
       libxs_token_info_t info;
       size_t offset;
       unsigned int current;
+      int kind;
       if (EXIT_SUCCESS != hier_read(&stream, token_pos, payload, &info)) {
         result = EXIT_FAILURE;
         break;
       }
-      current = hier_clock_symbol(model, symbols, info.kind, payload,
+      kind = (0 != role_aware)
+        ? hier_role_kind(&stream, token_pos, &info, previous_kind) : info.kind;
+      current = hier_clock_symbol(model, symbols, kind, payload,
         info.length, base);
       for (offset = 0; offset < info.length
         && byte_pos < (size_t)text_length; ++offset)
@@ -727,6 +912,7 @@ static int hier_clock_states(const converse_hier_t* model,
         states[byte_pos++] = previous;
       }
       previous = current;
+      previous_kind = info.kind;
       token_pos += info.cells;
     }
     if (byte_pos != (size_t)text_length) result = EXIT_FAILURE;
@@ -758,6 +944,7 @@ static void hier_train_clock_text(converse_hier_t* model,
 {
   unsigned int word_state[COMPOSE_MAXTEXT];
   unsigned int syllable_state[COMPOSE_MAXTEXT];
+  unsigned int syllable_role_state[COMPOSE_MAXTEXT];
   unsigned int raw_history[LIBXS_NGRAM_ORDER_MAX];
   int raw_length = 1;
   int pos;
@@ -767,19 +954,33 @@ static void hier_train_clock_text(converse_hier_t* model,
   if (text_length > 0 && text_length <= COMPOSE_MAXTEXT
     && EXIT_SUCCESS == hier_clock_states(model, text, text_length,
       model->word_tokenizer, model->symbols, HIER_CLOCK_WORD_BASE,
-      word_state)
+      word_state, 0)
+    && EXIT_SUCCESS == hier_clock_states(model, text, text_length,
+      model->syllable_tokenizer, model->syllable_payloads,
+      HIER_CLOCK_SYLLABLE_BASE, syllable_state, 0)
     && EXIT_SUCCESS == hier_clock_states(model, text, text_length,
       model->syllable_tokenizer, model->syllables,
-      HIER_CLOCK_SYLLABLE_BASE, syllable_state))
+      HIER_CLOCK_SYLLABLE_BASE, syllable_role_state, 1))
   {
     for (pos = 0; pos < text_length; ++pos) {
       unsigned int history[LIBXS_NGRAM_ORDER_MAX];
+      unsigned int skip_history[HIER_SKIP_COUNT][2];
       const unsigned int id = (unsigned int)(unsigned char)text[pos] + 1u;
       const int history_length = hier_clock_history(raw_history, raw_length,
         word_state[pos], syllable_state[pos], history);
       unsigned int recurrent_history[HIER_RECURRENT_ORDER];
+      unsigned int word_history[2], syllable_history[2];
+      unsigned int syllable_role_history[2];
       const int recurrent_length = hier_recurrent_history(recurrent,
         raw_history, raw_length, recurrent_history);
+      const int word_length = hier_struct_history(word_state[pos], raw_history,
+        raw_length, word_history);
+      const int syllable_length = hier_struct_history(syllable_state[pos],
+        raw_history, raw_length, syllable_history);
+      const int syllable_role_length = hier_struct_history(
+        syllable_role_state[pos], raw_history, raw_length,
+        syllable_role_history);
+      int skip;
       libxs_ngram_observe(&model->clock_byte_model, history, history_length,
         id);
       libxs_ngram_observe(&model->stream_byte_model, raw_history, raw_length,
@@ -789,6 +990,18 @@ static void hier_train_clock_text(converse_hier_t* model,
       hier_ppm_observe(&model->recurrent_ppm, recurrent_history,
         recurrent_length, id);
       hier_ppm_observe(&model->adaptive_ppm, raw_history, raw_length, id);
+      hier_ppm_observe(&model->expert_ppm, raw_history, raw_length, id);
+      hier_ppm_observe(&model->word_clock_ppm, word_history, word_length, id);
+      hier_ppm_observe(&model->syllable_clock_ppm, syllable_history,
+        syllable_length, id);
+      hier_ppm_observe(&model->syllable_role_ppm, syllable_role_history,
+        syllable_role_length, id);
+      for (skip = 0; skip < HIER_SKIP_COUNT; ++skip) {
+        const int skip_length = hier_skip_history(raw_history, raw_length,
+          hier_skip_distance[skip], skip_history[skip]);
+        hier_ppm_observe(&model->skip_ppm[skip], skip_history[skip],
+          skip_length, id);
+      }
       hier_history_push(raw_history, &raw_length, LIBXS_NGRAM_ORDER_MAX, id);
       hier_recurrent_update(recurrent, (unsigned int)(unsigned char)text[pos],
         model->recurrent_decay);
@@ -835,6 +1048,7 @@ static double hier_score_word(const converse_hier_t* model,
   unsigned int history[LIBXS_NGRAM_ORDER_MAX];
   int history_length = 1;
   size_t token_pos = 0;
+  int previous_kind = LIBXS_TOKEN_CONTROL;
   history[0] = HIER_HISTORY_START;
   libxs_token_stream_init(&stream);
   if (EXIT_SUCCESS == libxs_token_stream_encode(model->syllable_tokenizer,
@@ -845,8 +1059,10 @@ static double hier_score_word(const converse_hier_t* model,
       libxs_token_info_t info;
       unsigned int id;
       double bits;
+      int kind;
       if (EXIT_SUCCESS != hier_read(&stream, token_pos, syllable, &info)) break;
-      id = hier_symbol_find(model->syllables, info.kind, syllable, info.length);
+      kind = hier_role_kind(&stream, token_pos, &info, previous_kind);
+      id = hier_symbol_find(model->syllables, kind, syllable, info.length);
       if (0 == id) id = HIER_SYLLABLE_ESCAPE;
       bits = hier_bits(&model->syllable_model, history, history_length, id);
       result += bits;
@@ -858,6 +1074,7 @@ static double hier_score_word(const converse_hier_t* model,
         ++evaluation->nsyllable_escape;
       }
       hier_history_push(history, &history_length, LIBXS_NGRAM_ORDER_MAX, id);
+      previous_kind = info.kind;
       token_pos += info.cells;
     }
     { const double bits = hier_bits(&model->syllable_model, history,
@@ -943,6 +1160,7 @@ static void hier_score_clock_text(converse_hier_t* model,
 {
   unsigned int word_state[COMPOSE_MAXTEXT];
   unsigned int syllable_state[COMPOSE_MAXTEXT];
+  unsigned int syllable_role_state[COMPOSE_MAXTEXT];
   unsigned int raw_history[LIBXS_NGRAM_ORDER_MAX];
   int raw_length = 1;
   int pos;
@@ -952,10 +1170,13 @@ static void hier_score_clock_text(converse_hier_t* model,
   if (text_length > 0 && text_length <= COMPOSE_MAXTEXT
     && EXIT_SUCCESS == hier_clock_states(model, text, text_length,
       model->word_tokenizer, model->symbols, HIER_CLOCK_WORD_BASE,
-      word_state)
+      word_state, 0)
+    && EXIT_SUCCESS == hier_clock_states(model, text, text_length,
+      model->syllable_tokenizer, model->syllable_payloads,
+      HIER_CLOCK_SYLLABLE_BASE, syllable_state, 0)
     && EXIT_SUCCESS == hier_clock_states(model, text, text_length,
       model->syllable_tokenizer, model->syllables,
-      HIER_CLOCK_SYLLABLE_BASE, syllable_state))
+      HIER_CLOCK_SYLLABLE_BASE, syllable_role_state, 1))
   {
     for (pos = 0; pos < text_length; ++pos) {
       unsigned int history[LIBXS_NGRAM_ORDER_MAX];
@@ -964,8 +1185,18 @@ static void hier_score_clock_text(converse_hier_t* model,
       const int history_length = hier_clock_history(raw_history, raw_length,
         word_state[pos], syllable_state[pos], history);
       unsigned int recurrent_history[HIER_RECURRENT_ORDER];
+      unsigned int word_history[2], syllable_history[2];
+      unsigned int syllable_role_history[2];
+      unsigned int skip_history[HIER_SKIP_COUNT][2];
       const int recurrent_length = hier_recurrent_history(recurrent,
         raw_history, raw_length, recurrent_history);
+      const int word_length = hier_struct_history(word_state[pos], raw_history,
+        raw_length, word_history);
+      const int syllable_length = hier_struct_history(syllable_state[pos],
+        raw_history, raw_length, syllable_history);
+      const int syllable_role_length = hier_struct_history(
+        syllable_role_state[pos], raw_history, raw_length,
+        syllable_role_history);
       const double raw_probability = libxs_ngram_prob(
         &model->stream_byte_model, raw_history, raw_length, id);
       const double context_probability = libxs_ngram_prob(
@@ -986,6 +1217,12 @@ static void hier_score_clock_text(converse_hier_t* model,
         &model->stream_ppm, raw_history, raw_length, id);
       const double adaptive_probability = hier_ppm_interp_prob(
         &model->adaptive_ppm, raw_history, raw_length, id);
+      double expert_probability[HIER_EXPERT_MAX];
+      double adaptive_expert_probability[HIER_EXPERT_MAX];
+      double expert_mixture = 0.0;
+      double adaptive_expert_mixture = 0.0;
+      int expert_order;
+      int skip;
       const double raw_bits = -log(raw_probability) / log(2.0);
       const double context_bits = -log(context_probability) / log(2.0);
       const double bits = -log(probability) / log(2.0);
@@ -1002,17 +1239,80 @@ static void hier_score_clock_text(converse_hier_t* model,
       {
         ++evaluation->ncontext_top1;
       }
+      for (expert_order = 0; expert_order <= model->expert_order;
+        ++expert_order)
+      {
+        const int effective = (expert_order < raw_length)
+          ? expert_order : raw_length;
+        expert_probability[expert_order] = hier_ppm_prob_order(
+          &model->expert_ppm, raw_history, raw_length, id, effective);
+        expert_mixture += evaluation->expert_weight[expert_order]
+          * expert_probability[expert_order];
+      }
+      expert_probability[HIER_EXPERT_WORD] = hier_ppm_prob(
+        &model->word_clock_ppm, word_history, word_length, id);
+      expert_probability[HIER_EXPERT_SYLLABLE] = hier_ppm_prob(
+        &model->syllable_clock_ppm, syllable_history, syllable_length, id);
+      expert_probability[HIER_EXPERT_SYLLABLE_ROLE] = hier_ppm_prob(
+        &model->syllable_role_ppm, syllable_role_history,
+        syllable_role_length, id);
+      expert_mixture += evaluation->expert_weight[HIER_EXPERT_WORD]
+        * expert_probability[HIER_EXPERT_WORD]
+        + evaluation->expert_weight[HIER_EXPERT_SYLLABLE]
+          * expert_probability[HIER_EXPERT_SYLLABLE]
+        + evaluation->expert_weight[HIER_EXPERT_SYLLABLE_ROLE]
+          * expert_probability[HIER_EXPERT_SYLLABLE_ROLE];
+      for (skip = 0; skip < HIER_SKIP_COUNT; ++skip) {
+        const int skip_length = hier_skip_history(raw_history, raw_length,
+          hier_skip_distance[skip], skip_history[skip]);
+        expert_probability[HIER_EXPERT_SKIP2 + skip] = hier_ppm_prob(
+          &model->skip_ppm[skip], skip_history[skip], skip_length, id);
+        expert_mixture += evaluation->expert_weight[HIER_EXPERT_SKIP2 + skip]
+          * expert_probability[HIER_EXPERT_SKIP2 + skip];
+      }
+      for (expert_order = 0; expert_order <= model->clock_order;
+        ++expert_order)
+      {
+        const int effective = (expert_order < raw_length)
+          ? expert_order : raw_length;
+        adaptive_expert_probability[expert_order]
+          = hier_ppm_interp_prob_order(&model->adaptive_ppm, raw_history,
+            raw_length, id, effective);
+        adaptive_expert_mixture
+          += evaluation->adaptive_expert_weight[expert_order]
+            * adaptive_expert_probability[expert_order];
+      }
       if (0 == (evaluation->nbytes % model->top_stride)) {
         const int ppm_rank = hier_ppm_rank(&model->stream_ppm, raw_history,
           raw_length, id, 0);
         const int adaptive_rank = hier_ppm_rank(&model->adaptive_ppm,
           raw_history, raw_length, id, 1);
+        const int expert_rank = hier_expert_rank(&model->expert_ppm,
+          &model->word_clock_ppm, &model->syllable_clock_ppm,
+          &model->syllable_role_ppm, model->skip_ppm,
+          raw_history, raw_length, id, word_history, syllable_history,
+          syllable_role_history, skip_history,
+          evaluation->expert_weight, model->expert_order, 0);
+        const int adaptive_expert_rank = hier_expert_rank(
+          &model->adaptive_ppm, &model->word_clock_ppm,
+          &model->syllable_clock_ppm, &model->syllable_role_ppm,
+          model->skip_ppm, raw_history, raw_length, id, word_history,
+          syllable_history, syllable_role_history, skip_history,
+          evaluation->adaptive_expert_weight, model->clock_order, 1);
         ++evaluation->nppm;
         if (1 == ppm_rank) ++evaluation->nppm_top1;
         if (ppm_rank >= 1 && ppm_rank <= 3) ++evaluation->nppm_top3;
         if (1 == adaptive_rank) ++evaluation->nadaptive_top1;
         if (adaptive_rank >= 1 && adaptive_rank <= 3) {
           ++evaluation->nadaptive_top3;
+        }
+        if (1 == expert_rank) ++evaluation->nexpert_top1;
+        if (expert_rank >= 1 && expert_rank <= 3) {
+          ++evaluation->nexpert_top3;
+        }
+        if (1 == adaptive_expert_rank) ++evaluation->nadaptive_expert_top1;
+        if (adaptive_expert_rank >= 1 && adaptive_expert_rank <= 3) {
+          ++evaluation->nadaptive_expert_top3;
         }
       }
       ++evaluation->nbytes;
@@ -1028,6 +1328,31 @@ static void hier_score_clock_text(converse_hier_t* model,
       evaluation->frozen_interp_bits += -log(frozen_interp_probability)
         / log(2.0);
       evaluation->adaptive_bits += -log(adaptive_probability) / log(2.0);
+      for (expert_order = 0; expert_order <= model->expert_order;
+        ++expert_order)
+      {
+        evaluation->expert_bits[expert_order]
+          += -log(expert_probability[expert_order]) / log(2.0);
+      }
+      evaluation->expert_bits[HIER_EXPERT_WORD]
+        += -log(expert_probability[HIER_EXPERT_WORD]) / log(2.0);
+      evaluation->expert_bits[HIER_EXPERT_SYLLABLE]
+        += -log(expert_probability[HIER_EXPERT_SYLLABLE]) / log(2.0);
+      evaluation->expert_bits[HIER_EXPERT_SYLLABLE_ROLE]
+        += -log(expert_probability[HIER_EXPERT_SYLLABLE_ROLE]) / log(2.0);
+      for (skip = 0; skip < HIER_SKIP_COUNT; ++skip) {
+        evaluation->expert_bits[HIER_EXPERT_SKIP2 + skip]
+          += -log(expert_probability[HIER_EXPERT_SKIP2 + skip]) / log(2.0);
+      }
+      evaluation->expert_mix_bits += -log(expert_mixture) / log(2.0);
+      for (expert_order = 0; expert_order <= model->clock_order;
+        ++expert_order)
+      {
+        evaluation->adaptive_expert_bits[expert_order]
+          += -log(adaptive_expert_probability[expert_order]) / log(2.0);
+      }
+      evaluation->adaptive_expert_mix_bits
+        += -log(adaptive_expert_mixture) / log(2.0);
       if (0 != deep) {
         ++evaluation->ndeep;
         evaluation->deep_bits += bits;
@@ -1037,6 +1362,12 @@ static void hier_score_clock_text(converse_hier_t* model,
         evaluation->shallow_bits += bits;
       }
       hier_ppm_observe(&model->adaptive_ppm, raw_history, raw_length, id);
+      hier_expert_update(evaluation->expert_weight, expert_probability,
+        HIER_EXPERT_LAST, expert_mixture, model->expert_rate,
+        model->expert_share);
+      hier_expert_update(evaluation->adaptive_expert_weight,
+        adaptive_expert_probability, model->clock_order,
+        adaptive_expert_mixture, model->expert_rate, model->expert_share);
       hier_history_push(raw_history, &raw_length, LIBXS_NGRAM_ORDER_MAX, id);
       hier_recurrent_update(recurrent, (unsigned int)(unsigned char)text[pos],
         model->recurrent_decay);
@@ -1056,6 +1387,9 @@ converse_hier_t* converse_hier_build(const libxs_registry_t* corpus,
     const char* clock_env = getenv("CONVERSE_HIER_CLOCK_ORDER");
     const char* decay_env = getenv("CONVERSE_HIER_STATE_DECAY");
     const char* stride_env = getenv("CONVERSE_HIER_TOP_STRIDE");
+    const char* expert_env = getenv("CONVERSE_HIER_EXPERT_ORDER");
+    const char* rate_env = getenv("CONVERSE_HIER_EXPERT_RATE");
+    const char* share_env = getenv("CONVERSE_HIER_EXPERT_SHARE");
     const void* key = NULL;
     size_t cursor = 0;
     long index = 0;
@@ -1069,6 +1403,9 @@ converse_hier_t* converse_hier_build(const libxs_registry_t* corpus,
     model->clock_order = 2;
     model->recurrent_decay = 0.875;
     model->top_stride = 40;
+    model->expert_order = LIBXS_NGRAM_ORDER_MAX;
+    model->expert_rate = 0.15;
+    model->expert_share = 0.005;
     if (NULL != clock_env && '\0' != *clock_env) {
       const int parsed = atoi(clock_env);
       if (parsed >= 1 && parsed <= LIBXS_NGRAM_ORDER_MAX) {
@@ -1083,13 +1420,29 @@ converse_hier_t* converse_hier_build(const libxs_registry_t* corpus,
       const int parsed = atoi(stride_env);
       if (parsed > 0) model->top_stride = parsed;
     }
+    if (NULL != expert_env && '\0' != *expert_env) {
+      const int parsed = atoi(expert_env);
+      if (parsed >= 0 && parsed <= LIBXS_NGRAM_ORDER_MAX) {
+        model->expert_order = parsed;
+      }
+    }
+    if (NULL != rate_env && '\0' != *rate_env) {
+      const double parsed = atof(rate_env);
+      if (parsed > 0.0 && parsed <= 1.0) model->expert_rate = parsed;
+    }
+    if (NULL != share_env && '\0' != *share_env) {
+      const double parsed = atof(share_env);
+      if (parsed >= 0.0 && parsed < 1.0) model->expert_share = parsed;
+    }
     model->symbols = libxs_registry_create();
     model->syllables = libxs_registry_create();
+    model->syllable_payloads = libxs_registry_create();
     model->word_tokenizer = libxs_tokenizer_create(
       LIBXS_TOKEN_GRANULARITY_WORD);
     model->syllable_tokenizer = libxs_tokenizer_create(
       LIBXS_TOKEN_GRANULARITY_SYLLABLE);
     if (NULL != corpus && NULL != model->symbols && NULL != model->syllables
+      && NULL != model->syllable_payloads
       && NULL != model->word_tokenizer && NULL != model->syllable_tokenizer)
     {
       value = libxs_registry_begin(corpus, &key, &cursor);
@@ -1105,6 +1458,8 @@ converse_hier_t* converse_hier_build(const libxs_registry_t* corpus,
         model->mincount, HIER_SYMBOL_FIRST);
       model->syllable_vocab = hier_symbol_assign(model->syllables,
         model->mincount, HIER_SYLLABLE_FIRST);
+      hier_symbol_assign(model->syllable_payloads, model->mincount,
+        HIER_SYLLABLE_FIRST);
       if (EXIT_SUCCESS == libxs_ngram_create(&model->word_model, maxorder)
         && EXIT_SUCCESS == libxs_ngram_create(&model->syllable_model, maxorder)
         && EXIT_SUCCESS == libxs_ngram_create(&model->byte_model, maxorder)
@@ -1119,7 +1474,12 @@ converse_hier_t* converse_hier_build(const libxs_registry_t* corpus,
         && EXIT_SUCCESS == hier_ppm_create(&model->recurrent_ppm,
           HIER_RECURRENT_ORDER)
         && EXIT_SUCCESS == hier_ppm_create(&model->adaptive_ppm,
-          model->clock_order))
+          model->clock_order)
+        && EXIT_SUCCESS == hier_ppm_create(&model->expert_ppm,
+          model->expert_order)
+        && EXIT_SUCCESS == hier_ppm_create(&model->word_clock_ppm, 2)
+        && EXIT_SUCCESS == hier_ppm_create(&model->syllable_clock_ppm, 2)
+        && EXIT_SUCCESS == hier_ppm_create(&model->syllable_role_ppm, 2))
       {
         key = NULL;
         cursor = 0;
@@ -1142,16 +1502,26 @@ converse_hier_t* converse_hier_build(const libxs_registry_t* corpus,
         hier_ppm_finalize(&model->stream_ppm);
         hier_ppm_finalize(&model->clock_ppm);
         hier_ppm_finalize(&model->recurrent_ppm);
+        hier_ppm_finalize(&model->expert_ppm);
+        hier_ppm_finalize(&model->word_clock_ppm);
+        hier_ppm_finalize(&model->syllable_clock_ppm);
+        hier_ppm_finalize(&model->syllable_role_ppm);
         if (EXIT_SUCCESS == hier_ppm_check(&model->stream_ppm)
           && EXIT_SUCCESS == hier_ppm_check(&model->clock_ppm)
-          && EXIT_SUCCESS == hier_ppm_check(&model->recurrent_ppm))
+          && EXIT_SUCCESS == hier_ppm_check(&model->recurrent_ppm)
+          && EXIT_SUCCESS == hier_ppm_check(&model->expert_ppm)
+          && EXIT_SUCCESS == hier_ppm_check(&model->word_clock_ppm)
+          && EXIT_SUCCESS == hier_ppm_check(&model->syllable_clock_ppm)
+          && EXIT_SUCCESS == hier_ppm_check(&model->syllable_role_ppm))
         {
           model->ready = 1;
           fprintf(stderr, "hierarchy: word-vocab=%u syllable-vocab=%u"
-            " mincount=%d order=%d clock-order=%d state-decay=%.3f\n",
+            " mincount=%d order=%d clock-order=%d state-decay=%.3f"
+            " experts=0..%d\n",
             model->word_vocab,
             model->syllable_vocab, model->mincount, model->maxorder,
-            model->clock_order, model->recurrent_decay);
+            model->clock_order, model->recurrent_decay,
+            model->expert_order);
           result = model;
         }
       }
@@ -1174,8 +1544,13 @@ void converse_hier_destroy(converse_hier_t* model)
     hier_ppm_destroy(&model->clock_ppm);
     hier_ppm_destroy(&model->recurrent_ppm);
     hier_ppm_destroy(&model->adaptive_ppm);
+    hier_ppm_destroy(&model->expert_ppm);
+    hier_ppm_destroy(&model->word_clock_ppm);
+    hier_ppm_destroy(&model->syllable_clock_ppm);
+    hier_ppm_destroy(&model->syllable_role_ppm);
     libxs_registry_destroy(model->symbols);
     libxs_registry_destroy(model->syllables);
+    libxs_registry_destroy(model->syllable_payloads);
     libxs_tokenizer_destroy(model->word_tokenizer);
     libxs_tokenizer_destroy(model->syllable_tokenizer);
     free(model);
@@ -1197,6 +1572,22 @@ int converse_hier_eval(converse_hier_t* model,
     void* value;
     memset(&evaluation, 0, sizeof(evaluation));
     memset(&clock_evaluation, 0, sizeof(clock_evaluation));
+    { const double uniform = 1.0 / (double)(HIER_EXPERT_SYLLABLE_ROLE + 1);
+      int expert_order;
+      for (expert_order = 0; expert_order <= HIER_EXPERT_SYLLABLE_ROLE;
+        ++expert_order)
+      {
+        clock_evaluation.expert_weight[expert_order] = uniform;
+      }
+    }
+    { const double uniform = 1.0 / (double)(model->clock_order + 1);
+      int expert_order;
+      for (expert_order = 0; expert_order <= model->clock_order;
+        ++expert_order)
+      {
+        clock_evaluation.adaptive_expert_weight[expert_order] = uniform;
+      }
+    }
     value = libxs_registry_begin(corpus, &key, &cursor);
     while (NULL != value) {
       const corpus_entry_t* entry = (const corpus_entry_t*)value;
@@ -1269,6 +1660,61 @@ int converse_hier_eval(converse_hier_t* model,
           clock_evaluation.frozen_interp_bits
             / (double)clock_evaluation.nbytes,
           clock_evaluation.adaptive_bits / (double)clock_evaluation.nbytes);
+        fprintf(stdout, "predict-experts[%s]: top1=%.1f%% top3=%.1f%% n=%ld"
+          " (stride=%d) bpc=%.3f rate=%.3f share=%.4f\n",
+          (NULL != label) ? label : "metatoken",
+          100.0 * (double)clock_evaluation.nexpert_top1
+            / (double)clock_evaluation.nppm,
+          100.0 * (double)clock_evaluation.nexpert_top3
+            / (double)clock_evaluation.nppm,
+          clock_evaluation.nppm, model->top_stride,
+          clock_evaluation.expert_mix_bits / (double)clock_evaluation.nbytes,
+          model->expert_rate, model->expert_share);
+        fprintf(stderr, "  expert orders:");
+        { int expert_order;
+          for (expert_order = 0; expert_order <= model->expert_order;
+            ++expert_order)
+          {
+            fprintf(stderr, " %d=%.3f/%.3f", expert_order,
+              clock_evaluation.expert_bits[expert_order]
+                / (double)clock_evaluation.nbytes,
+              clock_evaluation.expert_weight[expert_order]);
+          }
+        }
+        fprintf(stderr, " word=%.3f/%.3f syllable=%.3f/%.3f"
+          " syllable-role=%.3f/%.3f",
+          clock_evaluation.expert_bits[HIER_EXPERT_WORD]
+            / (double)clock_evaluation.nbytes,
+          clock_evaluation.expert_weight[HIER_EXPERT_WORD],
+          clock_evaluation.expert_bits[HIER_EXPERT_SYLLABLE]
+            / (double)clock_evaluation.nbytes,
+          clock_evaluation.expert_weight[HIER_EXPERT_SYLLABLE],
+          clock_evaluation.expert_bits[HIER_EXPERT_SYLLABLE_ROLE]
+            / (double)clock_evaluation.nbytes,
+          clock_evaluation.expert_weight[HIER_EXPERT_SYLLABLE_ROLE]);
+        fprintf(stderr, "\n");
+        fprintf(stdout, "predict-adaptive-experts[%s]: top1=%.1f%%"
+          " top3=%.1f%% n=%ld (stride=%d) bpc=%.3f\n",
+          (NULL != label) ? label : "metatoken",
+          100.0 * (double)clock_evaluation.nadaptive_expert_top1
+            / (double)clock_evaluation.nppm,
+          100.0 * (double)clock_evaluation.nadaptive_expert_top3
+            / (double)clock_evaluation.nppm,
+          clock_evaluation.nppm, model->top_stride,
+          clock_evaluation.adaptive_expert_mix_bits
+            / (double)clock_evaluation.nbytes);
+        fprintf(stderr, "  adaptive expert orders:");
+        { int expert_order;
+          for (expert_order = 0; expert_order <= model->clock_order;
+            ++expert_order)
+          {
+            fprintf(stderr, " %d=%.3f/%.3f", expert_order,
+              clock_evaluation.adaptive_expert_bits[expert_order]
+                / (double)clock_evaluation.nbytes,
+              clock_evaluation.adaptive_expert_weight[expert_order]);
+          }
+        }
+        fprintf(stderr, "\n");
         fprintf(stderr, "  clock attested split: verbatim %.1f%%"
           " (bpc=%.3f) | novel %.1f%% (bpc=%.3f)\n",
           100.0 * (double)clock_evaluation.ndeep

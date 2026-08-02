@@ -157,6 +157,9 @@ For `-K hier`, `CONVERSE_HIER_MINCOUNT` sets the minimum known-unit count and
 (default 2). `CONVERSE_HIER_STATE_DECAY` sets fixed recurrent-state decay from
 zero up to, but not including, one. `CONVERSE_HIER_TOP_STRIDE` controls how
 often PPM top-1/top-3 is evaluated (default 40; use 1 for every byte).
+`CONVERSE_HIER_EXPERT_ORDER` sets the highest mixed PPM order (default 6),
+while `CONVERSE_HIER_EXPERT_RATE` and `CONVERSE_HIER_EXPERT_SHARE` control the
+online fixed-share mixer (defaults 0.15 and 0.005).
 
 An optional `converse.predict` fixture of `context|expected-next` lines adds a
 curated check to `-E`. The predictor profiles for `-K predict|embed|rerank` are
