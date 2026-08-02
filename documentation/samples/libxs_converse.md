@@ -1,18 +1,10 @@
 # Converse Sample
 
-Converse is a small, self-contained language sample built on the libxs
-primitives: the 8-byte `libxs_token_stream_encode` lexical layer (stable
-vocabulary IDs and class flags), `libxs_fprint` sentence fingerprints, the
-registry, and the `libxs_predict` predictor. It climbs a deliberately
-conservative ladder -- grounded extractive question answering, learned relation
-and identity facts, and an experimental next-token predictor -- with every step
-exercised by a small evaluation harness.
-
-The purpose is a fully inspectable place to build and measure a language
-capability from the ground up, keeping all corpus knowledge in caller-owned data
-rather than in source. It is not an LLM. For the design rationale and the
-measured comparisons behind the different modes, see the companion paper under
-`~/papers/converse` (`paper.tex`).
+Converse is a small, self-contained language sample built on libxs metatokens,
+lexemes, fingerprints, registries, n-grams, and parameter prediction. It provides
+grounded extractive question answering, learned relation and identity facts, an
+experimental next-token predictor, and evaluation fixtures. For design and
+measured comparisons, see `~/papers/converse/paper.tex`.
 
 ## Build
 
@@ -137,7 +129,9 @@ exercised through its own flags:
 ```bash
 ./converse.x -E -b texts/grimm            # next-token accuracy (default trigram)
 ./converse.x -E -K bigram -b texts/grimm  # choose the model
+./converse.x -E -K hier -b texts/grimm    # hierarchy and byte PPM evaluation
 printf 'the little\n' | ./converse.x -c -b texts/grimm   # suggestions + greedy
+CONVERSE_GRAN=meta-word ./converse.x -E -b texts/grimm   # metatoken policy
 ```
 
 `-E` reports next-token accuracy; `-c` reads prompts and prints the top few
@@ -152,6 +146,16 @@ non-memorized accuracy. The model is chosen with `-K`:
 - `embed` -- `predict` over distributional token embeddings instead of raw IDs.
 - `rerank` -- `libxs_predict` reranks the trigram's candidate successors,
   `-P PROFILE`.
+- `hier` -- report hierarchical metatoken, contextual-byte, and exact byte-PPM
+  BPC. This model is evaluation-only.
+
+`CONVERSE_GRAN` accepts `word`, `native`, `syllable`, `bpe`, `meta-native`,
+`meta-word`, or `meta-syllable`.
+
+For `-K hier`, `CONVERSE_HIER_MINCOUNT` sets the minimum known-unit count and
+`CONVERSE_HIER_CLOCK_ORDER` sets byte/state context order from 1 through 6
+(default 2). `CONVERSE_HIER_STATE_DECAY` sets fixed recurrent-state decay from
+zero up to, but not including, one.
 
 An optional `converse.predict` fixture of `context|expected-next` lines adds a
 curated check to `-E`. The predictor profiles for `-K predict|embed|rerank` are

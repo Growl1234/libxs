@@ -7,6 +7,7 @@
 #include <libxs/libxs_mem.h>
 
 #include "converse.h"
+#include "converse_hier.h"
 
 #include <unistd.h>
 
@@ -448,7 +449,7 @@ static void ngram_backoff_build(libxs_registry_t* model,
 static const ngram_entry_t* ngram_lookup(libxs_registry_t* model,
   unsigned int ctx_a, unsigned int ctx_b);
 static double ngram_unigram_prior(unsigned int id);
-static int ngram_order(void);
+static int ngram_maxorder(void);
 static double ngram_skip_prob(const unsigned int hist[], int hlen,
   unsigned int succ_id);
 static double ngram_skip_mu(void);
@@ -577,7 +578,7 @@ int main(int argc, char* argv[])
       "  -L: learn from the corpus, save state, and exit.\n"
       "  -c: read prompts and print next-token continuations.\n"
       "  -K KIND: next-token model "
-      "(bigram|trigram|predict|embed|rerank|knnlm).\n"
+      "(bigram|trigram|predict|embed|rerank|knnlm|hier).\n"
       "  -H N: held-out split; train on non-test, eval 1-in-N test.\n"
       "  -T PREFIX: fixed held-out corpus for -E (train all of -b, eval on -T).\n"
       "  -n N: response sentence budget (default %d).\n"
@@ -607,6 +608,10 @@ int main(int argc, char* argv[])
       "  CONVERSE_KNNLM_CONTROL=N control vote: 1=unigram, 2=arbitrary nbrs.\n"
       "  CONVERSE_KNNLM_TEMP=F    softmax temperature (0=inverse distance).\n"
       "  CONVERSE_KNNLM_HEADS=N   retrieval heads over embedding subspaces.\n"
+      "  CONVERSE_HIER_MINCOUNT=N hierarchy known-unit count (default 2).\n"
+      "  CONVERSE_HIER_CLOCK_ORDER=N byte/state context order 1..6 (default 2).\n"
+      "  CONVERSE_HIER_STATE_DECAY=F recurrent-state decay 0..<1.\n"
+      "  CONVERSE_HIER_TOP_STRIDE=N PPM top-k evaluation stride (default 40).\n"
       "  CONVERSE_SKIP=1          add skip-gram (w _ w) generalization tier.\n"
       "  CONVERSE_SKIP_MU=F       skip-gram interpolation weight (default 0.3).\n"
       "  CONVERSE_EMB_PROBE=w1,w2 print nearest embedding neighbors.\n"
@@ -671,10 +676,14 @@ int main(int argc, char* argv[])
         ngram_kind = "knnlm";
         ngram_order = 2;
       }
+      else if (0 == strcmp(argv[i + 1], "hier")) {
+        ngram_kind = "hier";
+        ngram_order = 2;
+      }
       else {
         fprintf(stderr,
           "unknown prediction kind: %s "
-          "(use bigram|trigram|predict|embed|rerank|knnlm)\n",
+          "(use bigram|trigram|predict|embed|rerank|knnlm|hier)\n",
           argv[i + 1]);
         free(basenames);
         return EXIT_FAILURE;
@@ -859,7 +868,9 @@ int main(int argc, char* argv[])
     int use_embed = (0 == strcmp(ngram_kind, "embed")) ? 1 : 0;
     int use_rerank = (0 == strcmp(ngram_kind, "rerank")) ? 1 : 0;
     int use_knnlm = (0 == strcmp(ngram_kind, "knnlm")) ? 1 : 0;
+    int use_hier = (0 == strcmp(ngram_kind, "hier")) ? 1 : 0;
     libxs_predict_t* token_model = NULL;
+    converse_hier_t* hier_model = NULL;
     libxs_registry_t* test_corpus = NULL;
     const libxs_registry_t* eval_corpus = corpus;
     /**
@@ -886,7 +897,11 @@ int main(int argc, char* argv[])
         test_corpus = NULL;
       }
     }
-    if (0 != use_predict) {
+    if (0 != use_hier) {
+      hier_model = converse_hier_build(corpus, ngram_holdout,
+        predict_ntotal, ngram_maxorder());
+    }
+    else if (0 != use_predict) {
       token_model = token_predict_build(corpus, lexicon, rules, nrules,
         predict_profile, 0, ngram_holdout, 2);
     }
@@ -908,7 +923,12 @@ int main(int argc, char* argv[])
       }
     }
     if (0 != predict_eval_mode) {
-      if (0 != use_predict || 0 != use_embed) {
+      if (0 != use_hier) {
+        mode_result = converse_hier_eval(hier_model, eval_corpus,
+          ngram_holdout, (eval_corpus == corpus) ? predict_ntotal : 0,
+          "metatoken");
+      }
+      else if (0 != use_predict || 0 != use_embed) {
         char label[64];
         sprintf(label, "%s:%s", use_embed ? "embed" : predict_profile->name,
           predict_profile->name);
@@ -936,7 +956,11 @@ int main(int argc, char* argv[])
         mode_result = ngram_eval(ngram_model, eval_corpus, lexicon, rules,
           nrules, ngram_order, ngram_holdout, ngram_kind);
       }
-      ngram_stats(ngram_model);
+      if (0 == use_hier) ngram_stats(ngram_model);
+    }
+    else if (0 != use_hier) {
+      fprintf(stderr, "hier is currently an evaluation-only model (-E)\n");
+      mode_result = EXIT_FAILURE;
     }
     else {
       printf("> ");
@@ -977,6 +1001,7 @@ int main(int argc, char* argv[])
       mode_result = EXIT_SUCCESS;
     }
     libxs_predict_destroy(token_model);
+    converse_hier_destroy(hier_model);
     libxs_registry_destroy(test_corpus);
     knnlm_cache_free();
     token_emb_free();
@@ -4743,6 +4768,9 @@ static double lexical_score(const libxs_lexeme_stream_t* query,
   if (QUERY_GENERIC != query_type && long_terms > 0 && 0 == long_matches) {
     return 0.0;
   }
+  if (QUERY_GENERIC != query_type && term_matches > 0 && 0 == exact_matches) {
+    return 0.0;
+  }
   if (QUERY_GENERIC != query_type) min_overlap = 0.40;
   overlap = score / total;
   if (bridge_score > 0.0 && overlap < bridge_score) overlap = bridge_score;
@@ -6546,7 +6574,7 @@ static int ngram_native_tokens(libxs_lexicon_t* lexicon, const char* text,
 }
 
 
-static int ngram_order(void)
+static int ngram_maxorder(void)
 {
   int result = (0 != converse_order_max) ? NGRAM_ORDER_MAX : 2;
   const char* env = getenv("CONVERSE_NGRAM_ORDER");
@@ -6705,7 +6733,7 @@ static void ngram_train_text(libxs_registry_t* model,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
   const char* text, int text_len)
 {
-  int maxorder = ngram_order();
+  int maxorder = ngram_maxorder();
   if (0 != ngram_native_mode()) {
     int wctx = ngram_wordctx();
     libxs_lexeme_t nat[COMPOSE_MAXTEXT];
@@ -6792,7 +6820,7 @@ static libxs_registry_t* ngram_build(const libxs_registry_t* corpus,
   libxs_ngram_destroy(&converse_ngram);
   if (0 != converse_skip_on) libxs_ngram_destroy(&converse_skip);
   converse_skip_on = ngram_skip();
-  if (EXIT_SUCCESS != libxs_ngram_create(&converse_ngram, ngram_order())) {
+  if (EXIT_SUCCESS != libxs_ngram_create(&converse_ngram, ngram_maxorder())) {
     return NULL;
   }
   if (0 != converse_skip_on
@@ -7627,7 +7655,7 @@ static int ngram_generate(libxs_registry_t* model, libxs_lexicon_t* lexicon,
   enum { GEN_MAX = 40 };
   unsigned int hist[NGRAM_ORDER_MAX];
   unsigned int recent[GEN_MAX];
-  int hlen, maxorder = ngram_order();
+  int hlen, maxorder = ngram_maxorder();
   int minorder = ngram_gen_minorder();
   int step, nrecent = 0;
   long order_sum = 0;
@@ -7747,7 +7775,7 @@ static int ngram_gen_eval(libxs_registry_t* model,
   int result = EXIT_FAILURE;
   long nsent = 0, sum_repro = 0, gen_tokens = 0, order_sum = 0, index = 0;
   long nsent_att = 0, sum_repro_att = 0, nsent_nov = 0, sum_repro_nov = 0;
-  int maxorder = ngram_order();
+  int maxorder = ngram_maxorder();
   int minorder = ngram_gen_minorder();
   const void* key = NULL;
   size_t cursor = 0;
@@ -7879,7 +7907,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
       int ti;
       unsigned int hist[NGRAM_ORDER_MAX];
       int hlen = 0;
-      int maxorder = ngram_order();
+      int maxorder = ngram_maxorder();
       for (ti = 0; ti < ntok; ++ti) {
         unsigned int cur;
         unsigned short curlen;

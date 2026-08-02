@@ -129,6 +129,7 @@ exercised through its own flags:
 ```bash
 ./converse.x -E -b texts/grimm            # next-token accuracy (default trigram)
 ./converse.x -E -K bigram -b texts/grimm  # choose the model
+./converse.x -E -K hier -b texts/grimm    # hierarchy and byte PPM evaluation
 printf 'the little\n' | ./converse.x -c -b texts/grimm   # suggestions + greedy
 CONVERSE_GRAN=meta-word ./converse.x -E -b texts/grimm   # metatoken policy
 ```
@@ -145,9 +146,17 @@ non-memorized accuracy. The model is chosen with `-K`:
 - `embed` -- `predict` over distributional token embeddings instead of raw IDs.
 - `rerank` -- `libxs_predict` reranks the trigram's candidate successors,
   `-P PROFILE`.
+- `hier` -- report hierarchical metatoken, contextual-byte, and exact byte-PPM
+  BPC. This model is evaluation-only.
 
 `CONVERSE_GRAN` accepts `word`, `native`, `syllable`, `bpe`, `meta-native`,
 `meta-word`, or `meta-syllable`.
+
+For `-K hier`, `CONVERSE_HIER_MINCOUNT` sets the minimum known-unit count and
+`CONVERSE_HIER_CLOCK_ORDER` sets byte/state context order from 1 through 6
+(default 2). `CONVERSE_HIER_STATE_DECAY` sets fixed recurrent-state decay from
+zero up to, but not including, one. `CONVERSE_HIER_TOP_STRIDE` controls how
+often PPM top-1/top-3 is evaluated (default 40; use 1 for every byte).
 
 An optional `converse.predict` fixture of `context|expected-next` lines adds a
 curated check to `-E`. The predictor profiles for `-K predict|embed|rerank` are
