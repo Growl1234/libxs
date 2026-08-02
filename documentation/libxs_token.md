@@ -1,8 +1,9 @@
-# Metatokens and Lexemes
+# Tokenizer
 
 Header: `libxs_token.h`
 
-The token module provides two representations:
+The tokenizer provides reversible metatokens and vocabulary-backed lexemes.
+These representations serve separate APIs:
 
 - reversible metatokens for prediction and exact text reconstruction;
 - vocabulary-backed lexemes for interpretation, matching, and rules.

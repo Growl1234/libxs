@@ -155,7 +155,8 @@ non-memorized accuracy. The model is chosen with `-K`:
 For `-K hier`, `CONVERSE_HIER_MINCOUNT` sets the minimum known-unit count and
 `CONVERSE_HIER_CLOCK_ORDER` sets byte/state context order from 1 through 6
 (default 2). `CONVERSE_HIER_STATE_DECAY` sets fixed recurrent-state decay from
-zero up to, but not including, one.
+zero up to, but not including, one. `CONVERSE_HIER_TOP_STRIDE` controls how
+often PPM top-1/top-3 is evaluated (default 40; use 1 for every byte).
 
 An optional `converse.predict` fixture of `context|expected-next` lines adds a
 curated check to `-E`. The predictor profiles for `-K predict|embed|rerank` are
