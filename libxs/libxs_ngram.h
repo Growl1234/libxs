@@ -92,8 +92,11 @@ LIBXS_API const libxs_ngram_entry_t* libxs_ngram_lookup(
 
 /**
  * Interpolated backoff probability of next given the history: blends orders
- * 1..min(maxorder,hlen) with weight total/(total+1) per order over the global
- * unigram prior, and never returns below a uniform floor.
+ * 1..min(maxorder,hlen) with weight total/(total+1) per order over an
+ * additive-smoothed global unigram prior. A saturated Space-Saving successor
+ * record discounts its minimum count as uncertainty and assigns that mass to
+ * backoff. Probabilities over ids 1..vocab sum to one for every history after
+ * libxs_ngram_finalize.
  */
 LIBXS_API double libxs_ngram_prob(const libxs_ngram_t* model,
   const unsigned int hist[], int hlen, unsigned int next);

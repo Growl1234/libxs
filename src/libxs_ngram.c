@@ -113,7 +113,10 @@ static double internal_libxs_ngram_prior(const libxs_ngram_t* model,
 {
   double result = 0.0;
   if (NULL != model->unifreq && 0 != id && id <= model->unifreq_size) {
-    result = (double)model->unifreq[id] / model->unifreq_total;
+    const double alpha = 0.5;
+    const double denom = model->unifreq_total
+      + alpha * (double)model->unifreq_size;
+    result = ((double)model->unifreq[id] + alpha) / denom;
   }
   return result;
 }
@@ -250,23 +253,37 @@ LIBXS_API const libxs_ngram_entry_t* libxs_ngram_lookup(
 LIBXS_API double libxs_ngram_prob(const libxs_ngram_t* model,
   const unsigned int hist[], int hlen, unsigned int next)
 {
-  double vocab, uni_floor, p_uni, p;
+  double p;
   int n;
   if (NULL == model) return 0.0;
-  vocab = (model->unifreq_size > 0) ? (double)model->unifreq_size : 1.0;
-  uni_floor = 1.0 / (vocab + 1.0);
-  p_uni = internal_libxs_ngram_prior(model, next);
-  p = (p_uni > 0.0) ? p_uni : uni_floor;
+  p = internal_libxs_ngram_prior(model, next);
   for (n = 1; n <= model->maxorder && n <= hlen; ++n) {
     const libxs_ngram_entry_t* entry = libxs_ngram_lookup(model, hist, hlen, n);
     if (NULL != entry && entry->total > 0) {
       double t = (double)entry->total;
-      double lambda = t / (t + 1.0);
-      p = lambda * internal_libxs_ngram_relfreq(entry, next)
-        + (1.0 - lambda) * p;
+      if (LIBXS_NGRAM_SUCC_MAX == entry->nsucc) {
+        unsigned int slot;
+        unsigned int minimum = entry->succ[0].count;
+        double retained = 0.0, count = 0.0;
+        for (slot = 1; slot < entry->nsucc; ++slot) {
+          if (entry->succ[slot].count < minimum) {
+            minimum = entry->succ[slot].count;
+          }
+        }
+        for (slot = 0; slot < entry->nsucc; ++slot) {
+          const double adjusted = (double)(entry->succ[slot].count - minimum);
+          retained += adjusted;
+          if (entry->succ[slot].id == next) count = adjusted;
+        }
+        p = count / t + (1.0 - retained / t) * p;
+      }
+      else {
+        const double lambda = t / (t + 1.0);
+        p = lambda * internal_libxs_ngram_relfreq(entry, next)
+          + (1.0 - lambda) * p;
+      }
     }
   }
-  if (p < uni_floor) p = uni_floor;
   if (p > 1.0) p = 1.0;
   return p;
 }
