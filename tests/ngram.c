@@ -7,7 +7,7 @@
 * Further information: https://github.com/hfp/libxs/                          *
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
-#include <libxs/libxs.h>
+#include <libxs/libxs_ngram.h>
 
 #include <math.h>
 #include <stdio.h>

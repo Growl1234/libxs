@@ -86,7 +86,7 @@ LIBXS_API int libxs_cpuid_amx_enable(void);
  && !defined(LIBXS_UTILS_H) && !defined(LIBXS_SYNC_H) \
  && !defined(LIBXS_MALLOC_H) && !defined(LIBXS_HIST_H) \
  && !defined(LIBXS_REG_H) && !defined(LIBXS_GEMM_H) \
- && !defined(LIBXS_PREDICT_H)
+ && !defined(LIBXS_PREDICT_H) && !defined(LIBXS_NGRAM_H)
 # include "libxs_source.h"
 #endif
 

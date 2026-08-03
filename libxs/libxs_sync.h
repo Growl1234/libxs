@@ -791,7 +791,7 @@ LIBXS_API void libxs_stdio_release(void);
 #if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \
  && !defined(LIBXS_MALLOC_H) && !defined(LIBXS_HIST_H) \
  && !defined(LIBXS_REG_H) && !defined(LIBXS_GEMM_H) \
- && !defined(LIBXS_PREDICT_H)
+ && !defined(LIBXS_PREDICT_H) && !defined(LIBXS_NGRAM_H)
 # include "libxs_source.h"
 #endif
 

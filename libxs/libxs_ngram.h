@@ -116,4 +116,9 @@ LIBXS_API int libxs_ngram_predict(const libxs_ngram_t* model,
 LIBXS_API int libxs_ngram_stats(const libxs_ngram_t* model,
   libxs_ngram_stats_t* stats);
 
+/* header-only: include implementation */
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+# include "libxs_source.h"
+#endif
+
 #endif /*LIBXS_NGRAM_H*/

@@ -520,7 +520,8 @@ __m512i libxs_mod_u32x16(__m512i x, unsigned int p, unsigned int rcp)
 #if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \
  && !defined(LIBXS_SYNC_H) && !defined(LIBXS_MALLOC_H) \
  && !defined(LIBXS_HIST_H) && !defined(LIBXS_REG_H) \
- && !defined(LIBXS_GEMM_H) && !defined(LIBXS_PREDICT_H)
+ && !defined(LIBXS_GEMM_H) && !defined(LIBXS_PREDICT_H) \
+ && !defined(LIBXS_NGRAM_H)
 # include "libxs_source.h"
 #endif
 
