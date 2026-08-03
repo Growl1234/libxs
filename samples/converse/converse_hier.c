@@ -23,12 +23,21 @@
 #define HIER_RECURRENT_DIM 8
 #define HIER_RECURRENT_RAW 2
 #define HIER_RECURRENT_ORDER 3
-#define HIER_EXPERT_WORD (LIBXS_NGRAM_ORDER_MAX + 1)
-#define HIER_EXPERT_SYLLABLE (LIBXS_NGRAM_ORDER_MAX + 2)
-#define HIER_EXPERT_SYLLABLE_ROLE (LIBXS_NGRAM_ORDER_MAX + 3)
-#define HIER_EXPERT_SKIP2 (LIBXS_NGRAM_ORDER_MAX + 4)
-#define HIER_EXPERT_SKIP3 (LIBXS_NGRAM_ORDER_MAX + 5)
-#define HIER_EXPERT_SKIP5 (LIBXS_NGRAM_ORDER_MAX + 6)
+/**
+ * Byte-context order for the local PPM models, independent of
+ * LIBXS_NGRAM_ORDER_MAX (which bounds the libxs_ngram token store). HARD LIMIT:
+ * hier_ppm_key_t is a registry KEY, and libxs_registry_get/set silently reject
+ * keys larger than LIBXS_REGKEY_MAXSIZE (64) by returning NULL -- every lookup
+ * would miss and the model would collapse to its unigram. sizeof(key) is
+ * 4 + 4*order, so order 15 is the maximum that fits.
+ */
+#define HIER_PPM_ORDER_MAX 12
+#define HIER_EXPERT_WORD (HIER_PPM_ORDER_MAX + 1)
+#define HIER_EXPERT_SYLLABLE (HIER_PPM_ORDER_MAX + 2)
+#define HIER_EXPERT_SYLLABLE_ROLE (HIER_PPM_ORDER_MAX + 3)
+#define HIER_EXPERT_SKIP2 (HIER_PPM_ORDER_MAX + 4)
+#define HIER_EXPERT_SKIP3 (HIER_PPM_ORDER_MAX + 5)
+#define HIER_EXPERT_SKIP5 (HIER_PPM_ORDER_MAX + 6)
 #define HIER_EXPERT_LAST HIER_EXPERT_SKIP5
 #define HIER_EXPERT_MAX (HIER_EXPERT_LAST + 1)
 #define HIER_SKIP_COUNT 3
@@ -91,6 +100,10 @@ typedef struct hier_clock_eval_t {
   double adaptive_bits;
   double expert_bits[HIER_EXPERT_MAX];
   double expert_mix_bits;
+  long nexpert_attested;
+  long nexpert_novel;
+  double expert_attested_bits;
+  double expert_novel_bits;
   double expert_weight[HIER_EXPERT_MAX];
   double adaptive_expert_bits[HIER_EXPERT_MAX];
   double adaptive_expert_mix_bits;
@@ -99,7 +112,7 @@ typedef struct hier_clock_eval_t {
 
 typedef struct hier_ppm_key_t {
   int order;
-  unsigned int context[LIBXS_NGRAM_ORDER_MAX];
+  unsigned int context[HIER_PPM_ORDER_MAX];
 } hier_ppm_key_t;
 
 typedef struct hier_ppm_pair_t {
@@ -159,6 +172,13 @@ struct converse_hier_t {
 static const int hier_skip_distance[HIER_SKIP_COUNT] = { 2, 3, 5 };
 
 
+static void hier_ppm_dist_order(const hier_ppm_t* model,
+  const unsigned int history[], int history_length, int maxorder,
+  double dist[]);
+static void hier_ppm_dist(const hier_ppm_t* model,
+  const unsigned int history[], int history_length, double dist[]);
+
+
 /**
  * Escape estimator: 0 = method C (escape mass distinct/(total+distinct)),
  * 1 = method D (escape distinct/(2*total), symbol (2c-1)/(2*total)). Both are
@@ -194,6 +214,37 @@ static long hier_eval_max(void)
     const char* env = getenv("CONVERSE_HIER_EVAL_MAX");
     cached = (NULL != env && '\0' != *env) ? atol(env) : 0;
     if (cached < 0) cached = 0;
+  }
+  return cached;
+}
+
+
+/**
+ * Bytes of each candidate the rescorer scores (0 = all). The query can only
+ * influence the first few bytes: it leaves the byte context window after
+ * expert_order positions, so averaging lift over a whole long sentence dilutes a
+ * short signal with unconditioned text. A window near the context order keeps
+ * the comparison to the region the query actually reaches.
+ */
+static int hier_rescore_window(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_HIER_RESCORE_WINDOW");
+    cached = (NULL != env && '\0' != *env) ? atoi(env) : 24;
+    if (cached < 0) cached = 0;
+  }
+  return cached;
+}
+
+
+/** Whether the skip-context experts participate (1 = yes), for A/B measurement. */
+static int hier_skip_on(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_HIER_SKIP");
+    cached = (NULL != env && '0' == *env) ? 0 : 1;
   }
   return cached;
 }
@@ -274,7 +325,7 @@ static int hier_ppm_create(hier_ppm_t* model, int maxorder)
 {
   int result = EXIT_FAILURE;
   if (NULL != model && maxorder >= 1
-    && maxorder <= LIBXS_NGRAM_ORDER_MAX)
+    && maxorder <= HIER_PPM_ORDER_MAX)
   {
     memset(model, 0, sizeof(*model));
     model->contexts = libxs_registry_create();
@@ -412,6 +463,13 @@ static void hier_ppm_finalize(hier_ppm_t* model)
 {
   int order;
   if (NULL == model) return;
+  /**
+   * Exclusion renormalizer: backoff_norm is the lower-order mass NOT already
+   * attested at this order, so escaped mass can be redistributed over unseen
+   * symbols only. Orders are processed low to high because order k reads the
+   * order k-1 distribution. One distribution fill per context replaces up to 256
+   * recursive per-symbol backoff walks.
+   */
   for (order = 1; order <= model->maxorder; ++order) {
     const void* registry_key = NULL;
     size_t cursor = 0;
@@ -421,12 +479,13 @@ static void hier_ppm_finalize(hier_ppm_t* model)
       const hier_ppm_key_t* key = (const hier_ppm_key_t*)registry_key;
       hier_ppm_stats_t* stats = (hier_ppm_stats_t*)value;
       if (key->order == order) {
+        double dist[257];
         double seen_mass = 0.0;
         unsigned int id;
+        hier_ppm_dist_order(model, key->context, order, order - 1, dist);
         for (id = 1; id <= 256; ++id) {
           if (0 != (stats->seen[(id - 1) / 32] & (1u << ((id - 1) % 32)))) {
-            seen_mass += hier_ppm_prob_order(model, key->context, order, id,
-              order - 1);
+            seen_mass += dist[id];
           }
         }
         stats->backoff_norm = 1.0 - seen_mass;
@@ -523,6 +582,34 @@ static int hier_ppm_rank(const hier_ppm_t* model,
 }
 
 
+/**
+ * Whether this position's FULL-order context recurred verbatim in training, i.e.
+ * whether the deepest expert had exact evidence rather than having to escape.
+ *
+ * This is the byte-level counterpart of the attested-context control: aggregate
+ * BPC is dominated by positions whose context was seen, so a mechanism can lower
+ * it substantially while doing nothing on the positions that actually require
+ * generalizing. Splitting the mixture's own bits by this flag is what separates
+ * the two. A history shorter than the order cannot be full-order attested and
+ * counts as novel.
+ */
+static int hier_ppm_attested(const hier_ppm_t* model,
+  const unsigned int history[], int history_length, int order)
+{
+  int result = 0;
+  if (NULL != model && 0 < order && history_length >= order
+    && order <= model->maxorder)
+  {
+    hier_ppm_key_t key;
+    hier_ppm_key(&key, history, history_length, order);
+    if (NULL != libxs_registry_get(model->contexts, &key, sizeof(key), NULL)) {
+      result = 1;
+    }
+  }
+  return result;
+}
+
+
 static double hier_expert_probability(const hier_ppm_t* model,
   const unsigned int history[], int history_length, unsigned int next,
   const double weight[], int maxorder, int interpolate)
@@ -591,18 +678,29 @@ static void hier_expert_update(double weight[], const double probability[],
   int maxorder, double mixture, double rate, double share)
 {
   double total = 0.0;
-  int order;
+  int order, nactive = 0;
+  /**
+   * Only experts that were initialized participate. The expert index space is
+   * sized for the deepest supported byte order, so when a shallower order is
+   * configured the unused slots hold weight zero; giving them share mass would
+   * spend probability on experts that never produce one.
+   */
   for (order = 0; order <= maxorder; ++order) {
-    const double relative = (mixture > 0.0)
-      ? probability[order] / mixture : 1.0;
-    weight[order] *= pow(relative, rate);
-    total += weight[order];
+    if (weight[order] > 0.0) {
+      const double relative = (mixture > 0.0)
+        ? probability[order] / mixture : 1.0;
+      weight[order] *= pow(relative, rate);
+      total += weight[order];
+      ++nactive;
+    }
   }
-  if (total > 0.0) {
-    const double uniform = 1.0 / (double)(maxorder + 1);
+  if (total > 0.0 && nactive > 0) {
+    const double uniform = 1.0 / (double)nactive;
     for (order = 0; order <= maxorder; ++order) {
-      weight[order] = (1.0 - share) * weight[order] / total
-        + share * uniform;
+      if (weight[order] > 0.0) {
+        weight[order] = (1.0 - share) * weight[order] / total
+          + share * uniform;
+      }
     }
   }
 }
@@ -614,56 +712,144 @@ static void hier_expert_update(double weight[], const double probability[],
  * domain and normalized. Returns the pooled probability of the target symbol.
  * Weights are the same fixed-share weights the linear pool uses, so the two
  * differ only in how the experts are combined.
+ *
+ * Each expert contributes ONE hier_ppm_dist call (a single backoff walk over the
+ * alphabet) rather than 256 per-symbol walks; without that the normalizer this
+ * pool requires makes it unaffordable.
  */
 static double hier_expert_logit_mix(const converse_hier_t* model,
-  const hier_clock_eval_t* evaluation, const unsigned int raw_history[],
+  const double expert_weight[], const unsigned int raw_history[],
   int raw_length, unsigned int target,
   const unsigned int word_history[], int word_length,
   const unsigned int syllable_history[], int syllable_length,
   const unsigned int syllable_role_history[], int syllable_role_length,
   unsigned int skip_history[HIER_SKIP_COUNT][2])
 {
-  double logits[257];
+  double accum[257], dist[257];
   double total = 0.0, best = 0.0;
   unsigned int id;
-  int have_best = 0;
-  for (id = 1; id <= 256; ++id) {
-    double accum = 0.0;
-    int expert_order, skip;
-    for (expert_order = 0; expert_order <= model->expert_order;
-      ++expert_order)
-    {
-      const int effective = (expert_order < raw_length)
-        ? expert_order : raw_length;
-      const double q = hier_ppm_prob_order(&model->expert_ppm, raw_history,
-        raw_length, id, effective);
-      accum += evaluation->expert_weight[expert_order]
-        * log(q > 1e-300 ? q : 1e-300);
+  int expert_order, skip;
+  for (id = 1; id <= 256; ++id) accum[id] = 0.0;
+  for (expert_order = 0; expert_order <= model->expert_order; ++expert_order) {
+    const int effective = (expert_order < raw_length)
+      ? expert_order : raw_length;
+    const double weight = expert_weight[expert_order];
+    if (weight <= 0.0) continue;
+    hier_ppm_dist_order(&model->expert_ppm, raw_history, raw_length, effective,
+      dist);
+    for (id = 1; id <= 256; ++id) {
+      accum[id] += weight * log(dist[id] > 1e-300 ? dist[id] : 1e-300);
     }
-    accum += evaluation->expert_weight[HIER_EXPERT_WORD]
-      * log(LIBXS_MAX(hier_ppm_prob(&model->word_clock_ppm, word_history,
-        word_length, id), 1e-300));
-    accum += evaluation->expert_weight[HIER_EXPERT_SYLLABLE]
-      * log(LIBXS_MAX(hier_ppm_prob(&model->syllable_clock_ppm,
-        syllable_history, syllable_length, id), 1e-300));
-    accum += evaluation->expert_weight[HIER_EXPERT_SYLLABLE_ROLE]
-      * log(LIBXS_MAX(hier_ppm_prob(&model->syllable_role_ppm,
-        syllable_role_history, syllable_role_length, id), 1e-300));
-    for (skip = 0; skip < HIER_SKIP_COUNT; ++skip) {
-      const int skip_length = hier_skip_history(raw_history, raw_length,
-        hier_skip_distance[skip], skip_history[skip]);
-      accum += evaluation->expert_weight[HIER_EXPERT_SKIP2 + skip]
-        * log(LIBXS_MAX(hier_ppm_prob(&model->skip_ppm[skip],
-          skip_history[skip], skip_length, id), 1e-300));
+  }
+  { const double weight = expert_weight[HIER_EXPERT_WORD];
+    if (weight > 0.0) {
+      hier_ppm_dist(&model->word_clock_ppm, word_history, word_length, dist);
+      for (id = 1; id <= 256; ++id) {
+        accum[id] += weight * log(dist[id] > 1e-300 ? dist[id] : 1e-300);
+      }
     }
-    logits[id] = accum;
-    if (0 == have_best || accum > best) { best = accum; have_best = 1; }
+  }
+  { const double weight = expert_weight[HIER_EXPERT_SYLLABLE];
+    if (weight > 0.0) {
+      hier_ppm_dist(&model->syllable_clock_ppm, syllable_history,
+        syllable_length, dist);
+      for (id = 1; id <= 256; ++id) {
+        accum[id] += weight * log(dist[id] > 1e-300 ? dist[id] : 1e-300);
+      }
+    }
+  }
+  { const double weight = expert_weight[HIER_EXPERT_SYLLABLE_ROLE];
+    if (weight > 0.0) {
+      hier_ppm_dist(&model->syllable_role_ppm, syllable_role_history,
+        syllable_role_length, dist);
+      for (id = 1; id <= 256; ++id) {
+        accum[id] += weight * log(dist[id] > 1e-300 ? dist[id] : 1e-300);
+      }
+    }
+  }
+  for (skip = 0; skip < HIER_SKIP_COUNT; ++skip) {
+    const double weight = expert_weight[HIER_EXPERT_SKIP2 + skip];
+    const int skip_length = hier_skip_history(raw_history, raw_length,
+      hier_skip_distance[skip], skip_history[skip]);
+    if (weight <= 0.0) continue;
+    hier_ppm_dist(&model->skip_ppm[skip], skip_history[skip], skip_length,
+      dist);
+    for (id = 1; id <= 256; ++id) {
+      accum[id] += weight * log(dist[id] > 1e-300 ? dist[id] : 1e-300);
+    }
   }
   for (id = 1; id <= 256; ++id) {
-    logits[id] = exp(logits[id] - best);
-    total += logits[id];
+    if (1 == id || accum[id] > best) best = accum[id];
   }
-  return (total > 0.0) ? (logits[target] / total) : 0.0;
+  for (id = 1; id <= 256; ++id) {
+    accum[id] = exp(accum[id] - best);
+    total += accum[id];
+  }
+  return (total > 0.0) ? (accum[target] / total) : 0.0;
+}
+
+
+/**
+ * Fill dist[1..256] with one expert's distribution over the whole alphabet.
+ *
+ * hier_ppm_prob_order walks the backoff chain per symbol, so scoring every
+ * symbol repeats the identical chain 256 times. Here the chain is walked ONCE:
+ * start from the unigram, then for each order from low to high overwrite the
+ * symbols attested at that order and scale the remaining (excluded) mass by the
+ * escape probability. The result matches hier_ppm_prob_order per symbol -- same
+ * estimator, same exclusion via backoff_norm -- at one pass instead of 256.
+ */
+static void hier_ppm_dist_order(const hier_ppm_t* model,
+  const unsigned int history[], int history_length, int maxorder,
+  double dist[])
+{
+  int order, top;
+  unsigned int id;
+  if (NULL == model || NULL == dist) return;
+  for (id = 1; id <= 256; ++id) dist[id] = hier_ppm_unigram(model, id);
+  top = maxorder;
+  if (top > model->maxorder) top = model->maxorder;
+  if (top > history_length) top = history_length;
+  for (order = 1; order <= top; ++order) {
+    hier_ppm_key_t key;
+    const hier_ppm_stats_t* stats;
+    hier_ppm_key(&key, history, history_length, order);
+    stats = (const hier_ppm_stats_t*)libxs_registry_get(model->contexts,
+      &key, sizeof(key), NULL);
+    if (NULL == stats || 0 == stats->total) continue;
+    { const int method_d = hier_ppm_escape_d();
+      const double denom = (0 != method_d)
+        ? (2.0 * (double)stats->total)
+        : ((double)stats->total + (double)stats->distinct);
+      const double escape = (double)stats->distinct / denom;
+      const double norm = (stats->backoff_norm > 0.0)
+        ? stats->backoff_norm : 1.0;
+      for (id = 1; id <= 256; ++id) {
+        if (0 != (stats->seen[(id - 1) / 32] & (1u << ((id - 1) % 32)))) {
+          hier_ppm_pair_t pair;
+          const unsigned int* count;
+          pair.key = key;
+          pair.next = id;
+          count = (const unsigned int*)libxs_registry_get(model->pairs,
+            &pair, sizeof(pair), NULL);
+          if (NULL != count) {
+            dist[id] = (0 != method_d)
+              ? ((2.0 * (double)*count - 1.0) / denom)
+              : ((double)*count / denom);
+          }
+        }
+        else dist[id] = escape * dist[id] / norm;
+      }
+    }
+  }
+}
+
+
+static void hier_ppm_dist(const hier_ppm_t* model,
+  const unsigned int history[], int history_length, double dist[])
+{
+  hier_ppm_dist_order(model, history, history_length, (NULL != model)
+    ? model->maxorder : 0, dist);
 }
 
 
@@ -1062,7 +1248,7 @@ static void hier_train_clock_text(converse_hier_t* model,
   unsigned int word_state[COMPOSE_MAXTEXT];
   unsigned int syllable_state[COMPOSE_MAXTEXT];
   unsigned int syllable_role_state[COMPOSE_MAXTEXT];
-  unsigned int raw_history[LIBXS_NGRAM_ORDER_MAX];
+  unsigned int raw_history[HIER_PPM_ORDER_MAX];
   int raw_length = 1;
   int pos;
   double recurrent[HIER_RECURRENT_DIM];
@@ -1119,7 +1305,7 @@ static void hier_train_clock_text(converse_hier_t* model,
         hier_ppm_observe(&model->skip_ppm[skip], skip_history[skip],
           skip_length, id);
       }
-      hier_history_push(raw_history, &raw_length, LIBXS_NGRAM_ORDER_MAX, id);
+      hier_history_push(raw_history, &raw_length, HIER_PPM_ORDER_MAX, id);
       hier_recurrent_update(recurrent, (unsigned int)(unsigned char)text[pos],
         model->recurrent_decay);
     }
@@ -1278,7 +1464,7 @@ static void hier_score_clock_text(converse_hier_t* model,
   unsigned int word_state[COMPOSE_MAXTEXT];
   unsigned int syllable_state[COMPOSE_MAXTEXT];
   unsigned int syllable_role_state[COMPOSE_MAXTEXT];
-  unsigned int raw_history[LIBXS_NGRAM_ORDER_MAX];
+  unsigned int raw_history[HIER_PPM_ORDER_MAX];
   int raw_length = 1;
   int pos;
   double recurrent[HIER_RECURRENT_DIM];
@@ -1391,7 +1577,8 @@ static void hier_score_clock_text(converse_hier_t* model,
           * expert_probability[HIER_EXPERT_SKIP2 + skip];
       }
       if (0 != hier_ppm_logit()) {
-        expert_mixture = hier_expert_logit_mix(model, evaluation, raw_history,
+        expert_mixture = hier_expert_logit_mix(model,
+          evaluation->expert_weight, raw_history,
           raw_length, id, word_history, word_length, syllable_history,
           syllable_length, syllable_role_history, syllable_role_length,
           skip_history);
@@ -1471,6 +1658,18 @@ static void hier_score_clock_text(converse_hier_t* model,
           += -log(expert_probability[HIER_EXPERT_SKIP2 + skip]) / log(2.0);
       }
       evaluation->expert_mix_bits += -log(expert_mixture) / log(2.0);
+      { const int attested = hier_ppm_attested(&model->expert_ppm, raw_history,
+          raw_length, model->expert_order);
+        const double mix_bits = -log(expert_mixture) / log(2.0);
+        if (0 != attested) {
+          ++evaluation->nexpert_attested;
+          evaluation->expert_attested_bits += mix_bits;
+        }
+        else {
+          ++evaluation->nexpert_novel;
+          evaluation->expert_novel_bits += mix_bits;
+        }
+      }
       for (expert_order = 0; expert_order <= model->clock_order;
         ++expert_order)
       {
@@ -1494,11 +1693,278 @@ static void hier_score_clock_text(converse_hier_t* model,
       hier_expert_update(evaluation->adaptive_expert_weight,
         adaptive_expert_probability, model->clock_order,
         adaptive_expert_mixture, model->expert_rate, model->expert_share);
-      hier_history_push(raw_history, &raw_length, LIBXS_NGRAM_ORDER_MAX, id);
+      hier_history_push(raw_history, &raw_length, HIER_PPM_ORDER_MAX, id);
       hier_recurrent_update(recurrent, (unsigned int)(unsigned char)text[pos],
         model->recurrent_decay);
     }
   }
+}
+
+
+/**
+ * Seed the mixture with uniform weight over the experts that actually exist:
+ * the per-order experts up to expert_order, then each named expert. Seeding the
+ * unused slots (the gap between expert_order and HIER_PPM_ORDER_MAX) would give
+ * weight to experts whose probability is always zero and dilute the mixture.
+ */
+static void hier_expert_weight_init(const converse_hier_t* model,
+  double weight[])
+{
+  const int nskip = (0 != hier_skip_on()) ? HIER_SKIP_COUNT : 0;
+  const int nexperts = model->expert_order + 1 + 3 + nskip;
+  const double uniform = 1.0 / (double)nexperts;
+  /**
+   * CONVERSE_HIER_WIDEINIT reinstates the superseded initialization for
+   * attribution only: seeding the whole fixed index span gives weight to
+   * per-order experts above expert_order that never produce a probability,
+   * which dilutes the mixture.
+   */
+  const int wide = (NULL != getenv("CONVERSE_HIER_WIDEINIT")) ? 1 : 0;
+  int expert_order, skip;
+  if (0 != wide) {
+    const double share = 1.0 / (double)HIER_EXPERT_MAX;
+    int slot;
+    for (slot = 0; slot < HIER_EXPERT_MAX; ++slot) weight[slot] = share;
+  }
+  else {
+    for (expert_order = 0; expert_order <= model->expert_order;
+      ++expert_order)
+    {
+      weight[expert_order] = uniform;
+    }
+    weight[HIER_EXPERT_WORD] = uniform;
+    weight[HIER_EXPERT_SYLLABLE] = uniform;
+    weight[HIER_EXPERT_SYLLABLE_ROLE] = uniform;
+    /**
+     * A disabled expert is left at weight zero rather than removed: the mixture
+     * adds weight*probability, the fixed-share update already skips zero-weight
+     * experts, and the logarithmic pool already ignores them, so zero weight is
+     * exactly "absent" everywhere without a second code path.
+     */
+    for (skip = 0; skip < HIER_SKIP_COUNT; ++skip) {
+      weight[HIER_EXPERT_SKIP2 + skip] = (skip < nskip) ? uniform : 0.0;
+    }
+  }
+}
+
+
+/**
+ * Bits the expert bank assigns to candidate[] given prefix[] as history: the
+ * prefix is scored to warm the byte history and the mixture weights but does not
+ * contribute to the returned total, so what comes back is a CONDITIONAL code
+ * length, -log2 P(candidate | prefix). Scoring the candidate alone would instead
+ * measure how ordinary it is and would prefer boilerplate to answers.
+ *
+ * Both texts are scored through the same per-position path the evaluator uses,
+ * so this reports the bits of the model the BPC numbers describe. Returns
+ * EXIT_SUCCESS and *bits when the clock states could be derived for both.
+ */
+static int hier_score_conditional(const converse_hier_t* model,
+  const char* prefix, int prefix_length, const char* candidate,
+  int candidate_length, int score_length, double* bits)
+{
+  int result = EXIT_FAILURE;
+  char joined[COMPOSE_MAXTEXT];
+  unsigned int word_state[COMPOSE_MAXTEXT];
+  unsigned int syllable_state[COMPOSE_MAXTEXT];
+  unsigned int syllable_role_state[COMPOSE_MAXTEXT];
+  unsigned int raw_history[HIER_PPM_ORDER_MAX];
+  double weight[HIER_EXPERT_MAX];
+  int total_length = 0;
+  if (NULL != model && 0 != model->ready
+    && (NULL != prefix || 0 == prefix_length)
+    && NULL != candidate && NULL != bits && prefix_length >= 0
+    && candidate_length > 0 && candidate_length + 1 < COMPOSE_MAXTEXT)
+  {
+    /**
+     * The candidate is always kept whole; an over-long prefix is trimmed from
+     * the LEFT so the bytes nearest the candidate survive. Those are the only
+     * ones the model can see anyway -- the byte context reaches back at most
+     * HIER_PPM_ORDER_MAX -- so trimming the head costs nothing and lets a
+     * growing generation context be scored without failing.
+     */
+    int keep = prefix_length;
+    if (keep + candidate_length + 1 >= COMPOSE_MAXTEXT) {
+      keep = COMPOSE_MAXTEXT - candidate_length - 2;
+      if (keep < 0) keep = 0;
+    }
+    if (keep > 0) {
+      memcpy(joined, prefix + prefix_length - keep, (size_t)keep);
+      total_length = keep;
+      joined[total_length++] = '\n';
+    }
+    memcpy(joined + total_length, candidate, (size_t)candidate_length);
+    total_length += candidate_length;
+    joined[total_length] = '\0';
+  }
+  if (total_length > 0
+    && EXIT_SUCCESS == hier_clock_states(model, joined, total_length,
+      model->word_tokenizer, model->symbols, HIER_CLOCK_WORD_BASE,
+      word_state, 0)
+    && EXIT_SUCCESS == hier_clock_states(model, joined, total_length,
+      model->syllable_tokenizer, model->syllable_payloads,
+      HIER_CLOCK_SYLLABLE_BASE, syllable_state, 0)
+    && EXIT_SUCCESS == hier_clock_states(model, joined, total_length,
+      model->syllable_tokenizer, model->syllables,
+      HIER_CLOCK_SYLLABLE_BASE, syllable_role_state, 1))
+  {
+    const int scored_from = total_length - candidate_length;
+    const int scored_to = (0 < score_length
+      && score_length < candidate_length)
+      ? (scored_from + score_length) : total_length;
+    int raw_length = 1;
+    int pos;
+    double total_bits = 0.0;
+    memset(weight, 0, sizeof(weight));
+    hier_expert_weight_init(model, weight);
+    raw_history[0] = HIER_CLOCK_BYTE_START;
+    for (pos = 0; pos < total_length; ++pos) {
+      const unsigned int id = (unsigned int)(unsigned char)joined[pos] + 1u;
+      unsigned int word_history[2], syllable_history[2];
+      unsigned int syllable_role_history[2];
+      unsigned int skip_history[HIER_SKIP_COUNT][2];
+      double probability[HIER_EXPERT_MAX];
+      double mixture = 0.0;
+      int expert_order, skip;
+      const int word_length = hier_struct_history(word_state[pos], raw_history,
+        raw_length, word_history);
+      const int syllable_length = hier_struct_history(syllable_state[pos],
+        raw_history, raw_length, syllable_history);
+      const int syllable_role_length = hier_struct_history(
+        syllable_role_state[pos], raw_history, raw_length,
+        syllable_role_history);
+      memset(probability, 0, sizeof(probability));
+      for (expert_order = 0; expert_order <= model->expert_order;
+        ++expert_order)
+      {
+        const int effective = (expert_order < raw_length)
+          ? expert_order : raw_length;
+        probability[expert_order] = hier_ppm_prob_order(&model->expert_ppm,
+          raw_history, raw_length, id, effective);
+        mixture += weight[expert_order] * probability[expert_order];
+      }
+      probability[HIER_EXPERT_WORD] = hier_ppm_prob(&model->word_clock_ppm,
+        word_history, word_length, id);
+      probability[HIER_EXPERT_SYLLABLE] = hier_ppm_prob(
+        &model->syllable_clock_ppm, syllable_history, syllable_length, id);
+      probability[HIER_EXPERT_SYLLABLE_ROLE] = hier_ppm_prob(
+        &model->syllable_role_ppm, syllable_role_history,
+        syllable_role_length, id);
+      mixture += weight[HIER_EXPERT_WORD] * probability[HIER_EXPERT_WORD]
+        + weight[HIER_EXPERT_SYLLABLE] * probability[HIER_EXPERT_SYLLABLE]
+        + weight[HIER_EXPERT_SYLLABLE_ROLE]
+          * probability[HIER_EXPERT_SYLLABLE_ROLE];
+      for (skip = 0; skip < HIER_SKIP_COUNT; ++skip) {
+        const int skip_length = hier_skip_history(raw_history, raw_length,
+          hier_skip_distance[skip], skip_history[skip]);
+        probability[HIER_EXPERT_SKIP2 + skip] = hier_ppm_prob(
+          &model->skip_ppm[skip], skip_history[skip], skip_length, id);
+        mixture += weight[HIER_EXPERT_SKIP2 + skip]
+          * probability[HIER_EXPERT_SKIP2 + skip];
+      }
+      if (0 != hier_ppm_logit()) {
+        mixture = hier_expert_logit_mix(model, weight, raw_history, raw_length,
+          id, word_history, word_length, syllable_history, syllable_length,
+          syllable_role_history, syllable_role_length, skip_history);
+      }
+      if (pos >= scored_from && pos < scored_to && mixture > 0.0) {
+        total_bits += -log(mixture) / log(2.0);
+      }
+      hier_expert_update(weight, probability, HIER_EXPERT_LAST, mixture,
+        model->expert_rate, model->expert_share);
+      hier_history_push(raw_history, &raw_length, HIER_PPM_ORDER_MAX, id);
+    }
+    *bits = total_bits;
+    result = EXIT_SUCCESS;
+  }
+  return result;
+}
+
+
+/**
+ * Bits the query SAVES on each candidate: the candidate's code length scored
+ * cold, minus its code length scored with the query as history. This is the lift
+ * metric P(candidate | query) / P(candidate) expressed in bits, and the
+ * distinction matters more than it looks.
+ *
+ * Ranking by the conditional length alone ranks by how ORDINARY a candidate is,
+ * because that term dominates: common dialogue outscores a naming sentence
+ * carrying the queried proper noun. Subtracting the unconditional length cancels
+ * the candidate's own predictability and leaves only what conditioning on the
+ * query contributed, which is the quantity relevance actually corresponds to.
+ * Larger is better, so callers rank by descending value.
+ */
+int converse_hier_rescore(const converse_hier_t* model,
+  const char* query, int query_length, const char* const candidates[],
+  const int candidate_lengths[], int ncandidates, double bits[])
+{
+  int result = EXIT_FAILURE;
+  if (NULL != model && 0 != model->ready && NULL != query
+    && NULL != candidates && NULL != candidate_lengths && NULL != bits
+    && 0 < ncandidates)
+  {
+    const int window = hier_rescore_window();
+    int slot, nscored = 0;
+    for (slot = 0; slot < ncandidates; ++slot) {
+      double conditional = 0.0, unconditional = 0.0;
+      const int scored = (0 < window && window < candidate_lengths[slot])
+        ? window : candidate_lengths[slot];
+      bits[slot] = 0.0;
+      if (NULL != candidates[slot] && 0 < candidate_lengths[slot]
+        && EXIT_SUCCESS == hier_score_conditional(model, query, query_length,
+          candidates[slot], candidate_lengths[slot], window, &conditional)
+        && EXIT_SUCCESS == hier_score_conditional(model, NULL, 0,
+          candidates[slot], candidate_lengths[slot], window, &unconditional))
+      {
+        bits[slot] = (unconditional - conditional) / (double)scored;
+        ++nscored;
+      }
+    }
+    /**
+     * All or nothing: lift is signed, so there is no value left to mark an
+     * unscorable candidate with, and a partial ranking would mix two
+     * incomparable orderings anyway.
+     */
+    if (nscored == ncandidates) result = EXIT_SUCCESS;
+  }
+  return result;
+}
+
+
+/**
+ * Pick the continuation the model finds most likely: the index of the candidate
+ * with the SMALLEST -log2 P(candidate | context).
+ *
+ * Note this is the conditional length, not the lift converse_hier_rescore uses,
+ * and the difference is not an inconsistency. There the candidates were competing
+ * answers and predictability was a confound to cancel; here they are competing
+ * continuations of one fixed context, which is the question a language model is
+ * actually built to answer, so its own preference is the signal. Returns -1 when
+ * no candidate could be scored.
+ */
+int converse_hier_choose(const converse_hier_t* model,
+  const char* context, int context_length, const char* const candidates[],
+  const int candidate_lengths[], int ncandidates)
+{
+  int result = -1;
+  if (NULL != model && 0 != model->ready && NULL != candidates
+    && NULL != candidate_lengths && 0 < ncandidates)
+  {
+    double best = 0.0;
+    int slot;
+    for (slot = 0; slot < ncandidates; ++slot) {
+      double bits = 0.0;
+      if (NULL != candidates[slot] && 0 < candidate_lengths[slot]
+        && EXIT_SUCCESS == hier_score_conditional(model, context,
+          context_length, candidates[slot], candidate_lengths[slot], 0, &bits)
+        && (result < 0 || bits < best))
+      {
+        best = bits;
+        result = slot;
+      }
+    }
+  }
+  return result;
 }
 
 
@@ -1548,7 +2014,7 @@ converse_hier_t* converse_hier_build(const libxs_registry_t* corpus,
     }
     if (NULL != expert_env && '\0' != *expert_env) {
       const int parsed = atoi(expert_env);
-      if (parsed >= 0 && parsed <= LIBXS_NGRAM_ORDER_MAX) {
+      if (parsed >= 0 && parsed <= HIER_PPM_ORDER_MAX) {
         model->expert_order = parsed;
       }
     }
@@ -1698,14 +2164,7 @@ int converse_hier_eval(converse_hier_t* model,
     void* value;
     memset(&evaluation, 0, sizeof(evaluation));
     memset(&clock_evaluation, 0, sizeof(clock_evaluation));
-    { const double uniform = 1.0 / (double)(HIER_EXPERT_SYLLABLE_ROLE + 1);
-      int expert_order;
-      for (expert_order = 0; expert_order <= HIER_EXPERT_SYLLABLE_ROLE;
-        ++expert_order)
-      {
-        clock_evaluation.expert_weight[expert_order] = uniform;
-      }
-    }
+    hier_expert_weight_init(model, clock_evaluation.expert_weight);
     { const double uniform = 1.0 / (double)(model->clock_order + 1);
       int expert_order;
       for (expert_order = 0; expert_order <= model->clock_order;
@@ -1796,6 +2255,19 @@ int converse_hier_eval(converse_hier_t* model,
           clock_evaluation.nppm, model->top_stride,
           clock_evaluation.expert_mix_bits / (double)clock_evaluation.nbytes,
           model->expert_rate, model->expert_share);
+        fprintf(stdout, "  expert attested split (order %d):"
+          " verbatim %.1f%% (bpc=%.3f) | novel %.1f%% (bpc=%.3f)\n",
+          model->expert_order,
+          100.0 * (double)clock_evaluation.nexpert_attested
+            / (double)clock_evaluation.nbytes,
+          (0 < clock_evaluation.nexpert_attested)
+            ? clock_evaluation.expert_attested_bits
+              / (double)clock_evaluation.nexpert_attested : 0.0,
+          100.0 * (double)clock_evaluation.nexpert_novel
+            / (double)clock_evaluation.nbytes,
+          (0 < clock_evaluation.nexpert_novel)
+            ? clock_evaluation.expert_novel_bits
+              / (double)clock_evaluation.nexpert_novel : 0.0);
         fprintf(stderr, "  expert orders:");
         { int expert_order;
           for (expert_order = 0; expert_order <= model->expert_order;

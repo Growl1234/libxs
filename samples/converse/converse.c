@@ -13,6 +13,7 @@
 
 #define RESPONSE_BUDGET 1
 #define ANSWER_MAX 4
+#define GEN_CAND_MAX 8
 #define ANSWER_MIN_SCORE 0.35
 #define LEXICON_FILE "converse.lex"
 #define PREDICT_FILE "converse.prd"
@@ -418,6 +419,10 @@ static int answer_reply(const char* query_text, size_t query_len,
   const corpus_entry_t* entry, libxs_lexicon_t* lexicon,
   const libxs_lexrule_t* rules, int nrules,
   char* output, size_t output_size);
+static int answer_hier_reorder(const char* query_text, size_t query_len,
+  const corpus_entry_t* entries[ANSWER_MAX], double scores[ANSWER_MAX],
+  int answer_count);
+static converse_hier_t* answer_hier_build(const libxs_registry_t* corpus);
 static int answer_evidence_sentence(const char* query_text, size_t query_len,
   const corpus_entry_t* entry, libxs_lexicon_t* lexicon,
   const libxs_lexrule_t* rules, int nrules,
@@ -459,6 +464,9 @@ static void ngram_train_text(libxs_registry_t* model,
 static libxs_ngram_t converse_ngram;
 static libxs_ngram_t converse_skip;
 static int converse_skip_on = 0;
+static const converse_hier_t* answer_hier_model = NULL;
+static long answer_hier_nreorder = 0;
+static long answer_hier_nchanged = 0;
 static int converse_profile_override = -1;
 static int converse_order_max = 0;
 static bpe_symbol_t* bpe_symbols = NULL;
@@ -874,6 +882,7 @@ int main(int argc, char* argv[])
     int use_hier = (0 == strcmp(ngram_kind, "hier")) ? 1 : 0;
     libxs_predict_t* token_model = NULL;
     converse_hier_t* hier_model = NULL;
+    converse_hier_t* rescore_model = NULL;
     libxs_registry_t* test_corpus = NULL;
     const libxs_registry_t* eval_corpus = corpus;
     /**
@@ -900,6 +909,7 @@ int main(int argc, char* argv[])
         test_corpus = NULL;
       }
     }
+    rescore_model = answer_hier_build(corpus);
     if (0 != use_hier) {
       hier_model = converse_hier_build(corpus, ngram_holdout,
         predict_ntotal, ngram_maxorder());
@@ -1003,6 +1013,8 @@ int main(int argc, char* argv[])
       }
       mode_result = EXIT_SUCCESS;
     }
+    answer_hier_model = NULL;
+    converse_hier_destroy(rescore_model);
     libxs_predict_destroy(token_model);
     converse_hier_destroy(hier_model);
     libxs_registry_destroy(test_corpus);
@@ -1027,8 +1039,12 @@ int main(int argc, char* argv[])
   }
 
   if (0 != eval_mode) {
-    int eval_result = eval_converse(corpus, lexicon, rules, nrules,
+    int eval_result;
+    converse_hier_t* rescore_model = answer_hier_build(corpus);
+    eval_result = eval_converse(corpus, lexicon, rules, nrules,
       answer_model, predict_profile);
+    answer_hier_model = NULL;
+    converse_hier_destroy(rescore_model);
     converse_lexicon_save(lexicon);
     libxs_predict_destroy(answer_model);
     libxs_lexicon_destroy(lexicon);
@@ -1043,6 +1059,7 @@ int main(int argc, char* argv[])
   }
 
   { libxs_spatial_t spatial;
+    converse_hier_t* rescore_model = NULL;
     if (EXIT_SUCCESS != libxs_spatial_build(&spatial, corpus)) {
       libxs_predict_destroy(answer_model);
       libxs_lexicon_destroy(lexicon);
@@ -1057,6 +1074,7 @@ int main(int argc, char* argv[])
     }
     ngram_model = ngram_build(corpus, lexicon, rules, nrules, 0);
     ngram_backoff_build(ngram_model, lexicon);
+    rescore_model = answer_hier_build(corpus);
     conv_reset();
     printf("> ");
     fflush(stdout);
@@ -1074,6 +1092,8 @@ int main(int argc, char* argv[])
       printf("> ");
       fflush(stdout);
     }
+    answer_hier_model = NULL;
+    converse_hier_destroy(rescore_model);
     libxs_spatial_destroy(&spatial);
   }
 
@@ -5547,6 +5567,109 @@ static void answer_fact_section_set(const char* section, int section_len)
 }
 
 
+static int answer_hier_rescore_on(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_HIER_RESCORE");
+    cached = (NULL != env && '0' != *env) ? atoi(env) : 0;
+    if (cached < 0) cached = 0;
+  }
+  return cached;
+}
+
+
+/**
+ * Build the expert bank used to rescore answers, and publish it for
+ * answer_hier_reorder. Returns NULL (and leaves the reorder inactive) unless the
+ * rescorer is enabled, so the default path pays neither the training time nor
+ * the memory.
+ */
+static converse_hier_t* answer_hier_build(const libxs_registry_t* corpus)
+{
+  converse_hier_t* result = NULL;
+  if (0 != answer_hier_rescore_on()) {
+    result = converse_hier_build(corpus, 0, 0, ngram_maxorder());
+    answer_hier_model = result;
+  }
+  return result;
+}
+
+
+/**
+ * Reorder the selected candidates by the hierarchical model's conditional code
+ * length, -log2 P(candidate | query), normalized per byte so a long sentence is
+ * not penalized for its length. Selection stays in charge of WHICH sentences are
+ * admitted -- this only reorders them -- so the abstention discipline is
+ * untouched: a candidate promoted here was already attested and already cleared
+ * the selection threshold. Returns the (unchanged) candidate count.
+ *
+ * The reorder is opt-in and off by default: it is a measurement of whether a
+ * better-calibrated likelihood carries downstream, and the QA harness is the
+ * gate. Without a built model, or when a candidate cannot be scored, the
+ * selection order is preserved exactly.
+ */
+static int answer_hier_reorder(const char* query_text, size_t query_len,
+  const corpus_entry_t* entries[ANSWER_MAX], double scores[ANSWER_MAX],
+  int answer_count)
+{
+  if (NULL != answer_hier_model && 1 < answer_count) {
+    const char* candidates[ANSWER_MAX];
+    int lengths[ANSWER_MAX];
+    double bits[ANSWER_MAX];
+    int slot, nvalid = 0;
+    for (slot = 0; slot < answer_count; ++slot) {
+      candidates[slot] = (NULL != entries[slot]) ? entries[slot]->text : NULL;
+      lengths[slot] = (NULL != entries[slot]) ? entries[slot]->text_len : 0;
+    }
+    if (EXIT_SUCCESS == converse_hier_rescore(answer_hier_model, query_text,
+      (int)query_len, candidates, lengths, answer_count, bits))
+    {
+      for (slot = 0; slot < answer_count; ++slot) {
+        if (0 < lengths[slot]) ++nvalid;
+      }
+    }
+    /**
+     * Only reorder when EVERY candidate scored: a partial ranking would mix two
+     * incomparable orderings, and preferring whichever subset the model happened
+     * to handle is not a measurement of the model.
+     */
+    if (nvalid == answer_count) {
+      const corpus_entry_t* was_first = entries[0];
+      ++answer_hier_nreorder;
+      for (slot = 1; slot < answer_count; ++slot) {
+        const corpus_entry_t* entry = entries[slot];
+        const double bpc = bits[slot];
+        const double score = scores[slot];
+        int probe = slot;
+        while (0 < probe && bpc > bits[probe - 1]) {
+          entries[probe] = entries[probe - 1];
+          scores[probe] = scores[probe - 1];
+          bits[probe] = bits[probe - 1];
+          --probe;
+        }
+        entries[probe] = entry;
+        scores[probe] = score;
+        bits[probe] = bpc;
+      }
+      if (was_first != entries[0]) {
+        ++answer_hier_nchanged;
+        if (1 < answer_hier_rescore_on()) {
+          fprintf(stderr, "  rescore[%.*s]\n    was: [%d B] %.*s\n"
+            "    now: [%d B] %.*s (%.3f bpc)\n", (int)query_len, query_text,
+            was_first->text_len,
+            (was_first->text_len < 90) ? was_first->text_len : 90,
+            was_first->text, entries[0]->text_len,
+            (entries[0]->text_len < 90) ? entries[0]->text_len : 90,
+            entries[0]->text, bits[0]);
+        }
+      }
+    }
+  }
+  return answer_count;
+}
+
+
 static int answer_query(const libxs_registry_t* corpus,
   const char* query_text, size_t query_len, int budget,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
@@ -5575,6 +5698,8 @@ static int answer_query(const libxs_registry_t* corpus,
   }
   answer_count = answer_select(corpus, query_text, query_len, budget,
     lexicon, rules, nrules, answer_model, profile, entries, scores);
+  answer_count = answer_hier_reorder(query_text, query_len, entries, scores,
+    answer_count);
   if (answer_count > 0 && NULL != entries[0]
     && EXIT_SUCCESS == answer_reply(query_text, query_len, entries[0],
       lexicon, rules, nrules, reply, sizeof(reply)))
@@ -5892,6 +6017,7 @@ static int eval_converse(const libxs_registry_t* corpus,
     nanswers = answer_select(corpus, qtext, qlen,
       ANSWER_MAX, lexicon, rules, nrules,
       answer_model, profile, entries, scores);
+    nanswers = answer_hier_reorder(qtext, qlen, entries, scores, nanswers);
     top_pass = eval_terms_match_answers(entries, nanswers, fields[1], 1);
     any_pass = eval_terms_match_answers(entries, nanswers, fields[1], 0);
     reply_pass = 1;
@@ -5981,6 +6107,10 @@ static int eval_converse(const libxs_registry_t* corpus,
   fprintf(stdout,
     "eval[%s]: %d/%d passed (top=%d, any=%d, reply=%d, fact=%d)\n",
     profile->name, npass, ncases, ntop, nany, nreply, nfact);
+  if (NULL != answer_hier_model) {
+    fprintf(stderr, "  hier rescore: %ld rankings, top-1 changed on %ld\n",
+      answer_hier_nreorder, answer_hier_nchanged);
+  }
   if (NULL != file) fclose(file);
   if (ncases > 0 && npass == ncases) result = EXIT_SUCCESS;
   return result;
@@ -6525,8 +6655,24 @@ static int ngram_native_tokens(libxs_lexicon_t* lexicon, const char* text,
   while (pos < text_len && result < max) {
     unsigned char c = (unsigned char)text[pos];
     if (0 == ngram_is_wordchar(c)) {
-      unsigned int id = libxs_lexicon_id(lexicon, text + pos, 1,
-        LIBXS_LEXEME_PUNCT, create);
+      char buf[3];
+      int off = 0;
+      unsigned int id;
+      /**
+       * Whitespace is NOT emitted as a piece: the boundary it marks is already
+       * carried by the leading space baked into the next piece's text (below,
+       * and the same convention the byte-pair encoder uses). Emitting it here
+       * too would represent one space twice, so concatenating the pieces would
+       * render "to  the" and no such text occurs in any corpus.
+       */
+      if (0 != isspace(c)) {
+        have_break = 1;
+        ++pos;
+        continue;
+      }
+      if (0 != have_break) buf[off++] = ' ';
+      buf[off] = (char)c;
+      id = libxs_lexicon_id(lexicon, buf, off + 1, LIBXS_LEXEME_PUNCT, create);
       if (0 == id) break;
       tokens[result].id = id;
       tokens[result].length = 1;
@@ -6534,7 +6680,7 @@ static int ngram_native_tokens(libxs_lexicon_t* lexicon, const char* text,
         | ((0 != have_break) ? LIBXS_LEXEME_BREAK : 0));
       if (NULL != word_ids) word_ids[result] = id;
       ++result;
-      have_break = (0 != isspace(c)) ? 1 : 0;
+      have_break = 0;
       ++pos;
     }
     else {
@@ -6556,7 +6702,7 @@ static int ngram_native_tokens(libxs_lexicon_t* lexicon, const char* text,
         int plen = piece_len[pi];
         int off = 0;
         unsigned int id;
-        if (0 == pi) buf[off++] = ' ';
+        if (0 == pi && 0 != have_break) buf[off++] = ' ';
         if (plen > (int)sizeof(buf) - 1 - off) plen = (int)sizeof(buf) - 1 - off;
         memcpy(buf + off, text + pos + piece_begin[pi], (size_t)plen);
         id = libxs_lexicon_id(lexicon, buf, off + plen,
@@ -7580,9 +7726,26 @@ static int ngram_history(libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules,
   int nrules, const char* text, int text_len, unsigned int hist[])
 {
   libxs_lexeme_stream_t stream;
+  const int native = ngram_native_mode();
   int hlen = 0;
   libxs_lexeme_stream_init(&stream);
-  if (NULL != lexicon && NULL != rules && nrules > 0 && text_len > 0
+  /**
+   * The prompt has to be read in the unit the model was trained on, or the
+   * seeded history holds ids from a different vocabulary and nothing matches.
+   */
+  if (0 != native) {
+    libxs_lexeme_t nat[COMPOSE_MAXTEXT];
+    const int ntok = (NULL != lexicon && 0 < text_len)
+      ? ngram_native_tokens(lexicon, text, text_len, nat, NULL,
+        COMPOSE_MAXTEXT, 0) : 0;
+    int ti;
+    for (ti = 0; ti < ntok; ++ti) {
+      if (0 != nat[ti].id) {
+        ngram_hist_push(hist, &hlen, NGRAM_ORDER_MAX, nat[ti].id);
+      }
+    }
+  }
+  else if (NULL != lexicon && NULL != rules && nrules > 0 && text_len > 0
     && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &stream,
       (const unsigned char*)text, (size_t)text_len, rules, nrules,
       answer_lexnorms, answer_lexnorms_size, 0))
@@ -7593,17 +7756,118 @@ static int ngram_history(libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules,
       if (0 != (lex->flags & (LIBXS_LEXEME_WORD | LIBXS_LEXEME_NUMBER))
         && 0 != lex->id)
       {
-        if (hlen < NGRAM_ORDER_MAX) hist[hlen++] = lex->id;
-        else {
-          int s;
-          for (s = 1; s < NGRAM_ORDER_MAX; ++s) hist[s - 1] = hist[s];
-          hist[NGRAM_ORDER_MAX - 1] = lex->id;
-        }
+        ngram_hist_push(hist, &hlen, NGRAM_ORDER_MAX, lex->id);
       }
     }
   }
   libxs_lexeme_stream_release(&stream);
   return hlen;
+}
+
+
+/**
+ * Successors offered to the hierarchical model at each generation step (1 = the
+ * count-ranked winner, i.e. plain greedy decoding). Widening this is what gives
+ * the byte model anything to say about generation: it never proposes a
+ * continuation, it only chooses among ones the n-gram already attested, so the
+ * grounding gate below still decides what may be shown.
+ */
+static int ngram_gen_ncand(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_GEN_NCAND");
+    cached = (NULL != env && '\0' != *env) ? atoi(env) : 1;
+    if (cached < 1) cached = 1;
+    if (cached > GEN_CAND_MAX) cached = GEN_CAND_MAX;
+  }
+  return cached;
+}
+
+
+/**
+ * Whether rendering has to supply the word separator itself.
+ *
+ * The modeling units (native chunks, syllable pieces, byte-pair pieces) bake the
+ * boundary into the piece text, so concatenating them reproduces the source and
+ * a separator here would duplicate it. The lexical view cannot: word ids come
+ * from the shared normalized vocabulary that grounded QA matches terms against,
+ * which must stay bare. So this is not a granularity table but the one-bit
+ * question "modeling view or lexical view", and it belongs in exactly one place:
+ * every site that re-derived it was a chance to render text no corpus contains.
+ */
+static int ngram_render_separated(void)
+{
+  return (0 == ngram_native_mode()) ? 1 : 0;
+}
+
+
+/**
+ * Append one piece's text at pos, inserting the separator first when the view
+ * needs one and the piece may be preceded by something. Returns the new end, or
+ * pos unchanged when the piece does not fit or has no text.
+ */
+static size_t ngram_render_append(char* out, size_t out_size, size_t pos,
+  const char* piece, int len, int leading)
+{
+  size_t result = pos;
+  if (NULL != out && NULL != piece && 0 < len
+    && pos + (size_t)len + 1 < out_size)
+  {
+    if (0 != leading && 0 != ngram_render_separated()) out[result++] = ' ';
+    memcpy(out + result, piece, (size_t)len);
+    result += (size_t)len;
+    out[result] = '\0';
+  }
+  return result;
+}
+
+
+/**
+ * Choose among the count-ranked successors with the byte model, returning the
+ * index to take. Falls back to the n-gram's own first choice whenever the model
+ * is absent or nothing could be scored, so enabling this can only reorder
+ * candidates the n-gram already offered.
+ */
+static int ngram_gen_select(libxs_lexicon_t* lexicon,
+  const unsigned int ids[], int nids, const char* context, int context_len)
+{
+  int result = 0;
+  if (1 < nids && NULL != answer_hier_model) {
+    const char* candidates[GEN_CAND_MAX];
+    int lengths[GEN_CAND_MAX];
+    char words[GEN_CAND_MAX][64];
+    int slot, chosen;
+    for (slot = 0; slot < nids; ++slot) {
+      int len = 0;
+      const char* word = libxs_lexicon_text(lexicon, ids[slot], &len, NULL);
+      /* A candidate always follows the context, so it always takes a leading. */
+      const size_t at = ngram_render_append(words[slot], sizeof(words[slot]), 0,
+        word, len, 1);
+      candidates[slot] = (0 < at) ? words[slot] : NULL;
+      lengths[slot] = (int)at;
+    }
+    chosen = converse_hier_choose(answer_hier_model, context, context_len,
+      candidates, lengths, nids);
+    if (0 <= chosen) result = chosen;
+  }
+  return result;
+}
+
+
+/** Text of the first n ids, as scoring context for the byte model. */
+static int ngram_gen_join(libxs_lexicon_t* lexicon,
+  const unsigned int ids[], int n, char* out, size_t out_size)
+{
+  size_t pos = 0;
+  int slot;
+  if (0 < out_size) out[0] = '\0';
+  for (slot = 0; slot < n; ++slot) {
+    int len = 0;
+    const char* word = libxs_lexicon_text(lexicon, ids[slot], &len, NULL);
+    pos = ngram_render_append(out, out_size, pos, word, len, (0 < pos) ? 1 : 0);
+  }
+  return (int)pos;
 }
 
 
@@ -7667,22 +7931,36 @@ static int ngram_generate(libxs_registry_t* model, libxs_lexicon_t* lexicon,
   if (NULL != out && out_size > 0) out[0] = '\0';
   hlen = ngram_history(lexicon, rules, nrules, text, text_len, hist);
   for (step = 0; hlen > 0 && step < GEN_MAX; ++step) {
-    unsigned int ids[1];
-    int got_order = 0, len = 0, i, repeat = 0;
+    unsigned int ids[GEN_CAND_MAX];
+    int got_order = 0, len = 0, i, repeat = 0, pick = 0;
     const char* word;
-    int n = ngramk_predict_order(model, hist, hlen, maxorder, ids, 1,
-      &got_order);
+    int n = ngramk_predict_order(model, hist, hlen, maxorder, ids,
+      ngram_gen_ncand(), &got_order);
     if (n <= 0 || got_order < minorder) break;
+    if (1 < n && NULL != answer_hier_model) {
+      char context[COMPOSE_MAXTEXT];
+      int context_len = text_len;
+      if (context_len >= (int)sizeof(context)) {
+        context_len = (int)sizeof(context) - 1;
+      }
+      memcpy(context, text + text_len - context_len, (size_t)context_len);
+      if (NULL != out && 0 < pos) {
+        context_len = (int)ngram_render_append(context, sizeof(context),
+          (size_t)context_len, out, (int)pos, 1);
+      }
+      pick = ngram_gen_select(lexicon, ids, n, context, context_len);
+    }
+    if (0 != pick) {
+      const unsigned int chosen = ids[pick];
+      ids[pick] = ids[0];
+      ids[0] = chosen;
+    }
     for (i = 0; i < nrecent; ++i) if (recent[i] == ids[0]) ++repeat;
     if (repeat >= 3) break;
     word = libxs_lexicon_text(lexicon, ids[0], &len, NULL);
     if (NULL == word || len <= 0) break;
-    if (NULL != out && pos + (size_t)len + 1 < out_size) {
-      if (pos > 0) out[pos++] = ' ';
-      memcpy(out + pos, word, (size_t)len);
-      pos += (size_t)len;
-      out[pos] = '\0';
-    }
+    pos = ngram_render_append(out, out_size, pos, word, len,
+      (0 < pos) ? 1 : 0);
     order_sum += got_order;
     if (got_order < order_min) order_min = got_order;
     if (nrecent < GEN_MAX) recent[nrecent++] = ids[0];
@@ -7789,21 +8067,38 @@ static int ngram_gen_eval(libxs_registry_t* model,
     const corpus_entry_t* entry = (const corpus_entry_t*)value;
     int is_test = (0 == holdout || 0 != predict_is_test(index, holdout));
     libxs_lexeme_stream_t stream;
+    const int native = ngram_native_mode();
     libxs_lexeme_stream_init(&stream);
+    /**
+     * The truth tokens must come from the SAME unit the model was trained on.
+     * Reading word lexemes while the model holds syllable or byte-pair ids makes
+     * every prediction a miss and reports a reproduction of zero, which reads as
+     * a catastrophically bad generator rather than as a unit mismatch.
+     */
     if (0 != is_test && entry->text_len > 0
-      && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &stream,
-        (const unsigned char*)entry->text, (size_t)entry->text_len,
-        rules, nrules, answer_lexnorms, answer_lexnorms_size, 0))
+      && (0 != native || EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon,
+        &stream, (const unsigned char*)entry->text, (size_t)entry->text_len,
+        rules, nrules, answer_lexnorms, answer_lexnorms_size, 0)))
     {
       unsigned int truth[GEN_SEED + GEN_LOOK];
+      libxs_lexeme_t nat[COMPOSE_MAXTEXT];
       int ntruth = 0;
-      size_t pos;
-      for (pos = 0; pos < stream.size && ntruth < GEN_SEED + GEN_LOOK; ++pos) {
-        const libxs_lexeme_t* lex = stream.data + pos;
-        if (0 != (lex->flags & (LIBXS_LEXEME_WORD | LIBXS_LEXEME_NUMBER))
-          && 0 != lex->id)
-        {
-          truth[ntruth++] = lex->id;
+      int ntok, ti;
+      ntok = (0 != native)
+        ? ngram_native_tokens(lexicon, entry->text, entry->text_len, nat,
+          NULL, COMPOSE_MAXTEXT, 0)
+        : (int)stream.size;
+      for (ti = 0; ti < ntok && ntruth < GEN_SEED + GEN_LOOK; ++ti) {
+        if (0 != native) {
+          if (0 != nat[ti].id) truth[ntruth++] = nat[ti].id;
+        }
+        else {
+          const libxs_lexeme_t* lex = stream.data + ti;
+          if (0 != (lex->flags & (LIBXS_LEXEME_WORD | LIBXS_LEXEME_NUMBER))
+            && 0 != lex->id)
+          {
+            truth[ntruth++] = lex->id;
+          }
         }
       }
       if (ntruth > GEN_SEED) {
@@ -7812,10 +8107,22 @@ static int ngram_gen_eval(libxs_registry_t* model,
         int hlen = 0, t, repro = 0, diverged = 0, seed_attested = -1;
         for (t = 0; t < GEN_SEED; ++t) hist[hlen++] = truth[t];
         for (t = GEN_SEED; t < ntruth && 0 == diverged; ++t) {
-          unsigned int ids[1];
+          unsigned int ids[GEN_CAND_MAX];
           int got_order = 0;
-          int n = ngramk_predict_order(model, hist, hlen, maxorder, ids, 1,
-            &got_order);
+          int n = ngramk_predict_order(model, hist, hlen, maxorder, ids,
+            ngram_gen_ncand(), &got_order);
+          if (1 < n && NULL != answer_hier_model) {
+            char context[COMPOSE_MAXTEXT];
+            const int context_len = ngram_gen_join(lexicon, truth, t,
+              context, sizeof(context));
+            const int pick = ngram_gen_select(lexicon, ids, n, context,
+              context_len);
+            if (0 != pick) {
+              const unsigned int chosen = ids[pick];
+              ids[pick] = ids[0];
+              ids[0] = chosen;
+            }
+          }
           /**
            * Classify the sentence by its SEED context only, before any token is
            * generated, so the split cannot be influenced by how far generation
