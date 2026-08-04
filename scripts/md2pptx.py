@@ -46,6 +46,18 @@ CODE_SIZE = Pt(20)
 TABLE_SIZE = Pt(12)
 BODY_SIZE = Pt(18)
 
+# Supporting detail (span class="dim"): recedes without disappearing. The
+# reveal.js stylesheet uses opacity, which PPTX runs lack, so approximate it
+# with a gray against the dark background.
+DIM_SCALE = 0.6
+DIM_COLOR = RGBColor(0x89, 0x87, 0x81)
+LINK_COLOR = RGBColor(0x42, 0xAF, 0xFA)
+
+# Marks a run whose color is deliberate (dim text, hyperlinks) so the global
+# white-text pass leaves it alone. Recorded in the XML rather than in a Python
+# set: lxml hands out transient proxy objects, so id() is not a stable key.
+PRESET_ATTR = "md2pptx-color"
+
 MARGIN = Inches(0.5)
 TITLE_TOP = Inches(0.5)
 TITLE_BOX = Inches(1.25)
@@ -192,25 +204,44 @@ def _latex_to_text(latex):
 
 
 def parse_inline(text):
-    """Parse **bold**, *italic*, `code`, and $math$ into [(text, style), ...]."""
+    """Parse inline markup into [(text, style, href), ...].
+
+    Handles **bold**, *italic*, `code`, $math$, [label](url), and
+    <span class="dim">...</span>. href is None unless the segment is a link.
+    Links are matched before emphasis so that a label may carry its own
+    markup; dim spans recede visually but keep their text.
+    """
     result = []
     pos = 0
-    pat = re.compile(r"\*\*(.+?)\*\*" r"|\*(.+?)\*" r"|`(.+?)`" r"|\$([^$]+?)\$")
+    pat = re.compile(
+        r"<span\s+class=\"dim\">(.*?)</span>"
+        r"|\[([^\]]+)\]\(([^)\s]+)\)"
+        r"|\*\*(.+?)\*\*"
+        r"|\*(.+?)\*"
+        r"|`(.+?)`"
+        r"|\$([^$]+?)\$"
+    )
     for m in pat.finditer(text):
         if m.start() > pos:
-            result.append((_typographic(text[pos : m.start()]), "normal"))
+            result.append((_typographic(text[pos : m.start()]), "normal", None))
         if m.group(1) is not None:
-            result.append((_typographic(m.group(1)), "bold"))
+            for seg, style, href in parse_inline(m.group(1)):
+                result.append((seg, "dim" if style == "normal" else style, href))
         elif m.group(2) is not None:
-            result.append((_typographic(m.group(2)), "italic"))
-        elif m.group(3) is not None:
-            result.append((m.group(3), "code"))
+            for seg, style, _ in parse_inline(m.group(2)):
+                result.append((seg, style, m.group(3)))
+        elif m.group(4) is not None:
+            result.append((_typographic(m.group(4)), "bold", None))
+        elif m.group(5) is not None:
+            result.append((_typographic(m.group(5)), "italic", None))
+        elif m.group(6) is not None:
+            result.append((m.group(6), "code", None))
         else:
-            result.append((_latex_to_text(m.group(4)), "italic"))
+            result.append((_latex_to_text(m.group(7)), "italic", None))
         pos = m.end()
     if pos < len(text):
-        result.append((_typographic(text[pos:]), "normal"))
-    return result or [("", "normal")]
+        result.append((_typographic(text[pos:]), "normal", None))
+    return result or [("", "normal", None)]
 
 
 def add_runs(para, text, font_size=None, code=False):
@@ -221,7 +252,7 @@ def add_runs(para, text, font_size=None, code=False):
         if font_size:
             run.font.size = font_size
         return
-    for content, style in parse_inline(text):
+    for content, style, href in parse_inline(text):
         run = para.add_run()
         run.text = content
         if font_size:
@@ -234,6 +265,25 @@ def add_runs(para, text, font_size=None, code=False):
             run.font.name = CODE_FONT
             if font_size:
                 run.font.size = font_size
+        elif style == "dim":
+            run.font.size = Pt(
+                round((font_size or BODY_SIZE).pt * DIM_SCALE)
+            )
+            run.font.color.rgb = DIM_COLOR
+            _keep_color(run)
+        if href:
+            run.hyperlink.address = href
+            run.font.color.rgb = LINK_COLOR
+            _keep_color(run)
+
+
+def _keep_color(run):
+    """Exempt a run from the global white-text pass."""
+    run._r.set(PRESET_ATTR, "1")
+
+
+def _color_preset(run):
+    return run._r.get(PRESET_ATTR) is not None
 
 
 def no_bullet(para):
@@ -496,7 +546,12 @@ def _parse_slide(text):
 
         if re.match(r"^\s*<[^>]+>\s*$", line) and not line.strip().startswith("<br"):
             stripped = line.strip()
-            inner = re.sub(r"<[^>]*>", "", stripped).strip()
+            # Keep a whole-line dim span intact: parse_inline styles it, so
+            # stripping the tag here would silently drop the styling.
+            if re.match(r'^<span\s+class="dim">.*</span>$', stripped):
+                inner = stripped
+            else:
+                inner = re.sub(r"<[^>]*>", "", stripped).strip()
             if inner:
                 if cur and cur["type"] == "text":
                     cur["lines"].append(inner)
@@ -652,18 +707,27 @@ def _apply_dark_theme(prs):
 def _set_text_color(prs):
     """Set all text runs to white across every slide."""
     white = RGBColor(255, 255, 255)
+    preset = []
     for slide in prs.slides:
         for shape in slide.shapes:
             if shape.has_text_frame:
                 for para in shape.text_frame.paragraphs:
                     for run in para.runs:
-                        run.font.color.rgb = white
+                        if _color_preset(run):
+                            preset.append(run._r)
+                        else:
+                            run.font.color.rgb = white
             if shape.has_table:
                 for row in shape.table.rows:
                     for cell in row.cells:
                         for para in cell.text_frame.paragraphs:
                             for run in para.runs:
-                                run.font.color.rgb = white
+                                if _color_preset(run):
+                                    preset.append(run._r)
+                                else:
+                                    run.font.color.rgb = white
+    for r in preset:  # the marker is scaffolding, not part of the format
+        r.attrib.pop(PRESET_ATTR, None)
 
 
 def build_presentation(slides, base_dir="."):
