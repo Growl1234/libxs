@@ -27,10 +27,9 @@ jobs:
     trigger: commit
     branch: main
     project: devpkgs
-  - <<: *copr_build
+  - job: copr_build
     trigger: pull_request
     manual_trigger: true
-    project: devpkgs
     allowed_pr_authors:
       - hfp
       - Growl1234
