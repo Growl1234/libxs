@@ -21,9 +21,12 @@ jobs:
   - &copr_build
     job: copr_build
     trigger: release
+    owner: growl
+    project: release
   - <<: *copr_build
     trigger: commit
     branch: main
+    project: devpkgs
   - <<: *copr_build
     trigger: pull_request
     manual_trigger: true
