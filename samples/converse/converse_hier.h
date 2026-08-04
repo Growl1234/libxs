@@ -39,4 +39,14 @@ int converse_hier_choose(const converse_hier_t* model,
   const char* context, int context_length, const char* const candidates[],
   const int candidate_lengths[], int ncandidates);
 
+/**
+ * Bits per byte the model assigns to the first score_length bytes of suffix[]
+ * given prefix[] as history (0 = the whole suffix). Used to judge how fluent a
+ * junction between two texts is: a short window measures the seam itself rather
+ * than the content on either side. Lower is more fluent.
+ */
+int converse_hier_seam_bits(const converse_hier_t* model,
+  const char* prefix, int prefix_length, const char* suffix,
+  int suffix_length, int score_length, double* bits);
+
 #endif /*CONVERSE_HIER_H*/

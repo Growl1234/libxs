@@ -1942,6 +1942,37 @@ int converse_hier_rescore(const converse_hier_t* model,
  * actually built to answer, so its own preference is the signal. Returns -1 when
  * no candidate could be scored.
  */
+/**
+ * Conditional code length of the first score_length bytes of suffix[] given
+ * prefix[] as history (0 = whole suffix), in bits per scored byte.
+ *
+ * This is the seam-fluency measure: with a short window it asks only "how
+ * surprising is the text immediately after this join", which is what makes it a
+ * judgement about the junction rather than about either side's content. Note the
+ * inversion relative to converse_hier_rescore -- there, ranking by conditional
+ * length was wrong because it ranked by how ordinary a candidate is; here that is
+ * exactly the quantity wanted.
+ */
+int converse_hier_seam_bits(const converse_hier_t* model,
+  const char* prefix, int prefix_length, const char* suffix,
+  int suffix_length, int score_length, double* bits)
+{
+  int result = EXIT_FAILURE;
+  if (NULL != bits && 0 < suffix_length) {
+    const int scored = (0 < score_length && score_length < suffix_length)
+      ? score_length : suffix_length;
+    double total = 0.0;
+    if (EXIT_SUCCESS == hier_score_conditional(model, prefix, prefix_length,
+      suffix, suffix_length, score_length, &total))
+    {
+      *bits = total / (double)scored;
+      result = EXIT_SUCCESS;
+    }
+  }
+  return result;
+}
+
+
 int converse_hier_choose(const converse_hier_t* model,
   const char* context, int context_length, const char* const candidates[],
   const int candidate_lengths[], int ncandidates)
