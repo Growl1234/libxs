@@ -134,6 +134,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   int diff_mode, diff_order;
   int refine;
   int tangent;
+  int dispersion;
   double smooth;
   double quality;
   double consistency;
@@ -186,6 +187,25 @@ LIBXS_API_INLINE void internal_libxs_predict_normalize(
     norm[i] = (NULL != model->input_rng && model->input_rng[i] > 0)
       ? (inputs[i] - model->input_min[i]) / model->input_rng[i] : inputs[i];
     if (NULL != model->weights) norm[i] *= model->weights[i];
+  }
+}
+
+
+/**
+ * Inverse of internal_libxs_predict_normalize.  Kept adjacent to it so the two
+ * cannot drift apart.  A zero weight is not invertible (feature selection drops
+ * the coordinate), which callers must check before relying on the result.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_denormalize(
+  const libxs_predict_t* model, const double* norm, double* inputs)
+{
+  const int m = model->ninputs;
+  int i;
+  for (i = 0; i < m; ++i) {
+    double v = norm[i];
+    if (NULL != model->weights && 0 != model->weights[i]) v /= model->weights[i];
+    inputs[i] = (NULL != model->input_rng && model->input_rng[i] > 0)
+      ? (v * model->input_rng[i] + model->input_min[i]) : v;
   }
 }
 
@@ -527,7 +547,8 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
   int ndistinct, int extrapolate, int skip_local,
   const int* po_groups, int query_group,
   double* confidence, double* out_variance,
-  double quantile, double* out_lower, double* out_upper)
+  double quantile, double* out_lower, double* out_upper,
+  int dispersion)
 {
   const int k = cl->k_eff;
   const int ndistinct_thresh = (int)(sqrt((double)nc) + 0.5);
@@ -538,7 +559,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
   const double* dpts = kd_pts;
   int dm = m;
   double best_val = 0.0;
-  int nfound = 0, exact = 0, i, max_idx = 0;
+  int nfound = 0, exact = 0, exact_nearest = 0, i, max_idx = 0;
   if (NULL != confidence) *confidence = 0.0;
   if (NULL != out_variance) *out_variance = 0.0;
   if (NULL != out_lower) *out_lower = 0.0;
@@ -578,13 +599,24 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
       {
         continue;
       }
+      /**
+       * An exact match is authoritative for the value wherever the scan finds
+       * it, not only when it happens to be admitted first.  Collapsing the
+       * spread is a separate question: with duplicate input vectors (9410 in
+       * the crystal set) a zero-distance neighbor is ordinary evidence, and
+       * reporting zero variance for it makes the compression criterion drop
+       * entries it must keep.  Hence nearest, tracked separately.
+       */
+      if (0.0 == d2) {
+        if (0 == exact) {
+          best_val = cl->raw_outputs[(size_t)i * nouts + output_j];
+          exact = 1;
+        }
+        if (0 == nfound) exact_nearest = 1;
+      }
       if (nfound < k) {
         candidates[nfound] = cl->raw_outputs[(size_t)i * nouts + output_j];
         dists[nfound] = sqrt(d2);
-        if (0 == nfound && 0.0 == d2) {
-          best_val = candidates[0];
-          exact = 1;
-        }
         ++nfound;
       }
       else {
@@ -599,7 +631,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
       }
     }
     if (NULL != out_variance) {
-      if (0 != exact || nfound <= 1) {
+      if (0 != exact_nearest || nfound <= 1) {
         *out_variance = 0;
       }
       else {
@@ -614,7 +646,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
       }
     }
     if (NULL != out_lower && NULL != out_upper && quantile > 0
-      && nfound > 1 && 0 == exact)
+      && nfound > 1 && 0 == exact_nearest)
     {
       double weights[LIBXS_PREDICT_KNN];
       double sorted_v[LIBXS_PREDICT_KNN];
@@ -674,7 +706,31 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
           }
         }
         if (NULL != confidence) {
-          *confidence = 1.0;
+          /**
+           * A many-valued output has no vote fraction.  By default this stays
+           * 1.0 and callers read info->variance for the neighborhood spread.
+           * Opt in via set_dispersion to fold that spread into confidence:
+           * measured better where spread is informative (earthquake MAE 0.265
+           * -> 0.259) and worse under recency weighting (SOI +29%), so it is
+           * suppressed when extrapolating.  On the GPU-tuning table it lifts
+           * gated precision but only in the attested bucket, so it is not a
+           * generalization gain -- hence opt-in rather than default.
+           */
+          if (0 == dispersion || 0 != extrapolate) {
+            *confidence = 1.0;
+          }
+          else {
+            const double cvar = (NULL != cl->out_var) ? cl->out_var[output_j] : 0.0;
+            const double csd = sqrt(cvar);
+            double wvar = 0;
+            for (i = 0; i < nfound; ++i) {
+              const double wi = (dists[i] > 0.0) ? (1.0 / dists[i]) : 1e30;
+              const double d = candidates[i] - wavg;
+              wvar += wi * d * d;
+            }
+            wvar = (wsum > 0.0) ? wvar / wsum : 0.0;
+            *confidence = (csd > 0.0) ? 1.0 / (1.0 + sqrt(wvar) / csd) : 1.0;
+          }
         }
       }
       else {
@@ -710,11 +766,11 @@ LIBXS_API_INLINE double internal_libxs_predict_classify(
   const internal_libxs_predict_cluster_t* cl, const double* kd_pts,
   int nc, int m, const double* inputs, int output_j, int nouts,
   int ndistinct, int extrapolate, int skip_local,
-  double* confidence, double* out_variance)
+  double* confidence, double* out_variance, int dispersion)
 {
   return internal_libxs_predict_classify2(cl, kd_pts, nc, m, inputs,
     output_j, nouts, ndistinct, extrapolate, skip_local,
-    NULL, -1, confidence, out_variance, 0, NULL, NULL);
+    NULL, -1, confidence, out_variance, 0, NULL, NULL, dispersion);
 }
 
 
@@ -819,6 +875,13 @@ LIBXS_API void libxs_predict_set_mode(libxs_predict_t* model, int mode)
 {
   LIBXS_ASSERT(NULL != model);
   model->eval_mode = mode;
+}
+
+
+LIBXS_API void libxs_predict_set_dispersion(libxs_predict_t* model, int enable)
+{
+  LIBXS_ASSERT(NULL != model);
+  model->dispersion = enable;
 }
 
 
@@ -2172,7 +2235,7 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
             const double actual = cl->raw_outputs[(size_t)k * n + j];
             const double pred = internal_libxs_predict_classify(
               cl, cl->kd_pts, nc, m, cl->kd_pts + (size_t)k * m,
-              j, n, cl->ndistinct[j], 0, k, NULL, NULL);
+              j, n, cl->ndistinct[j], 0, k, NULL, NULL, 0);
             const double res = pred - actual;
             sse += res * res;
           }
@@ -2403,18 +2466,19 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
                   vals[j] = internal_libxs_predict_classify2(
                     pcl, pcl->kd_pts, pcl->nentries, m, norm_inputs,
                     lj, gsz, pcl->ndistinct[lj], extrapolate, -1, NULL, -1,
-                    &po_conf, &po_var, qi, &lo[j], &hi[j]);
+                    &po_conf, &po_var, qi, &lo[j], &hi[j], model->dispersion);
                 }
                 else {
                   vals[j] = internal_libxs_predict_classify2(
                     cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
                     cl->ndistinct[j], extrapolate, -1, NULL, -1,
-                    &po_conf, &po_var, qi, &lo[j], &hi[j]);
+                    &po_conf, &po_var, qi, &lo[j], &hi[j], model->dispersion);
                 }
               }
               internal_libxs_predict_classify(
                 cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
-                cl->ndistinct[j], extrapolate, -1, &conf[j], &var[j]);
+                cl->ndistinct[j], extrapolate, -1, &conf[j], &var[j],
+                model->dispersion);
               errs[j] = 0;
               rels[j] = 0;
             }
@@ -2422,7 +2486,7 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
               vals[j] = internal_libxs_predict_classify2(
                 cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
                 cl->ndistinct[j], extrapolate, -1, NULL, -1,
-                &conf[j], &var[j], qi, &lo[j], &hi[j]);
+                &conf[j], &var[j], qi, &lo[j], &hi[j], model->dispersion);
               errs[j] = 0;
               rels[j] = 0;
             }
@@ -2431,7 +2495,7 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
             vals[j] = internal_libxs_predict_classify2(
               cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
               cl->ndistinct[j], extrapolate, -1, NULL, -1,
-              &conf[j], &var[j], qi, &lo[j], &hi[j]);
+              &conf[j], &var[j], qi, &lo[j], &hi[j], model->dispersion);
             errs[j] = 0;
             rels[j] = 0;
           }
@@ -2532,7 +2596,7 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
                 const double v = internal_libxs_predict_classify2(
                   cl2, cl2->kd_pts, cl2->nentries, m, norm_inputs, j, n,
                   cl2->ndistinct[j], extrapolate, -1, NULL, -1,
-                  &cj_conf, &cj_var, qi, &cj_lo, &cj_hi);
+                  &cj_conf, &cj_var, qi, &cj_lo, &cj_hi, model->dispersion);
                 blend_val += w * v;
                 blend_conf += w * cj_conf;
                 blend_var += w * cj_var;
@@ -2656,7 +2720,8 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
                         double rc_conf = 0;
                         refined[j] = internal_libxs_predict_classify(
                           rcl, rcl->kd_pts, rcl->nentries, m, rnorm, j, n,
-                          rcl->ndistinct[j], extrapolate, -1, &rc_conf, NULL);
+                          rcl->ndistinct[j], extrapolate, -1, &rc_conf, NULL,
+                          model->dispersion);
                         rconf[j] = rc_conf;
                       }
                       else {

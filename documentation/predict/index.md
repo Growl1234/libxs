@@ -129,9 +129,10 @@ values).  Other bins are near neutral — the rules are already strong.
 
 ![Saved PVC predictor confidence over the M×N×K cube](assets/pvc_confidence_projection.png)
 
-Over the M × N × K cube (739k queries), 39% fall below the 0.9
-threshold (defer to rules).  The distribution is bimodal: confident
-or clearly insufficient — the gate fires decisively.
+Over the M × N × K cube (739k queries), 42% fall below the 0.9
+threshold (defer to rules).  58% sit at or above it, but the rest is
+graded rather than split: 22% lands in [0.8, 0.9) — just short of the
+gate.  The threshold is a policy choice on a continuum.
 
 ---
 
@@ -148,7 +149,10 @@ It changes the failure mode.
 How to know if a parameter is confidently predicted?  
 Well, if you know how to predict...
 
-Note: confidence = (sum of weights voting for winner) / (sum of all weights)
+Note: confidence = (sum of weights voting for winner) / (sum of all weights).
+A continuous output has no winner to count, so it reports 1.0 and callers read
+info->variance instead; libxs_predict_set_dispersion optionally turns that
+spread into a confidence (used by the earthquake sample).
 
 ---
 
@@ -190,21 +194,24 @@ a confidence-gated predictor can provide it or abstain.
 
 | Domain | Ours | Literature | Confidence |
 | --- | ---: | ---: | --- |
-| Sunspots | MAE 17.6 | MAE 19.8–45.5 | 1.0 (dense cycles) |
-| Discharge | 0.23 err/σ | 0.10–0.47 | 1.0 (seasonal) |
-| SOI* | nRMSE 0.11 | 0.23–0.55 | 1.0 (spread modes) |
-| Earthquakes | MAE 0.265 | 0.184–0.283 | 0.694 (ambiguous) |
+| ETT** (H=96) | MSE 0.244 | 0.370–0.449 | 0 parameters, 1 CPU core |
+| Sunspots | MAE 17.4 | MAE 19.8–45.5 | 1.0 (dense cycles) |
+| Discharge | 0.22 err/σ | 0.10–0.47 err/σ | 1.0 (seasonal) |
+| SOI* | nRMSE 0.11 (0.07 hKNN) | 0.23–0.55 | 1.0 (spread modes) |
+| Earthquakes | MAE 0.259 (0.254 hKNN) | 0.184–0.283 | 0.462 (ambiguous) |
 | Crystals | 79.6% → 95.0% (conf ≥ 0.9) | ≈75–80% | 54% gated coverage |
 
 Confidence separates dense-coverage domains from genuinely ambiguous
 ones.  Literature comparisons are orienting — different features, splits,
-metrics.
+metrics.  ETT is the exception: same dataset, same split, same horizon.
 
 <span style="opacity: 0.4; font-size: 50%;">Results for comparison from
 [Dang2022], [Akkala2025], [Kratzert2018], [Kratzert2019], [Simatupang2025],
-[Ahmed2024], [Kaftan2025]</span>
+[Ahmed2024], [Kaftan2025], [Nie2023], [Zeng2023], [Zhou2022], [Wu2021]</span>
 
-<span style="opacity: 0.4; font-size: 50%;">* SOI: Southern Oscillation Index</span>
+<span style="opacity: 0.4; font-size: 50%;">* SOI: Southern Oscillation Index —
+** ETT: Electricity Transformer Temperature (ETTh1), the standard timeseries
+benchmark; baselines are PatchTST, DLinear, FEDformer, Autoformer</span>
 
 Note: The Southern Oscillation Index (SOI) measures the difference in air pressure between
 Tahiti and Darwin, Australia, serving as a key indicator of El Niño and La Niña events.

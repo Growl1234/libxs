@@ -85,6 +85,12 @@ Predict earthquake magnitude from geographic location and depth.
 
     ./predict_earthquakes.x <usgs_csv> [train_fraction] [compress[Q]] [hknn|rf]
 
+    DISPERSION=0  Disable folding neighbor spread into the confidence of
+                  continuous outputs (libxs_predict_set_dispersion).
+                  On by default: it lowers magnitude error for kNN
+                  (0.265 -> 0.259) and hknn (0.263 -> 0.254), but raises
+                  it for rf (0.355 -> 0.365), which does not use the vote.
+
 ### Example
 
     ./predict_earthquakes.x predict_earthquakes.csv

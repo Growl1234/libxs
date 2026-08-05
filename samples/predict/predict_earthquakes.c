@@ -26,6 +26,8 @@ int main(int argc, char* argv[])
 {
   const char* filename = (argc > 1) ? argv[1] : NULL;
   const double split = (argc > 2) ? atof(argv[2]) : 0.8;
+  const char* denv = getenv("DISPERSION");
+  const int dispersion = (NULL != denv) ? atoi(denv) : 1;
   int decompose = LIBXS_PREDICT_RAW;
   double quality = 0, consistency = 0;
   int argi, result = EXIT_FAILURE;
@@ -49,6 +51,8 @@ int main(int argc, char* argv[])
     fprintf(stdout,
       "Usage: %s <usgs_csv> [train_fraction] [compress[Q]] [hknn|rf]\n"
       "  Earthquake magnitude prediction from location and depth.\n"
+      "  DISPERSION=0 disables folding neighbor spread into confidence\n"
+      "  (on by default: it lowers error for kNN and hknn, but not rf).\n"
       "  Input: USGS earthquake catalog CSV (comma-delimited).\n"
       "  Predicts magnitude from (latitude, longitude, depth).\n"
       "  Default train_fraction: 0.8\n", argv[0]);
@@ -69,6 +73,7 @@ int main(int argc, char* argv[])
           double inputs[NINPUTS], outputs[NOUTPUTS], dt_build;
           int i, build_ok = EXIT_FAILURE;
           libxs_predict_set_decompose(model, decompose);
+          if (0 != dispersion) libxs_predict_set_dispersion(model, 1);
           if (0.0 != consistency) libxs_predict_set_consistency(model, consistency);
           for (i = 0; i < train_end; ++i) {
             libxs_predict_get(source, i, inputs, outputs);

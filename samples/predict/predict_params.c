@@ -9,6 +9,7 @@
 ******************************************************************************/
 #include <libxs/libxs_predict.h>
 #include <libxs/libxs_mhd.h>
+#include <libxs/libxs_perm.h>
 #include <libxs/libxs_timer.h>
 
 #if defined(_OPENMP)
@@ -24,7 +25,7 @@ enum { NINPUTS = 3, NOUTPUTS = 16 };
 static const int confidence_outputs[] = { 5, 6, 8, 12, 13 };
 
 static void evaluate(const libxs_predict_t* model,
-  const libxs_predict_t* reference, int ntotal);
+  const libxs_predict_t* reference, int ntotal, const char trained[]);
 static int write_confidence_maps(const char* prefix, const void* buffer,
   size_t size, const libxs_predict_t* reference, int ntotal);
 static double deployment_confidence(const libxs_predict_info_t* info);
@@ -33,7 +34,7 @@ static double deployment_confidence(const libxs_predict_info_t* info);
 int main(int argc, char* argv[])
 {
   int argi = 1, mode = LIBXS_PREDICT_AUTO, use_rf = 0, use_hknn = 0;
-  int order_arg = 0;
+  int order_arg = 0, shuffle_split = 0;
   double quality = 0, smooth = 0, consistency = 0, quantile = 0;
   double eval_fraction = 0.8;
   const char *filename, *modelfile, *confidence_prefix;
@@ -60,6 +61,7 @@ int main(int argc, char* argv[])
       quality = ('\0' != *p) ? atof(p) : 0.9;
     }
     else if ('i' == argv[argi][0]) mode = LIBXS_PREDICT_INTERPOLATE;
+    else if ('m' == argv[argi][0]) shuffle_split = 1;
     else if ('r' == argv[argi][0]) use_rf = 1;
     else if ('h' == argv[argi][0]) use_hknn = 1;
     else if ('q' == argv[argi][0]) {
@@ -105,6 +107,9 @@ int main(int argc, char* argv[])
       "  compress: drop predictable entries (Q: threshold, default 0.9)\n"
       "  consist:  round-trip consistency penalty (C: 0..1, default 0.9)\n"
       "  interp:   force interpolation for all outputs\n"
+      "  mix:      draw the validation split by co-prime stride rather than\n"
+      "            as a prefix (a CSV sorted by shape otherwise makes the\n"
+      "            held-out part systematically larger shapes)\n"
       "  quantile: prediction intervals (Q: level 0..0.5, default 0.1)\n"
       "  rf:       Random Forest classification\n"
       "  hknn:     hierarchical kNN (Fisher-guided partition)\n"
@@ -160,7 +165,8 @@ int main(int argc, char* argv[])
                 (int)(ntotal * eval_fraction + 0.5), 1);
               libxs_predict_t* val_model =
                 libxs_predict_create(NINPUTS, NOUTPUTS);
-              if (NULL != val_model) {
+              char* trained = (char*)calloc((size_t)ntotal, 1);
+              if (NULL != val_model && NULL != trained) {
                 double vi[NINPUTS], vo[NOUTPUTS];
                 libxs_predict_set_mode(val_model, mode);
                 if (0 != use_rf) {
@@ -173,17 +179,29 @@ int main(int argc, char* argv[])
                 if (0.0 != consistency) {
                   libxs_predict_set_consistency(val_model, consistency);
                 }
-                for (i = 0; i < nval; ++i) {
-                  libxs_predict_get(source, i, vi, vo);
-                  libxs_predict_push(NULL, val_model, vi, vo);
+                if (0 != shuffle_split) {
+                  const size_t co = libxs_coprime2((size_t)ntotal);
+                  for (i = 0; i < nval; ++i) {
+                    trained[LIBXS_SHUFFLE_INDEX(i, ntotal, co, 0)] = 1;
+                  }
+                }
+                else {
+                  for (i = 0; i < nval; ++i) trained[i] = 1;
+                }
+                for (i = 0; i < ntotal; ++i) {
+                  if (0 != trained[i]) {
+                    libxs_predict_get(source, i, vi, vo);
+                    libxs_predict_push(NULL, val_model, vi, vo);
+                  }
                 }
                 if (EXIT_SUCCESS == libxs_predict_build(
                   val_model, 0, order_arg, quality))
                 {
-                  evaluate(val_model, source, ntotal);
+                  evaluate(val_model, source, ntotal, trained);
                 }
-                libxs_predict_destroy(val_model);
               }
+              libxs_predict_destroy(val_model);
+              free(trained);
             }
             { size_t size = 0;
               void* buffer;
@@ -223,7 +241,7 @@ int main(int argc, char* argv[])
 
 
 static void evaluate(const libxs_predict_t* model,
-  const libxs_predict_t* reference, int ntotal)
+  const libxs_predict_t* reference, int ntotal, const char trained[])
 {
   double* all_inputs = (double*)malloc((size_t)ntotal * NINPUTS * sizeof(double));
   double* all_predicted = (double*)malloc((size_t)ntotal * NOUTPUTS * sizeof(double));
@@ -270,20 +288,33 @@ static void evaluate(const libxs_predict_t* model,
         / sizeof(confidence_outputs[0]));
       const double threshold = 0.9;
       int gated_correct[5] = {0}, gated_wrong[5] = {0}, deferred[5] = {0};
+      int split_acted[5][2], split_correct[5][2], split_n[2];
       int ci;
+      memset(split_acted, 0, sizeof(split_acted));
+      memset(split_correct, 0, sizeof(split_correct));
+      split_n[0] = split_n[1] = 0;
       for (i = 0; i < ntotal; ++i) {
+        /**
+         * An entry the model was built from is recalled, not predicted.  The
+         * split separates the two so a mechanism cannot be credited for moving
+         * only the attested bucket.
+         */
+        const int novel = (0 == trained[i]) ? 1 : 0;
         double expected[NOUTPUTS];
         libxs_predict_info_t info;
         libxs_predict_eval(NULL, model,
           all_inputs + (size_t)i * NINPUTS, NULL, &info, 1);
         libxs_predict_get(reference, i, NULL, expected);
+        ++split_n[novel];
         for (ci = 0; ci < nconf; ++ci) {
           const int oi = confidence_outputs[ci];
           if (NULL != info.confidence && info.confidence[oi] >= threshold) {
-            if (NULL != info.values
-              && LIBXS_ROUNDX(int, info.values[oi]) == (int)expected[oi])
-            {
+            const int ok = (NULL != info.values
+              && LIBXS_ROUNDX(int, info.values[oi]) == (int)expected[oi]);
+            ++split_acted[ci][novel];
+            if (0 != ok) {
               ++gated_correct[ci];
+              ++split_correct[ci][novel];
             }
             else {
               ++gated_wrong[ci];
@@ -306,6 +337,24 @@ static void evaluate(const libxs_predict_t* model,
           len, name, gated_correct[ci], gated_wrong[ci], deferred[ci],
           (ntotal > 0) ? 100.0 * acted / ntotal : 0.0,
           (acted > 0) ? 100.0 * gated_correct[ci] / acted : 100.0);
+      }
+      fprintf(stdout, "Attested-entry split: attested %d (%.1f%%)"
+        " | novel %d (%.1f%%)\n", split_n[0],
+        (ntotal > 0) ? 100.0 * split_n[0] / ntotal : 0.0, split_n[1],
+        (ntotal > 0) ? 100.0 * split_n[1] / ntotal : 0.0);
+      fprintf(stdout,
+        "  param  attested-prec  novel-prec  novel-cov\n");
+      for (ci = 0; ci < nconf; ++ci) {
+        const int oi = confidence_outputs[ci];
+        int len = 0;
+        const char* name = libxs_strtoken(output_names, ",", oi, &len);
+        fprintf(stdout, "  %-4.*s      %6.1f%%       %6.1f%%     %5.1f%%\n",
+          len, name,
+          (0 < split_acted[ci][0])
+            ? 100.0 * split_correct[ci][0] / split_acted[ci][0] : 100.0,
+          (0 < split_acted[ci][1])
+            ? 100.0 * split_correct[ci][1] / split_acted[ci][1] : 100.0,
+          (0 < split_n[1]) ? 100.0 * split_acted[ci][1] / split_n[1] : 0.0);
       }
     }
   }

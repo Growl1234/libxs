@@ -8,6 +8,114 @@ LIBXS_API_INLINE int internal_libxs_predict_crc(const void* buffer,
 }
 
 
+/**
+ * Derive per-output variance from the serialized raw outputs.  Loaded models
+ * carry raw_outputs but not out_var, and eval reads out_var to score the
+ * confidence of many-valued outputs; without this a loaded model would report
+ * a constant confidence where a built one reports neighbor concentration.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_load_var(
+  internal_libxs_predict_cluster_t* cl, int nout)
+{
+  int result = EXIT_SUCCESS;
+  cl->out_mean = (double*)calloc((size_t)nout, sizeof(double));
+  cl->out_var = (double*)calloc((size_t)nout, sizeof(double));
+  if (NULL == cl->out_mean || NULL == cl->out_var) result = EXIT_FAILURE;
+  else if (0 < cl->nentries && NULL != cl->raw_outputs) {
+    const int nc = cl->nentries;
+    int j, k;
+    for (k = 0; k < nc; ++k) {
+      for (j = 0; j < nout; ++j) {
+        cl->out_mean[j] += cl->raw_outputs[(size_t)k * nout + j];
+      }
+    }
+    for (j = 0; j < nout; ++j) cl->out_mean[j] /= nc;
+    for (k = 0; k < nc; ++k) {
+      for (j = 0; j < nout; ++j) {
+        const double d = cl->raw_outputs[(size_t)k * nout + j] - cl->out_mean[j];
+        cl->out_var[j] += d * d;
+      }
+    }
+    for (j = 0; j < nout; ++j) cl->out_var[j] /= nc;
+  }
+  return result;
+}
+
+
+/**
+ * Rebuild the global entry set from the per-cluster data.  A loaded model
+ * otherwise has no entries, which silently disables libxs_predict_inverse (it
+ * abstains), the refinement loop, and the local-error diagnostic -- so a saved
+ * model answered differently from the model it was saved from.  kd_pts holds
+ * normalized inputs, so they are mapped back through input_min/input_rng;
+ * sorted_idx supplies the global position of each cluster-local entry.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_load_entries(libxs_predict_t* model)
+{
+  const int m = model->ninputs, n = model->noutputs;
+  const int p = model->nentries;
+  int result = EXIT_SUCCESS;
+  int recoverable = (0 < p && NULL != model->clusters && NULL != model->input_rng);
+  if (0 != recoverable && NULL != model->weights) {
+    /**
+     * Feature selection (Fisher, setdiff, PCA) zeroes the weight of a dropped
+     * input, and kd_pts stores the weighted value, so that coordinate cannot be
+     * recovered.  Reconstructing it as garbage would be worse than abstaining:
+     * inverse would return plausible-looking wrong inputs instead of signalling
+     * no result.
+     */
+    int j;
+    for (j = 0; j < m; ++j) {
+      if (0 == model->weights[j]) recoverable = 0;
+    }
+  }
+  if (0 != recoverable) {
+    model->entries = (internal_libxs_predict_entry_t*)calloc(
+      (size_t)p, sizeof(internal_libxs_predict_entry_t));
+    model->assignments = (int*)calloc((size_t)p, sizeof(int));
+    if (NULL == model->entries || NULL == model->assignments) {
+      result = EXIT_FAILURE;
+    }
+    else {
+      int c, k;
+      model->capacity = p;
+      for (c = 0; c < model->nclusters && EXIT_SUCCESS == result; ++c) {
+        const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
+        if (NULL == cl->sorted_idx || NULL == cl->kd_pts
+          || NULL == cl->raw_outputs)
+        {
+          continue;
+        }
+        for (k = 0; k < cl->nentries && EXIT_SUCCESS == result; ++k) {
+          const int gi = cl->sorted_idx[k];
+          if (0 > gi || p <= gi) {
+            result = EXIT_FAILURE;
+          }
+          else {
+            internal_libxs_predict_entry_t* e = &model->entries[gi];
+            free(e->inputs);
+            free(e->outputs);
+            e->inputs = (double*)malloc((size_t)m * sizeof(double));
+            e->outputs = (double*)malloc((size_t)n * sizeof(double));
+            if (NULL == e->inputs || NULL == e->outputs) {
+              result = EXIT_FAILURE;
+            }
+            else {
+              internal_libxs_predict_denormalize(model,
+                cl->kd_pts + (size_t)k * m, e->inputs);
+              memcpy(e->outputs, cl->raw_outputs + (size_t)k * n,
+                (size_t)n * sizeof(double));
+              model->assignments[gi] = c;
+            }
+          }
+        }
+      }
+    }
+  }
+  return result;
+}
+
+
 LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
   const libxs_predict_t* model, void* buffer, size_t* size)
 {
@@ -182,6 +290,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       required += (size_t)model->noutputs * sizeof(double);
       required += (size_t)cl->nentries * (size_t)model->ninputs * sizeof(double);
       required += (size_t)cl->nentries * (size_t)model->noutputs * sizeof(double);
+      required += (size_t)cl->nentries * sizeof(uint32_t);
       for (j = 0; j < model->noutputs; ++j) {
         required += (size_t)(cl->order[j] + 1) * sizeof(double);
       }
@@ -259,6 +368,15 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
         WRITE_BLK(cl->out_rms, (size_t)model->noutputs * sizeof(double));
         WRITE_BLK(cl->kd_pts, (size_t)cl->nentries * (size_t)model->ninputs * sizeof(double));
         WRITE_BLK(cl->raw_outputs, (size_t)cl->nentries * (size_t)model->noutputs * sizeof(double));
+        /**
+         * sorted_idx is what recency weighting and the local-error diagnostic
+         * read; without it a loaded model silently takes a different path from
+         * the model it was saved from.  U32 because it indexes the global entry
+         * set, which is not bounded by 64K like a per-cluster count.
+         */
+        { int si;
+          for (si = 0; si < cl->nentries; ++si) WRITE_U32(cl->sorted_idx[si]);
+        }
         for (j = 0; j < model->noutputs; ++j) {
           WRITE_BLK(cl->coeffs + (size_t)j * (cl->maxorder + 1),
             (size_t)(cl->order[j] + 1) * sizeof(double));
@@ -447,6 +565,9 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
       if (NULL == cl->out_rms) ok = EXIT_FAILURE;
       else ok = internal_libxs_predict_read(&src, end,
         cl->out_rms, (size_t)nout * sizeof(double));
+    }
+    if (EXIT_SUCCESS == ok) {
+      ok = internal_libxs_predict_load_var(cl, nout);
     }
     if (EXIT_SUCCESS == ok) {
       ok = internal_libxs_predict_avail(src, end, (size_t)ne, sizeof(uint16_t));
@@ -814,6 +935,28 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
           }
         }
         if (EXIT_SUCCESS == ok) {
+          ok = internal_libxs_predict_avail(src, end,
+            (size_t)cl->nentries, sizeof(uint32_t));
+        }
+        if (EXIT_SUCCESS == ok) {
+          cl->sorted_idx = (int*)malloc((size_t)cl->nentries * sizeof(int));
+          if (NULL == cl->sorted_idx) ok = EXIT_FAILURE;
+          else {
+            int kk;
+            for (kk = 0; kk < cl->nentries && EXIT_SUCCESS == ok; ++kk) {
+              uint32_t v = 0;
+              ok = internal_libxs_predict_read(&src, end, &v, 4);
+              if (EXIT_SUCCESS == ok && (uint32_t)model->nentries <= v) {
+                ok = EXIT_FAILURE;
+              }
+              else cl->sorted_idx[kk] = (int)v;
+            }
+          }
+        }
+        if (EXIT_SUCCESS == ok) {
+          ok = internal_libxs_predict_load_var(cl, (int)nout);
+        }
+        if (EXIT_SUCCESS == ok) {
           cl->coeffs = (double*)calloc(
             (size_t)nout * (size_t)(cl->maxorder + 1), sizeof(double));
           if (NULL == cl->coeffs) ok = EXIT_FAILURE;
@@ -904,6 +1047,9 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
     }
     /* the writer sizes the payload exactly: a remainder signals layout drift */
     if (EXIT_SUCCESS == ok && src != end) ok = EXIT_FAILURE;
+    if (EXIT_SUCCESS == ok && 0 == hknn) {
+      ok = internal_libxs_predict_load_entries(model);
+    }
     if (EXIT_SUCCESS == ok) {
       const char* tenv = getenv("LIBXS_PREDICT_TANGENT");
       if (NULL != tenv) model->tangent = atoi(tenv);

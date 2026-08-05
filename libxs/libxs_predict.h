@@ -136,6 +136,20 @@ LIBXS_API void libxs_predict_set_transform(libxs_predict_t* model,
   int output, int transform);
 
 /**
+ * Fold neighbor dispersion into the confidence of many-valued outputs.
+ * 0 (default): such an output reports confidence 1.0, because a continuous
+ *   target has no vote fraction; read info->variance for its spread.
+ * non-zero: confidence becomes 1/(1 + spread/cluster-spread), so a threshold
+ *   can gate on it. Suppressed while extrapolating (timeseries recency
+ *   weighting), where it was measured to hurt.
+ * Enable this where neighbor spread is informative -- it lowered spatial
+ * prediction error in the earthquake sample. It is not a generalization gain
+ * everywhere: on the GPU-tuning table it raises gated precision only for
+ * queries whose inputs were in the training set.
+ */
+LIBXS_API void libxs_predict_set_dispersion(libxs_predict_t* model, int enable);
+
+/**
  * Set the number of forward-inverse-forward refinement iterations.
  * 0 (default): iterate only when confidence is below threshold.
  * >0: always perform this many refinement iterations per eval.
