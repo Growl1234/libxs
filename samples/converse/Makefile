@@ -46,8 +46,9 @@ $(OUTDIR)/summarize.x: $(OUTDIR)/.make $(BLDDIR)/summarize-c.o $(XLIB)
 	$(LD) -o $@ $(BLDDIR)/summarize-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
 $(OUTDIR)/converse.x: $(OUTDIR)/.make $(BLDDIR)/converse-c.o \
-  $(BLDDIR)/converse_hier-c.o $(XLIB)
+  $(BLDDIR)/converse_hier-c.o $(BLDDIR)/converse_recomb-c.o $(XLIB)
 	$(LD) -o $@ $(BLDDIR)/converse-c.o $(BLDDIR)/converse_hier-c.o \
+	  $(BLDDIR)/converse_recomb-c.o \
 	  $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
 $(BLDDIR)/%-c.o: $(SRCDIR)/%.c .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc

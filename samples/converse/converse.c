@@ -8,6 +8,7 @@
 
 #include "converse.h"
 #include "converse_hier.h"
+#include "converse_recomb.h"
 
 #include <unistd.h>
 
@@ -232,6 +233,15 @@ static size_t answer_relation_rules_size = 0;
 static libxs_lexnorm_t* answer_lexnorms = NULL;
 static int answer_lexnorms_size = 0;
 /**
+ * Source file an entry came from, assigned in ingest order (1-based; 0 means
+ * unknown). A section alone cannot identify a source in the documentation
+ * corpus: 14 pages carry a "Usage" heading and 12 carry "Example", so two
+ * entries with equal section text may well be different modules. Coherence
+ * measurements that compare sections therefore need this to tell a same-page
+ * join from a cross-page one, and only the latter combines two sources.
+ */
+static unsigned short corpus_source_id = 0;
+/**
  * Section of the most recent fact reply, so a citation can be printed without
  * threading an out-parameter through five resolver signatures. Cleared by
  * answer_fact_reply before dispatch and set by whichever resolver answered;
@@ -299,6 +309,7 @@ static int corpus_md_emit_block(libxs_registry_t* corpus,
 static int corpus_ingest_markdown(libxs_registry_t* corpus,
   const unsigned char* text, size_t text_size, const char* path,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules);
+static int corpus_md_sentences(void);
 static int count_words(const unsigned char* text, int length);
 static size_t text_closer_size(const unsigned char* text, size_t size,
   size_t pos);
@@ -426,8 +437,6 @@ static converse_hier_t* answer_hier_build(const libxs_registry_t* corpus);
 static void slot_probe_run(const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
   int holdout);
-static void recomb_probe_run(const libxs_registry_t* corpus,
-  libxs_lexicon_t* lexicon, int limit);
 static int answer_evidence_sentence(const char* query_text, size_t query_len,
   const corpus_entry_t* entry, libxs_lexicon_t* lexicon,
   const libxs_lexrule_t* rules, int nrules,
@@ -460,6 +469,9 @@ static const ngram_entry_t* ngram_lookup(libxs_registry_t* model,
   unsigned int ctx_a, unsigned int ctx_b);
 static double ngram_unigram_prior(unsigned int id);
 static int ngram_maxorder(void);
+static int ngram_is_wordchar(unsigned char c);
+static double recomb_word_prob(const unsigned int hist[], int hlen,
+  unsigned int next);
 static double ngram_skip_prob(const unsigned int hist[], int hlen,
   unsigned int succ_id);
 static double ngram_skip_mu(void);
@@ -631,7 +643,9 @@ int main(int argc, char* argv[])
       "  CONVERSE_SKIP=1          add skip-gram (w _ w) generalization tier.\n"
       "  CONVERSE_SKIP_MU=F       skip-gram interpolation weight (default 0.3).\n"
       "  CONVERSE_EMB_PROBE=w1,w2 print nearest embedding neighbors.\n"
-      "  CONVERSE_EMB_BACKFILL=0  disable rare-token vector backfill.\n",
+      "  CONVERSE_EMB_BACKFILL=0  disable rare-token vector backfill.\n"
+      "  CONVERSE_RECOMB=N        recombination probe over N sentences.\n"
+      "  CONVERSE_RECOMB_REFERENT=1 test whether a pivot denotes one thing.\n",
       argv[0], RESPONSE_BUDGET, NGRAM_ORDER_MAX, NGRAM_ORDER_MAX);
     answer_predict_profile_list(stderr);
     return EXIT_FAILURE;
@@ -974,7 +988,14 @@ int main(int argc, char* argv[])
         if (NULL != answer_hier_model) {
           const char* env = getenv("CONVERSE_RECOMB");
           const int limit = ('\0' != *env && 0 < atoi(env)) ? atoi(env) : 50;
-          recomb_probe_run(corpus, lexicon, limit);
+          converse_recomb_host_t host;
+          host.ends_sentence = text_ends_sentence;
+          host.is_wordchar = libxs_lexeme_is_word_char;
+          host.entry_build = corpus_entry_build;
+          host.word_prob = recomb_word_prob;
+          host.maxorder = ngram_maxorder();
+          converse_recomb_probe_run(corpus, lexicon, rules, nrules, limit,
+            answer_hier_model, &host);
           mode_result = EXIT_SUCCESS;
         }
         else {
@@ -2082,6 +2103,7 @@ static int corpus_entry_build(corpus_entry_t* entry,
     memcpy(entry->text, text, (size_t)len);
     entry->connector = CONN_NEWLINE;
     entry->scale = scale;
+    entry->source = corpus_source_id;
     result = EXIT_SUCCESS;
   }
   if (EXIT_SUCCESS == result && NULL != lexicon && NULL != rules
@@ -6177,6 +6199,19 @@ static double ngramk_prob(libxs_registry_t* model, const unsigned int hist[],
 }
 
 
+/**
+ * Adapter matching converse_recomb_prob_t. The recombination syntax gate needs a
+ * word-scale backoff probability and nothing more, so the model handle, the
+ * maximum order and the skip-gram interpolation all stay on this side of the
+ * boundary rather than being threaded through it.
+ */
+static double recomb_word_prob(const unsigned int hist[], int hlen,
+  unsigned int next)
+{
+  return ngramk_prob(NULL, hist, hlen, ngram_maxorder(), next);
+}
+
+
 static int ngramk_predict_order(libxs_registry_t* model,
   const unsigned int hist[], int hlen, int maxorder, unsigned int out_ids[],
   int k, int* order)
@@ -6236,6 +6271,18 @@ static int ngram_is_vowel(unsigned char c)
 }
 
 
+/**
+ * A UTF-8 continuation or lead byte counts as a word character so that a pivot
+ * span stays whole on a non-ASCII corpus: ctype rejects every byte of an encoded
+ * letter, which would cut a German word mid-letter and offer the fragments as
+ * separate pivots.
+ *
+ * Unlike the tokenizer's predicate this does NOT exclude encoded punctuation, and
+ * it does not need to: this only extends a span whose FIRST byte the tokenizer
+ * already classified as a word, so a leading typographic quote cannot start one.
+ * The span is re-tokenized before its id is taken, so the authoritative decision
+ * still belongs to the tokenizer.
+ */
 static int ngram_is_wordchar(unsigned char c)
 {
   return (0 != isalnum(c)) ? 1 : 0;
@@ -8202,177 +8249,6 @@ static int ngram_gen_eval(libxs_registry_t* model,
 
 
 /**
- * Grounded recombination: synthesize a sentence that is in the corpus nowhere by
- * splicing two corpus sentences at a shared content term.
- *
- * The slot probe established that no discrete re-keying of contexts reaches the
- * novel positions, so this does not try to generalize a lookup. It composes
- * instead: given A ending "...the girl called X ..." and B containing "... X went
- * into the forest.", emit prefix(A up to and including X) + suffix(B after X).
- * Both halves are verbatim corpus text and the shared term is the licence for the
- * join, so every word remains attributable -- which is the property that
- * distinguishes this from generating text.
- *
- * A pivot must be a CONTENT word (not a stop word) appearing in both sentences,
- * and the result must not itself occur in the corpus, or this measures replay.
- * Fluency of the junction is judged by the byte model over a short window after
- * the seam; two controls bound the scale (see recomb_probe_run).
- */
-#define RECOMB_MIN_WORDS 4
-#define RECOMB_MAX_CAND 64
-
-
-typedef struct recomb_word_t {
-  int begin;
-  int end;
-  unsigned int id;
-  unsigned short flags;
-} recomb_word_t;
-
-
-/**
- * Bytes scored after the seam. Small on purpose: the byte context reaches back
- * only HIER_PPM_ORDER_MAX, so a wide window is dominated by the suffix's own
- * predictability and stops measuring the junction at all. Measured on grimm, the
- * gap between a real corpus junction and an arbitrary splice is 0.709 bits at 4
- * bytes, 0.252 at 8, 0.008 at 24, and inverts at 48 -- so a wide window does not
- * merely dilute the signal, it destroys it.
- */
-/**
- * Minimum shared content words (beyond the pivot) a donor must have with the
- * host, as a percentage of the smaller content set. 0 accepts any pivot match,
- * which is what exposed that a fluent seam does not imply a coherent sentence.
- */
-static int recomb_min_overlap(void)
-{
-  static int cached = -1;
-  if (cached < 0) {
-    const char* env = getenv("CONVERSE_RECOMB_MINOVL");
-    cached = (NULL != env && '\0' != *env) ? atoi(env) : 25;
-    if (cached < 0) cached = 0;
-  }
-  return cached;
-}
-
-
-/**
- * Syntactic gate on a seam, expressed as attestation rather than as grammar.
- *
- * The byte-level seam judge cannot see grammar: "the guards would not to go
- * away" costs little per byte because every byte pair is common. The fault is at
- * WORD scale, and the corpus already knows it -- "would not to" occurs zero times
- * in grimm while "would not have/let/go/give" all occur. So the gate asks the
- * n-gram, not a rule file: no English syntax is declared anywhere, and the same
- * test works unchanged on another language.
- *
- * Two things make this subtler than "reject unattested":
- *  - A bigram is too short. "not to" occurs 19 times, so the bigram at the seam
- *    of the bad example is perfectly attested; only the trigram exposes it.
- *  - A trigram is often legitimately unseen: "guards would not" also occurs zero
- *    times and is fine. So an absolute zero test would reject good text.
- * Hence the comparison is RELATIVE: the seam-crossing trigram's probability under
- * backoff, against the same span's probability in the host sentence it replaced.
- * A seam is rejected when it is worse than what it displaced by more than a
- * tolerance, which asks "did the join make this less like the corpus" rather than
- * "is this exact sequence present".
- */
-static double recomb_span_bits(libxs_lexicon_t* lexicon,
-  const unsigned int ids[], int n)
-{
-  double result = 0.0;
-  const int maxorder = ngram_maxorder();
-  int at;
-  LIBXS_UNUSED(lexicon);
-  for (at = 1; at < n; ++at) {
-    const int hlen = (at < maxorder) ? at : maxorder;
-    const double p = ngramk_prob(NULL, ids + at - hlen, hlen, maxorder,
-      ids[at]);
-    result += -log((p > 1e-300) ? p : 1e-300) / log(2.0);
-  }
-  return (1 < n) ? result / (double)(n - 1) : 0.0;
-}
-
-
-static double recomb_grammar_tol(void)
-{
-  static double cached = -1.0;
-  if (cached < 0.0) {
-    const char* env = getenv("CONVERSE_RECOMB_GRAMTOL");
-    cached = (NULL != env && '\0' != *env) ? atof(env) : 0.5;
-    if (cached < 0.0) cached = 0.0;
-  }
-  return cached;
-}
-
-
-static int recomb_seam_window(void)
-{
-  static int cached = -1;
-  if (cached < 0) {
-    const char* env = getenv("CONVERSE_RECOMB_WINDOW");
-    cached = (NULL != env && '\0' != *env) ? atoi(env) : 4;
-    if (cached < 0) cached = 0;
-  }
-  return cached;
-}
-
-
-/**
- * Split text into word spans with their lexicon ids and flags. Offsets are taken
- * from the raw text rather than from the lexeme stream, because a splice needs
- * exact byte positions and the stream carries lengths only.
- */
-static int recomb_words(libxs_lexicon_t* lexicon, const char* text,
-  int text_len, recomb_word_t words[], int max)
-{
-  int result = 0;
-  int pos = 0;
-  while (pos < text_len && result < max) {
-    if (0 != ngram_is_wordchar((unsigned char)text[pos])) {
-      int end = pos;
-      while (end < text_len
-        && 0 != ngram_is_wordchar((unsigned char)text[end])) ++end;
-      words[result].begin = pos;
-      words[result].end = end;
-      words[result].id = libxs_lexicon_id(lexicon, text + pos, end - pos,
-        LIBXS_LEXEME_WORD, 0);
-      words[result].flags = 0;
-      if (0 != words[result].id) {
-        unsigned int flags = 0;
-        libxs_lexicon_text(lexicon, words[result].id, NULL, &flags);
-        words[result].flags = (unsigned short)flags;
-      }
-      ++result;
-      pos = end;
-    }
-    else ++pos;
-  }
-  return result;
-}
-
-
-/**
- * Splice at the given pivot positions: everything of A through pivot word a,
- * then everything of B after pivot word b. Returns the composed length, or 0 if
- * it does not fit or either side would be degenerate.
- */
-static int recomb_splice(const char* a, int a_len, int a_end,
-  const char* b, int b_len, int b_after, char* out, size_t out_size)
-{
-  int result = 0;
-  if (0 < a_end && a_end <= a_len && 0 <= b_after && b_after <= b_len
-    && (size_t)(a_end + b_len - b_after) + 1 < out_size)
-  {
-    memcpy(out, a, (size_t)a_end);
-    memcpy(out + a_end, b + b_after, (size_t)(b_len - b_after));
-    result = a_end + (b_len - b_after);
-    out[result] = '\0';
-  }
-  return result;
-}
-
-
-/**
  * Coverage probe for slot abstraction (does NOT predict anything).
  *
  * The question it answers: on positions whose exact context did NOT recur in
@@ -8632,283 +8508,6 @@ static void slot_probe_run(const libxs_registry_t* corpus,
   libxs_registry_destroy(probe.patterns);
   libxs_registry_destroy(probe.contexts);
   libxs_registry_destroy(probe.freq);
-}
-
-
-/**
- * Content-word overlap between two entries, excluding the pivot itself, as a
- * fraction of the smaller content set.
- *
- * A fluent seam says nothing about whether the two halves are ABOUT the same
- * thing: a pivot on a common word can join unrelated scenes. Shared content
- * beyond the pivot is the cheapest available evidence that they are, and it uses
- * the token ids the corpus already stores.
- */
-static double recomb_overlap(const corpus_entry_t* a, const corpus_entry_t* b,
-  unsigned int pivot)
-{
-  double result = 0.0;
-  int na = 0, nb = 0, shared = 0;
-  int ai, bi;
-  for (ai = 0; ai < (int)a->ntokens && ai < ENTRY_TOKEN_MAX; ++ai) {
-    const unsigned int id = a->token_ids[ai];
-    if (0 == id || id == pivot) continue;
-    if (0 != (a->token_flags[ai] & LIBXS_LEXEME_STOP)) continue;
-    ++na;
-    for (bi = 0; bi < (int)b->ntokens && bi < ENTRY_TOKEN_MAX; ++bi) {
-      if (b->token_ids[bi] == id) {
-        ++shared;
-        break;
-      }
-    }
-  }
-  for (bi = 0; bi < (int)b->ntokens && bi < ENTRY_TOKEN_MAX; ++bi) {
-    const unsigned int id = b->token_ids[bi];
-    if (0 != id && id != pivot
-      && 0 == (b->token_flags[bi] & LIBXS_LEXEME_STOP)) ++nb;
-  }
-  { const int smaller = (na < nb) ? na : nb;
-    if (0 < smaller) result = (double)shared / (double)smaller;
-  }
-  return result;
-}
-
-
-/**
- * Bits penalty the join incurs at word scale: the seam-crossing span's cost minus
- * the cost of the same span as it ran in the host sentence. Positive means the
- * splice made the sequence less corpus-like. RECOMB_SPAN words either side of the
- * pivot are compared, so the measured span is exactly the one the join altered.
- */
-static double recomb_seam_penalty(libxs_lexicon_t* lexicon,
-  const recomb_word_t awords[], int nawords, int ai,
-  const recomb_word_t bwords[], int nbwords, int bi)
-{
-  enum { RECOMB_SPAN = 2 };
-  unsigned int spliced[2 * RECOMB_SPAN], original[2 * RECOMB_SPAN];
-  int nspliced = 0, noriginal = 0;
-  int at;
-  for (at = ai - RECOMB_SPAN + 1; at <= ai; ++at) {
-    if (0 <= at && at < nawords && 0 != awords[at].id) {
-      spliced[nspliced++] = awords[at].id;
-      original[noriginal++] = awords[at].id;
-    }
-  }
-  for (at = bi + 1; at <= bi + RECOMB_SPAN; ++at) {
-    if (at < nbwords && 0 != bwords[at].id) spliced[nspliced++] = bwords[at].id;
-  }
-  for (at = ai + 1; at <= ai + RECOMB_SPAN; ++at) {
-    if (at < nawords && 0 != awords[at].id) {
-      original[noriginal++] = awords[at].id;
-    }
-  }
-  return (1 < nspliced && 1 < noriginal)
-    ? recomb_span_bits(lexicon, spliced, nspliced)
-      - recomb_span_bits(lexicon, original, noriginal)
-    : 0.0;
-}
-
-
-static int recomb_is_verbatim(const libxs_registry_t* corpus,
-  const char* text, int text_len)
-{
-  int result = 0;
-  const void* key = NULL;
-  size_t cursor = 0;
-  void* value = libxs_registry_begin(corpus, &key, &cursor);
-  while (NULL != value && 0 == result) {
-    const corpus_entry_t* entry = (const corpus_entry_t*)value;
-    if (entry->text_len >= text_len) {
-      int at, span = entry->text_len - text_len;
-      for (at = 0; at <= span && 0 == result; ++at) {
-        if (0 == memcmp(entry->text + at, text, (size_t)text_len)) result = 1;
-      }
-    }
-    value = libxs_registry_next(corpus, &key, &cursor);
-  }
-  return result;
-}
-
-
-/**
- * Try to build one novel sentence by splicing entry a with some later entry that
- * shares a content word. Returns the composed length, 0 if none worked.
- */
-static int recomb_compose(const libxs_registry_t* corpus,
-  libxs_lexicon_t* lexicon, const corpus_entry_t* a,
-  const recomb_word_t awords[], int nawords, long skip,
-  char* out, size_t out_size, int* pivot_id, const corpus_entry_t** donor,
-  double* out_penalty)
-{
-  int result = 0;
-  const void* key = NULL;
-  size_t cursor = 0;
-  long index = 0;
-  void* value = libxs_registry_begin(corpus, &key, &cursor);
-  while (NULL != value && 0 == result) {
-    const corpus_entry_t* b = (const corpus_entry_t*)value;
-    if (index++ >= skip && b != a && SCALE_SENTENCE == b->scale
-      && b->text_len > 0)
-    {
-      recomb_word_t bwords[COMPOSE_MAXTEXT / 2];
-      const int nbwords = recomb_words(lexicon, b->text, b->text_len, bwords,
-        (int)(sizeof(bwords) / sizeof(*bwords)));
-      int ai, bi;
-      for (ai = 1; ai < nawords - 1 && 0 == result; ++ai) {
-        if (0 == awords[ai].id
-          || 0 != (awords[ai].flags & LIBXS_LEXEME_STOP)) continue;
-        for (bi = 1; bi < nbwords - 1 && 0 == result; ++bi) {
-          if (awords[ai].id != bwords[bi].id) continue;
-          if (ai + 1 < RECOMB_MIN_WORDS
-            || nbwords - bi - 1 < RECOMB_MIN_WORDS) continue;
-          result = recomb_splice(a->text, a->text_len, awords[ai].end,
-            b->text, b->text_len, bwords[bi].end, out, out_size);
-          if (0 != result) {
-            const int minovl = recomb_min_overlap();
-            const double gramtol = recomb_grammar_tol();
-            if (0 != recomb_is_verbatim(corpus, out, result)) result = 0;
-            else if (0 < minovl && 100.0 * recomb_overlap(a, b,
-              awords[ai].id) < (double)minovl) result = 0;
-            else if (0.0 < gramtol && recomb_seam_penalty(lexicon, awords,
-              nawords, ai, bwords, nbwords, bi) > gramtol) result = 0;
-            else {
-              if (NULL != pivot_id) *pivot_id = (int)awords[ai].id;
-              if (NULL != donor) *donor = b;
-              if (NULL != out_penalty) {
-                *out_penalty = recomb_seam_penalty(lexicon, awords, nawords,
-                  ai, bwords, nbwords, bi);
-              }
-            }
-          }
-        }
-      }
-    }
-    value = libxs_registry_next(corpus, &key, &cursor);
-  }
-  return result;
-}
-
-
-/**
- * Measure grounded recombination against two controls that bound the scale.
- *
- * The seam score alone means nothing -- it has to be read against what fluent and
- * broken junctions cost on the same model. CEILING: verbatim corpus sentences,
- * scored at the same offset (a junction the corpus itself made). FLOOR: splices
- * at an arbitrary word position with no shared pivot. If pivot seams do not land
- * near the ceiling and clearly below the floor, the shared term is not buying
- * fluency and the mechanism is not doing what it claims.
- */
-static void recomb_probe_run(const libxs_registry_t* corpus,
-  libxs_lexicon_t* lexicon, int limit)
-{
-  const void* key = NULL;
-  size_t cursor = 0;
-  long index = 0, nmade = 0, ntried = 0;
-  double sum_pivot = 0.0, sum_ceiling = 0.0, sum_floor = 0.0;
-  long nceiling = 0, nfloor = 0;
-  const int window = recomb_seam_window();
-  const int verbose = (NULL != getenv("CONVERSE_RECOMB_SHOW")) ? 1 : 0;
-  double sum_overlap = 0.0, sum_penalty = 0.0;
-  long nsection = 0, noverlap0 = 0;
-  void* value = libxs_registry_begin(corpus, &key, &cursor);
-  while (NULL != value && nmade < limit) {
-    const corpus_entry_t* a = (const corpus_entry_t*)value;
-    if (SCALE_SENTENCE == a->scale && a->text_len > 0) {
-      recomb_word_t awords[COMPOSE_MAXTEXT / 2];
-      const int nawords = recomb_words(lexicon, a->text, a->text_len, awords,
-        (int)(sizeof(awords) / sizeof(*awords)));
-      char out[COMPOSE_MAXTEXT];
-      int pivot_id = 0;
-      const corpus_entry_t* donor = NULL;
-      double penalty = 0.0;
-      int len;
-      ++ntried;
-      len = recomb_compose(corpus, lexicon, a, awords, nawords, index + 1,
-        out, sizeof(out), &pivot_id, &donor, &penalty);
-      if (0 < len) {
-        double bits = 0.0;
-        int seam = 0;
-        int wi;
-        for (wi = 1; wi < nawords; ++wi) {
-          if ((int)awords[wi].id == pivot_id) seam = awords[wi].end;
-        }
-        if (0 < seam && seam < len
-          && EXIT_SUCCESS == converse_hier_seam_bits(answer_hier_model, out,
-            seam, out + seam, len - seam, window, &bits))
-        {
-          const double overlap = (NULL != donor)
-            ? recomb_overlap(a, donor, (unsigned int)pivot_id) : 0.0;
-          const int same = (NULL != donor && 0 < a->section_len
-            && a->section_len == donor->section_len
-            && 0 == memcmp(a->section, donor->section,
-              (size_t)a->section_len)) ? 1 : 0;
-          ++nmade;
-          sum_pivot += bits;
-          sum_overlap += overlap;
-          sum_penalty += penalty;
-          if (0 != same) ++nsection;
-          if (overlap <= 0.0) ++noverlap0;
-          if (0 != verbose) {
-            fprintf(stderr, "  recomb[%.3f bpc ovl=%.2f gram%+.2f %s] %.*s\n",
-              bits, overlap, penalty,
-              (0 != same) ? "same-section" : "CROSS-SECTION", len, out);
-          }
-        }
-        /* Ceiling: the same offset inside a real corpus sentence. */
-        if (0 < seam && seam < a->text_len
-          && EXIT_SUCCESS == converse_hier_seam_bits(answer_hier_model,
-            a->text, seam, a->text + seam, a->text_len - seam, window, &bits))
-        {
-          ++nceiling;
-          sum_ceiling += bits;
-        }
-        /* Floor: same prefix, but a suffix taken with no shared pivot. */
-        if (0 < seam && nawords > 2) {
-          const corpus_entry_t* b = NULL;
-          const void* fkey = NULL;
-          size_t fcursor = 0;
-          long fi = 0;
-          void* fval = libxs_registry_begin(corpus, &fkey, &fcursor);
-          while (NULL != fval && NULL == b) {
-            const corpus_entry_t* cand = (const corpus_entry_t*)fval;
-            if (fi++ > index + 7 && SCALE_SENTENCE == cand->scale
-              && cand->text_len > seam + 8) b = cand;
-            fval = libxs_registry_next(corpus, &fkey, &fcursor);
-          }
-          if (NULL != b && EXIT_SUCCESS == converse_hier_seam_bits(
-            answer_hier_model, out, seam, b->text + seam / 2,
-            b->text_len - seam / 2, window, &bits))
-          {
-            ++nfloor;
-            sum_floor += bits;
-          }
-        }
-      }
-    }
-    ++index;
-    value = libxs_registry_next(corpus, &key, &cursor);
-  }
-  fprintf(stdout, "recomb[window=%d]: made=%ld of %ld tried"
-    " | seam bpc: pivot=%.3f ceiling=%.3f floor=%.3f\n",
-    window, nmade, ntried,
-    (0 < nmade) ? sum_pivot / (double)nmade : 0.0,
-    (0 < nceiling) ? sum_ceiling / (double)nceiling : 0.0,
-    (0 < nfloor) ? sum_floor / (double)nfloor : 0.0);
-  /**
-   * Coherence, reported separately because it is a different claim from fluency
-   * and the two can disagree: same-section says the halves come from one tale,
-   * overlap says they share content words beyond the pivot. A high fluency score
-   * with low coherence is the failure mode this measures -- a well-formed
-   * sentence about two unrelated things.
-   */
-  fprintf(stdout, "  coherence: same-section=%.1f%% mean-overlap=%.2f"
-    " pivot-only=%.1f%%\n",
-    (0 < nmade) ? 100.0 * (double)nsection / (double)nmade : 0.0,
-    (0 < nmade) ? sum_overlap / (double)nmade : 0.0,
-    (0 < nmade) ? 100.0 * (double)noverlap0 / (double)nmade : 0.0);
-  fprintf(stdout, "  seam grammar: mean word-bits penalty=%+.3f (tol=%.2f)\n",
-    (0 < nmade) ? sum_penalty / (double)nmade : 0.0, recomb_grammar_tol());
 }
 
 
@@ -10530,6 +10129,31 @@ static int corpus_profile_for_path(const char* path)
 }
 
 
+/**
+ * Index prose markdown blocks at sentence scale in addition to paragraph scale.
+ *
+ * Off by default, and the default is not tidiness: the n-gram trainer scans every
+ * corpus entry without filtering on scale, so a sentence indexed alongside its
+ * paragraph is trained on twice and every bits-per-character figure for the
+ * documentation moves. Enabling this therefore changes a published baseline, and
+ * the mechanisms that need it (recombination, which gates on sentence scale and
+ * otherwise finds no host at all) are probes rather than defaults.
+ *
+ * Code blocks and tables are never split: they have no sentences, and splicing
+ * them would produce text the word-level seam gates cannot judge.
+ */
+static int corpus_md_sentences(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_MD_SENTENCES");
+    cached = (NULL != env && '\0' != *env) ? atoi(env) : 0;
+    if (cached < 0) cached = 0;
+  }
+  return cached;
+}
+
+
 static int corpus_md_store(libxs_registry_t* corpus,
   const unsigned char* text, int len, const char* section, int section_len,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
@@ -10548,6 +10172,38 @@ static int corpus_md_store(libxs_registry_t* corpus,
     {
       corpus_entry_set_section(&entry, section, section_len);
       if (0 != corpus_store_entry(corpus, &entry)) result = 1;
+    }
+    if (0 == code_like && 0 != corpus_md_sentences()) {
+      int begin = 0, at;
+      for (at = 0; at <= len; ++at) {
+        const int is_end = (at == len)
+          ? 1 : is_sentence_end_text(text, (size_t)len, (size_t)at);
+        if (0 != is_end) {
+          int end = (at < len) ? at + 1 : at;
+          int span;
+          size_t close_size = text_closer_size(text, (size_t)len, (size_t)end);
+          while (0 != close_size) {
+            end += (int)close_size;
+            close_size = text_closer_size(text, (size_t)len, (size_t)end);
+          }
+          span = end - begin;
+          while (0 < span && 0 != isspace((unsigned char)text[begin])) {
+            ++begin;
+            --span;
+          }
+          while (0 < span
+            && 0 != isspace((unsigned char)text[begin + span - 1])) --span;
+          /* A block that is one sentence is already stored above. */
+          if (8 < span && span < len && 3 <= count_words(text + begin, span)
+            && EXIT_SUCCESS == corpus_entry_build(&entry, text + begin, span,
+              SCALE_SENTENCE, lexicon, rules, nrules))
+          {
+            corpus_entry_set_section(&entry, section, section_len);
+            corpus_store_entry(corpus, &entry);
+          }
+          begin = end;
+        }
+      }
     }
   }
   return result;
@@ -10689,6 +10345,7 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
   unsigned char* text = NULL;
   size_t text_size = 0;
   if (NULL == corpus || NULL == path) return EXIT_FAILURE;
+  if (corpus_source_id < 0xffff) ++corpus_source_id;
   profile = corpus_profile_for_path(path);
   f = fopen(path, "rb");
   if (NULL != f) {

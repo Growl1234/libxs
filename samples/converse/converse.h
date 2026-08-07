@@ -35,7 +35,7 @@ typedef struct corpus_entry_t {
   unsigned short nentities;
   unsigned short nnumbers;
   unsigned short lexical_flags;
-  unsigned short reserved;
+  unsigned short source;
   unsigned int token_ids[ENTRY_TOKEN_MAX];
   unsigned short token_flags[ENTRY_TOKEN_MAX];
   unsigned short section_len;
@@ -43,7 +43,7 @@ typedef struct corpus_entry_t {
 } corpus_entry_t;
 
 
-static void corpus_key_from_fprint(const libxs_fprint_t* fp,
+LIBXS_INLINE void corpus_key_from_fprint(const libxs_fprint_t* fp,
   unsigned char key[], size_t* key_size)
 {
   unsigned int coords[COMPOSE_NDIMS];
