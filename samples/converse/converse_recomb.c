@@ -1,5 +1,7 @@
 #include <libxs/libxs.h>
 #include <libxs/libxs_token.h>
+#include <libxs/libxs_hash.h>
+#include <libxs/libxs_mem.h>
 
 #include "converse.h"
 #include "converse_hier.h"
@@ -415,6 +417,110 @@ typedef struct recomb_postings_t {
 static libxs_registry_t* recomb_index = NULL;
 static long recomb_index_nkeys = 0;
 static long recomb_index_ntruncated = 0;
+
+
+/**
+ * Predicate-like pivot suppression: constrain the OPERATOR instead of filtering
+ * its output.
+ *
+ * Every truth failure observed so far splices on a predicate-like pivot ("made"
+ * joining "made fat" to "made in his whole kingdom"), while the join that was true
+ * and useful pivoted on an argument-like word ("children"). Four separate gate
+ * ideas were measured and none separates those two cases: both seam trigrams occur
+ * exactly ONCE, 79% of content bigrams occur once, and clause-scale recurrence only
+ * reaches 6.6% at 27x the corpus. So there is no attestation to test against, and a
+ * gate that cannot be built can still be avoided -- by not generating the failure.
+ *
+ * The proxy is derived from counts, not from a word list, so no language vocabulary
+ * enters the sample: a lexeme is predicate-like when it frequently FOLLOWS one of
+ * the function words the rules already declare skippable. Measured on grimm: made
+ * 33, built 4, against children/witch/kingdom at 0. It costs 58% of pivot tokens,
+ * which is the honest price of removing a failure class by construction.
+ *
+ * This is a probe. It is off by default because it trades reachable set for
+ * precision and that trade has not been measured on more than one corpus.
+ */
+static libxs_registry_t* recomb_predicate = NULL;
+static long recomb_predicate_nkeys = 0;
+
+
+static int recomb_nopredicate_on(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_RECOMB_NOPRED");
+    cached = (NULL != env && '\0' != *env) ? atoi(env) : 0;
+    if (cached < 0) cached = 0;
+  }
+  return cached;
+}
+
+
+static void recomb_predicate_free(void)
+{
+  if (NULL != recomb_predicate) {
+    libxs_registry_destroy(recomb_predicate);
+    recomb_predicate = NULL;
+  }
+  recomb_predicate_nkeys = 0;
+}
+
+
+/**
+ * Count, per lexeme, how often it directly follows a STOP word. The tokenizer
+ * already flags those from the rules file, so the class comes from data that
+ * exists rather than from anything declared here.
+ */
+static int recomb_predicate_build(const libxs_registry_t* corpus,
+  libxs_lexicon_t* lexicon)
+{
+  int result = EXIT_SUCCESS;
+  recomb_predicate_free();
+  recomb_predicate = libxs_registry_create();
+  if (NULL == recomb_predicate) result = EXIT_FAILURE;
+  if (EXIT_SUCCESS == result) {
+    const void* key = NULL;
+    size_t cursor = 0;
+    void* value = libxs_registry_begin(corpus, &key, &cursor);
+    while (NULL != value) {
+      const corpus_entry_t* entry = (const corpus_entry_t*)value;
+      if (SCALE_SENTENCE == entry->scale && 0 < entry->text_len) {
+        recomb_word_t words[COMPOSE_MAXTEXT / 2];
+        const int nwords = recomb_words(lexicon, entry->text, entry->text_len,
+          words, (int)(sizeof(words) / sizeof(*words)));
+        int at;
+        for (at = 1; at < nwords; ++at) {
+          const unsigned int id = words[at].id;
+          long* count;
+          if (0 == id) continue;
+          if (0 == (words[at - 1].flags & LIBXS_LEXEME_STOP)) continue;
+          if (0 != (words[at].flags & LIBXS_LEXEME_STOP)) continue;
+          count = (long*)libxs_registry_get(recomb_predicate, &id, sizeof(id),
+            NULL);
+          if (NULL != count) ++*count;
+          else {
+            const long fresh = 1;
+            if (NULL != libxs_registry_set(recomb_predicate, &id, sizeof(id),
+              &fresh, sizeof(fresh), NULL)) ++recomb_predicate_nkeys;
+          }
+        }
+      }
+      value = libxs_registry_next(corpus, &key, &cursor);
+    }
+  }
+  return result;
+}
+
+
+static int recomb_is_predicate(unsigned int id)
+{
+  const long* count;
+  const int threshold = recomb_nopredicate_on();
+  if (0 >= threshold || NULL == recomb_predicate) return 0;
+  count = (const long*)libxs_registry_get(recomb_predicate, &id, sizeof(id),
+    NULL);
+  return (NULL != count && *count >= (long)threshold) ? 1 : 0;
+}
 
 
 static void recomb_index_free(void)
@@ -1273,6 +1379,7 @@ static long recomb_capacity(const libxs_registry_t* corpus,
     int pi;
     if (0 == pivot || 0 != (awords[at].flags & LIBXS_LEXEME_STOP)) continue;
     if (at + 1 < RECOMB_MIN_WORDS) continue;
+    if (0 != recomb_is_predicate(pivot)) continue;
     postings = (NULL != recomb_index)
       ? (const recomb_postings_t*)libxs_registry_get(recomb_index,
           &pivot, sizeof(pivot), NULL) : NULL;
@@ -1439,6 +1546,7 @@ static int recomb_compose(const libxs_registry_t* corpus,
     if (at < 1 || at >= nawords - 1) continue;
     if (0 == pivot || 0 != (awords[at].flags & LIBXS_LEXEME_STOP)) continue;
     if (at + 1 < RECOMB_MIN_WORDS) continue;
+    if (0 != recomb_is_predicate(pivot)) continue;
     postings = (NULL != recomb_index)
       ? (const recomb_postings_t*)libxs_registry_get(recomb_index,
           &pivot, sizeof(pivot), NULL) : NULL;
@@ -1537,6 +1645,13 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
   recomb_host = host;
   if (EXIT_SUCCESS != recomb_index_build(corpus, lexicon)) {
     fprintf(stderr, "recomb: pivot index could not be built\n");
+    return;
+  }
+  if (0 != recomb_nopredicate_on()
+    && EXIT_SUCCESS != recomb_predicate_build(corpus, lexicon))
+  {
+    fprintf(stderr, "recomb: predicate store could not be built\n");
+    recomb_index_free();
     return;
   }
   if (0 != recomb_referent_on()
@@ -1768,7 +1883,226 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
   if (NULL != cap_seen) libxs_registry_destroy(cap_seen);
   if (NULL != cap_seen2) libxs_registry_destroy(cap_seen2);
   recomb_referent_free();
+  recomb_predicate_free();
   recomb_index_free();
+}
+
+
+int converse_recomb_open(const libxs_registry_t* corpus,
+  libxs_lexicon_t* lexicon, const converse_hier_t* judge,
+  const converse_recomb_host_t* host)
+{
+  int result;
+  recomb_judge = judge;
+  recomb_host = host;
+  result = recomb_index_build(corpus, lexicon);
+  if (EXIT_SUCCESS == result && 0 != recomb_nopredicate_on()) {
+    result = recomb_predicate_build(corpus, lexicon);
+  }
+  return result;
+}
+
+
+void converse_recomb_close(void)
+{
+  recomb_index_free();
+  recomb_predicate_free();
+  recomb_referent_free();
+  recomb_judge = NULL;
+  recomb_host = NULL;
+}
+
+
+/**
+ * Does `a` dominate `b`? Every axis at least as good and one strictly better.
+ *
+ * Axes are ordered so that LOWER is better, which is why the coherence overlap is
+ * negated by the caller: mixing directions here is the mistake a weighted sum
+ * hides and a Pareto test exposes as a silent inversion.
+ */
+/**
+ * Does the donor's word sequence CONTAIN the host's, as lexeme ids?
+ *
+ * Compared over ids rather than bytes because the host is the retrieved answer,
+ * which for a fact reply is a normalized quotation of its source: capitalized,
+ * terminated with a period, and with the source's line breaks removed. A literal
+ * substring test therefore cannot fire -- it was tried and did not. Ids are already
+ * case-folded and carry no punctuation, so they compare the words themselves.
+ */
+static int recomb_contains_words(const recomb_word_t hay[], int nhay,
+  const recomb_word_t needle[], int nneedle)
+{
+  int result = 0;
+  int at, from = 0;
+  /**
+   * Leading unknown words are skipped rather than compared. libxs_lexicon_id does
+   * NOT case-fold, so a sentence-initial capitalized word yields id 0 -- and the
+   * host here is a normalized quotation, which capitalizes its first word. Matching
+   * on that 0 is what made an earlier version of this guard never fire, and 81% of
+   * corpus sentences start with a capital, so this is the common case.
+   */
+  while (from < nneedle && 0 == needle[from].id) ++from;
+  if (from >= nneedle || (nneedle - from) > nhay) return 0;
+  for (at = 0; at <= nhay - (nneedle - from) && 0 == result; ++at) {
+    int k, same = 1;
+    for (k = 0; k < nneedle - from && 0 != same; ++k) {
+      if (0 == needle[from + k].id) continue;
+      if (hay[at + k].id != needle[from + k].id) same = 0;
+    }
+    if (0 != same) result = 1;
+  }
+  return result;
+}
+
+
+static int recomb_dominates(const double a[], const double b[], int n)
+{
+  int result = 0;
+  int strictly_better = 0;
+  int at;
+  for (at = 0; at < n; ++at) {
+    if (a[at] > b[at]) return 0;
+    if (a[at] < b[at]) strictly_better = 1;
+  }
+  if (0 != strictly_better) result = 1;
+  return result;
+}
+
+
+int converse_recomb_compose_best(const libxs_registry_t* corpus,
+  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
+  const char* host_text, int host_len, char* out, size_t out_size,
+  int* out_nfront, int* out_ncand)
+{
+  enum { RECOMB_AXES = 3, RECOMB_KEEP = 64 };
+  int result = 0;
+  corpus_entry_t a;
+  recomb_word_t awords[COMPOSE_MAXTEXT / 2];
+  int nawords, at;
+  int ncand = 0, nfront = 0;
+  double cand_axes[RECOMB_KEEP][RECOMB_AXES];
+  char cand_text[RECOMB_KEEP][COMPOSE_MAXTEXT];
+  int cand_len[RECOMB_KEEP];
+  if (NULL != out_nfront) *out_nfront = 0;
+  if (NULL != out_ncand) *out_ncand = 0;
+  if (NULL == recomb_index || NULL == recomb_host || NULL == host_text
+    || 0 >= host_len)
+  {
+    return 0;
+  }
+  /**
+   * The host is re-encoded rather than looked up: it is the retrieved answer text,
+   * which may not be a corpus entry at all (a fact reply is synthesized from the
+   * rules). Overlap and the seam penalty are both computed against the host entry,
+   * so scoring the wrong text here would silently misrank every candidate.
+   */
+  if (EXIT_SUCCESS != recomb_host->entry_build(&a,
+    (const unsigned char*)host_text, host_len, SCALE_SENTENCE, lexicon, rules,
+    nrules))
+  {
+    return 0;
+  }
+  nawords = recomb_words(lexicon, a.text, a.text_len, awords,
+    (int)(sizeof(awords) / sizeof(*awords)));
+  for (at = 1; at < nawords - 1 && ncand < RECOMB_KEEP; ++at) {
+    const unsigned int pivot = awords[at].id;
+    const recomb_postings_t* postings;
+    int pi;
+    if (0 == pivot || 0 != (awords[at].flags & LIBXS_LEXEME_STOP)) continue;
+    if (at + 1 < RECOMB_MIN_WORDS) continue;
+    if (0 != recomb_is_predicate(pivot)) continue;
+    postings = (const recomb_postings_t*)libxs_registry_get(recomb_index,
+      &pivot, sizeof(pivot), NULL);
+    if (NULL == postings) continue;
+    for (pi = 0; pi < postings->n && ncand < RECOMB_KEEP; ++pi) {
+      const corpus_entry_t* b = postings->entry[pi];
+      recomb_word_t bwords[COMPOSE_MAXTEXT / 2];
+      char candidate[COMPOSE_MAXTEXT];
+      int nbwords, bi;
+      /**
+       * The host cannot donate to itself, and equality is not a strong enough
+       * test. The host here is the retrieved ANSWER, which for a fact reply is a
+       * rewritten prefix of the sentence it came from -- so a donor that CONTAINS
+       * the host produces a splice that merely restores the original text. That
+       * happened and was reported as a successful composition: the two halves
+       * rejoined one corpus sentence which the source file had split across two
+       * lines, and `recomb_is_verbatim` could not catch it because the rejoined
+       * text (without the line break) occurs nowhere.
+       */
+      if (NULL == b) continue;
+      nbwords = recomb_words(lexicon, b->text, b->text_len, bwords,
+        (int)(sizeof(bwords) / sizeof(*bwords)));
+      if (0 != recomb_contains_words(bwords, nbwords, awords, nawords)) continue;
+      for (bi = 1; bi < nbwords - 1 && ncand < RECOMB_KEEP; ++bi) {
+        int len;
+        if (pivot != bwords[bi].id) continue;
+        if (nbwords - bi - 1 < RECOMB_MIN_WORDS) continue;
+        len = recomb_splice(a.text, a.text_len, awords[at].end,
+          b->text, b->text_len, bwords[bi].end, candidate, sizeof(candidate));
+        if (0 != len && (size_t)len < out_size) {
+          recomb_signal_t sig;
+          const int seam = awords[at].end;
+          if (EXIT_SUCCESS != recomb_signals(&sig, lexicon, &a, awords,
+            nawords, at, b, bwords, nbwords, bi, candidate, len, seam,
+            bwords[bi].end, recomb_seam_window()))
+          {
+            continue;
+          }
+          /**
+           * PREREQUISITES, not trade-offs. Measured: leaving ends-a-sentence to
+           * compete rewards prefix/suffix symmetry, so selection sought
+           * mid-sentence cuts and produced MORE dangling fragments than no
+           * selection at all. A property selection can trade away does not survive
+           * selection.
+           */
+          if (0 == sig.ends_sentence) continue;
+          if (sig.gram > recomb_grammar_tol()) continue;
+          if (0 == recomb_balanced(candidate, len)) continue;
+          if (0 != recomb_is_verbatim(corpus, candidate, len)) continue;
+          /* Trade-offs, all as lower-is-better; overlap is negated. */
+          cand_axes[ncand][0] = sig.seam_bits;
+          cand_axes[ncand][1] = -sig.overlap;
+          cand_axes[ncand][2] = sig.fpjoin;
+          memcpy(cand_text[ncand], candidate, (size_t)len);
+          cand_text[ncand][len] = '\0';
+          cand_len[ncand] = len;
+          ++ncand;
+        }
+      }
+    }
+  }
+  if (0 < ncand) {
+    int best = -1;
+    int i, j;
+    for (i = 0; i < ncand; ++i) {
+      int dominated = 0;
+      for (j = 0; j < ncand && 0 == dominated; ++j) {
+        if (i != j && 0 != recomb_dominates(cand_axes[j], cand_axes[i],
+          RECOMB_AXES))
+        {
+          dominated = 1;
+        }
+      }
+      if (0 == dominated) {
+        ++nfront;
+        /**
+         * Within the front the objective is indifferent by construction, so the
+         * pick cannot be justified by the objective. Taking the first keeps it
+         * deterministic and corpus-ordered; the front size is reported so the
+         * caller can say that a choice was arbitrary rather than imply it was not.
+         */
+        if (best < 0) best = i;
+      }
+    }
+    if (0 <= best) {
+      memcpy(out, cand_text[best], (size_t)cand_len[best]);
+      out[cand_len[best]] = '\0';
+      result = cand_len[best];
+    }
+  }
+  if (NULL != out_nfront) *out_nfront = nfront;
+  if (NULL != out_ncand) *out_ncand = ncand;
+  return result;
 }
 
 

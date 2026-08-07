@@ -53,4 +53,40 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
   int limit, const converse_hier_t* judge,
   const converse_recomb_host_t* host);
 
+
+/**
+ * Build the pivot index and keep it, for a session that composes repeatedly. The
+ * probe builds and frees per run, which is right for one batch measurement and
+ * wrong interactively: the index costs a full corpus pass, so rebuilding it per
+ * query would dominate the response. Entry pointers are stored, so the corpus
+ * registry must outlive this and must not be modified.
+ */
+int converse_recomb_open(const libxs_registry_t* corpus,
+  libxs_lexicon_t* lexicon, const converse_hier_t* judge,
+  const converse_recomb_host_t* host);
+
+/** Release what converse_recomb_open built. Safe when open was never called. */
+void converse_recomb_close(void);
+
+/**
+ * Compose one sentence from `host_text`, chosen by the selection objective rather
+ * than by first acceptance.
+ *
+ * The probe stops at the first donor that passes the gates, which is right for
+ * measuring whether a host admits a join and wrong for answering: the reachable
+ * set per host is tens of alternatives, and the gates are thresholds that admit
+ * all of them. So candidates are enumerated, screened by prerequisites, and the
+ * winner is taken from the Pareto front over the remaining trade-offs.
+ *
+ * Returns the composed length, or 0 when nothing is admissible -- which is a
+ * legitimate and frequent outcome, and must stay distinguishable from an error.
+ * `out_nfront` receives the front size when non-NULL: a front of one is a real
+ * choice, a large front means the objective is indifferent and the pick within it
+ * is arbitrary, so a caller that reports composition honestly needs to know which.
+ */
+int converse_recomb_compose_best(const libxs_registry_t* corpus,
+  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
+  const char* host_text, int host_len, char* out, size_t out_size,
+  int* out_nfront, int* out_ncand);
+
 #endif /*CONVERSE_RECOMB_H*/

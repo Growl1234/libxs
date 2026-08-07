@@ -469,7 +469,9 @@ static const ngram_entry_t* ngram_lookup(libxs_registry_t* model,
   unsigned int ctx_a, unsigned int ctx_b);
 static double ngram_unigram_prior(unsigned int id);
 static int ngram_maxorder(void);
+static int ngram_dedup_scale(void);
 static int ngram_is_wordchar(unsigned char c);
+static int recomb_compose_on(void);
 static double recomb_word_prob(const unsigned int hist[], int hlen,
   unsigned int next);
 static double ngram_skip_prob(const unsigned int hist[], int hlen,
@@ -521,7 +523,7 @@ static void token_emb_build(const libxs_registry_t* corpus,
 static void token_emb_free(void);
 static int knnlm_topk(libxs_registry_t* ngram, const libxs_predict_t* store,
   const unsigned int hist[], int hlen, int ctxlen, int order,
-  unsigned int out_ids[], int k);
+  unsigned int out_ids[], int k, unsigned int target, double* target_prob);
 static int knnlm_ctxlen(void);
 static void knnlm_cache_free(void);
 static int knnlm_eval(libxs_registry_t* ngram, const libxs_predict_t* store,
@@ -645,7 +647,9 @@ int main(int argc, char* argv[])
       "  CONVERSE_EMB_PROBE=w1,w2 print nearest embedding neighbors.\n"
       "  CONVERSE_EMB_BACKFILL=0  disable rare-token vector backfill.\n"
       "  CONVERSE_RECOMB=N        recombination probe over N sentences.\n"
-      "  CONVERSE_RECOMB_REFERENT=1 test whether a pivot denotes one thing.\n",
+      "  CONVERSE_RECOMB_REFERENT=1 test whether a pivot denotes one thing.\n"
+      "  CONVERSE_RECOMB_COMPOSE=1 -c may synthesize when replay fails.\n"
+      "  CONVERSE_NO_PREDICT=1    skip answer-ranker training (large corpora).\n",
       argv[0], RESPONSE_BUDGET, NGRAM_ORDER_MAX, NGRAM_ORDER_MAX);
     answer_predict_profile_list(stderr);
     return EXIT_FAILURE;
@@ -853,7 +857,17 @@ int main(int argc, char* argv[])
     }
     corpus_save(corpus);
     converse_lexicon_save(lexicon);
-    { libxs_predict_t* trained = converse_predict_train(corpus,
+    /**
+     * The answer ranker is skippable, and on a large corpus it has to be. It is
+     * the only consumer of this model, it degrades to the unmodified base score
+     * when the model is absent (see answer_predict_score), and training it is the
+     * stage that stops a big corpus being usable at all: pushing every entry x
+     * query-type superlinearly outgrows ingest, so 88k Fortran sentences never
+     * reach the model that the recombination and byte-model tracks actually need.
+     * CONVERSE_NO_PREDICT=1 trades a ranking refinement for reaching those tracks.
+     */
+    if (NULL == getenv("CONVERSE_NO_PREDICT")) {
+      libxs_predict_t* trained = converse_predict_train(corpus,
         predict_profile);
       if (NULL != trained) {
         libxs_predict_destroy(answer_model);
@@ -861,6 +875,7 @@ int main(int argc, char* argv[])
         converse_predict_save(answer_model);
       }
     }
+    else fprintf(stderr, "predict: training skipped (CONVERSE_NO_PREDICT)\n");
   }
   else fprintf(stderr, "warm start: reusing %s\n", converse_path_corpus);
   free(basenames);
@@ -1019,6 +1034,28 @@ int main(int argc, char* argv[])
       mode_result = EXIT_FAILURE;
     }
     else {
+      converse_recomb_host_t recomb_hostcb;
+      int recomb_ready = 0;
+      if (0 != recomb_compose_on()) {
+        if (NULL == answer_hier_model) {
+          fprintf(stderr, "compose needs CONVERSE_HIER_RESCORE=1"
+            " (it judges seams with the byte model)\n");
+        }
+        else {
+          recomb_hostcb.ends_sentence = text_ends_sentence;
+          recomb_hostcb.is_wordchar = libxs_lexeme_is_word_char;
+          recomb_hostcb.entry_build = corpus_entry_build;
+          recomb_hostcb.word_prob = recomb_word_prob;
+          recomb_hostcb.maxorder = ngram_maxorder();
+          /* One corpus pass, kept for the session: per-query would dominate. */
+          if (EXIT_SUCCESS == converse_recomb_open(corpus, lexicon,
+            answer_hier_model, &recomb_hostcb))
+          {
+            recomb_ready = 1;
+          }
+          else fprintf(stderr, "compose: pivot index could not be built\n");
+        }
+      }
       printf("> ");
       fflush(stdout);
       while (NULL != fgets(line, (int)sizeof(line), stdin)) {
@@ -1054,6 +1091,7 @@ int main(int argc, char* argv[])
         printf("> ");
         fflush(stdout);
       }
+      if (0 != recomb_ready) converse_recomb_close();
       mode_result = EXIT_SUCCESS;
     }
     answer_hier_model = NULL;
@@ -6805,6 +6843,25 @@ static int ngram_maxorder(void)
 
 
 /**
+ * Score (and train on) each text at ONE scale only. The corpus holds every text
+ * at both sentence and paragraph scale, so the default loops see each sentence
+ * TWICE: once standalone and once inside its paragraph. That is multiplicity,
+ * not two observations -- the second copy is the same source bytes. It inflates
+ * training counts and, worse, lets a paragraph copy make a sentence's own
+ * contexts look attested, which is exactly the confound the slot probe already
+ * filters against (it takes SCALE_SENTENCE only).
+ *
+ * Off by default so published figures stay reproducible; the point of the knob
+ * is to measure how much the duplication was worth.
+ */
+static int ngram_dedup_scale(void)
+{
+  const char* env = getenv("CONVERSE_NGRAM_ONESCALE");
+  return (NULL != env && '0' != env[0] && '\0' != env[0]) ? 1 : 0;
+}
+
+
+/**
  * Skip-gram tier: an auxiliary store keyed by the pair (w[-3], w[-1]) that
  * abstracts over the varying middle slot, so an unseen exact context can still
  * match a seen "w ___ w" pattern (analogic generalization, no parameters).
@@ -7050,10 +7107,13 @@ static libxs_registry_t* ngram_build(const libxs_registry_t* corpus,
     const void* key = NULL;
     size_t cursor = 0;
     long index = 0;
+    const int onescale = ngram_dedup_scale();
     void* value = libxs_registry_begin(corpus, &key, &cursor);
     while (NULL != value) {
       const corpus_entry_t* entry = (const corpus_entry_t*)value;
-      if (0 == predict_is_test(index, holdout)) {
+      if (0 == predict_is_test(index, holdout)
+        && (0 == onescale || SCALE_SENTENCE == entry->scale))
+      {
         ngram_train_text(converse_ngram.store, lexicon, rules, nrules,
           entry->text, entry->text_len);
       }
@@ -7959,6 +8019,21 @@ static int ngram_gen_minorder(void)
  * at maxorder 2 every run averages 2.0 (pure bigram drift, suppressed); with
  * deeper context (-x) genuinely attested passages average much higher.
  */
+/**
+ * Whether the -c cascade may synthesize. Off by default: every other tier emits
+ * text that occurs verbatim in the corpus, and this one does not, so it is a
+ * different promise to the caller and should be asked for.
+ */
+static int recomb_compose_on(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    cached = (NULL != getenv("CONVERSE_RECOMB_COMPOSE")) ? 1 : 0;
+  }
+  return cached;
+}
+
+
 static double ngram_gen_contfloor(void)
 {
   double result = 3.0;
@@ -8094,12 +8169,57 @@ static void complete_respond(const libxs_registry_t* corpus,
     int ntok = ngram_generate(converse_ngram.store, lexicon, rules, nrules,
       seed, seed_len, gen, sizeof(gen), &order_mean, &order_min);
     int grounded = (ntok > 0 && order_mean >= ngram_gen_contfloor()) ? 1 : 0;
+    int composed = 0;
     if (0 != grounded) {
       printf("continuation: %s\n", gen);
       printf("grounding: %d tokens, mean order %.1f, min order %d\n",
         ntok, order_mean, order_min);
     }
-    if (0 == answered && 0 == grounded) {
+    /**
+     * Composition is the LAST tier, tried only once replay has failed. A
+     * continuation is verbatim attested text, so it is better grounded than a
+     * splice: offering a synthesized sentence while an attested one was available
+     * would trade grounding for novelty without saying so. Seeded from the answer
+     * when there is one, because that is the text retrieval already judged
+     * relevant to the query.
+     */
+    if (0 == grounded && 0 != recomb_compose_on()) {
+      char syn[COMPOSE_MAXTEXT];
+      int nfront = 0, ncand = 0;
+      const int slen = converse_recomb_compose_best(corpus, lexicon, rules,
+        nrules, seed, seed_len, syn, sizeof(syn), &nfront, &ncand);
+      if (0 < slen) {
+        composed = 1;
+        printf("composed: %s\n", syn);
+        /**
+         * The provenance line is not decoration. This sentence is in the corpus
+         * NOWHERE, so a reader has to be able to tell it from the attested replies
+         * above it, and the front size says whether the objective actually chose
+         * it or was indifferent among that many.
+         */
+        printf("synthesis: spliced at a shared term, %d candidate%s,"
+          " %d on the front (not attested; every word is)\n",
+          ncand, (1 == ncand) ? "" : "s", nfront);
+        /**
+         * State what was NOT checked. Five separate gate ideas were measured and
+         * none can tell a true join from a fluent false one: the evidence that
+         * would decide it lies at clause scale, where only 2% of four-word content
+         * spans recur even at 27x this corpus. So the honest output is a caveat
+         * rather than a confidence, and it is worded as the specific thing left
+         * unverified -- "sense of the shared term" -- because a generic disclaimer
+         * on every line is quickly ignored.
+         *
+         * The front size carries the rest: when the objective is indifferent among
+         * most candidates it did not really choose, and saying so is what keeps
+         * this consistent with the abstention discipline the QA side uses.
+         */
+        printf("unverified: the shared term may carry a different sense in each"
+          " half; no gate here checks that%s\n",
+          (nfront > 1 && nfront * 2 >= ncand)
+            ? ", and the objective was near-indifferent among these" : "");
+      }
+    }
+    if (0 == answered && 0 == grounded && 0 == composed) {
       printf("I do not know from the corpus.\n");
     }
   }
@@ -8521,12 +8641,24 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   double deep_bits = 0.0, deep_bytes = 0.0;
   double shallow_bits = 0.0, shallow_bytes = 0.0;
   double sum_bits = 0.0, sum_bytes = 0.0;
+  long novel_match[NGRAM_ORDER_MAX + 1];
+  double novel_match_bits[NGRAM_ORDER_MAX + 1];
+  double novel_match_bytes[NGRAM_ORDER_MAX + 1];
+  long novel_short = 0;
+  double novel_short_bits = 0.0;
+  long novel_sat = 0;
+  double novel_sat_bits = 0.0;
+  long ntrunc = 0, ntrunc_top1 = 0;
+  double trunc_bits = 0.0, trunc_bytes = 0.0;
   const double inv_log2 = 1.0 / log(2.0);
   const void* key = NULL;
   size_t cursor = 0;
   void* value;
   FILE* file;
   if (NULL == model || NULL == corpus || NULL == lexicon) return EXIT_FAILURE;
+  memset(novel_match, 0, sizeof(novel_match));
+  memset(novel_match_bits, 0, sizeof(novel_match_bits));
+  memset(novel_match_bytes, 0, sizeof(novel_match_bytes));
   value = libxs_registry_begin(corpus, &key, &cursor);
   while (NULL != value) {
     const corpus_entry_t* entry = (const corpus_entry_t*)value;
@@ -8534,6 +8666,9 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
     int is_test = (0 == holdout || 0 != predict_is_test(index, holdout));
     int native = ngram_native_mode();
     libxs_lexeme_stream_init(&stream);
+    if (0 != ngram_dedup_scale() && SCALE_SENTENCE != entry->scale) {
+      is_test = 0;
+    }
     if (0 != is_test && entry->text_len > 0
       && (0 != native || EXIT_SUCCESS == libxs_lexeme_stream_encode(
       lexicon, &stream, (const unsigned char*)entry->text,
@@ -8607,10 +8742,63 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
               deep_bytes += (curlen > 0) ? (double)curlen : 1.0;
             }
             else {
+              /**
+               * Decompose the novel bucket by how much context DID match. The
+               * predictor already reports that length, so this costs no extra
+               * lookup. It bounds what a total function can buy: mass at
+               * matched==0 is scored by the unigram prior alone and is the only
+               * part where no count evidence exists at any order, while mass at
+               * matched>0 is already carried by a shorter attested context.
+               */
+              const int m = (matched < 0) ? 0
+                : ((matched > NGRAM_ORDER_MAX) ? NGRAM_ORDER_MAX : matched);
               ++nshallow;
               nshallow_top1 += top1;
               shallow_bits += bits;
               shallow_bytes += (curlen > 0) ? (double)curlen : 1.0;
+              ++novel_match[m];
+              novel_match_bits[m] += bits;
+              novel_match_bytes[m] += (curlen > 0) ? (double)curlen : 1.0;
+              /**
+               * A position whose history is shorter than the order cannot be
+               * full-order attested, so it lands in the novel bucket by sentence
+               * position rather than by unattested context. Counted separately:
+               * without this the short-context mass reads as weak evidence when
+               * part of it is merely an early position with nothing to look up.
+               */
+              if (hlen < maxorder) {
+                ++novel_short;
+                novel_short_bits += bits;
+              }
+              /**
+               * The distinction that decides how to read the short-context mass.
+               * SATURATED means the model matched ALL the history that existed,
+               * so nothing was unattested and the only remedy is more history --
+               * an early sentence position. TRUNCATED means history was
+               * available and the longer context was not in the store, which is
+               * the genuinely unattested case. Lumping them reads a young
+               * sentence as weak evidence.
+               */
+              { const int avail = (hlen < maxorder) ? hlen : maxorder;
+                if (m >= avail) {
+                  ++novel_sat;
+                  novel_sat_bits += bits;
+                }
+                /**
+                 * The REPAIRED generalization bucket: a full-order history was
+                 * available AND the full-order context was not attested. This is
+                 * the only set where the model was asked something its evidence
+                 * could have covered and did not. The wider novel bucket mixes
+                 * these with early-sentence positions that had nothing longer to
+                 * look up, so a mechanism can move it without generalizing.
+                 */
+                else if (hlen >= maxorder) {
+                  ++ntrunc;
+                  ntrunc_top1 += top1;
+                  trunc_bits += bits;
+                  trunc_bytes += (curlen > 0) ? (double)curlen : 1.0;
+                }
+              }
             }
           }
           if (0 == wctx) ngram_hist_push(hist, &hlen, NGRAM_ORDER_MAX, cur);
@@ -8640,6 +8828,32 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
       100.0 * (double)nshallow / (double)npairs,
       (nshallow > 0) ? 100.0 * (double)nshallow_top1 / (double)nshallow : 0.0,
       (shallow_bytes > 0.0) ? shallow_bits / shallow_bytes : 0.0);
+    if (nshallow > 0) {
+      int m;
+      fprintf(stderr, "  novel bucket by matched context:");
+      for (m = 0; m <= NGRAM_ORDER_MAX; ++m) {
+        if (novel_match[m] > 0) {
+          fprintf(stderr, " n%d=%.1f%%/bpc=%.3f/bits=%.1f%%", m,
+            100.0 * (double)novel_match[m] / (double)nshallow,
+            (novel_match_bytes[m] > 0.0)
+              ? novel_match_bits[m] / novel_match_bytes[m] : 0.0,
+            (shallow_bits > 0.0)
+              ? 100.0 * novel_match_bits[m] / shallow_bits : 0.0);
+        }
+      }
+      fprintf(stderr, " | truncated %.1f%% of all (top1=%.1f%% bpc=%.3f)\n",
+        100.0 * (double)ntrunc / (double)npairs,
+        (ntrunc > 0) ? 100.0 * (double)ntrunc_top1 / (double)ntrunc : 0.0,
+        (trunc_bytes > 0.0) ? trunc_bits / trunc_bytes : 0.0);
+      fprintf(stderr, "  novel bucket composition:"
+        " short-history %.1f%%/bits=%.1f%%"
+        " saturated %.1f%%/bits=%.1f%% (n=%ld)\n",
+        100.0 * (double)novel_short / (double)nshallow,
+        (shallow_bits > 0.0) ? 100.0 * novel_short_bits / shallow_bits : 0.0,
+        100.0 * (double)novel_sat / (double)nshallow,
+        (shallow_bits > 0.0) ? 100.0 * novel_sat_bits / shallow_bits : 0.0,
+        nshallow);
+    }
     result = EXIT_SUCCESS;
   }
   file = fopen(converse_path_predict_eval, "r");
@@ -9902,7 +10116,7 @@ static int knnlm_vote(const libxs_predict_t* store, const unsigned int hist[],
 
 static int knnlm_topk(libxs_registry_t* ngram, const libxs_predict_t* store,
   const unsigned int hist[], int hlen, int ctxlen, int order,
-  unsigned int out_ids[], int k)
+  unsigned int out_ids[], int k, unsigned int target, double* target_prob)
 {
   unsigned int prev1 = (hlen > 0) ? hist[hlen - 1] : 0;
   unsigned int prev2 = (hlen > 1) ? hist[hlen - 2] : 0;
@@ -9963,6 +10177,26 @@ static int knnlm_topk(libxs_registry_t* ngram, const libxs_predict_t* store,
     out_ids[result] = ids[best];
     ++result;
   }
+  /**
+   * A normalized probability for one target, needed to score this model in bits
+   * rather than only by rank. The candidate scores above rank on relative
+   * frequency within the retained successor list, which does not sum to one over
+   * the vocabulary; the classic kNN-LM mixture does, because the n-gram term is
+   * normalized and the vote mass sums to one over the neighbours. So lambda=1
+   * must reproduce the n-gram baseline bit for bit, and that is the control
+   * which says this is wired correctly rather than merely plausible.
+   */
+  if (NULL != target_prob) {
+    double p = lambda * ngramk_prob(ngram, hist, hlen, ngram_maxorder(),
+      target);
+    for (v = 0; v < nvote; ++v) {
+      if (vote_ids[v] == target) {
+        p += (1.0 - lambda) * vote_p[v];
+        break;
+      }
+    }
+    *target_prob = p;
+  }
   return result;
 }
 
@@ -9975,6 +10209,13 @@ static int knnlm_eval(libxs_registry_t* ngram, const libxs_predict_t* store,
   int result = EXIT_FAILURE;
   long npairs = 0, ntop1 = 0, ntopk = 0, seen = 0, index = 0;
   long nnullq = 0, nnulltgt = 0;
+  long ndeep = 0, ndeep_top1 = 0, nshallow = 0, nshallow_top1 = 0;
+  double deep_bits = 0.0, deep_bytes = 0.0;
+  double shallow_bits = 0.0, shallow_bytes = 0.0;
+  double sum_bits = 0.0, sum_bytes = 0.0;
+  long ntrunc = 0, ntrunc_top1 = 0;
+  double trunc_bits = 0.0, trunc_bytes = 0.0;
+  const double inv_log2 = 1.0 / log(2.0);
   double ord_inner = 0.0, ord_cross = 0.0;
   long nord_inner = 0, nord_cross = 0;
   const char* ord_env = getenv("CONVERSE_KNNLM_ORDERPROBE");
@@ -9996,6 +10237,9 @@ static int knnlm_eval(libxs_registry_t* ngram, const libxs_predict_t* store,
     libxs_lexeme_stream_t stream;
     int is_test = (0 == holdout || 0 != predict_is_test(index, holdout));
     libxs_lexeme_stream_init(&stream);
+    if (0 != ngram_dedup_scale() && SCALE_SENTENCE != entry->scale) {
+      is_test = 0;
+    }
     if (0 != is_test && entry->text_len > 0
       && EXIT_SUCCESS == libxs_lexeme_stream_encode(
       lexicon, &stream, (const unsigned char*)entry->text,
@@ -10012,10 +10256,30 @@ static int knnlm_eval(libxs_registry_t* ngram, const libxs_predict_t* store,
           if (hlen > 0) {
             if (0 == (seen % stride)) {
               unsigned int ids[NGRAM_TOPK];
+              double p = 0.0;
               int n = knnlm_topk(ngram, store, hist, hlen, ctxlen, order, ids,
-                NGRAM_TOPK);
-              int rank;
+                NGRAM_TOPK, lex->id, &p);
+              int rank, top1 = 0;
+              /**
+               * Whether the FULL-order context recurred in training, by the same
+               * definition ngram_eval uses, so the two models' buckets are the
+               * same set of positions. Retrieval has only ever been reported as
+               * a top-k delta over all positions; the project's own criterion is
+               * that a mechanism moving only the verbatim bucket has achieved
+               * nothing, and that criterion had never been applied here.
+               */
+              int matched = 0;
+              double bits;
+              int deep;
+              ngramk_predict_order(ngram, hist, hlen, ngram_maxorder(), NULL, 0,
+                &matched);
+              deep = (matched >= ngram_maxorder()
+                && hlen >= ngram_maxorder()) ? 1 : 0;
+              if (!(p > 0.0)) p = 1e-12;
+              bits = -log(p) * inv_log2;
               ++npairs;
+              sum_bits += bits;
+              sum_bytes += (lex->length > 0) ? (double)lex->length : 1.0;
               if (0 != token_emb_isnull(hist[hlen - 1])) ++nnullq;
               if (0 != token_emb_isnull(lex->id)) ++nnulltgt;
               if (0 != order_probe) {
@@ -10024,9 +10288,33 @@ static int knnlm_eval(libxs_registry_t* ngram, const libxs_predict_t* store,
               }
               for (rank = 0; rank < n; ++rank) {
                 if (ids[rank] == lex->id) {
-                  if (0 == rank) ++ntop1;
+                  if (0 == rank) {
+                    ++ntop1;
+                    top1 = 1;
+                  }
                   ++ntopk;
                   break;
+                }
+              }
+              if (0 != deep) {
+                ++ndeep;
+                ndeep_top1 += top1;
+                deep_bits += bits;
+                deep_bytes += (lex->length > 0) ? (double)lex->length : 1.0;
+              }
+              else {
+                const int mo = ngram_maxorder();
+                const int avail = (hlen < mo) ? hlen : mo;
+                ++nshallow;
+                nshallow_top1 += top1;
+                shallow_bits += bits;
+                shallow_bytes += (lex->length > 0) ? (double)lex->length : 1.0;
+                /* The repaired generalization bucket; see ngram_eval. */
+                if (matched < avail && hlen >= mo) {
+                  ++ntrunc;
+                  ntrunc_top1 += top1;
+                  trunc_bits += bits;
+                  trunc_bytes += (lex->length > 0) ? (double)lex->length : 1.0;
                 }
               }
             }
@@ -10044,11 +10332,23 @@ static int knnlm_eval(libxs_registry_t* ngram, const libxs_predict_t* store,
   }
   if (npairs > 0) {
     fprintf(stdout,
-      "predict-%s%s%s: top1=%.1f%% top%d=%.1f%% n=%ld (stride=%d)\n",
+      "predict-%s%s%s: top1=%.1f%% top%d=%.1f%% n=%ld (stride=%d) bpc=%.3f\n",
       kind, (0 != dynamic) ? ":dyn" : "", (holdout > 0) ? ":heldout" : "",
       100.0 * (double)ntop1 / (double)npairs, NGRAM_TOPK,
       100.0 * (double)ntopk / (double)npairs, npairs,
-      stride);
+      stride, (sum_bytes > 0.0) ? sum_bits / sum_bytes : 0.0);
+    fprintf(stderr, "  attested-context split: verbatim %.1f%% of positions"
+      " (top1=%.1f%% bpc=%.3f) | novel %.1f%% (top1=%.1f%% bpc=%.3f)\n",
+      100.0 * (double)ndeep / (double)npairs,
+      (ndeep > 0) ? 100.0 * (double)ndeep_top1 / (double)ndeep : 0.0,
+      (deep_bytes > 0.0) ? deep_bits / deep_bytes : 0.0,
+      100.0 * (double)nshallow / (double)npairs,
+      (nshallow > 0) ? 100.0 * (double)nshallow_top1 / (double)nshallow : 0.0,
+      (shallow_bytes > 0.0) ? shallow_bits / shallow_bytes : 0.0);
+    fprintf(stderr, "  truncated %.1f%% of all (top1=%.1f%% bpc=%.3f)\n",
+      100.0 * (double)ntrunc / (double)npairs,
+      (ntrunc > 0) ? 100.0 * (double)ntrunc_top1 / (double)ntrunc : 0.0,
+      (trunc_bytes > 0.0) ? trunc_bits / trunc_bytes : 0.0);
     fprintf(stderr, "embedding coverage: null query vectors %.2f%%,"
       " null targets %.2f%% (n=%ld)\n",
       100.0 * (double)nnullq / (double)npairs,
@@ -10077,7 +10377,7 @@ static void knnlm_complete(libxs_registry_t* ngram,
   ngram_last_context(lexicon, rules, nrules, text, text_len, &prev2, &prev1);
   hist[0] = prev2;
   hist[1] = prev1;
-  n = knnlm_topk(ngram, store, hist, 2, 2, order, ids, NGRAM_TOPK);
+  n = knnlm_topk(ngram, store, hist, 2, 2, order, ids, NGRAM_TOPK, 0, NULL);
   if (n <= 0) {
     printf("(no continuation)\n");
     return;
@@ -10098,7 +10398,9 @@ static void knnlm_complete(libxs_registry_t* ngram,
       unsigned int step_ids[1];
       int len = 0;
       const char* word;
-      if (0 == knnlm_topk(ngram, store, step, 2, 2, order, step_ids, 1)) {
+      if (0 == knnlm_topk(ngram, store, step, 2, 2, order, step_ids, 1,
+        0, NULL))
+      {
         break;
       }
       word = libxs_lexicon_text(lexicon, step_ids[0], &len, NULL);
