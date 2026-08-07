@@ -95,6 +95,9 @@ int main(int argc, char* argv[])
       && (decoded_size != meta_input_size
         || 0 != memcmp(decoded, meta_input, meta_input_size)))
     {
+      FPRINTF(stderr, "ERROR line #%i: metatoken round-trip"
+        " (%i bytes decoded, expected %i)\n", __LINE__,
+        (int)decoded_size, (int)meta_input_size);
       result = EXIT_FAILURE;
     }
     while (EXIT_SUCCESS == result && token_pos < meta_stream.size) {
@@ -409,6 +412,73 @@ int main(int argc, char* argv[])
         result = EXIT_FAILURE;
       }
     }
+  }
+  /**
+   * Multi-byte letters belong to words; multi-byte punctuation does not.
+   *
+   * Both halves matter and they pull in opposite directions. Accepting every byte
+   * >= 0x80 as a word character glues "don" and "t" together across a typographic
+   * apostrophe; rejecting them all (plain ctype) cuts a German word into pieces and
+   * classes the middle piece as punctuation, which is then read as a SENTENCE
+   * boundary. So this asserts a word count, not merely that nothing crashed.
+   */
+  if (EXIT_SUCCESS == result) {
+    static const unsigned char german[] =
+      "Das M\xC3\xA4" "dchen und der K\xC3\xB6" "nig.";
+    static const unsigned char quoted[] = "don\xE2\x80\x99t stop";
+    libxs_lexeme_stream_t utf8_stream;
+    libxs_lexicon_t* utf8_lexicon = libxs_lexicon_create();
+    libxs_lexeme_stream_init(&utf8_stream);
+    if (NULL == utf8_lexicon) result = EXIT_FAILURE;
+    if (EXIT_SUCCESS == result) {
+      result = libxs_lexeme_stream_encode(utf8_lexicon, &utf8_stream, german,
+        sizeof(german) - 1, NULL, 0, NULL, 0, 1);
+    }
+    if (EXIT_SUCCESS == result) {
+      size_t nwords = 0;
+      for (i = 0; i < utf8_stream.size; ++i) {
+        if (0 != (utf8_stream.data[i].flags & LIBXS_LEXEME_WORD)) ++nwords;
+      }
+      /* "Das Maedchen und der Koenig" = five words, umlauts kept whole. */
+      if (5 != nwords) {
+        FPRINTF(stderr, "ERROR line #%i: utf-8 letters split a word"
+          " (%i words, expected 5)\n", __LINE__, (int)nwords);
+        result = EXIT_FAILURE;
+      }
+    }
+    if (EXIT_SUCCESS == result) {
+      /* encode APPENDS, so the stream is reset before the second sentence. */
+      libxs_lexeme_stream_release(&utf8_stream);
+      libxs_lexeme_stream_init(&utf8_stream);
+      result = libxs_lexeme_stream_encode(utf8_lexicon, &utf8_stream, quoted,
+        sizeof(quoted) - 1, NULL, 0, NULL, 0, 1);
+    }
+    if (EXIT_SUCCESS == result) {
+      size_t npunct = 0;
+      for (i = 0; i < utf8_stream.size; ++i) {
+        if (0 != (utf8_stream.data[i].flags & LIBXS_LEXEME_PUNCT)) ++npunct;
+      }
+      /* The apostrophe stays punctuation, so "don" and "t" stay separate. */
+      if (1 != npunct) {
+        FPRINTF(stderr, "ERROR line #%i: utf-8 punctuation joined a word"
+          " (%i punct, expected 1)\n", __LINE__, (int)npunct);
+        result = EXIT_FAILURE;
+      }
+    }
+    if (EXIT_SUCCESS == result) {
+      int span = 0;
+      /* The public predicate reports the span so callers advance correctly. */
+      if (0 == libxs_lexeme_is_word_char(german + 4, 3, &span) || 1 != span
+        || 0 == libxs_lexeme_is_word_char(german + 5, 2, &span) || 2 != span
+        || 0 != libxs_lexeme_is_word_char(quoted + 3, 3, &span) || 3 != span)
+      {
+        FPRINTF(stderr, "ERROR line #%i: libxs_lexeme_is_word_char\n",
+          __LINE__);
+        result = EXIT_FAILURE;
+      }
+    }
+    libxs_lexeme_stream_release(&utf8_stream);
+    libxs_lexicon_destroy(utf8_lexicon);
   }
   free(lexicon_buffer);
   libxs_lexicon_destroy(loaded_lexicon);

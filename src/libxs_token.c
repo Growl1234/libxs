@@ -103,6 +103,66 @@ unsigned int internal_libxs_lexicon_id(libxs_lexicon_t* lexicon,
 }
 
 
+/**
+ * Whether a UTF-8 sequence starting at text[0] encodes a LETTER rather than
+ * punctuation, and how many bytes it spans (via *length).
+ *
+ * A byte-wise "anything >= 0x80 is a letter" rule is not good enough, and the
+ * reason is measurable: an English corpus written with typographic quotes carries
+ * 5133 apostrophes encoded E2 80 99, so that rule silently glues "don" and "t"
+ * into one lexeme and moves every English figure. Conversely ctype alone rejects
+ * both bytes of an umlaut, cutting a German word into pieces -- and the middle
+ * piece was classed as punctuation and hence read as a SENTENCE BOUNDARY, which
+ * corrupts segmentation rather than merely word identity. 9.1% of word tokens in a
+ * German fairy-tale corpus carry an umlaut or sharp s.
+ *
+ * So the test is on the decoded codepoint, kept to the ranges that actually occur
+ * in text corpora: Latin-1 Supplement and Latin Extended-A/B (C3..C9 leads) are
+ * letters apart from the two punctuation slots at U+00AB/U+00BB and the
+ * multiplication/division signs; General Punctuation (E2 80..) is not. Anything
+ * outside the recognized ranges is treated as a letter, which keeps scripts this
+ * function was never taught (Greek, Cyrillic, CJK) working as words.
+ */
+LIBXS_API_INLINE
+int internal_libxs_lexeme_is_letter_utf8(const unsigned char* text,
+  size_t size, int* length)
+{
+  int result = 0;
+  int span = 1;
+  if (NULL != text && 0 < size) {
+    if (0xC0u <= text[0] && text[0] < 0xE0u && 1 < size) {
+      const unsigned long cp = ((unsigned long)(text[0] & 0x1Fu) << 6)
+        | (unsigned long)(text[1] & 0x3Fu);
+      span = 2;
+      /* Latin-1 letters, excluding guillemets and the two math signs. */
+      result = ((0x00AAul == cp || 0x00B5ul == cp || 0x00BAul == cp
+        || (0x00C0ul <= cp && 0x00FFul >= cp && 0x00D7ul != cp
+          && 0x00F7ul != cp)
+        || (0x0100ul <= cp && 0x024Ful >= cp)) != 0) ? 1 : 0;
+    }
+    else if (0xE0u <= text[0] && text[0] < 0xF0u && 2 < size) {
+      const unsigned long cp = ((unsigned long)(text[0] & 0x0Fu) << 12)
+        | ((unsigned long)(text[1] & 0x3Fu) << 6)
+        | (unsigned long)(text[2] & 0x3Fu);
+      span = 3;
+      /* General Punctuation, and the CJK/quotation blocks around it. */
+      result = ((0x2000ul <= cp && 0x206Ful >= cp)
+        || (0x3000ul <= cp && 0x303Ful >= cp)) ? 0 : 1;
+    }
+    else if (0xF0u <= text[0]) {
+      span = 4;
+      result = 1;
+    }
+    else if (0x80u <= text[0]) {
+      /* A stray continuation byte: not a letter, and consumed on its own. */
+      result = 0;
+    }
+  }
+  if (NULL != length) *length = span;
+  return result;
+}
+
+
 LIBXS_API_INLINE
 int internal_libxs_lexeme_is_word_char(unsigned char ch)
 {
@@ -882,6 +942,22 @@ LIBXS_API void libxs_lexeme_stream_release(libxs_lexeme_stream_t* stream)
 }
 
 
+LIBXS_API int libxs_lexeme_is_word_char(const unsigned char* text, size_t size,
+  int* length)
+{
+  int result = 0;
+  if (NULL != text && 0 < size) {
+    if (0 != internal_libxs_lexeme_is_word_char(text[0])) {
+      if (NULL != length) *length = 1;
+      result = 1;
+    }
+    else result = internal_libxs_lexeme_is_letter_utf8(text, size, length);
+  }
+  else if (NULL != length) *length = 1;
+  return result;
+}
+
+
 LIBXS_API int libxs_lexeme_stream_encode(libxs_lexicon_t* lexicon,
   libxs_lexeme_stream_t* stream, const unsigned char* text, size_t size,
   const libxs_lexrule_t* rules, int nrules,
@@ -902,11 +978,22 @@ LIBXS_API int libxs_lexeme_stream_encode(libxs_lexicon_t* lexicon,
     }
     if (text_pos >= size) break;
     token_start = text_pos;
-    if (0 != isalpha(text[text_pos]) || '_' == text[text_pos]) {
-      while (text_pos < size
-        && 0 != internal_libxs_lexeme_is_word_char(text[text_pos]))
-      {
-        ++text_pos;
+    /* A word may also START with a multi-byte letter ("Uber" with an umlaut). */
+    if (0 != isalpha(text[text_pos]) || '_' == text[text_pos]
+      || 0 != internal_libxs_lexeme_is_letter_utf8(text + text_pos,
+           size - text_pos, NULL))
+    {
+      while (text_pos < size) {
+        int span = 1;
+        if (0 != internal_libxs_lexeme_is_word_char(text[text_pos])) {
+          ++text_pos;
+        }
+        else if (0 != internal_libxs_lexeme_is_letter_utf8(text + text_pos,
+          size - text_pos, &span))
+        {
+          text_pos += (size_t)span;
+        }
+        else break;
       }
       token_len = text_pos - token_start;
       normalized_len = internal_libxs_lexeme_normalize_word(normalized,

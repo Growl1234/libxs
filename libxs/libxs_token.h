@@ -328,6 +328,17 @@ LIBXS_API int libxs_lexeme_stream_push(libxs_lexeme_stream_t* stream,
 LIBXS_API void libxs_lexeme_stream_release(libxs_lexeme_stream_t* stream);
 
 /**
+ * Whether the character at text[0] belongs to a word, and how many bytes it spans
+ * (via length, which may be NULL). Handles multi-byte encodings: an encoded letter
+ * such as an umlaut is a word character while encoded punctuation such as a
+ * typographic apostrophe is not, so "don<U+2019>t" stays three lexemes while a
+ * German word stays one. Callers that scan word spans themselves should use this
+ * rather than ctype, which rejects every byte of an encoded letter.
+ */
+LIBXS_API int libxs_lexeme_is_word_char(const unsigned char* text, size_t size,
+  int* length);
+
+/**
  * Encode text into stable lexical token ids. Words are lowercased and then can
  * be rewritten by caller-supplied normalization rules. Numbers are mapped to
  * <num>, punctuation is preserved, and class flags are assigned by built-in
