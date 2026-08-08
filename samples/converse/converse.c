@@ -470,6 +470,8 @@ static const ngram_entry_t* ngram_lookup(libxs_registry_t* model,
 static double ngram_unigram_prior(unsigned int id);
 static int ngram_maxorder(void);
 static int ngram_dedup_scale(void);
+static int ngram_oracle_probe(void);
+static int ngram_select_order(void);
 static int ngram_is_wordchar(unsigned char c);
 static int recomb_compose_on(void);
 static double recomb_word_prob(const unsigned int hist[], int hlen,
@@ -6862,6 +6864,37 @@ static int ngram_dedup_scale(void)
 
 
 /**
+ * Report, per position, the cost of every fixed-order expert and of an oracle
+ * that picks the cheapest. A measurement, not a mechanism: the oracle reads the
+ * truth, so it is an upper bound on what any per-position order selection can
+ * win over the single interpolated model.
+ */
+static int ngram_oracle_probe(void)
+{
+  const char* env = getenv("CONVERSE_NGRAM_ORACLE");
+  return (NULL != env && '0' != env[0] && '\0' != env[0]) ? 1 : 0;
+}
+
+
+/**
+ * Which fixed-order expert the achievable selector falls back to. The best
+ * single order is unit-dependent (order 1 for whole words, order 2 for the
+ * sub-word units), so a hardcoded 1 measures the rule on the wrong expert and
+ * reports a loss where there is a gain.
+ */
+static int ngram_select_order(void)
+{
+  int result = 1;
+  const char* env = getenv("CONVERSE_NGRAM_SELORDER");
+  if (NULL != env && '\0' != *env) {
+    int v = atoi(env);
+    if (v >= 1 && v <= NGRAM_ORDER_MAX) result = v;
+  }
+  return result;
+}
+
+
+/**
  * Skip-gram tier: an auxiliary store keyed by the pair (w[-3], w[-1]) that
  * abstracts over the varying middle slot, so an unseen exact context can still
  * match a seen "w ___ w" pattern (analogic generalization, no parameters).
@@ -8650,12 +8683,29 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   double novel_sat_bits = 0.0;
   long ntrunc = 0, ntrunc_top1 = 0;
   double trunc_bits = 0.0, trunc_bytes = 0.0;
+  double oracle_bits = 0.0;
+  double expert_bits[NGRAM_ORDER_MAX + 1];
+  double expert_bytes[NGRAM_ORDER_MAX + 1];
+  long oracle_pick[NGRAM_ORDER_MAX + 1];
+  long oracle_mixed = 0;
+  long sel_total[NGRAM_ORDER_MAX + 1];
+  long sel_mixed[NGRAM_ORDER_MAX + 1];
+  long sel_low[NGRAM_ORDER_MAX + 1];
+  double sel_bits = 0.0;
+  const int sel_order = ngram_select_order();
+  const int oracle = ngram_oracle_probe();
   const double inv_log2 = 1.0 / log(2.0);
   const void* key = NULL;
   size_t cursor = 0;
   void* value;
   FILE* file;
   if (NULL == model || NULL == corpus || NULL == lexicon) return EXIT_FAILURE;
+  memset(expert_bits, 0, sizeof(expert_bits));
+  memset(expert_bytes, 0, sizeof(expert_bytes));
+  memset(oracle_pick, 0, sizeof(oracle_pick));
+  memset(sel_total, 0, sizeof(sel_total));
+  memset(sel_mixed, 0, sizeof(sel_mixed));
+  memset(sel_low, 0, sizeof(sel_low));
   memset(novel_match, 0, sizeof(novel_match));
   memset(novel_match_bits, 0, sizeof(novel_match_bits));
   memset(novel_match_bytes, 0, sizeof(novel_match_bytes));
@@ -8715,6 +8765,74 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
             double bits = -log(p) * inv_log2;
             int rank, top1 = 0;
             int deep = (matched >= maxorder && hlen >= maxorder) ? 1 : 0;
+            /**
+             * Per-position order selection, bounded from above. Each expert is
+             * the SAME interpolated model given only its last k words of
+             * history, so expert k is what a model capped at order k would say.
+             * The oracle takes the cheapest expert per position: not achievable
+             * (it reads the answer), but it bounds what ANY per-position mixture
+             * of these predictors can win. The byte side found local order
+             * selection worth 0.5-0.8 bits cross-document, and this asks whether
+             * the same headroom exists at the word level before anything is
+             * built to exploit it.
+             */
+            if (0 != oracle) {
+              int k;
+              double best = bits;
+              int bestk = 0;
+              const double w = (curlen > 0) ? (double)curlen : 1.0;
+              for (k = 1; k <= maxorder && k <= hlen; ++k) {
+                double pk = ngramk_prob(model, hist + (hlen - k), k, k, cur);
+                double bk = -log((pk > 0.0) ? pk : 1e-12) * inv_log2;
+                /**
+                 * Per-expert byte denominator: expert k only exists where the
+                 * history reaches k, so dividing its bits by the TOTAL bytes
+                 * would flatter every high order by omitting the positions it
+                 * cannot score. That artifact made order 6 look like the best
+                 * expert when it had simply skipped the hard short-history
+                 * positions.
+                 */
+                expert_bits[k] += bk;
+                expert_bytes[k] += w;
+                if (bk < best) {
+                  best = bk;
+                  bestk = k;
+                }
+              }
+              oracle_bits += best;
+              /* bestk==0 means no single-order expert beat the mixture. */
+              if (0 == bestk) ++oracle_mixed;
+              else ++oracle_pick[bestk];
+              /**
+               * Can an OBSERVABLE feature separate "o1 wins" from "the mixture
+               * wins"? The natural candidate costs nothing: the matched context
+               * length, which the predictor already reports and which does not
+               * read the target. Accumulate the oracle's choice against it, so
+               * the confusion is visible rather than assumed. Secs 16/19/20 each
+               * found a signal that separated classes in hindsight and died when
+               * computed without the answer, so this is checked before any
+               * chooser is written.
+               */
+              { const int mm = (matched < 0) ? 0
+                  : ((matched > NGRAM_ORDER_MAX) ? NGRAM_ORDER_MAX : matched);
+                ++sel_total[mm];
+                if (0 == bestk) ++sel_mixed[mm];
+                else if (1 == bestk) ++sel_low[mm];
+                /**
+                 * The ACHIEVABLE rule the confusion above suggests: take the
+                 * order-1 expert when a short context matched (matched >= 2),
+                 * otherwise keep the mixture. Uses only the reported match
+                 * length, never the target, so unlike the oracle this is a
+                 * mechanism and its bits are honest.
+                 */
+                if (mm >= 2 && hlen >= sel_order) {
+                  double ps = ngramk_prob(model, hist + (hlen - sel_order),
+                    sel_order, sel_order, cur);
+                  sel_bits += -log((ps > 0.0) ? ps : 1e-12) * inv_log2;
+                }
+                else sel_bits += bits;
+              }
+            }
             ++npairs;
             sum_bits += bits;
             sum_bytes += (curlen > 0) ? (double)curlen : 1.0;
@@ -8828,6 +8946,38 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
       100.0 * (double)nshallow / (double)npairs,
       (nshallow > 0) ? 100.0 * (double)nshallow_top1 / (double)nshallow : 0.0,
       (shallow_bytes > 0.0) ? shallow_bits / shallow_bytes : 0.0);
+    if (0 != oracle) {
+      int k;
+      fprintf(stderr, "  order experts (bpc):");
+      for (k = 1; k <= NGRAM_ORDER_MAX; ++k) {
+        if (expert_bytes[k] > 0.0) {
+          fprintf(stderr, " o%d=%.3f", k,
+            expert_bits[k] / expert_bytes[k]);
+        }
+      }
+      fprintf(stderr, " | ORACLE=%.3f (mixed=%.3f)\n",
+        (sum_bytes > 0.0) ? oracle_bits / sum_bytes : 0.0,
+        (sum_bytes > 0.0) ? sum_bits / sum_bytes : 0.0);
+      fprintf(stderr, "  oracle picks:");
+      for (k = 1; k <= NGRAM_ORDER_MAX; ++k) {
+        if (oracle_pick[k] > 0) {
+          fprintf(stderr, " o%d=%.1f%%", k,
+            100.0 * (double)oracle_pick[k] / (double)npairs);
+        }
+      }
+      fprintf(stderr, " mixed=%.1f%%\n",
+        100.0 * (double)oracle_mixed / (double)npairs);
+      fprintf(stderr, "  oracle choice vs matched context (o1-wins%%/mixed%%):");
+      for (k = 0; k <= NGRAM_ORDER_MAX; ++k) {
+        if (sel_total[k] > 0) {
+          fprintf(stderr, " m%d=%.0f/%.0f", k,
+            100.0 * (double)sel_low[k] / (double)sel_total[k],
+            100.0 * (double)sel_mixed[k] / (double)sel_total[k]);
+        }
+      }
+      fprintf(stderr, " | RULE(m>=2 -> o%d)=%.3f\n", sel_order,
+        (sum_bytes > 0.0) ? sel_bits / sum_bytes : 0.0);
+    }
     if (nshallow > 0) {
       int m;
       fprintf(stderr, "  novel bucket by matched context:");
