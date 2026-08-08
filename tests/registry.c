@@ -29,6 +29,9 @@ typedef struct test_struct_key_t {
   double y;
 } test_struct_key_t;
 
+static size_t test_fixup_nvisits;
+static int test_fixup_keysizes;
+
 
 static int test_null_args(void)
 { /* NULL and invalid arguments must not crash and must return NULL / failure */
@@ -66,6 +69,8 @@ static int test_null_args(void)
   /* begin/next: NULL registry */
   TEST_CHECK(NULL == libxs_registry_begin(NULL, NULL, NULL));
   TEST_CHECK(NULL == libxs_registry_next(NULL, NULL, NULL));
+  TEST_CHECK(NULL == libxs_registry_begin_length(NULL, NULL, NULL, NULL));
+  TEST_CHECK(NULL == libxs_registry_next_length(NULL, NULL, NULL, NULL));
 
   /* info: NULL args */
   TEST_CHECK(EXIT_SUCCESS != libxs_registry_info(NULL, &info));
@@ -290,6 +295,352 @@ static int test_struct_key(void)
 }
 
 
+static void test_mixed_fill_key(unsigned char* key, int key_size, int index)
+{ /* deterministic content, unique per (key_size, index) */
+  int i;
+  key[0] = (unsigned char)index;
+  if (1 < key_size) key[1] = (unsigned char)key_size;
+  for (i = 2; i < key_size; ++i) key[i] = (unsigned char)(7 * i + 1);
+}
+
+
+static int test_mixed_key_sizes(void)
+{ /* keys of different length coexist: a shorter key is not the prefix
+     of a longer one, and every operation is length-specific */
+  unsigned char key[LIBXS_REGKEY_MAXSIZE];
+  libxs_registry_info_t info;
+  int i, n;
+  libxs_registry_t* registry = libxs_registry_create();
+  TEST_CHECK(NULL != registry);
+
+  for (i = 0; i < LIBXS_REGKEY_MAXSIZE; ++i) key[i] = (unsigned char)(i + 1);
+
+  /* one buffer registered at every length: each length is a distinct key */
+  for (n = 1; n <= LIBXS_REGKEY_MAXSIZE; ++n) {
+    const int* v = (const int*)libxs_registry_set(registry, key, (size_t)n,
+      &n, sizeof(n), NULL);
+    TEST_CHECK(NULL != v && *v == n);
+  }
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(registry, &info));
+  TEST_CHECK((size_t)LIBXS_REGKEY_MAXSIZE == info.size);
+
+  /* every length resolves to the value stored for exactly that length */
+  for (n = 1; n <= LIBXS_REGKEY_MAXSIZE; ++n) {
+    const int* v = (const int*)libxs_registry_get(registry, key, (size_t)n, NULL);
+    TEST_CHECK(NULL != v && *v == n);
+    TEST_CHECK(0 != libxs_registry_has(registry, key, (size_t)n, NULL));
+    TEST_CHECK(sizeof(int) == libxs_registry_value_size(registry, key, (size_t)n, NULL));
+  }
+
+  /* same length but differing last byte: another distinct key */
+  key[3] = 0xFF;
+  { const int val = -1;
+    const int* v = (const int*)libxs_registry_set(registry, key, 4, &val, sizeof(val), NULL);
+    TEST_CHECK(NULL != v && *v == val);
+    /* the shorter prefix and the original 4-Byte key are unaffected */
+    v = (const int*)libxs_registry_get(registry, key, 3, NULL);
+    TEST_CHECK(NULL != v && 3 == *v);
+    key[3] = 4;
+    v = (const int*)libxs_registry_get(registry, key, 4, NULL);
+    TEST_CHECK(NULL != v && 4 == *v);
+  }
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(registry, &info));
+  TEST_CHECK((size_t)LIBXS_REGKEY_MAXSIZE + 1 == info.size);
+
+  /* get_copy honors the key length */
+  { int out = 0;
+    TEST_CHECK(0 != libxs_registry_get_copy(registry, key, 1, &out, sizeof(out), NULL));
+    TEST_CHECK(1 == out);
+    TEST_CHECK(0 != libxs_registry_get_copy(registry, key, 7, &out, sizeof(out), NULL));
+    TEST_CHECK(7 == out);
+  }
+
+  /* extract removes only the entry matching that length */
+  { int out = 0;
+    TEST_CHECK(0 != libxs_registry_extract(registry, key, 5, &out, sizeof(out), NULL));
+    TEST_CHECK(5 == out);
+    TEST_CHECK(0 == libxs_registry_has(registry, key, 5, NULL));
+    TEST_CHECK(0 != libxs_registry_has(registry, key, 4, NULL));
+    TEST_CHECK(0 != libxs_registry_has(registry, key, 6, NULL));
+  }
+
+  /* remove is length-specific as well */
+  libxs_registry_remove(registry, key, 1, NULL);
+  TEST_CHECK(0 == libxs_registry_has(registry, key, 1, NULL));
+  TEST_CHECK(0 != libxs_registry_has(registry, key, 2, NULL));
+
+  /* re-registering one length does not disturb the neighbouring lengths */
+  { const int val = 4242;
+    TEST_CHECK(NULL != libxs_registry_set(registry, key, 8, &val, sizeof(val), NULL));
+    for (n = 2; n <= LIBXS_REGKEY_MAXSIZE; ++n) {
+      const int* v = (const int*)libxs_registry_get(registry, key, (size_t)n, NULL);
+      if (5 == n) {
+        TEST_CHECK(NULL == v);
+      }
+      else {
+        TEST_CHECK(NULL != v && *v == (8 == n ? val : n));
+      }
+    }
+  }
+
+  libxs_registry_destroy(registry);
+  return EXIT_SUCCESS;
+}
+
+
+static int test_mixed_key_sizes_growth(void)
+{ /* rehash re-probes with the per-entry key length: no entry may be
+     lost or aliased when lengths are mixed across a growing table */
+  unsigned char key[LIBXS_REGKEY_MAXSIZE];
+  libxs_registry_info_t info;
+  int s, j, count = 0;
+  libxs_registry_t* registry = libxs_registry_create();
+  TEST_CHECK(NULL != registry);
+  memset(key, 0, sizeof(key));
+
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(registry, &info));
+  { const size_t initial_cap = info.capacity;
+    for (s = 1; s <= LIBXS_REGKEY_MAXSIZE; ++s) {
+      const int m = (1 < s) ? 20 : 8; /* 1-Byte keys: only 256 exist */
+      for (j = 0; j < m; ++j) {
+        const int val = s * 1000 + j;
+        const int* v;
+        test_mixed_fill_key(key, s, j);
+        v = (const int*)libxs_registry_set(registry, key, (size_t)s,
+          &val, sizeof(val), NULL);
+        TEST_CHECK(NULL != v && *v == val);
+        ++count;
+      }
+    }
+    TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(registry, &info));
+    TEST_CHECK(info.size == (size_t)count); /* no key aliased another */
+    TEST_CHECK(info.capacity > initial_cap); /* table has grown */
+  }
+
+  /* every entry survives the rehash with its own length and value */
+  for (s = 1; s <= LIBXS_REGKEY_MAXSIZE; ++s) {
+    const int m = (1 < s) ? 20 : 8;
+    for (j = 0; j < m; ++j) {
+      const int* v;
+      test_mixed_fill_key(key, s, j);
+      v = (const int*)libxs_registry_get(registry, key, (size_t)s, NULL);
+      TEST_CHECK(NULL != v && *v == (s * 1000 + j));
+    }
+  }
+
+  /* a truncated view of a longer key must not resolve to that key */
+  for (s = 3; s <= LIBXS_REGKEY_MAXSIZE; ++s) {
+    const int* v;
+    test_mixed_fill_key(key, s, 0);
+    v = (const int*)libxs_registry_get(registry, key, (size_t)s - 1, NULL);
+    /* bytes match the (s-1)-length key only if its length byte agrees */
+    TEST_CHECK(NULL == v);
+  }
+
+  libxs_registry_destroy(registry);
+  return EXIT_SUCCESS;
+}
+
+
+static int test_mixed_key_sizes_tombstone(void)
+{ /* tombstones left behind by one key length must not shadow or alias
+     entries probed with a different length */
+  unsigned char key[LIBXS_REGKEY_MAXSIZE];
+  const int nsize = 32, nidx = 8;
+  int s, j;
+  libxs_registry_t* registry = libxs_registry_create();
+  TEST_CHECK(NULL != registry);
+  memset(key, 0, sizeof(key));
+
+  for (s = 1; s <= nsize; ++s) {
+    for (j = 0; j < nidx; ++j) {
+      const int val = s * 1000 + j;
+      test_mixed_fill_key(key, s, j);
+      TEST_CHECK(NULL != libxs_registry_set(registry, key, (size_t)s,
+        &val, sizeof(val), NULL));
+    }
+  }
+
+  /* remove all entries of even length: leaves tombstones throughout */
+  for (s = 2; s <= nsize; s += 2) {
+    for (j = 0; j < nidx; ++j) {
+      test_mixed_fill_key(key, s, j);
+      libxs_registry_remove(registry, key, (size_t)s, NULL);
+    }
+  }
+
+  /* odd-length entries are untouched, even-length ones are gone */
+  for (s = 1; s <= nsize; ++s) {
+    for (j = 0; j < nidx; ++j) {
+      const int* v;
+      test_mixed_fill_key(key, s, j);
+      v = (const int*)libxs_registry_get(registry, key, (size_t)s, NULL);
+      if (0 == (s % 2)) {
+        TEST_CHECK(NULL == v);
+      }
+      else {
+        TEST_CHECK(NULL != v && *v == (s * 1000 + j));
+      }
+    }
+  }
+
+  /* insert fresh even-length keys: probing must traverse the tombstones */
+  for (s = 2; s <= nsize; s += 2) {
+    for (j = 100; j < 100 + nidx; ++j) {
+      const int val = s * 1000 + j;
+      const int* v;
+      test_mixed_fill_key(key, s, j);
+      v = (const int*)libxs_registry_set(registry, key, (size_t)s,
+        &val, sizeof(val), NULL);
+      TEST_CHECK(NULL != v && *v == val);
+    }
+  }
+
+  /* final state: odd 0..7, even 100..107, and nothing else */
+  for (s = 1; s <= nsize; ++s) {
+    for (j = 0; j < nidx; ++j) {
+      const int* v;
+      test_mixed_fill_key(key, s, j);
+      v = (const int*)libxs_registry_get(registry, key, (size_t)s, NULL);
+      TEST_CHECK((0 == (s % 2)) ? (NULL == v) : (NULL != v && *v == (s * 1000 + j)));
+      test_mixed_fill_key(key, s, j + 100);
+      v = (const int*)libxs_registry_get(registry, key, (size_t)s, NULL);
+      TEST_CHECK((0 == (s % 2)) ? (NULL != v && *v == (s * 1000 + j + 100)) : (NULL == v));
+    }
+  }
+
+  libxs_registry_destroy(registry);
+  return EXIT_SUCCESS;
+}
+
+
+static int test_mixed_key_sizes_cache(void)
+{ /* the TLS cache keys on the key length as well: a cached entry must
+     never be served for the same bytes read at a different length */
+  unsigned char key[LIBXS_REGKEY_MAXSIZE];
+  int i, n;
+  libxs_registry_t* registry = libxs_registry_create();
+  TEST_CHECK(NULL != registry);
+
+  for (i = 0; i < LIBXS_REGKEY_MAXSIZE; ++i) key[i] = (unsigned char)(i + 1);
+  for (n = 1; n <= LIBXS_REGKEY_MAXSIZE; ++n) {
+    TEST_CHECK(NULL != libxs_registry_set(registry, key, (size_t)n,
+      &n, sizeof(n), NULL));
+  }
+
+  /* hammer alternating lengths: more distinct keys than cache entries,
+     so the cache both hits and evicts throughout */
+  for (i = 0; i < 100; ++i) {
+    for (n = 1; n <= LIBXS_REGKEY_MAXSIZE; ++n) {
+      const int* v = (const int*)libxs_registry_get(registry, key, (size_t)n, NULL);
+      TEST_CHECK(NULL != v && *v == n);
+    }
+  }
+
+  /* immediate neighbours: a hit for length n must not answer length n+1 */
+  for (n = 1; n < LIBXS_REGKEY_MAXSIZE; ++n) {
+    const int* a = (const int*)libxs_registry_get(registry, key, (size_t)n, NULL);
+    const int* b = (const int*)libxs_registry_get(registry, key, (size_t)n + 1, NULL);
+    TEST_CHECK(NULL != a && *a == n);
+    TEST_CHECK(NULL != b && *b == (n + 1));
+    TEST_CHECK(a != b);
+  }
+
+  /* invalidation is length-specific: removing one length must not drop
+     the cached values of the surrounding lengths */
+  libxs_registry_remove(registry, key, 3, NULL);
+  TEST_CHECK(NULL == libxs_registry_get(registry, key, 3, NULL));
+  { const int* v = (const int*)libxs_registry_get(registry, key, 2, NULL);
+    TEST_CHECK(NULL != v && 2 == *v);
+    v = (const int*)libxs_registry_get(registry, key, 4, NULL);
+    TEST_CHECK(NULL != v && 4 == *v);
+  }
+
+  libxs_registry_destroy(registry);
+  return EXIT_SUCCESS;
+}
+
+
+static int test_mixed_key_sizes_iteration(void)
+{ /* iteration must yield each entry's own key size, so a mixed-length
+     registry can be enumerated without knowing the lengths up front */
+  unsigned char key[LIBXS_REGKEY_MAXSIZE];
+  int visited[LIBXS_REGKEY_MAXSIZE + 1];
+  int s, count = 0;
+  libxs_registry_t* registry = libxs_registry_create();
+  TEST_CHECK(NULL != registry);
+  memset(key, 0, sizeof(key));
+  memset(visited, 0, sizeof(visited));
+
+  for (s = 1; s <= LIBXS_REGKEY_MAXSIZE; ++s) {
+    test_mixed_fill_key(key, s, 0);
+    TEST_CHECK(NULL != libxs_registry_set(registry, key, (size_t)s,
+      &s, sizeof(s), NULL));
+  }
+
+  { const void* regkey = NULL;
+    size_t regkey_size = 0, cursor = 0;
+    const void* entry = libxs_registry_begin_length(
+      registry, &regkey, &regkey_size, &cursor);
+    for (; NULL != entry;
+         entry = libxs_registry_next_length(registry, &regkey, &regkey_size, &cursor))
+    {
+      /* the reported size identifies the entry, and re-reading the key at
+         exactly that size must round-trip back to the very same value */
+      const int val = *(const int*)entry;
+      TEST_CHECK(0 < regkey_size && regkey_size <= LIBXS_REGKEY_MAXSIZE);
+      TEST_CHECK(val == (int)regkey_size);
+      TEST_CHECK(0 == visited[regkey_size]);
+      visited[regkey_size] = 1;
+      { const int* v = (const int*)libxs_registry_get(
+          registry, regkey, regkey_size, NULL);
+        TEST_CHECK(NULL != v && *v == val);
+      }
+      ++count;
+    }
+  }
+  TEST_CHECK(LIBXS_REGKEY_MAXSIZE == count);
+  for (s = 1; s <= LIBXS_REGKEY_MAXSIZE; ++s) TEST_CHECK(1 == visited[s]);
+
+  /* key_size argument is optional, and the plain flavor still works */
+  { const void* regkey = NULL;
+    size_t cursor = 0;
+    TEST_CHECK(NULL != libxs_registry_begin_length(registry, &regkey, NULL, &cursor));
+    TEST_CHECK(NULL != libxs_registry_begin_length(registry, NULL, NULL, &cursor));
+    TEST_CHECK(NULL != libxs_registry_begin(registry, &regkey, &cursor));
+  }
+
+  /* empty registry: key size is cleared, not left stale */
+  { const void* regkey = &key;
+    size_t regkey_size = 123, cursor = 0;
+    libxs_registry_t* empty = libxs_registry_create();
+    TEST_CHECK(NULL != empty);
+    TEST_CHECK(NULL == libxs_registry_begin_length(empty, &regkey, &regkey_size, &cursor));
+    TEST_CHECK(NULL == regkey);
+    TEST_CHECK(0 == regkey_size);
+    /* NULL registry must not crash either */
+    TEST_CHECK(NULL == libxs_registry_begin_length(NULL, NULL, NULL, NULL));
+    TEST_CHECK(NULL == libxs_registry_next_length(NULL, NULL, NULL, NULL));
+    libxs_registry_destroy(empty);
+  }
+
+  /* iteration past the last entry clears the reported key size */
+  { const void* regkey = NULL;
+    size_t regkey_size = 0, cursor = 0;
+    const void* entry = libxs_registry_begin_length(
+      registry, &regkey, &regkey_size, &cursor);
+    while (NULL != entry) {
+      entry = libxs_registry_next_length(registry, &regkey, &regkey_size, &cursor);
+    }
+    TEST_CHECK(NULL == regkey);
+    TEST_CHECK(0 == regkey_size);
+  }
+
+  libxs_registry_destroy(registry);
+  return EXIT_SUCCESS;
+}
+
+
 static int test_tls_cache(void)
 { /* repeated get should be served from TLS cache; free invalidates cache */
   const int key = 99;
@@ -409,7 +760,7 @@ static int test_has(void)
   TEST_CHECK(0 == libxs_registry_has(registry, NULL, sizeof(key), NULL));
   TEST_CHECK(0 == libxs_registry_has(registry, &key, 0, NULL));
 
-  /* remove → no longer found */
+  /* remove -> no longer found */
   libxs_registry_remove(registry, &key, sizeof(key), NULL);
   TEST_CHECK(0 == libxs_registry_has(registry, &key, sizeof(key), NULL));
 
@@ -431,7 +782,7 @@ static int test_value_size(void)
   TEST_CHECK(NULL != libxs_registry_set(registry, &key, sizeof(key), small, sizeof(small), NULL));
   TEST_CHECK(sizeof(small) == libxs_registry_value_size(registry, &key, sizeof(key), NULL));
 
-  /* auto-realloc to larger → value_size grows */
+  /* auto-realloc to larger -> value_size grows */
   TEST_CHECK(NULL != libxs_registry_set(registry, &key, sizeof(key), large, sizeof(large), NULL));
   TEST_CHECK(sizeof(large) == libxs_registry_value_size(registry, &key, sizeof(key), NULL));
 
@@ -561,6 +912,102 @@ static int test_save_load_empty(void)
 }
 
 
+static void test_fixup_noop(void* value, const void* key, size_t key_size,
+  size_t value_size, void* udata)
+{ /* record that fixup sees the per-entry key length, not a fixed one */
+  const unsigned char* k = (const unsigned char*)key;
+  LIBXS_UNUSED(value); LIBXS_UNUSED(value_size); LIBXS_UNUSED(udata);
+  ++test_fixup_nvisits;
+  /* test_mixed_fill_key encodes the key length in the second Byte */
+  if (1 < key_size && k[1] != (unsigned char)key_size) test_fixup_keysizes = 1;
+}
+
+
+static int test_mixed_key_sizes_save_load(void)
+{ /* the serialized keys section has a per-entry stride (length-prefixed):
+     a fixed-stride assumption would misplace the values section */
+  unsigned char key[LIBXS_REGKEY_MAXSIZE];
+  char payload[128];
+  libxs_registry_info_t info;
+  size_t buf_size = 0;
+  void* buf;
+  int s, i;
+  libxs_registry_t* registry = libxs_registry_create();
+  libxs_registry_t* loaded;
+  TEST_CHECK(NULL != registry);
+  memset(key, 0, sizeof(key));
+  for (i = 0; i < (int)sizeof(payload); ++i) payload[i] = (char)(i + 1);
+
+  /* mix key lengths AND value sizes so both inline and heap values occur */
+  for (s = 1; s <= LIBXS_REGKEY_MAXSIZE; ++s) {
+    const size_t vsize = (0 == (s % 3)) ? sizeof(payload) : sizeof(int);
+    test_mixed_fill_key(key, s, 0);
+    if (sizeof(int) == vsize) {
+      TEST_CHECK(NULL != libxs_registry_set(registry, key, (size_t)s,
+        &s, sizeof(int), NULL));
+    }
+    else { /* first Byte encodes the key length to identify the entry */
+      payload[0] = (char)s;
+      TEST_CHECK(NULL != libxs_registry_set(registry, key, (size_t)s,
+        payload, vsize, NULL));
+    }
+  }
+
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_save(registry, NULL, &buf_size));
+  TEST_CHECK(0 < buf_size);
+  buf = malloc(buf_size);
+  TEST_CHECK(NULL != buf);
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_save(registry, buf, &buf_size));
+
+  loaded = libxs_registry_load(buf, buf_size, NULL, NULL);
+  TEST_CHECK(NULL != loaded);
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(loaded, &info));
+  TEST_CHECK((size_t)LIBXS_REGKEY_MAXSIZE == info.size);
+
+  /* every key length round-trips with its own length and value */
+  for (s = 1; s <= LIBXS_REGKEY_MAXSIZE; ++s) {
+    const size_t vsize = (0 == (s % 3)) ? sizeof(payload) : sizeof(int);
+    const void* v;
+    test_mixed_fill_key(key, s, 0);
+    v = libxs_registry_get(loaded, key, (size_t)s, NULL);
+    TEST_CHECK(NULL != v);
+    TEST_CHECK(vsize == libxs_registry_value_size(loaded, key, (size_t)s, NULL));
+    if (sizeof(int) == vsize) {
+      TEST_CHECK(*(const int*)v == s);
+    }
+    else {
+      TEST_CHECK((char)s == *(const char*)v);
+      TEST_CHECK(0 == memcmp((const char*)v + 1, payload + 1, vsize - 1));
+    }
+  }
+
+  /* a length that was never registered must not resolve */
+  test_mixed_fill_key(key, LIBXS_REGKEY_MAXSIZE, 1);
+  TEST_CHECK(NULL == libxs_registry_get(loaded, key, LIBXS_REGKEY_MAXSIZE, NULL));
+
+  libxs_registry_destroy(loaded);
+
+  /* same round-trip through the fixup path (heap-allocates every entry) */
+  test_fixup_nvisits = 0;
+  test_fixup_keysizes = 0;
+  loaded = libxs_registry_load(buf, buf_size, test_fixup_noop, NULL);
+  TEST_CHECK(NULL != loaded);
+  TEST_CHECK(EXIT_SUCCESS == libxs_registry_info(loaded, &info));
+  TEST_CHECK((size_t)LIBXS_REGKEY_MAXSIZE == info.size);
+  TEST_CHECK((size_t)LIBXS_REGKEY_MAXSIZE == test_fixup_nvisits);
+  TEST_CHECK(0 == test_fixup_keysizes); /* fixup saw each entry's own length */
+  for (s = 1; s <= LIBXS_REGKEY_MAXSIZE; ++s) {
+    test_mixed_fill_key(key, s, 0);
+    TEST_CHECK(NULL != libxs_registry_get(loaded, key, (size_t)s, NULL));
+  }
+
+  libxs_registry_destroy(loaded);
+  free(buf);
+  libxs_registry_destroy(registry);
+  return EXIT_SUCCESS;
+}
+
+
 static int test_load_invalid(void)
 { /* invalid buffers must return NULL */
   const char garbage[] = "not a registry";
@@ -645,6 +1092,11 @@ int main(int argc, char* argv[])
   if (EXIT_SUCCESS == result) result = test_info();
   if (EXIT_SUCCESS == result) result = test_growth();
   if (EXIT_SUCCESS == result) result = test_struct_key();
+  if (EXIT_SUCCESS == result) result = test_mixed_key_sizes();
+  if (EXIT_SUCCESS == result) result = test_mixed_key_sizes_growth();
+  if (EXIT_SUCCESS == result) result = test_mixed_key_sizes_tombstone();
+  if (EXIT_SUCCESS == result) result = test_mixed_key_sizes_cache();
+  if (EXIT_SUCCESS == result) result = test_mixed_key_sizes_iteration();
   if (EXIT_SUCCESS == result) result = test_tls_cache();
   if (EXIT_SUCCESS == result) result = test_tls_cache_growth();
   if (EXIT_SUCCESS == result) result = test_multiple_registries();
@@ -653,6 +1105,7 @@ int main(int argc, char* argv[])
   if (EXIT_SUCCESS == result) result = test_save_load();
   if (EXIT_SUCCESS == result) result = test_save_load_inline();
   if (EXIT_SUCCESS == result) result = test_save_load_empty();
+  if (EXIT_SUCCESS == result) result = test_mixed_key_sizes_save_load();
   if (EXIT_SUCCESS == result) result = test_load_invalid();
   if (EXIT_SUCCESS == result) result = test_save_load_fixup();
 

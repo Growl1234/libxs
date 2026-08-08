@@ -106,6 +106,7 @@ libxs_kdtree_nearest
 libxs_kdtree_partition
 libxs_lcm
 libxs_lexeme_info
+libxs_lexeme_is_word_char
 libxs_lexeme_stream_encode
 libxs_lexeme_stream_init
 libxs_lexeme_stream_push
@@ -205,6 +206,7 @@ libxs_predict_set_weights
 libxs_primes_u32
 libxs_product_limit
 libxs_registry_begin
+libxs_registry_begin_length
 libxs_registry_create
 libxs_registry_destroy
 libxs_registry_extract
@@ -215,6 +217,7 @@ libxs_registry_info
 libxs_registry_load
 libxs_registry_lock
 libxs_registry_next
+libxs_registry_next_length
 libxs_registry_remove
 libxs_registry_save
 libxs_registry_set

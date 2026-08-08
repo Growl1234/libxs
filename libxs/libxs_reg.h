@@ -52,6 +52,9 @@ LIBXS_API libxs_lock_t* libxs_registry_lock(libxs_registry_t* registry);
  * Enumerate registry. Caller must initialize *cursor to 0 before
  * the first call. Returns the value pointer of the first occupied
  * entry, or NULL when the registry is empty.
+ * Only the first key_size Bytes of *key are meaningful; a registry
+ * holding keys of differing size must be enumerated with
+ * libxs_registry_begin_length to recover each entry's key size.
  */
 LIBXS_API void* libxs_registry_begin(const libxs_registry_t* registry,
   const void** key, size_t* cursor);
@@ -62,6 +65,18 @@ LIBXS_API void* libxs_registry_begin(const libxs_registry_t* registry,
  */
 LIBXS_API void* libxs_registry_next(const libxs_registry_t* registry,
   const void** key, size_t* cursor);
+
+/**
+ * Like libxs_registry_begin, but also yields the size of the entry's key
+ * (key_size may be NULL). Needed when a single registry holds keys of
+ * differing size, since the Bytes of *key beyond key_size are undefined.
+ */
+LIBXS_API void* libxs_registry_begin_length(const libxs_registry_t* registry,
+  const void** key, size_t* key_size, size_t* cursor);
+
+/** Like libxs_registry_next, but also yields the entry's key size. */
+LIBXS_API void* libxs_registry_next_length(const libxs_registry_t* registry,
+  const void** key, size_t* key_size, size_t* cursor);
 
 /**
  * Register user-defined key-value pair; value can be queried (libxs_registry_get).

@@ -53,6 +53,10 @@
         PUBLIC :: libxs_registry_has
         PUBLIC :: libxs_registry_remove
         PUBLIC :: libxs_registry_extract
+        PUBLIC :: libxs_registry_begin
+        PUBLIC :: libxs_registry_next
+        PUBLIC :: libxs_registry_begin_length
+        PUBLIC :: libxs_registry_next_length
         PUBLIC :: libxs_registry_info
         PUBLIC :: libxs_memcmp
         PUBLIC :: libxs_matcopy, libxs_matcopy_task
@@ -572,6 +576,48 @@
      &      value_size
             TYPE(C_PTR), INTENT(IN), VALUE :: lock
             INTEGER(C_INT) :: internal_registry_extract_c
+          END FUNCTION
+          !> Enumerate registry; initialize cursor to 0 before the
+          !> first call. Returns C_NULL_PTR when the registry is empty.
+          !> Only the first key_size Bytes of key are meaningful; use
+          !> libxs_registry_begin_length when key sizes differ.
+          FUNCTION libxs_registry_begin(registry,                       &
+     &    key, cursor) BIND(C)
+            IMPORT :: C_PTR, C_SIZE_T
+            TYPE(C_PTR), INTENT(IN), VALUE :: registry
+            TYPE(C_PTR), INTENT(OUT) :: key
+            INTEGER(C_SIZE_T), INTENT(INOUT) :: cursor
+            TYPE(C_PTR) :: libxs_registry_begin
+          END FUNCTION
+          !> Advance to the next entry; C_NULL_PTR when complete.
+          FUNCTION libxs_registry_next(registry,                        &
+     &    key, cursor) BIND(C)
+            IMPORT :: C_PTR, C_SIZE_T
+            TYPE(C_PTR), INTENT(IN), VALUE :: registry
+            TYPE(C_PTR), INTENT(OUT) :: key
+            INTEGER(C_SIZE_T), INTENT(INOUT) :: cursor
+            TYPE(C_PTR) :: libxs_registry_next
+          END FUNCTION
+          !> Like libxs_registry_begin, but also yields the size of
+          !> the entry's key (required for mixed key sizes).
+          FUNCTION libxs_registry_begin_length(registry,                &
+     &    key, key_size, cursor) BIND(C)
+            IMPORT :: C_PTR, C_SIZE_T
+            TYPE(C_PTR), INTENT(IN), VALUE :: registry
+            TYPE(C_PTR), INTENT(OUT) :: key
+            INTEGER(C_SIZE_T), INTENT(OUT) :: key_size
+            INTEGER(C_SIZE_T), INTENT(INOUT) :: cursor
+            TYPE(C_PTR) :: libxs_registry_begin_length
+          END FUNCTION
+          !> Like libxs_registry_next, but also yields the key size.
+          FUNCTION libxs_registry_next_length(registry,                 &
+     &    key, key_size, cursor) BIND(C)
+            IMPORT :: C_PTR, C_SIZE_T
+            TYPE(C_PTR), INTENT(IN), VALUE :: registry
+            TYPE(C_PTR), INTENT(OUT) :: key
+            INTEGER(C_SIZE_T), INTENT(OUT) :: key_size
+            INTEGER(C_SIZE_T), INTENT(INOUT) :: cursor
+            TYPE(C_PTR) :: libxs_registry_next_length
           END FUNCTION
           !> Query registry capacity and usage.
           FUNCTION libxs_registry_info(registry,                        &

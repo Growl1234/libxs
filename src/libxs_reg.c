@@ -536,8 +536,8 @@ LIBXS_API int libxs_registry_extract(libxs_registry_t* registry,
 }
 
 
-LIBXS_API void* libxs_registry_begin(const libxs_registry_t* registry,
-  const void** key, size_t* cursor)
+LIBXS_API void* libxs_registry_begin_length(const libxs_registry_t* registry,
+  const void** key, size_t* key_size, size_t* cursor)
 {
   void* result = NULL;
   if (NULL != registry && NULL != registry->entries) {
@@ -545,6 +545,7 @@ LIBXS_API void* libxs_registry_begin(const libxs_registry_t* registry,
     for (i = 0; i < registry->capacity; ++i) {
       if (INTERNAL_REG_USED == registry->entries[i].state) {
         if (NULL != key) *key = registry->entries[i].key;
+        if (NULL != key_size) *key_size = registry->entries[i].key_size;
         if (NULL != cursor) *cursor = (size_t)i;
         result = internal_value_ptr(registry->entries + i);
         break;
@@ -553,14 +554,15 @@ LIBXS_API void* libxs_registry_begin(const libxs_registry_t* registry,
   }
   if (NULL == result) {
     if (NULL != key) *key = NULL;
+    if (NULL != key_size) *key_size = 0;
     if (NULL != cursor) *cursor = 0;
   }
   return result;
 }
 
 
-LIBXS_API void* libxs_registry_next(const libxs_registry_t* registry,
-  const void** key, size_t* cursor)
+LIBXS_API void* libxs_registry_next_length(const libxs_registry_t* registry,
+  const void** key, size_t* key_size, size_t* cursor)
 {
   void* result = NULL;
   if (NULL != registry && NULL != registry->entries && NULL != cursor) {
@@ -568,16 +570,32 @@ LIBXS_API void* libxs_registry_next(const libxs_registry_t* registry,
     for (i = (unsigned int)(*cursor) + 1; i < registry->capacity; ++i) {
       if (INTERNAL_REG_USED == registry->entries[i].state) {
         if (NULL != key) *key = registry->entries[i].key;
+        if (NULL != key_size) *key_size = registry->entries[i].key_size;
         *cursor = (size_t)i;
         result = internal_value_ptr(registry->entries + i);
         break;
       }
     }
   }
-  if (NULL == result && NULL != key) {
-    *key = NULL;
+  if (NULL == result) {
+    if (NULL != key) *key = NULL;
+    if (NULL != key_size) *key_size = 0;
   }
   return result;
+}
+
+
+LIBXS_API void* libxs_registry_begin(const libxs_registry_t* registry,
+  const void** key, size_t* cursor)
+{
+  return libxs_registry_begin_length(registry, key, NULL, cursor);
+}
+
+
+LIBXS_API void* libxs_registry_next(const libxs_registry_t* registry,
+  const void** key, size_t* cursor)
+{
+  return libxs_registry_next_length(registry, key, NULL, cursor);
 }
 
 
