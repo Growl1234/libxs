@@ -898,11 +898,13 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
               size_t key_size = 0;
               unsigned int seq;
               const size_t shape = (size_t)len;
+              libxs_fprint_t full;
               memset(&entry, 0, sizeof(entry));
-              if (EXIT_SUCCESS == libxs_fprint(&entry.fprint,
+              if (EXIT_SUCCESS == libxs_fprint(&full,
                 LIBXS_DATATYPE_U8, text + sent_start, 1,
                 &shape, NULL, FPRINT_ORDER, 0, 0, 0))
               {
+                corpus_fprint_pack(&entry.fprint, &full);
                 entry.text_len = len;
                 memcpy(entry.text, text + sent_start, (size_t)len);
                 entry.connector = CONN_NEWLINE;
@@ -1042,7 +1044,7 @@ static int compose_document(const libxs_registry_t* corpus,
   { unsigned char prev_conn = CONN_PERIOD;
     const corpus_entry_t* used[256];
     int nused = 0;
-    libxs_fprint_t prev_fprint;
+    corpus_fprint_t prev_fprint;
     int have_prev = 0;
     double alpha = 0.3;
     for (step = 0; step < budget; ++step) {
@@ -1084,7 +1086,12 @@ static int compose_document(const libxs_registry_t* corpus,
               score *= (1.0 - 0.25 * lex_score);
             }
             if (0 != have_prev) {
-              score += alpha * compose_distance(&e->fprint, &prev_fprint);
+              /* Stored fingerprints are the compact projection; widen both to
+                 the library form for the distance. */
+              libxs_fprint_t ea, pb;
+              corpus_fprint_unpack(&ea, &e->fprint);
+              corpus_fprint_unpack(&pb, &prev_fprint);
+              score += alpha * compose_distance(&ea, &pb);
             }
             if (score < best_score) {
               best_score = score;

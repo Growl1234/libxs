@@ -5,6 +5,9 @@
 #include <libxs/libxs_perm.h>
 #include <libxs/libxs_str.h>
 #include <libxs/libxs_mem.h>
+#include <libxs/libxs_hash.h>
+#include <libxs/libxs_malloc.h>
+#include <libxs/libxs_timer.h>
 
 #include "converse.h"
 #include "converse_hier.h"
@@ -13,6 +16,7 @@
 #include <unistd.h>
 
 #define RESPONSE_BUDGET 1
+#define CONVERSE_STAGE_MAX 12
 #define ANSWER_MAX 4
 #define GEN_CAND_MAX 8
 #define ANSWER_MIN_SCORE 0.35
@@ -343,6 +347,8 @@ static int corpus_entry_same_section(const corpus_entry_t* lhs,
   size_t lhs_size, const corpus_entry_t* rhs);
 static int corpus_store_entry(libxs_registry_t* corpus,
   const corpus_entry_t* entry);
+static int corpus_spatial_build(libxs_spatial_t* sp,
+  const libxs_registry_t* corpus);
 static int answer_query_section(const char* query_text, size_t query_len,
   char* title, int title_size);
 static int corpus_entry_section_match(const corpus_entry_t* entry,
@@ -471,6 +477,11 @@ static double ngram_unigram_prior(unsigned int id);
 static int ngram_maxorder(void);
 static int ngram_dedup_scale(void);
 static int ngram_oracle_probe(void);
+static unsigned int corpus_chain_max(void);
+static int converse_predict_on(void);
+static void converse_stage_begin(void);
+static void converse_stage_end(const char* name);
+static void converse_stage_report(void);
 static int ngram_select_order(void);
 static int ngram_bank_probe(void);
 static double ngram_bank_rate(void);
@@ -495,6 +506,11 @@ static long answer_hier_nreorder = 0;
 static long answer_hier_nchanged = 0;
 static int converse_profile_override = -1;
 static int converse_order_max = 0;
+static const char* converse_stage_name[CONVERSE_STAGE_MAX];
+static double converse_stage_time[CONVERSE_STAGE_MAX];
+static int converse_stage_count = 0;
+static long corpus_chain_dropped = 0;
+static libxs_timer_tick_t converse_stage_tick = 0;
 static bpe_symbol_t* bpe_symbols = NULL;
 static int bpe_nsymbols = 0;
 static int bpe_cap_symbols = 0;
@@ -564,13 +580,13 @@ static void rerank_complete(libxs_registry_t* ngram,
   const libxs_predict_t* reranker, libxs_lexicon_t* lexicon,
   const libxs_lexrule_t* rules, int nrules, int order, const char* text,
   int text_len);
-static double converse_score(const libxs_fprint_t* candidate,
-  const libxs_fprint_t* query, const libxs_fprint_t* prev);
+static double converse_score(const corpus_fprint_t* candidate,
+  const libxs_fprint_t* query, const corpus_fprint_t* prev);
 static int entry_used(const corpus_entry_t* e,
   const corpus_entry_t* const used[], int nused);
 static const corpus_entry_t* select_best(void* const candidates[],
   int ncandidates, const corpus_entry_t* const used[], int nused,
-  const libxs_fprint_t* query, const libxs_fprint_t* prev,
+  const libxs_fprint_t* query, const corpus_fprint_t* prev,
   int require_scale, unsigned char preferred_scale);
 static uint64_t query_hilbert_code(const libxs_fprint_t* fp);
 static int respond(const libxs_spatial_t* spatial,
@@ -656,7 +672,8 @@ int main(int argc, char* argv[])
       "  CONVERSE_RECOMB=N        recombination probe over N sentences.\n"
       "  CONVERSE_RECOMB_REFERENT=1 test whether a pivot denotes one thing.\n"
       "  CONVERSE_RECOMB_COMPOSE=1 -c may synthesize when replay fails.\n"
-      "  CONVERSE_NO_PREDICT=1    skip answer-ranker training (large corpora).\n",
+      "  CONVERSE_PREDICT=1       train the answer ranker (off by default:\n"
+      "                           40%% of wall, no measured BPC or QA change).\n",
       argv[0], RESPONSE_BUDGET, NGRAM_ORDER_MAX, NGRAM_ORDER_MAX);
     answer_predict_profile_list(stderr);
     return EXIT_FAILURE;
@@ -841,6 +858,7 @@ int main(int argc, char* argv[])
   if (0 == warm_start) {
     int basename_index;
     int have_positional = (i < argc) ? 1 : 0;
+    converse_stage_begin();
     for (basename_index = 0; basename_index < nbasenames; ++basename_index) {
       if (EXIT_SUCCESS != corpus_ingest_basename(corpus,
         basenames[basename_index], lexicon, rules, nrules)
@@ -862,8 +880,10 @@ int main(int argc, char* argv[])
     for (; i < argc; ++i) {
       corpus_ingest_file(corpus, argv[i], lexicon, rules, nrules);
     }
+    converse_stage_end("ingest");
     corpus_save(corpus);
     converse_lexicon_save(lexicon);
+    converse_stage_end("save");
     /**
      * The answer ranker is skippable, and on a large corpus it has to be. It is
      * the only consumer of this model, it degrades to the unmodified base score
@@ -873,7 +893,7 @@ int main(int argc, char* argv[])
      * reach the model that the recombination and byte-model tracks actually need.
      * CONVERSE_NO_PREDICT=1 trades a ranking refinement for reaching those tracks.
      */
-    if (NULL == getenv("CONVERSE_NO_PREDICT")) {
+    if (0 != converse_predict_on()) {
       libxs_predict_t* trained = converse_predict_train(corpus,
         predict_profile);
       if (NULL != trained) {
@@ -881,22 +901,34 @@ int main(int argc, char* argv[])
         answer_model = trained;
         converse_predict_save(answer_model);
       }
+      converse_stage_end("predict_train");
     }
-    else fprintf(stderr, "predict: training skipped (CONVERSE_NO_PREDICT)\n");
+    else {
+      fprintf(stderr, "predict: training skipped"
+        " (set CONVERSE_PREDICT=1 to enable)\n");
+    }
   }
   else fprintf(stderr, "warm start: reusing %s\n", converse_path_corpus);
   free(basenames);
   answer_relation_facts_build(corpus);
   answer_relation_facts_report(stderr);
+  converse_stage_end("f_relation");
   answer_identity_facts_build(corpus);
   answer_identity_facts_report(stderr);
+  converse_stage_end("f_identity");
   answer_describe_facts_build(corpus);
   answer_describe_facts_report(stderr);
+  converse_stage_end("f_describe");
   answer_docdef_facts_build(corpus);
   answer_docdef_facts_report(stderr);
+  converse_stage_end("f_docdef");
 
   libxs_registry_info(corpus, &rinfo);
   fprintf(stderr, "corpus: %lu sentences\n", (unsigned long)rinfo.size);
+  if (corpus_chain_dropped > 0) {
+    fprintf(stderr, "  fingerprint chain cap reached: %ld texts dropped"
+      " (CONVERSE_CHAIN_MAX=%u)\n", corpus_chain_dropped, corpus_chain_max());
+  }
   predict_ntotal = (long)rinfo.size;
 
   if (0 != learn_mode) {
@@ -934,6 +966,7 @@ int main(int argc, char* argv[])
      */
     if (NULL != test_prefix) {
       test_corpus = libxs_registry_create();
+      converse_stage_begin();
       if (NULL != test_corpus && EXIT_SUCCESS == corpus_ingest_basename(
         test_corpus, test_prefix, lexicon, rules, nrules))
       {
@@ -963,19 +996,24 @@ int main(int argc, char* argv[])
       if (GRAN_BPE == ngram_gran_mode()) {
         bpe_build(corpus, ngram_holdout);
       }
+      converse_stage_end("test_ingest");
       ngram_model = ngram_build(corpus, lexicon, rules, nrules, ngram_holdout);
       ngram_backoff_build(ngram_model, lexicon);
+      converse_stage_end("ngram_build");
       if (0 != use_embed || 0 != use_knnlm) {
         token_emb_build(corpus, lexicon, rules, nrules, ngram_holdout);
+        converse_stage_end("emb_build");
         token_model = token_predict_build(corpus, lexicon, rules, nrules,
           predict_profile, 1, ngram_holdout,
           (0 != use_knnlm) ? knnlm_ctxlen() : 2);
+        converse_stage_end("token_predict");
       }
       else if (0 != use_rerank) {
         token_model = rerank_build(corpus, ngram_model, lexicon, rules,
           nrules, ngram_order, predict_profile, ngram_holdout);
       }
     }
+    converse_stage_begin();
     if (0 != predict_eval_mode) {
       if (0 != use_hier) {
         mode_result = converse_hier_eval(hier_model, eval_corpus,
@@ -1035,6 +1073,8 @@ int main(int argc, char* argv[])
           nrules, ngram_order, ngram_holdout, ngram_kind);
       }
       if (0 == use_hier) ngram_stats(ngram_model);
+      converse_stage_end("eval");
+      converse_stage_report();
     }
     else if (0 != use_hier) {
       fprintf(stderr, "hier is currently an evaluation-only model (-E)\n");
@@ -1148,7 +1188,7 @@ int main(int argc, char* argv[])
 
   { libxs_spatial_t spatial;
     converse_hier_t* rescore_model = NULL;
-    if (EXIT_SUCCESS != libxs_spatial_build(&spatial, corpus)) {
+    if (EXIT_SUCCESS != corpus_spatial_build(&spatial, corpus)) {
       libxs_predict_destroy(answer_model);
       libxs_lexicon_destroy(lexicon);
       libxs_registry_destroy(corpus);
@@ -2132,6 +2172,7 @@ static int corpus_entry_build(corpus_entry_t* entry,
   int result = EXIT_FAILURE;
   const size_t shape = (size_t)len;
   libxs_lexeme_stream_t stream;
+  libxs_fprint_t full;
   unsigned char shuffled[COMPOSE_MAXTEXT];
   size_t lexeme_pos;
   libxs_lexeme_stream_init(&stream);
@@ -2141,9 +2182,10 @@ static int corpus_entry_build(corpus_entry_t* entry,
     if (EXIT_SUCCESS == corpus_shuffle_words(shuffled, len)) text = shuffled;
   }
   memset(entry, 0, sizeof(*entry));
-  if (EXIT_SUCCESS == libxs_fprint(&entry->fprint, LIBXS_DATATYPE_U8,
+  if (EXIT_SUCCESS == libxs_fprint(&full, LIBXS_DATATYPE_U8,
     text, 1, &shape, NULL, FPRINT_ORDER, 0, 0, 0))
   {
+    corpus_fprint_pack(&entry->fprint, &full);
     entry->text_len = len;
     memcpy(entry->text, text, (size_t)len);
     entry->connector = CONN_NEWLINE;
@@ -2310,26 +2352,140 @@ static int corpus_entry_same_section(const corpus_entry_t* lhs,
 }
 
 
+/**
+ * Upper bound on the fingerprint-collision probe chain. 65536 was effectively
+ * unbounded and made ingest quadratic on collision-heavy corpora.
+ */
+static unsigned int corpus_chain_max(void)
+{
+  unsigned int result = 65536;
+  const char* env = getenv("CONVERSE_CHAIN_MAX");
+  if (NULL != env && '\0' != *env) {
+    const long v = atol(env);
+    if (v >= 1 && v <= 65536) result = (unsigned int)v;
+  }
+  return result;
+}
+
+
+/**
+ * Registry key = IDENTITY of the entry's content, not its fingerprint. The two
+ * jobs were conflated: a Hilbert code of the fingerprint is locality-preserving
+ * ON PURPOSE, so similar texts share a cell, and using it as a unique key forced
+ * a linear probe over every colliding entry with a full text compare per step.
+ * On collision-heavy corpora (wiki markup, code) that made ingest quadratic --
+ * 2x the enwik8 text cost 10.8x the ingest CPU.
+ *
+ * A content hash collides only by accident, so insertion and duplicate detection
+ * are one lookup. The similarity index gets its codes from the entries instead
+ * (libxs_spatial_build_codes), which is where locality belongs.
+ *
+ * The 128-bit key (two independent hashes plus the length) makes an accidental
+ * collision between DIFFERENT texts negligible. One is still resolved rather
+ * than dropped: the walk appends a seq only from the second probe on, and the
+ * registry supports mixed key sizes, so the common case stays 16 bytes and no
+ * entry is lost to a genuine hash collision.
+ */
+static void corpus_key_from_text(const corpus_entry_t* entry,
+  unsigned char key[], size_t* key_size)
+{
+  const unsigned int len = (unsigned int)entry->text_len;
+  const unsigned int h1 = libxs_hash(entry->text, len, 0x9e3779b9u);
+  const unsigned int h2 = libxs_hash(entry->text, len, 0x85ebca6bu);
+  const unsigned int hs = (0 < entry->section_len)
+    ? libxs_hash(entry->section, (unsigned int)entry->section_len, 0xc2b2ae35u)
+    : 0u;
+  memcpy(key, &h1, 4);
+  memcpy(key + 4, &h2, 4);
+  memcpy(key + 8, &hs, 4);
+  memcpy(key + 12, &len, 4);
+  *key_size = 16;
+}
+
+
+/**
+ * Build the similarity index from the entries' own fingerprints. The registry key
+ * is now a content hash, so libxs_spatial_build -- which reads the first 8 Bytes
+ * of each key as the code -- would index hash values and destroy locality. The
+ * code is recomputed here from the fingerprint, which is where it belongs.
+ *
+ * Iteration uses the _length flavor because this registry deliberately holds keys
+ * of two sizes (16 Bytes, or 18 when a hash collision needed resolving); the
+ * plain iterator cannot report which, and the Bytes beyond key_size are
+ * undefined.
+ */
+static int corpus_spatial_build(libxs_spatial_t* sp,
+  const libxs_registry_t* corpus)
+{
+  int result = EXIT_FAILURE;
+  libxs_registry_info_t info;
+  if (NULL == sp || NULL == corpus) return EXIT_FAILURE;
+  libxs_registry_info(corpus, &info);
+  if (0 < info.size) {
+    uint64_t* codes = (uint64_t*)libxs_malloc(NULL,
+      info.size * sizeof(uint64_t), LIBXS_MALLOC_AUTO);
+    void** values = (void**)libxs_malloc(NULL,
+      info.size * sizeof(void*), LIBXS_MALLOC_AUTO);
+    if (NULL != codes && NULL != values) {
+      const void* key = NULL;
+      size_t key_size = 0, cursor = 0;
+      int count = 0;
+      void* value = libxs_registry_begin_length(corpus, &key, &key_size,
+        &cursor);
+      while (NULL != value && count < (int)info.size) {
+        const corpus_entry_t* entry = (const corpus_entry_t*)value;
+        unsigned char code_key[16];
+        size_t code_size = 0;
+        uint64_t code = 0;
+        corpus_key_from_fprint(&entry->fprint, code_key, &code_size);
+        memcpy(&code, code_key, 8);
+        codes[count] = code;
+        values[count] = value;
+        ++count;
+        value = libxs_registry_next_length(corpus, &key, &key_size, &cursor);
+      }
+      result = libxs_spatial_build_codes(sp, codes, values, count);
+    }
+    libxs_free(codes);
+    libxs_free(values);
+  }
+  return result;
+}
+
+
 static int corpus_store_entry(libxs_registry_t* corpus,
   const corpus_entry_t* entry)
 {
   int result = 0;
-  unsigned char key[16];
+  unsigned char key[20];
   size_t key_size = 0;
   unsigned int seq;
   int matched = 0;
   if (NULL == corpus || NULL == entry) return 0;
-  corpus_key_from_fprint(&entry->fprint, key, &key_size);
-  for (seq = 0; seq < 65536; ++seq) {
+  corpus_key_from_text(entry, key, &key_size);
+  /**
+   * The sequence walk is a linear probe over every entry sharing a quantized
+   * fingerprint, and it re-reads each one to compare text. On prose the chains
+   * are short, but the key quantizes to COMPOSE_NDIMS x COMPOSE_BITS, so a
+   * corpus of many near-identical short texts (wiki markup, code) collides
+   * heavily and ingest becomes quadratic: 2x the enwik8 text cost 10.8x the
+   * ingest CPU. The cap bounds the walk so ingest stays linear; a text beyond it
+   * is dropped rather than stored, which is reported so a silent truncation
+   * cannot be mistaken for a rare fingerprint (the same discipline as the
+   * recomb postings cap).
+   */
+  for (seq = 0; seq < corpus_chain_max(); ++seq) {
     void* existing;
-    unsigned short seq_key = (unsigned short)seq;
-    memcpy(key + 8, &seq_key, 2);
-    key_size = 10;
+    if (0 < seq) {
+      const unsigned short seq_key = (unsigned short)seq;
+      memcpy(key + 16, &seq_key, 2);
+      key_size = 18;
+    }
     existing = libxs_registry_get(corpus, key, key_size, NULL);
     if (NULL == existing) {
       if (0 == matched) {
         libxs_registry_set(corpus, key, key_size,
-          entry, sizeof(*entry), NULL);
+          entry, corpus_entry_size(entry), NULL);
         result = 1;
       }
       break;
@@ -2344,16 +2500,18 @@ static int corpus_store_entry(libxs_registry_t* corpus,
         && 0 != corpus_entry_same_section(old_entry, old_size, entry))
       {
         matched = 1;
-        if (old_size != sizeof(*entry)
-          || (0 == old_entry->ntokens && entry->ntokens > 0))
-        {
+        /* Replace only to gain token metadata; sizes now vary by text
+           length, so an unequal size is no longer evidence of anything. */
+        if (0 == old_entry->ntokens && entry->ntokens > 0) {
           libxs_registry_set(corpus, key, key_size,
-            entry, sizeof(*entry), NULL);
+            entry, corpus_entry_size(entry), NULL);
         }
-        if (old_size == sizeof(*entry) && old_entry->ntokens > 0) break;
+        if (old_entry->ntokens > 0) break;
       }
     }
   }
+  /* Chain exhausted without placing or matching: the text is dropped. */
+  if (0 == result && 0 == matched) ++corpus_chain_dropped;
   return result;
 }
 
@@ -2436,7 +2594,7 @@ static int corpus_entry_section_match(const corpus_entry_t* entry,
   int result = 0;
   int entry_pos = 0, title_pos = 0, entry_len = 0;
   if (NULL == title || title_len <= 0) return 1;
-  if (NULL != entry && entry_size >= sizeof(*entry)
+  if (NULL != entry && entry_size >= CORPUS_ENTRY_META_SIZE
     && '\0' != entry->section[0])
   {
     while (entry_len < ENTRY_SECTION_MAX && '\0' != entry->section[entry_len]) {
@@ -3404,6 +3562,20 @@ static size_t answer_identity_facts_build(const libxs_registry_t* corpus)
     const char* token;
     const char* prev_end = entry->text;
     int token_len = 0;
+    /**
+     * Sentence scale only, fragments excluded. A role->name binding is defined
+     * within ONE sentence, so the paragraph copy and every comma fragment of a
+     * sentence re-derive the same facts from the same bytes: pure duplicated
+     * work, and on a large corpus it dominates (13.4 s of 54.9 s at 16 MB of
+     * enwik8). The facts themselves are unchanged because a fragment cannot
+     * contain a binding its parent sentence does not.
+     */
+    if (SCALE_SENTENCE != entry->scale
+      || 0 != (entry->lexical_flags & ENTRY_LEX_FRAGMENT))
+    {
+      value = libxs_registry_next(corpus, &key, &cursor);
+      continue;
+    }
     while (NULL != (token = libxs_strtoken(entry->text, delims,
       token_index, &token_len)))
     {
@@ -3585,7 +3757,11 @@ static size_t answer_describe_facts_build(const libxs_registry_t* corpus)
   value = libxs_registry_begin(corpus, &key, &cursor);
   while (NULL != value) {
     const corpus_entry_t* entry = (const corpus_entry_t*)value;
-    if (SCALE_SENTENCE == entry->scale) {
+    /* Fragments re-derive their parent sentence's facts; see the identity
+       builder. Sentence scale alone was not enough. */
+    if (SCALE_SENTENCE == entry->scale
+      && 0 == (entry->lexical_flags & ENTRY_LEX_FRAGMENT))
+    {
       const char* article = NULL;
       int gap = 0;
       int token_index = 0;
@@ -4239,7 +4415,7 @@ static int answer_relation_aggregate_reply(const libxs_registry_t* corpus,
   enum { RELATION_AGG_MAX = 4 };
   int result = EXIT_FAILURE;
   const void* key = NULL;
-  size_t cursor = 0;
+  size_t cursor = 0, key_size = 0;
   void* value;
   char query_section[ENTRY_SECTION_MAX];
   int query_section_len;
@@ -4269,11 +4445,14 @@ static int answer_relation_aggregate_reply(const libxs_registry_t* corpus,
       answer_lens[slot] = 0;
       answer_scores[slot] = 0.0;
     }
-    value = libxs_registry_begin(corpus, &key, &cursor);
+    value = libxs_registry_begin_length(corpus, &key, &key_size, &cursor);
     while (NULL != value) {
       const corpus_entry_t* entry = (const corpus_entry_t*)value;
+      /* The corpus deliberately holds keys of two sizes, so the size must come
+         from the iterator; a hardcoded one silently misses every entry. */
       size_t entry_size = (NULL != key)
-        ? libxs_registry_value_size(corpus, key, 10, NULL) : sizeof(*entry);
+        ? libxs_registry_value_size(corpus, key, key_size, NULL)
+        : sizeof(*entry);
       answer_relation_match_t match;
       if ((query_section_len <= 0
           || 0 != corpus_entry_section_match(entry, entry_size,
@@ -4320,7 +4499,7 @@ static int answer_relation_aggregate_reply(const libxs_registry_t* corpus,
           ++count;
         }
       }
-      value = libxs_registry_next(corpus, &key, &cursor);
+      value = libxs_registry_next_length(corpus, &key, &key_size, &cursor);
     }
     if (count > 1) {
       size_t pos = 0;
@@ -4420,7 +4599,7 @@ static int answer_features_fill(const corpus_entry_t* entry,
     inputs[input_pos] = 0.0;
   }
   if (NULL == entry || NULL == inputs) return EXIT_FAILURE;
-  if (entry_size >= sizeof(*entry) && entry->ntokens > 0) use_sketch = 1;
+  if (entry_size >= CORPUS_ENTRY_META_SIZE && entry->ntokens > 0) use_sketch = 1;
   if (0 == use_sketch) return EXIT_FAILURE;
   if (overlap < 0.0) overlap = 0.0;
   if (overlap > 1.0) overlap = 1.0;
@@ -4557,18 +4736,20 @@ static libxs_predict_t* converse_predict_train(const libxs_registry_t* corpus,
   libxs_predict_t* result = NULL;
   libxs_predict_t* model = NULL;
   const void* key = NULL;
-  size_t cursor = 0;
+  size_t cursor = 0, key_size = 0;
   void* value;
   int ntrain = 0;
   if (NULL == corpus) return NULL;
   model = answer_predict_create(profile);
   if (NULL == model) return NULL;
-  value = libxs_registry_begin(corpus, &key, &cursor);
+  value = libxs_registry_begin_length(corpus, &key, &key_size, &cursor);
   while (NULL != value) {
     const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    /* Key size from the iterator: see the note in answer_relation_reply. */
     size_t entry_size = (NULL != key)
-      ? libxs_registry_value_size(corpus, key, 10, NULL) : sizeof(*entry);
-    if (entry_size >= sizeof(*entry) && entry->ntokens > 0
+      ? libxs_registry_value_size(corpus, key, key_size, NULL)
+      : sizeof(*entry);
+    if (entry_size >= CORPUS_ENTRY_META_SIZE && entry->ntokens > 0
       && entry->text_len >= 16)
     {
       int query_type;
@@ -4585,7 +4766,7 @@ static libxs_predict_t* converse_predict_train(const libxs_registry_t* corpus,
         }
       }
     }
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = libxs_registry_next_length(corpus, &key, &key_size, &cursor);
   }
   if (ntrain >= 8 && EXIT_SUCCESS == answer_predict_build_model(model,
     profile))
@@ -4608,17 +4789,17 @@ static libxs_predict_t* answer_predict_build(const libxs_registry_t* corpus,
   libxs_predict_t* result = NULL;
   libxs_predict_t* model = NULL;
   const void* key = NULL;
-  size_t cursor = 0;
+  size_t cursor = 0, key_size = 0;
   void* value;
   int ntrain = 0;
   if (NULL == corpus || NULL == query || NULL == lexicon) return NULL;
   model = answer_predict_create(profile);
   if (NULL == model) return NULL;
-  value = libxs_registry_begin(corpus, &key, &cursor);
+  value = libxs_registry_begin_length(corpus, &key, &key_size, &cursor);
   while (NULL != value) {
     const corpus_entry_t* entry = (const corpus_entry_t*)value;
     size_t entry_size = (NULL != key)
-      ? libxs_registry_value_size(corpus, key, 10, NULL) : sizeof(*entry);
+      ? libxs_registry_value_size(corpus, key, key_size, NULL) : sizeof(*entry);
     double inputs[ANSWER_PREDICT_INPUTS];
     double output;
     if (entry->text_len >= 16
@@ -4631,7 +4812,7 @@ static libxs_predict_t* answer_predict_build(const libxs_registry_t* corpus,
         ++ntrain;
       }
     }
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = libxs_registry_next_length(corpus, &key, &key_size, &cursor);
   }
   if (ntrain >= 4 && EXIT_SUCCESS == answer_predict_build_model(model,
     profile))
@@ -4813,7 +4994,7 @@ static double lexical_score(const libxs_lexeme_stream_t* query,
   size_t query_pos;
   libxs_lexeme_stream_init(&entry_stream);
   if (NULL == query || NULL == lexicon || NULL == entry) return 0.0;
-  if (entry_size >= sizeof(*entry) && entry->ntokens > 0) {
+  if (entry_size >= CORPUS_ENTRY_META_SIZE && entry->ntokens > 0) {
     use_sketch = 1;
   }
   else if (EXIT_SUCCESS != libxs_lexeme_stream_encode(lexicon, &entry_stream,
@@ -4946,7 +5127,7 @@ static int answer_select(const libxs_registry_t* corpus,
 {
   libxs_lexeme_stream_t query;
   const void* key = NULL;
-  size_t cursor = 0;
+  size_t cursor = 0, key_size = 0;
   void* value;
   int answer_count = 0;
   int slot;
@@ -5003,11 +5184,11 @@ static int answer_select(const libxs_registry_t* corpus,
         rules, nrules, query_type, profile);
       predictor = query_predictor;
     }
-    value = libxs_registry_begin(corpus, &key, &cursor);
+    value = libxs_registry_begin_length(corpus, &key, &key_size, &cursor);
     while (NULL != value) {
       const corpus_entry_t* entry = (const corpus_entry_t*)value;
       size_t entry_size = (NULL != key)
-        ? libxs_registry_value_size(corpus, key, 10, NULL) : sizeof(*entry);
+        ? libxs_registry_value_size(corpus, key, key_size, NULL) : sizeof(*entry);
       double base_score = 0.0;
       double score = base_score;
       double identity_score = 0.0;
@@ -5018,7 +5199,7 @@ static int answer_select(const libxs_registry_t* corpus,
         && 0 == corpus_entry_section_match(entry, entry_size,
           query_section, query_section_len))
       {
-        value = libxs_registry_next(corpus, &key, &cursor);
+        value = libxs_registry_next_length(corpus, &key, &key_size, &cursor);
         continue;
       }
       if (0 != query_type_prefers_sentence(query_type)
@@ -6879,6 +7060,72 @@ static int ngram_dedup_scale(void)
     else if ('0' != env[0]) result = 1;
   }
   return result;
+}
+
+
+/**
+ * Wall-clock per startup stage, so a slow run is attributed rather than guessed
+ * at. Sec 23 blamed the hierarchy for a stall that was actually
+ * converse_predict_train and lost the measurement; the fix is to make the
+ * attribution a printed number instead of an inference.
+ */
+/**
+ * The answer ranker trains OFF by default. Measured: it is 40% of wall time on a
+ * 2 MB corpus, leaves BPC identical to three decimals, and leaves QA at 9/9 and
+ * 14/14 -- its only consumer (answer_predict_score) degrades to the unmodified
+ * base score when the model is absent. A stage that costs 40% and moves nothing
+ * measurable should be opt-in. CONVERSE_NO_PREDICT is still honoured so existing
+ * scripts keep working.
+ */
+static int converse_predict_on(void)
+{
+  const char* env = getenv("CONVERSE_PREDICT");
+  if (NULL != env) return ('0' != env[0] && '\0' != env[0]) ? 1 : 0;
+  return 0;
+}
+
+
+static int converse_stage_on(void)
+{
+  const char* env = getenv("CONVERSE_STAGES");
+  return (NULL != env && '0' != env[0] && '\0' != env[0]) ? 1 : 0;
+}
+
+
+static void converse_stage_begin(void)
+{
+  if (0 != converse_stage_on()) converse_stage_tick = libxs_timer_tick();
+}
+
+
+static void converse_stage_end(const char* name)
+{
+  if (0 != converse_stage_on() && converse_stage_count < CONVERSE_STAGE_MAX) {
+    const libxs_timer_tick_t now = libxs_timer_tick();
+    converse_stage_name[converse_stage_count] = name;
+    converse_stage_time[converse_stage_count]
+      = libxs_timer_duration(converse_stage_tick, now);
+    ++converse_stage_count;
+    converse_stage_tick = now;
+  }
+}
+
+
+static void converse_stage_report(void)
+{
+  if (0 != converse_stage_on() && converse_stage_count > 0) {
+    double total = 0.0;
+    int i;
+    for (i = 0; i < converse_stage_count; ++i) {
+      total += converse_stage_time[i];
+    }
+    fprintf(stderr, "stages (s):");
+    for (i = 0; i < converse_stage_count; ++i) {
+      fprintf(stderr, " %s=%.1f", converse_stage_name[i],
+        converse_stage_time[i]);
+    }
+    fprintf(stderr, " | total=%.1f\n", total);
+  }
 }
 
 
@@ -11265,8 +11512,8 @@ static int corpus_ingest_basename(libxs_registry_t* corpus,
 }
 
 
-static double converse_score(const libxs_fprint_t* candidate,
-  const libxs_fprint_t* query, const libxs_fprint_t* prev)
+static double converse_score(const corpus_fprint_t* candidate,
+  const libxs_fprint_t* query, const corpus_fprint_t* prev)
 {
   double low = 0, high = 0, coherence = 0;
   int kmax = candidate->order < query->order
@@ -11321,7 +11568,7 @@ static int entry_used(const corpus_entry_t* e,
 
 static const corpus_entry_t* select_best(void* const candidates[],
   int ncandidates, const corpus_entry_t* const used[], int nused,
-  const libxs_fprint_t* query, const libxs_fprint_t* prev,
+  const libxs_fprint_t* query, const corpus_fprint_t* prev,
   int require_scale, unsigned char preferred_scale)
 {
   const corpus_entry_t* result = NULL;
@@ -11376,7 +11623,7 @@ static int respond(const libxs_spatial_t* spatial,
   char output[65536];
   size_t out_pos = 0;
   int step;
-  libxs_fprint_t prev_fprint;
+  corpus_fprint_t prev_fprint;
   int have_prev = 0;
   const corpus_entry_t* used[64];
   int nused = 0;
@@ -11418,7 +11665,7 @@ static int respond(const libxs_spatial_t* spatial,
   ncandidates = libxs_spatial_nearest(spatial, qcode, 256, candidates);
 
   for (step = 0; step < budget; ++step) {
-    const libxs_fprint_t* prev = (0 != have_prev) ? &prev_fprint : NULL;
+    const corpus_fprint_t* prev = (0 != have_prev) ? &prev_fprint : NULL;
     const corpus_entry_t* best_entry = select_best(candidates, ncandidates,
       used, nused, query, prev, 1, preferred_scale);
 
