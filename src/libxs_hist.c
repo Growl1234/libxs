@@ -23,7 +23,7 @@ LIBXS_API libxs_hist_t* libxs_hist_create(int nbuckets, int nvals,
   const libxs_hist_update_t update[])
 {
   libxs_hist_t* h = (libxs_hist_t*)malloc(sizeof(libxs_hist_t));
-  LIBXS_ASSERT(0 < nbuckets && 0 < nvals && NULL != update);
+  LIBXS_ASSERT(0 < nbuckets && 0 < nvals);
   if (NULL != h) {
     const int nqueue = 16 * nbuckets;
     h->vals = (double*)malloc(sizeof(double) * LIBXS_MAX(nbuckets, nqueue) * nvals);
@@ -36,7 +36,9 @@ LIBXS_API libxs_hist_t* libxs_hist_create(int nbuckets, int nvals,
       h->nbuckets = nbuckets;
       h->nqueue = nqueue;
       h->nvals = nvals;
-      for (h->n = 0; h->n < nvals; ++h->n) h->update[h->n] = update[h->n];
+      for (h->n = 0; h->n < nvals; ++h->n) {
+        h->update[h->n] = (NULL != update) ? update[h->n] : NULL;
+      }
       h->n = 0;
     }
     else {

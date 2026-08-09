@@ -30,7 +30,11 @@ LIBXS_EXTERN_C typedef struct libxs_hist_info_t {
 } libxs_hist_info_t;
 
 
-/** Create histogram: nbuckets resolution, nvals per entry. Returns NULL on failure. */
+/**
+ * Create histogram: nbuckets resolution, nvals per entry. Returns NULL on failure.
+ * update may be NULL (all values use libxs_hist_update_avg), and individual
+ * entries may be NULL to select that default per value.
+ */
 LIBXS_API libxs_hist_t* libxs_hist_create(int nbuckets, int nvals,
   const libxs_hist_update_t update[]);
 
