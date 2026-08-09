@@ -25,6 +25,48 @@ int internal_spatial_cmp(const void* a, const void* b)
 }
 
 
+LIBXS_API int libxs_spatial_build_codes(libxs_spatial_t* sp,
+  const uint64_t codes[], void* const values[], int n)
+{
+  int result = EXIT_FAILURE;
+  if (NULL == sp) return EXIT_FAILURE;
+  sp->codes = NULL;
+  sp->values = NULL;
+  sp->n = 0;
+  if (NULL != codes && NULL != values && 0 < n) {
+    internal_spatial_pair_t* pairs = (internal_spatial_pair_t*)libxs_malloc(
+      NULL, (size_t)n * sizeof(internal_spatial_pair_t), LIBXS_MALLOC_AUTO);
+    if (NULL != pairs) {
+      int i;
+      for (i = 0; i < n; ++i) {
+        pairs[i].code = codes[i];
+        pairs[i].value = values[i];
+      }
+      qsort(pairs, (size_t)n, sizeof(internal_spatial_pair_t),
+        internal_spatial_cmp);
+      sp->codes = (uint64_t*)malloc((size_t)n * sizeof(uint64_t));
+      sp->values = (void**)malloc((size_t)n * sizeof(void*));
+      if (NULL != sp->codes && NULL != sp->values) {
+        for (i = 0; i < n; ++i) {
+          sp->codes[i] = pairs[i].code;
+          sp->values[i] = pairs[i].value;
+        }
+        sp->n = n;
+        result = EXIT_SUCCESS;
+      }
+      else {
+        free(sp->codes);
+        free(sp->values);
+        sp->codes = NULL;
+        sp->values = NULL;
+      }
+      libxs_free(pairs);
+    }
+  }
+  return result;
+}
+
+
 LIBXS_API int libxs_spatial_build(libxs_spatial_t* sp,
   const libxs_registry_t* registry)
 {
@@ -36,10 +78,11 @@ LIBXS_API int libxs_spatial_build(libxs_spatial_t* sp,
   sp->n = 0;
   libxs_registry_info(registry, &info);
   if (info.size > 0) {
-    internal_spatial_pair_t* pairs;
-    pairs = (internal_spatial_pair_t*)malloc(
-      info.size * sizeof(internal_spatial_pair_t));
-    if (NULL != pairs) {
+    uint64_t* codes = (uint64_t*)libxs_malloc(NULL,
+      info.size * sizeof(uint64_t), LIBXS_MALLOC_AUTO);
+    void** values = (void**)libxs_malloc(NULL,
+      info.size * sizeof(void*), LIBXS_MALLOC_AUTO);
+    if (NULL != codes && NULL != values) {
       size_t cursor = 0;
       const void* key = NULL;
       void* val;
@@ -48,32 +91,15 @@ LIBXS_API int libxs_spatial_build(libxs_spatial_t* sp,
       while (NULL != val && count < (int)info.size) {
         uint64_t code = 0;
         memcpy(&code, key, 8);
-        pairs[count].code = code;
-        pairs[count].value = val;
+        codes[count] = code;
+        values[count] = val;
         ++count;
         val = libxs_registry_next(registry, &key, &cursor);
       }
-      qsort(pairs, (size_t)count, sizeof(internal_spatial_pair_t),
-        internal_spatial_cmp);
-      sp->codes = (uint64_t*)malloc((size_t)count * sizeof(uint64_t));
-      sp->values = (void**)malloc((size_t)count * sizeof(void*));
-      if (NULL != sp->codes && NULL != sp->values) {
-        int i;
-        for (i = 0; i < count; ++i) {
-          sp->codes[i] = pairs[i].code;
-          sp->values[i] = pairs[i].value;
-        }
-        sp->n = count;
-        result = EXIT_SUCCESS;
-      }
-      else {
-        free(sp->codes);
-        free(sp->values);
-        sp->codes = NULL;
-        sp->values = NULL;
-      }
-      free(pairs);
+      result = libxs_spatial_build_codes(sp, codes, values, count);
     }
+    libxs_free(codes);
+    libxs_free(values);
   }
   return result;
 }

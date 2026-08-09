@@ -269,6 +269,15 @@ LIBXS_EXTERN_C typedef struct libxs_spatial_t {
 LIBXS_API int libxs_spatial_build(libxs_spatial_t* sp,
   const libxs_registry_t* registry);
 
+/**
+ * Build the index from parallel arrays instead of from registry keys. Use this
+ * when the registry key is an identity (a content hash, say) rather than a
+ * locality-preserving code: the caller supplies the codes, so the key is free to
+ * be unique and the index still orders by locality. Arrays are copied.
+ */
+LIBXS_API int libxs_spatial_build_codes(libxs_spatial_t* sp,
+  const uint64_t codes[], void* const values[], int n);
+
 /** Find up to k entries nearest to query_code. Returns count found. */
 LIBXS_API int libxs_spatial_nearest(const libxs_spatial_t* sp,
   uint64_t query_code, int k, void** out_values);
