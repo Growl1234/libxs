@@ -472,6 +472,11 @@ static int ngram_maxorder(void);
 static int ngram_dedup_scale(void);
 static int ngram_oracle_probe(void);
 static int ngram_select_order(void);
+static int ngram_bank_probe(void);
+static double ngram_bank_rate(void);
+static double ngram_bank_share(void);
+static void ngram_bank_update(double weight[], const double probability[],
+  int maxorder, double mixture, double rate, double share);
 static int ngram_is_wordchar(unsigned char c);
 static int recomb_compose_on(void);
 static double recomb_word_prob(const unsigned int hist[], int hlen,
@@ -6751,7 +6756,15 @@ static int ngram_native_tokens(libxs_lexicon_t* lexicon, const char* text,
       if (len > NGRAM_NATIVE_WIDTH) len = NGRAM_NATIVE_WIDTH;
       id = libxs_lexicon_id(lexicon, text + pos, len,
         LIBXS_LEXEME_WORD, create);
-      if (0 == id) break;
+      /**
+       * An unknown chunk must be EMITTED with id 0, not abort the entry. When
+       * scoring held-out text (create=0) a chunk absent from training is the
+       * normal case, and breaking here silently truncated the entry at its first
+       * novel chunk -- dropping ~95% of the held-out bytes and making the BPC
+       * denominator, hence BPC itself, incomparable with the other units. Id 0
+       * is the reserved unknown, which the scoring loop skips as non-content,
+       * so the bytes are still counted where the caller counts source bytes.
+       */
       tokens[result].id = id;
       tokens[result].length = (unsigned short)len;
       tokens[result].flags = LIBXS_LEXEME_WORD;
@@ -6858,8 +6871,14 @@ static int ngram_maxorder(void)
  */
 static int ngram_dedup_scale(void)
 {
+  int result = 0;
   const char* env = getenv("CONVERSE_NGRAM_ONESCALE");
-  return (NULL != env && '0' != env[0] && '\0' != env[0]) ? 1 : 0;
+  if (NULL != env && '\0' != *env) {
+    const int v = atoi(env);
+    if (v >= 1 && v <= 2) result = v;
+    else if ('0' != env[0]) result = 1;
+  }
+  return result;
 }
 
 
@@ -6891,6 +6910,81 @@ static int ngram_select_order(void)
     if (v >= 1 && v <= NGRAM_ORDER_MAX) result = v;
   }
   return result;
+}
+
+
+/**
+ * Word-level expert bank: mix the fixed-order experts with causally updated
+ * fixed-share weights instead of the count-derived backoff weights. The byte
+ * side earned 0.5-0.8 bits cross-document this way, and the order-selection
+ * probe showed the same headroom exists at word and sub-word units, so this is
+ * the same mechanism at a coarser unit rather than a new one.
+ *
+ * The threshold rule proved the headroom is reachable from an observable
+ * feature; this replaces the hard threshold with a learned per-position
+ * weighting, which is what the byte side actually does.
+ */
+static int ngram_bank_probe(void)
+{
+  const char* env = getenv("CONVERSE_NGRAM_BANK");
+  return (NULL != env && '0' != env[0] && '\0' != env[0]) ? 1 : 0;
+}
+
+
+static double ngram_bank_rate(void)
+{
+  double result = 0.15;
+  const char* env = getenv("CONVERSE_NGRAM_BANK_RATE");
+  if (NULL != env && '\0' != *env) {
+    const double v = atof(env);
+    if (v > 0.0 && v <= 4.0) result = v;
+  }
+  return result;
+}
+
+
+static double ngram_bank_share(void)
+{
+  double result = 0.005;
+  const char* env = getenv("CONVERSE_NGRAM_BANK_SHARE");
+  if (NULL != env && '\0' != *env) {
+    const double v = atof(env);
+    if (v >= 0.0 && v < 1.0) result = v;
+  }
+  return result;
+}
+
+
+/**
+ * One causal fixed-share step. Multiplicative log-loss update toward the
+ * experts that beat the mixture, then a share of the mass redistributed
+ * uniformly so an expert that was wrong for a while can recover. Only
+ * initialized experts participate; giving mass to slots that never produce a
+ * probability would spend it for nothing.
+ */
+static void ngram_bank_update(double weight[], const double probability[],
+  int maxorder, double mixture, double rate, double share)
+{
+  double total = 0.0;
+  int order, nactive = 0;
+  for (order = 1; order <= maxorder; ++order) {
+    if (weight[order] > 0.0) {
+      const double relative = (mixture > 0.0)
+        ? probability[order] / mixture : 1.0;
+      weight[order] *= pow(relative, rate);
+      total += weight[order];
+      ++nactive;
+    }
+  }
+  if (total > 0.0 && nactive > 0) {
+    const double uniform = 1.0 / (double)nactive;
+    for (order = 1; order <= maxorder; ++order) {
+      if (weight[order] > 0.0) {
+        weight[order] = (1.0 - share) * weight[order] / total
+          + share * uniform;
+      }
+    }
+  }
 }
 
 
@@ -7145,7 +7239,10 @@ static libxs_registry_t* ngram_build(const libxs_registry_t* corpus,
     while (NULL != value) {
       const corpus_entry_t* entry = (const corpus_entry_t*)value;
       if (0 == predict_is_test(index, holdout)
-        && (0 == onescale || SCALE_SENTENCE == entry->scale))
+        && (0 == onescale
+          || (((2 == onescale) ? SCALE_PARAGRAPH : SCALE_SENTENCE)
+              == entry->scale
+            && 0 == (entry->lexical_flags & ENTRY_LEX_FRAGMENT))))
       {
         ngram_train_text(converse_ngram.store, lexicon, rules, nrules,
           entry->text, entry->text_len);
@@ -8693,6 +8790,14 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   long sel_low[NGRAM_ORDER_MAX + 1];
   double sel_bits = 0.0;
   const int sel_order = ngram_select_order();
+  double entry_bytes = 0.0;
+  double bank_bits = 0.0;
+  double bank_weight[NGRAM_ORDER_MAX + 1];
+  double bank_wsum[NGRAM_ORDER_MAX + 1];
+  long bank_n = 0;
+  const int bank = ngram_bank_probe();
+  const double bank_rate = ngram_bank_rate();
+  const double bank_share = ngram_bank_share();
   const int oracle = ngram_oracle_probe();
   const double inv_log2 = 1.0 / log(2.0);
   const void* key = NULL;
@@ -8703,6 +8808,13 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   memset(expert_bits, 0, sizeof(expert_bits));
   memset(expert_bytes, 0, sizeof(expert_bytes));
   memset(oracle_pick, 0, sizeof(oracle_pick));
+  memset(bank_wsum, 0, sizeof(bank_wsum));
+  { int k;
+    /* Uniform prior over the orders; the update is what differentiates them. */
+    for (k = 0; k <= NGRAM_ORDER_MAX; ++k) {
+      bank_weight[k] = (k >= 1) ? 1.0 / (double)NGRAM_ORDER_MAX : 0.0;
+    }
+  }
   memset(sel_total, 0, sizeof(sel_total));
   memset(sel_mixed, 0, sizeof(sel_mixed));
   memset(sel_low, 0, sizeof(sel_low));
@@ -8716,8 +8828,19 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
     int is_test = (0 == holdout || 0 != predict_is_test(index, holdout));
     int native = ngram_native_mode();
     libxs_lexeme_stream_init(&stream);
-    if (0 != ngram_dedup_scale() && SCALE_SENTENCE != entry->scale) {
-      is_test = 0;
+    { const int ds = ngram_dedup_scale();
+      const int want = (2 == ds) ? SCALE_PARAGRAPH : SCALE_SENTENCE;
+      /**
+       * Each source byte must be counted once, or BPC is not comparable across
+       * granularities -- which is the one job the metric exists to do. Clause
+       * fragments are stored at sentence scale ALONGSIDE their parent sentence,
+       * so keeping both scored ~3x the real text.
+       */
+      if (0 != ds && (want != entry->scale
+        || 0 != (entry->lexical_flags & ENTRY_LEX_FRAGMENT)))
+      {
+        is_test = 0;
+      }
     }
     if (0 != is_test && entry->text_len > 0
       && (0 != native || EXIT_SUCCESS == libxs_lexeme_stream_encode(
@@ -8735,6 +8858,9 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
       unsigned int hist[NGRAM_ORDER_MAX];
       int hlen = 0;
       int maxorder = ngram_maxorder();
+      /* Source bytes this entry contributes, whether or not every token in it
+         is scored -- the ceiling the denominator should approach. */
+      entry_bytes += (double)entry->text_len;
       for (ti = 0; ti < ntok; ++ti) {
         unsigned int cur;
         unsigned short curlen;
@@ -8780,10 +8906,13 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
               int k;
               double best = bits;
               int bestk = 0;
+              double expert_p[NGRAM_ORDER_MAX + 1];
               const double w = (curlen > 0) ? (double)curlen : 1.0;
+              for (k = 0; k <= NGRAM_ORDER_MAX; ++k) expert_p[k] = 0.0;
               for (k = 1; k <= maxorder && k <= hlen; ++k) {
                 double pk = ngramk_prob(model, hist + (hlen - k), k, k, cur);
                 double bk = -log((pk > 0.0) ? pk : 1e-12) * inv_log2;
+                expert_p[k] = pk;
                 /**
                  * Per-expert byte denominator: expert k only exists where the
                  * history reaches k, so dividing its bits by the TOTAL bytes
@@ -8798,6 +8927,31 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
                   best = bk;
                   bestk = k;
                 }
+              }
+              /**
+               * The bank: linear pool over the same fixed-order experts, with
+               * weights carried across positions and updated causally (score
+               * first, then update), so no target information enters the score.
+               * Reuses the oracle's per-order probabilities, which is why it
+               * lives inside this probe rather than in the default path.
+               */
+              if (0 != bank) {
+                double pooled = 0.0, wtotal = 0.0;
+                int b;
+                for (b = 1; b <= maxorder && b <= hlen; ++b) {
+                  pooled += bank_weight[b] * expert_p[b];
+                  wtotal += bank_weight[b];
+                }
+                if (wtotal > 0.0) pooled /= wtotal;
+                if (!(pooled > 0.0)) pooled = 1e-12;
+                bank_bits += -log(pooled) * inv_log2;
+                ++bank_n;
+                for (b = 1; b <= NGRAM_ORDER_MAX; ++b) {
+                  bank_wsum[b] += bank_weight[b];
+                }
+                ngram_bank_update(bank_weight, expert_p,
+                  (maxorder < hlen) ? maxorder : hlen, pooled, bank_rate,
+                  bank_share);
               }
               oracle_bits += best;
               /* bestk==0 means no single-order expert beat the mixture. */
@@ -8938,6 +9092,18 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
       100.0 * (double)ntop1 / (double)npairs, NGRAM_TOPK,
       100.0 * (double)ntopk / (double)npairs, npairs,
       (sum_bytes > 0.0) ? sum_bits / sum_bytes : 0.0);
+    /**
+     * The BPC denominator, printed because it is the only thing that makes the
+     * number comparable ACROSS granularities: the same test text must yield the
+     * same byte count whatever the unit. A zero-length token (a sub-word
+     * continuation carries the whole word's bytes on its first piece) falls back
+     * to 1.0, which would silently inflate the denominator and understate BPC
+     * for the finer units, so the count is reported rather than trusted.
+     */
+    fprintf(stderr, "  bpc denominator: %.0f source bytes of %.0f in scored"
+      " entries (%.1f%% covered, %.2f bytes/position)\n", sum_bytes,
+      entry_bytes, (entry_bytes > 0.0) ? 100.0 * sum_bytes / entry_bytes : 0.0,
+      (npairs > 0) ? sum_bytes / (double)npairs : 0.0);
     fprintf(stderr, "  attested-context split: verbatim %.1f%% of positions"
       " (top1=%.1f%% bpc=%.3f) | novel %.1f%% (top1=%.1f%% bpc=%.3f)\n",
       100.0 * (double)ndeep / (double)npairs,
@@ -8974,6 +9140,18 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
             100.0 * (double)sel_low[k] / (double)sel_total[k],
             100.0 * (double)sel_mixed[k] / (double)sel_total[k]);
         }
+      }
+      if (0 != bank && bank_n > 0) {
+        int b;
+        fprintf(stderr, "  BANK(rate=%.2f share=%.3f)=%.3f | mean weights:",
+          bank_rate, bank_share,
+          (sum_bytes > 0.0) ? bank_bits / sum_bytes : 0.0);
+        for (b = 1; b <= NGRAM_ORDER_MAX; ++b) {
+          if (bank_wsum[b] > 0.0) {
+            fprintf(stderr, " o%d=%.3f", b, bank_wsum[b] / (double)bank_n);
+          }
+        }
+        fprintf(stderr, "\n");
       }
       fprintf(stderr, " | RULE(m>=2 -> o%d)=%.3f\n", sel_order,
         (sum_bytes > 0.0) ? sel_bits / sum_bytes : 0.0);
@@ -10387,7 +10565,9 @@ static int knnlm_eval(libxs_registry_t* ngram, const libxs_predict_t* store,
     libxs_lexeme_stream_t stream;
     int is_test = (0 == holdout || 0 != predict_is_test(index, holdout));
     libxs_lexeme_stream_init(&stream);
-    if (0 != ngram_dedup_scale() && SCALE_SENTENCE != entry->scale) {
+    if (0 != ngram_dedup_scale() && (SCALE_SENTENCE != entry->scale
+      || 0 != (entry->lexical_flags & ENTRY_LEX_FRAGMENT)))
+    {
       is_test = 0;
     }
     if (0 != is_test && entry->text_len > 0
@@ -10893,6 +11073,9 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
                     text + trim_start, frag_len, SCALE_SENTENCE,
                     lexicon, rules, nrules))
                   {
+                    /* A clause cut from the sentence stored below: its bytes
+                       are already covered by that entry. */
+                    entry.lexical_flags |= ENTRY_LEX_FRAGMENT;
                     corpus_entry_set_section(&entry, current_section,
                       current_section_len);
                     if (0 != corpus_store_entry(corpus, &entry)) ++nsentences;
@@ -10979,6 +11162,9 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
                     text + trim_start, frag_len, SCALE_SENTENCE,
                     lexicon, rules, nrules))
                   {
+                    /* A clause cut from the sentence stored below: its bytes
+                       are already covered by that entry. */
+                    entry.lexical_flags |= ENTRY_LEX_FRAGMENT;
                     corpus_entry_set_section(&entry, para_section,
                       para_section_len);
                     if (0 != corpus_store_entry(corpus, &entry)) ++nsentences;

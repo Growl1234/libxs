@@ -20,6 +20,13 @@
 #define ENTRY_LEX_PLACE 0x0008u
 #define ENTRY_LEX_CAUSE 0x0010u
 #define ENTRY_LEX_METHOD 0x0020u
+/**
+ * The entry is a clause FRAGMENT cut from a larger sentence, not a sentence.
+ * Ingest stores both, so a byte of source text belongs to several entries at
+ * the same scale; anything that must count each source byte once (above all the
+ * BPC denominator) has to exclude these.
+ */
+#define ENTRY_LEX_FRAGMENT 0x0040u
 
 enum { CONN_SPACE = 0, CONN_COMMA = 1, CONN_PERIOD = 2, CONN_NEWLINE = 3 };
 enum { SCALE_PHRASE = 0, SCALE_SENTENCE = 1, SCALE_PARAGRAPH = 2 };
