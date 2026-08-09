@@ -49,6 +49,20 @@
 #define NGRAM_TOPK 3
 #define NGRAM_NATIVE_WIDTH 4
 #define NGRAM_ORDER_MAX LIBXS_NGRAM_ORDER_MAX
+/**
+ * Expert-bank slots. Slots 1..NGRAM_ORDER_MAX are the fixed-order experts and
+ * keep their order as their index, so the array stays order-indexed where that
+ * is the natural key; slots beyond that are experts of a different KIND. An
+ * extra slot has a FIXED index rather than one relative to the running
+ * maxorder: a slot whose meaning shifted with the order would carry a weight
+ * that was learned for a different expert.
+ */
+#define NGRAM_BANK_SKIP (NGRAM_ORDER_MAX + 1)
+#define NGRAM_BANK_PRIOR (NGRAM_ORDER_MAX + 2)
+#define NGRAM_BANK_LAST NGRAM_BANK_PRIOR
+#define NGRAM_BANK_MAX (NGRAM_BANK_LAST + 1)
+/** Ratio substituted for an expert that gave the target no mass at all. */
+#define NGRAM_BANK_RELMIN 1e-4
 #define BPE_SYMBOL_MAX 32
 #define BPE_WORD_MAX 128
 #define BPE_MERGES_DEFAULT 750
@@ -183,6 +197,20 @@ typedef struct ngram_key_t {
 
 typedef libxs_ngram_succ_t ngram_succ_t;
 typedef libxs_ngram_entry_t ngram_entry_t;
+
+/**
+ * One expert-bank slot at one position. ACTIVE is not "probability zero":
+ * an expert that cannot speak here (the skip tier without a seen pair, a
+ * retrieval store without neighbours) must be left out of the pool and out of
+ * the weight update entirely. Folding abstention in as zero drives the slot's
+ * weight to exactly zero through the multiplicative update, and the uniform
+ * recovery share only reaches slots that still hold mass -- so one abstention
+ * would retire the expert permanently.
+ */
+typedef struct ngram_expert_t {
+  double probability;
+  int active;
+} ngram_expert_t;
 
 typedef struct token_emb_pair_t {
   unsigned int center;
@@ -486,14 +514,30 @@ static int ngram_select_order(void);
 static int ngram_bank_probe(void);
 static double ngram_bank_rate(void);
 static double ngram_bank_share(void);
-static void ngram_bank_update(double weight[], const double probability[],
-  int maxorder, double mixture, double rate, double share);
+static void ngram_bank_update(double weight[], const ngram_expert_t expert[],
+  double mixture, double rate, double share);
+static unsigned int ngram_bank_slots(void);
+static int ngram_bank_enabled(unsigned int slots, int slot);
+static const char* ngram_bank_slotname(int slot);
+static void ngram_bank_experts(const unsigned int hist[], int hlen,
+  int maxorder, unsigned int cur, unsigned int slots, ngram_expert_t expert[]);
+static double ngram_bank_pool(const double weight[],
+  const ngram_expert_t expert[]);
+static int ngram_bank_geometric(void);
+static int ngram_bank_support(libxs_registry_t* model, const unsigned int hist[],
+  int hlen, int maxorder, unsigned int ids[], int max);
+static double ngram_bank_pool_geo(libxs_registry_t* model,
+  const unsigned int hist[], int hlen, int maxorder, unsigned int cur,
+  const double weight[], const ngram_expert_t expert[]);
 static int ngram_is_wordchar(unsigned char c);
 static int recomb_compose_on(void);
 static double recomb_word_prob(const unsigned int hist[], int hlen,
   unsigned int next);
+static double ngramk_prob_exact(const unsigned int hist[], int hlen,
+  unsigned int next);
 static double ngram_skip_prob(const unsigned int hist[], int hlen,
   unsigned int succ_id);
+static int ngram_skip_ready(const unsigned int hist[], int hlen);
 static double ngram_skip_mu(void);
 static void ngram_train_text(libxs_registry_t* model,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
@@ -667,6 +711,12 @@ int main(int argc, char* argv[])
       "  CONVERSE_HIER_EXPERT_SHARE=F fixed share 0..<1 (default 0.005).\n"
       "  CONVERSE_SKIP=1          add skip-gram (w _ w) generalization tier.\n"
       "  CONVERSE_SKIP_MU=F       skip-gram interpolation weight (default 0.3).\n"
+      "  CONVERSE_NGRAM_BANK_SKIP=1 carry the skip tier as its own bank slot\n"
+      "                           (learned weight instead of fixed SKIP_MU).\n"
+      "  CONVERSE_NGRAM_BANK_PRIOR=1 carry the unigram prior as a bank slot\n"
+      "                           (a total expert where counts are partial).\n"
+      "  CONVERSE_NGRAM_BANK_GEO=1 geometric (log-linear) pool instead of the\n"
+      "                           linear one; exactly normalized.\n"
       "  CONVERSE_EMB_PROBE=w1,w2 print nearest embedding neighbors.\n"
       "  CONVERSE_EMB_BACKFILL=0  disable rare-token vector backfill.\n"
       "  CONVERSE_RECOMB=N        recombination probe over N sentences.\n"
@@ -6409,10 +6459,23 @@ static const ngram_entry_t* ngramk_lookup(libxs_registry_t* model,
 }
 
 
+/**
+ * The pure count-based estimate: interpolated backoff with NO skip tier folded
+ * in. The bank needs this because it carries skip as its own slot, and an order
+ * expert that already contained skip at a fixed weight would double-count it --
+ * making the learned skip weight meaningless.
+ */
+static double ngramk_prob_exact(const unsigned int hist[], int hlen,
+  unsigned int next)
+{
+  return libxs_ngram_prob(&converse_ngram, hist, hlen, next);
+}
+
+
 static double ngramk_prob(libxs_registry_t* model, const unsigned int hist[],
   int hlen, int maxorder, unsigned int next)
 {
-  double p = libxs_ngram_prob(&converse_ngram, hist, hlen, next);
+  double p = ngramk_prob_exact(hist, hlen, next);
   LIBXS_UNUSED(model); LIBXS_UNUSED(maxorder);
   if (0 != converse_skip_on) {
     double p_skip = ngram_skip_prob(hist, hlen, next);
@@ -7203,35 +7266,288 @@ static double ngram_bank_share(void)
 
 
 /**
- * One causal fixed-share step. Multiplicative log-loss update toward the
- * experts that beat the mixture, then a share of the mass redistributed
- * uniformly so an expert that was wrong for a while can recover. Only
- * initialized experts participate; giving mass to slots that never produce a
- * probability would spend it for nothing.
+ * One causal fixed-share step over the expert slots. Multiplicative log-loss
+ * update toward the experts that beat the mixture, then a share of the mass
+ * redistributed uniformly so an expert that was wrong for a while can recover.
+ * Only slots that are ENABLED (weight > 0) and ACTIVE (spoke at this position)
+ * participate: an abstaining slot is neither updated nor renormalized, so it
+ * carries its weight to the next position where it can speak. Restricting the
+ * update to the slots that spoke is also what keeps the order experts bit-exact
+ * to the pre-slot bank, where the loop simply stopped at min(maxorder, hlen).
+ *
+ * The ratio is floored only where it is EXACTLY zero, which happens when an
+ * active expert assigns no mass at all to the observed target (the skip tier
+ * matches a pair whose successor list omits it). pow(0, rate) is exactly zero,
+ * so such a slot would lose all its mass in one step and the uniform recovery
+ * term, which only reaches slots that still hold mass, could never revive it.
+ * A merely tiny ratio needs no floor -- it decays steeply but stays positive,
+ * and clamping it would perturb the order-only weights that are otherwise
+ * bit-exact to the pre-slot bank.
  */
-static void ngram_bank_update(double weight[], const double probability[],
-  int maxorder, double mixture, double rate, double share)
+static void ngram_bank_update(double weight[], const ngram_expert_t expert[],
+  double mixture, double rate, double share)
 {
   double total = 0.0;
-  int order, nactive = 0;
-  for (order = 1; order <= maxorder; ++order) {
-    if (weight[order] > 0.0) {
-      const double relative = (mixture > 0.0)
-        ? probability[order] / mixture : 1.0;
-      weight[order] *= pow(relative, rate);
-      total += weight[order];
+  int slot, nactive = 0;
+  for (slot = 1; slot <= NGRAM_BANK_LAST; ++slot) {
+    if (weight[slot] > 0.0 && 0 != expert[slot].active) {
+      double relative = (mixture > 0.0)
+        ? expert[slot].probability / mixture : 1.0;
+      if (!(relative > 0.0)) relative = NGRAM_BANK_RELMIN;
+      weight[slot] *= pow(relative, rate);
+      total += weight[slot];
       ++nactive;
     }
   }
   if (total > 0.0 && nactive > 0) {
     const double uniform = 1.0 / (double)nactive;
-    for (order = 1; order <= maxorder; ++order) {
-      if (weight[order] > 0.0) {
-        weight[order] = (1.0 - share) * weight[order] / total
+    for (slot = 1; slot <= NGRAM_BANK_LAST; ++slot) {
+      if (weight[slot] > 0.0 && 0 != expert[slot].active) {
+        weight[slot] = (1.0 - share) * weight[slot] / total
           + share * uniform;
       }
     }
   }
+}
+
+
+/**
+ * Which extra slots the bank carries beyond the fixed orders, as a mask over
+ * slot indices. Empty by default: with no extra slot the bank is the order-only
+ * pool, which is the control the kind-different experts have to beat. The knobs
+ * are independent so one candidate can be measured without the others.
+ */
+static unsigned int ngram_bank_slots(void)
+{
+  unsigned int result = 0;
+  const char* skip = getenv("CONVERSE_NGRAM_BANK_SKIP");
+  const char* prior = getenv("CONVERSE_NGRAM_BANK_PRIOR");
+  if (NULL != skip && '0' != skip[0] && '\0' != skip[0]) {
+    result |= 1u << NGRAM_BANK_SKIP;
+  }
+  if (NULL != prior && '0' != prior[0] && '\0' != prior[0]) {
+    result |= 1u << NGRAM_BANK_PRIOR;
+  }
+  return result;
+}
+
+
+static int ngram_bank_enabled(unsigned int slots, int slot)
+{
+  return (slot <= NGRAM_ORDER_MAX || 0 != (slots & (1u << slot))) ? 1 : 0;
+}
+
+
+static const char* ngram_bank_slotname(int slot)
+{
+  static char name[8];
+  const char* result = name;
+  if (NGRAM_BANK_SKIP == slot) result = "skip";
+  else if (NGRAM_BANK_PRIOR == slot) result = "uni";
+  else sprintf(name, "o%d", slot);
+  return result;
+}
+
+
+/**
+ * Fill the per-position expert set. The fixed-order experts are the SAME
+ * interpolated model given only their last k words, so expert k is what a model
+ * capped at order k would say.
+ *
+ * When the skip slot is enabled the order experts are asked for the SKIP-FREE
+ * estimate: ngramk_prob folds the skip tier into every order at a fixed weight,
+ * so leaving that in would double-count it and make the learned skip weight
+ * meaningless. Without the slot they keep the folded estimate, which is what
+ * holds every existing configuration bit-exact.
+ *
+ * An expert that cannot speak is left inactive rather than given probability
+ * zero -- see ngram_expert_t. Order expert k needs k words of history; the skip
+ * slot needs three and a pair that was actually observed. The unigram slot is
+ * TOTAL: it always speaks, which is the point of carrying it -- the pool then
+ * has a floor at every position, including those where counts have nothing.
+ */
+static void ngram_bank_experts(const unsigned int hist[], int hlen,
+  int maxorder, unsigned int cur, unsigned int slots, ngram_expert_t expert[])
+{
+  const int skip_slot = (0 != (slots & (1u << NGRAM_BANK_SKIP))) ? 1 : 0;
+  int slot;
+  for (slot = 0; slot < NGRAM_BANK_MAX; ++slot) {
+    expert[slot].probability = 0.0;
+    expert[slot].active = 0;
+  }
+  for (slot = 1; slot <= maxorder && slot <= hlen; ++slot) {
+    const unsigned int* sub = hist + (hlen - slot);
+    expert[slot].probability = (0 != skip_slot)
+      ? ngramk_prob_exact(sub, slot, cur)
+      : ngramk_prob(NULL, sub, slot, slot, cur);
+    expert[slot].active = 1;
+  }
+  if (0 != skip_slot) {
+    const double ps = ngram_skip_prob(hist, hlen, cur);
+    /**
+     * Abstention is a property of the CONTEXT, not of the target: the tier
+     * speaks when its pair was observed, whatever probability it then assigns
+     * to this particular successor. Testing ps > 0.0 instead would silently
+     * make the slot active only where it happens to be right, which reads the
+     * target and would flatter the expert.
+     */
+    if (0 != ngram_skip_ready(hist, hlen)) {
+      expert[NGRAM_BANK_SKIP].probability = ps;
+      expert[NGRAM_BANK_SKIP].active = 1;
+    }
+  }
+  if (0 != (slots & (1u << NGRAM_BANK_PRIOR))) {
+    /* Zero history reaches the smoothed unigram prior with no backoff term. */
+    expert[NGRAM_BANK_PRIOR].probability = ngramk_prob_exact(hist, 0, cur);
+    expert[NGRAM_BANK_PRIOR].active = 1;
+  }
+}
+
+
+/**
+ * Which pooling rule the bank uses: 0 = linear (default, bit-exact), 1 =
+ * geometric (log-linear).
+ *
+ * The linear pool cannot beat its best member by much: it is a convex
+ * combination, so a confident expert can be outvoted but never veto. Three
+ * added slots were each capped near 0.008 bits, which makes the RULE a suspect
+ * independent of the expert supply. A geometric pool multiplies instead of
+ * averaging, so agreement sharpens and any expert can suppress a candidate.
+ */
+static int ngram_bank_geometric(void)
+{
+  const char* env = getenv("CONVERSE_NGRAM_BANK_GEO");
+  return (NULL != env && '0' != env[0] && '\0' != env[0]) ? 1 : 0;
+}
+
+
+/**
+ * Collect the union of successor ids reachable from this history, which is the
+ * only part of the vocabulary where the experts differ from a scaled prior.
+ * Every expert is the same interpolated backoff over suffixes of one history,
+ * so the union over all of them is the union of the successor lists at suffix
+ * lengths 1..maxorder -- at most maxorder * SUCC_MAX ids.
+ */
+static int ngram_bank_support(libxs_registry_t* model, const unsigned int hist[],
+  int hlen, int maxorder, unsigned int ids[], int max)
+{
+  int result = 0, n;
+  for (n = 1; n <= maxorder && n <= hlen; ++n) {
+    const ngram_entry_t* entry = ngramk_lookup(model, hist, hlen, n);
+    if (NULL != entry) {
+      unsigned int s;
+      for (s = 0; s < entry->nsucc && result < max; ++s) {
+        const unsigned int id = entry->succ[s].id;
+        int seen = 0, i;
+        for (i = 0; i < result; ++i) {
+          if (ids[i] == id) {
+            seen = 1;
+            break;
+          }
+        }
+        if (0 == seen && 0 != id) ids[result++] = id;
+      }
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Geometric (log-linear) pool, normalized EXACTLY rather than approximately.
+ * An unnormalized log-linear score is not a code length, so a BPC taken from
+ * one would be meaningless -- the whole point of the measurement.
+ *
+ * The normalizer is exact at bounded cost because of the backoff structure: for
+ * an id outside every successor list along the chain, each expert reduces to
+ * c_k * prior(id) with c_k its total backoff mass. With the weights normalized
+ * to sum to one, the product over such ids is (prod c_k^w_k) * prior(id), so
+ * that entire tail of the vocabulary sums in closed form and only the support
+ * needs explicit terms. c_k itself comes from each expert summing to one over
+ * the vocabulary, so no probe id and no vocabulary scan is needed.
+ *
+ * Partial experts are excluded: an expert assigning exactly zero would drive
+ * the product to zero everywhere outside its own successor list, which is the
+ * known pathology of log-linear pools rather than a property of the data. Only
+ * the total experts (the orders and the prior) participate.
+ */
+static double ngram_bank_pool_geo(libxs_registry_t* model,
+  const unsigned int hist[], int hlen, int maxorder, unsigned int cur,
+  const double weight[], const ngram_expert_t expert[])
+{
+  unsigned int support[NGRAM_ORDER_MAX * NGRAM_SUCC_MAX];
+  double logprod[NGRAM_ORDER_MAX * NGRAM_SUCC_MAX];
+  double prior_sum = 0.0, tail_log = 0.0, wtotal = 0.0;
+  double zsum = 0.0, numerator;
+  const int nsupport = ngram_bank_support(model, hist, hlen, maxorder, support,
+    (int)(sizeof(support) / sizeof(*support)));
+  int slot, i, cur_index = -1;
+  for (slot = 1; slot <= NGRAM_BANK_LAST; ++slot) {
+    if (weight[slot] > 0.0 && 0 != expert[slot].active
+      && expert[slot].probability > 0.0)
+    {
+      wtotal += weight[slot];
+    }
+  }
+  if (!(wtotal > 0.0)) return 1e-12;
+  for (i = 0; i < nsupport; ++i) {
+    logprod[i] = 0.0;
+    prior_sum += ngramk_prob_exact(hist, 0, support[i]);
+    if (support[i] == cur) cur_index = i;
+  }
+  if (prior_sum >= 1.0) prior_sum = 1.0;
+  for (slot = 1; slot <= NGRAM_BANK_LAST; ++slot) {
+    if (weight[slot] > 0.0 && 0 != expert[slot].active
+      && expert[slot].probability > 0.0)
+    {
+      const double w = weight[slot] / wtotal;
+      const int k = (slot <= NGRAM_ORDER_MAX) ? slot : 0;
+      double mass = 0.0, backoff;
+      for (i = 0; i < nsupport; ++i) {
+        const double pk = (k > 0)
+          ? ngramk_prob_exact(hist + (hlen - k), k, support[i])
+          : ngramk_prob_exact(hist, 0, support[i]);
+        logprod[i] += w * log((pk > 0.0) ? pk : 1e-300);
+        mass += pk;
+      }
+      /* Backoff mass left for the tail, from this expert summing to one. */
+      backoff = (prior_sum < 1.0) ? (1.0 - mass) / (1.0 - prior_sum) : 0.0;
+      tail_log += w * log((backoff > 0.0) ? backoff : 1e-300);
+    }
+  }
+  for (i = 0; i < nsupport; ++i) zsum += exp(logprod[i]);
+  zsum += exp(tail_log) * (1.0 - prior_sum);
+  /**
+   * The target is scored through the same partition, not added to the support:
+   * the tail form is exact for any id outside it, so the normalizer stays
+   * independent of which target is being scored.
+   */
+  numerator = (cur_index >= 0) ? exp(logprod[cur_index])
+    : exp(tail_log) * ngramk_prob_exact(hist, 0, cur);
+  if (!(zsum > 0.0)) return 1e-12;
+  numerator /= zsum;
+  return (numerator > 0.0) ? numerator : 1e-12;
+}
+
+
+/**
+ * Score one position under the bank: a linear pool over the active slots,
+ * renormalized by their weight mass so an abstaining expert costs no
+ * probability mass rather than draining it.
+ */
+static double ngram_bank_pool(const double weight[],
+  const ngram_expert_t expert[])
+{
+  double pooled = 0.0, wtotal = 0.0;
+  int slot;
+  for (slot = 1; slot <= NGRAM_BANK_LAST; ++slot) {
+    if (weight[slot] > 0.0 && 0 != expert[slot].active) {
+      pooled += weight[slot] * expert[slot].probability;
+      wtotal += weight[slot];
+    }
+  }
+  if (wtotal > 0.0) pooled /= wtotal;
+  return (pooled > 0.0) ? pooled : 1e-12;
 }
 
 
@@ -7303,6 +7619,28 @@ static double ngram_skip_prob(const unsigned int hist[], int hlen,
           }
         }
       }
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Whether the skip tier can speak for this context at all: the pair exists and
+ * was observed. Target-independent by construction, so the bank can mark the
+ * slot active without reading the answer.
+ */
+static int ngram_skip_ready(const unsigned int hist[], int hlen)
+{
+  int result = 0;
+  if (0 != converse_skip_on && hlen >= 3) {
+    unsigned int pair[2];
+    pair[0] = hist[hlen - 3];
+    pair[1] = hist[hlen - 1];
+    if (0 != pair[0] && 0 != pair[1]) {
+      const libxs_ngram_entry_t* entry =
+        libxs_ngram_lookup(&converse_skip, pair, 2, 2);
+      if (NULL != entry && entry->total > 0) result = 1;
     }
   }
   return result;
@@ -9039,10 +9377,25 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   const int sel_order = ngram_select_order();
   double entry_bytes = 0.0;
   double bank_bits = 0.0;
-  double bank_weight[NGRAM_ORDER_MAX + 1];
-  double bank_wsum[NGRAM_ORDER_MAX + 1];
+  double bank_weight[NGRAM_BANK_MAX];
+  double bank_wsum[NGRAM_BANK_MAX];
+  long bank_active[NGRAM_BANK_MAX];
+  /**
+   * Each slot's STANDALONE cost, over exactly the positions where it spoke.
+   * Without this a collapsed weight is uninterpretable: it cannot be told apart
+   * from a plumbing fault. Same per-expert denominator discipline as the order
+   * experts -- an abstaining slot must not be charged for positions it never
+   * scored, nor credited with them.
+   */
+  double bank_slot_bits[NGRAM_BANK_MAX];
+  double bank_slot_bytes[NGRAM_BANK_MAX];
   long bank_n = 0;
+  /* The bank under the attested/novel split: two mechanisms so far had their
+     headline reversed by bucket-splitting, so every slot set reports both. */
+  double bank_deep_bits = 0.0, bank_shallow_bits = 0.0;
   const int bank = ngram_bank_probe();
+  const unsigned int bank_slots = ngram_bank_slots();
+  const int bank_geo = ngram_bank_geometric();
   const double bank_rate = ngram_bank_rate();
   const double bank_share = ngram_bank_share();
   const int oracle = ngram_oracle_probe();
@@ -9056,10 +9409,22 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   memset(expert_bytes, 0, sizeof(expert_bytes));
   memset(oracle_pick, 0, sizeof(oracle_pick));
   memset(bank_wsum, 0, sizeof(bank_wsum));
+  memset(bank_active, 0, sizeof(bank_active));
+  memset(bank_slot_bits, 0, sizeof(bank_slot_bits));
+  memset(bank_slot_bytes, 0, sizeof(bank_slot_bytes));
   { int k;
-    /* Uniform prior over the orders; the update is what differentiates them. */
-    for (k = 0; k <= NGRAM_ORDER_MAX; ++k) {
-      bank_weight[k] = (k >= 1) ? 1.0 / (double)NGRAM_ORDER_MAX : 0.0;
+    /**
+     * Uniform prior over the ENABLED slots; the update is what differentiates
+     * them. A disabled slot starts at zero and stays there, which is what makes
+     * the order-only bank bit-exact to the pre-slot version.
+     */
+    int nslot = 0;
+    for (k = 1; k <= NGRAM_BANK_LAST; ++k) {
+      if (0 != ngram_bank_enabled(bank_slots, k)) ++nslot;
+    }
+    for (k = 0; k < NGRAM_BANK_MAX; ++k) {
+      bank_weight[k] = (k >= 1 && k <= NGRAM_BANK_LAST
+        && 0 != ngram_bank_enabled(bank_slots, k)) ? 1.0 / (double)nslot : 0.0;
     }
   }
   memset(sel_total, 0, sizeof(sel_total));
@@ -9153,13 +9518,10 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
               int k;
               double best = bits;
               int bestk = 0;
-              double expert_p[NGRAM_ORDER_MAX + 1];
               const double w = (curlen > 0) ? (double)curlen : 1.0;
-              for (k = 0; k <= NGRAM_ORDER_MAX; ++k) expert_p[k] = 0.0;
               for (k = 1; k <= maxorder && k <= hlen; ++k) {
                 double pk = ngramk_prob(model, hist + (hlen - k), k, k, cur);
                 double bk = -log((pk > 0.0) ? pk : 1e-12) * inv_log2;
-                expert_p[k] = pk;
                 /**
                  * Per-expert byte denominator: expert k only exists where the
                  * history reaches k, so dividing its bits by the TOTAL bytes
@@ -9176,28 +9538,40 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
                 }
               }
               /**
-               * The bank: linear pool over the same fixed-order experts, with
-               * weights carried across positions and updated causally (score
-               * first, then update), so no target information enters the score.
-               * Reuses the oracle's per-order probabilities, which is why it
-               * lives inside this probe rather than in the default path.
+               * The bank: linear pool over the expert slots, with weights
+               * carried across positions and updated causally (score first,
+               * then update), so no target information enters the score. The
+               * slots are the fixed orders plus, when enabled, experts of a
+               * different KIND -- the 2.018 oracle below says order selection
+               * alone cannot reach the target, so mixing kinds is the only
+               * direction with measured room.
                */
               if (0 != bank) {
-                double pooled = 0.0, wtotal = 0.0;
+                ngram_expert_t expert[NGRAM_BANK_MAX];
+                double pooled, pbits;
                 int b;
-                for (b = 1; b <= maxorder && b <= hlen; ++b) {
-                  pooled += bank_weight[b] * expert_p[b];
-                  wtotal += bank_weight[b];
-                }
-                if (wtotal > 0.0) pooled /= wtotal;
-                if (!(pooled > 0.0)) pooled = 1e-12;
-                bank_bits += -log(pooled) * inv_log2;
+                ngram_bank_experts(hist, hlen, maxorder, cur, bank_slots,
+                  expert);
+                pooled = (0 != bank_geo)
+                  ? ngram_bank_pool_geo(model, hist, hlen, maxorder, cur,
+                    bank_weight, expert)
+                  : ngram_bank_pool(bank_weight, expert);
+                pbits = -log(pooled) * inv_log2;
+                bank_bits += pbits;
+                if (0 != deep) bank_deep_bits += pbits;
+                else bank_shallow_bits += pbits;
                 ++bank_n;
-                for (b = 1; b <= NGRAM_ORDER_MAX; ++b) {
+                for (b = 1; b <= NGRAM_BANK_LAST; ++b) {
                   bank_wsum[b] += bank_weight[b];
+                  if (0 != expert[b].active) {
+                    const double pb = expert[b].probability;
+                    ++bank_active[b];
+                    bank_slot_bits[b] += -log((pb > 0.0) ? pb : 1e-12)
+                      * inv_log2;
+                    bank_slot_bytes[b] += w;
+                  }
                 }
-                ngram_bank_update(bank_weight, expert_p,
-                  (maxorder < hlen) ? maxorder : hlen, pooled, bank_rate,
+                ngram_bank_update(bank_weight, expert, pooled, bank_rate,
                   bank_share);
               }
               oracle_bits += best;
@@ -9389,13 +9763,34 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
         }
       }
       if (0 != bank && bank_n > 0) {
-        int b;
-        fprintf(stderr, "  BANK(rate=%.2f share=%.3f)=%.3f | mean weights:",
-          bank_rate, bank_share,
-          (sum_bytes > 0.0) ? bank_bits / sum_bytes : 0.0);
-        for (b = 1; b <= NGRAM_ORDER_MAX; ++b) {
+        int b, nslot = 0;
+        for (b = 1; b <= NGRAM_BANK_LAST; ++b) {
+          if (0 != ngram_bank_enabled(bank_slots, b)) ++nslot;
+        }
+        fprintf(stderr, "  BANK(%s rate=%.2f share=%.3f slots=%d)=%.3f"
+          " | attested %.3f novel %.3f | mean weight (active%%):",
+          (0 != bank_geo) ? "geo" : "linear", bank_rate, bank_share, nslot,
+          (sum_bytes > 0.0) ? bank_bits / sum_bytes : 0.0,
+          (deep_bytes > 0.0) ? bank_deep_bits / deep_bytes : 0.0,
+          (shallow_bytes > 0.0) ? bank_shallow_bits / shallow_bytes : 0.0);
+        /**
+         * Mean weight alone cannot be read without the active share: a slot
+         * that abstains often keeps its weight while contributing nothing, so a
+         * healthy-looking weight can belong to an expert that almost never
+         * spoke.
+         */
+        for (b = 1; b <= NGRAM_BANK_LAST; ++b) {
           if (bank_wsum[b] > 0.0) {
-            fprintf(stderr, " o%d=%.3f", b, bank_wsum[b] / (double)bank_n);
+            fprintf(stderr, " %s=%.3f(%.0f%%)", ngram_bank_slotname(b),
+              bank_wsum[b] / (double)bank_n,
+              100.0 * (double)bank_active[b] / (double)bank_n);
+          }
+        }
+        fprintf(stderr, "\n  bank slots standalone (bpc where active):");
+        for (b = 1; b <= NGRAM_BANK_LAST; ++b) {
+          if (bank_slot_bytes[b] > 0.0) {
+            fprintf(stderr, " %s=%.3f", ngram_bank_slotname(b),
+              bank_slot_bits[b] / bank_slot_bytes[b]);
           }
         }
         fprintf(stderr, "\n");
