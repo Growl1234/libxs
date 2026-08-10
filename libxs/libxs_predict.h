@@ -424,13 +424,38 @@ LIBXS_API void libxs_predict_inverse(libxs_lock_t* lock,
  * are scored in. That is reproducible for a fixed corpus and fixed iteration,
  * but not comparable across shuffles, and should not be reported as if it
  * were. For a figure that is both converged and order-independent, score once
- * with a context, save the model (the weights are serialized), then score with
- * context == NULL -- frozen at converged weights, with no transient.
+ * with a context over a warm-up split, libxs_predict_prob_commit the converged
+ * weights to the model, then score the reported split with context == NULL --
+ * frozen at converged weights, with no transient. The commit step is required:
+ * adaptation writes only into the context, so without it the model still holds
+ * its uniform prior and frozen scoring is frozen at that prior, not at what the
+ * stream learned.
  */
 LIBXS_API void* libxs_predict_prob_create(const libxs_predict_t* model);
 
 /** Destroy a scoring context (NULL is accepted). */
 LIBXS_API void libxs_predict_prob_destroy(void* context);
+
+/**
+ * Copy a context's converged escape weights into the model, so that frozen
+ * scoring (context == NULL) and libxs_predict_save carry what the stream
+ * learned instead of the uniform prior.
+ *
+ * This is a deliberate, caller-timed act rather than a side effect of scoring:
+ * an adaptive call that wrote through to the model would make concurrent
+ * streams interfere and would silently give up the read-only-while-scoring
+ * guarantee the context exists to provide.
+ *
+ * The model is modified, so no scoring call on it may be in flight. Returns
+ * EXIT_SUCCESS, or EXIT_FAILURE if the context does not belong to this model
+ * and build (the same rejection scoring applies to a stale context) or the
+ * model has no weights to write.
+ *
+ * Committing mid-stream is allowed and simply publishes the weights as they
+ * stand; the context keeps adapting from where it was.
+ */
+LIBXS_API int libxs_predict_prob_commit(libxs_predict_t* model,
+  const void* context);
 
 /**
  * Probability of a supplied candidate output given the inputs.

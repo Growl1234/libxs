@@ -538,6 +538,8 @@ static int token_input_vector(unsigned int prev2, unsigned int prev1,
 static double ngram_bank_pool(const double weight[],
   const ngram_expert_t expert[]);
 static int ngram_bank_geometric(void);
+static int ngram_bank_frozen(void);
+static int ngram_bank_warmup(libxs_predict_t* store, int vocabulary);
 static int ngram_bank_support(libxs_registry_t* model, const unsigned int hist[],
   int hlen, int maxorder, unsigned int ids[], int max);
 static double ngram_bank_pool_geo(libxs_registry_t* model,
@@ -745,6 +747,9 @@ int main(int argc, char* argv[])
       "                           (a total expert where counts are partial).\n"
       "  CONVERSE_NGRAM_BANK_PREDICT=1 carry libxs_predict as a bank slot\n"
       "                           (distribution via prob_observe).\n"
+      "  CONVERSE_NGRAM_BANK_FROZEN=1 warm up the predict slot on the training\n"
+      "                           entries, commit, then score frozen: the\n"
+      "                           figure stops depending on iteration order.\n"
       "  CONVERSE_GEN_RELEVANCE=F require F content-word overlap between an\n"
       "                           answer and its continuation (default 0=off).\n"
       "  CONVERSE_NGRAM_BANK_GEO=1 geometric (log-linear) pool instead of the\n"
@@ -1100,6 +1105,13 @@ int main(int argc, char* argv[])
       else if (0 != (ngram_bank_slots() & (1u << NGRAM_BANK_PREDICT))) {
         token_model = token_predict_build(corpus, lexicon, rules, nrules,
           predict_profile, 0, ngram_holdout, 2);
+        /* Converge and publish the escape weights BEFORE scoring, so frozen
+           mode freezes something converged rather than the uniform prior. The
+           model is mutable only here, which is also the only place it may be
+           written: scoring requires it read-only. */
+        if (0 != ngram_bank_frozen() && NULL != token_model) {
+          ngram_bank_warmup(token_model, (int)libxs_lexicon_size(lexicon));
+        }
         converse_stage_end("token_predict");
       }
     }
@@ -7451,7 +7463,7 @@ static void ngram_bank_experts(const unsigned int hist[], int hlen,
     expert[NGRAM_BANK_PRIOR].active = 1;
   }
   if (0 != (slots & (1u << NGRAM_BANK_PREDICT)) && NULL != store
-    && NULL != context && hlen >= 1)
+    && hlen >= 1)
   {
     /**
      * The store is keyed on the last two tokens, so it speaks wherever one token
@@ -7471,20 +7483,41 @@ static void ngram_bank_experts(const unsigned int hist[], int hlen,
     const double candidate = (double)cur;
     int nsupport;
     token_input_vector(prev2, prev1, use_emb, in);
-    nsupport = libxs_predict_prob_observe(NULL, store, context, in, 0,
-      &candidate, NULL, NULL, 0, NULL, &pinfo, vocabulary, 1);
-    /**
-     * Mass mode only: a token id is discrete, so PDENSITY cannot arise, and an
-     * unexpected PNONE must surface as abstention rather than a silent zero.
-     */
-    if (0 < nsupport && NULL != pinfo.kind
-      && LIBXS_PREDICT_PMASS == pinfo.kind[0] && NULL != pinfo.prob)
-    {
-      expert[NGRAM_BANK_PREDICT].probability = pinfo.prob[0];
-      expert[NGRAM_BANK_PREDICT].active = 1;
-      predict_entropy_sum += pinfo.entropy;
-      predict_support_last = nsupport;
-      ++predict_nscored;
+    if (NULL != context) {
+      nsupport = libxs_predict_prob_observe(NULL, store, context, in, 0,
+        &candidate, NULL, NULL, 0, NULL, &pinfo, vocabulary, 1);
+      /**
+       * Mass mode only: a token id is discrete, so PDENSITY cannot arise, and an
+       * unexpected PNONE must surface as abstention rather than a silent zero.
+       */
+      if (0 < nsupport && NULL != pinfo.kind
+        && LIBXS_PREDICT_PMASS == pinfo.kind[0] && NULL != pinfo.prob)
+      {
+        expert[NGRAM_BANK_PREDICT].probability = pinfo.prob[0];
+        expert[NGRAM_BANK_PREDICT].active = 1;
+        predict_entropy_sum += pinfo.entropy;
+        predict_support_last = nsupport;
+        ++predict_nscored;
+      }
+    }
+    else {
+      /**
+       * Frozen: the weights the warm-up committed are read and never written, so
+       * the score does not depend on how many positions preceded this one. info
+       * aliases the context, so the distribution cannot be reported here and the
+       * point query is what is available -- which is also cheaper, since it
+       * answers P(y|x) without enumerating the support. The mass-mode check
+       * moves to the reported probability being a usable number.
+       */
+      double p = 0.0;
+      libxs_predict_prob(NULL, store, NULL, in, &candidate, &p, NULL,
+        vocabulary, 1);
+      nsupport = 0;
+      if (p > 0.0 && p <= 1.0) {
+        expert[NGRAM_BANK_PREDICT].probability = p;
+        expert[NGRAM_BANK_PREDICT].active = 1;
+        ++predict_nscored;
+      }
     }
   }
 }
@@ -9607,6 +9640,71 @@ static void slot_probe_run(const libxs_registry_t* corpus,
 }
 
 
+/**
+ * Which scoring mode the predict slot uses: 0 = adaptive (default), 1 = warm up
+ * over the training entries, commit the converged weights, then score FROZEN.
+ *
+ * Adaptive scoring carries one context across the run, so the escape bank
+ * converges but the figure becomes a function of the order entries are
+ * iterated -- reproducible here, not comparable across shuffles, and the
+ * content-hash key already changed that order once. Frozen scoring is
+ * order-independent by construction, but only says something once the weights
+ * it freezes have converged, which is what the warm-up pass is for.
+ */
+static int ngram_bank_frozen(void)
+{
+  const char* env = getenv("CONVERSE_NGRAM_BANK_FROZEN");
+  return (NULL != env && 0 != atoi(env)) ? 1 : 0;
+}
+
+
+/**
+ * Converge the escape bank on the TRAINING data, then publish the weights so
+ * frozen scoring has something converged to freeze.
+ *
+ * The entries pushed into the store are the training split already -- pushing
+ * is gated on predict_is_test in token_predict_build -- so replaying them
+ * reads no held-out data and needs none of the tokenization the eval loop does.
+ * Passing NULL for values/probs/info still advances the bank: prob_observe
+ * learns from the candidate, and the distribution is only reported if asked
+ * for.
+ *
+ * Weights move only while this runs. Afterwards the model carries them and
+ * scoring is strictly read-only, which is the property that makes the reported
+ * figure independent of iteration order.
+ */
+static int ngram_bank_warmup(libxs_predict_t* store, int vocabulary)
+{
+  int result = EXIT_FAILURE;
+  void* context = (NULL != store) ? libxs_predict_prob_create(store) : NULL;
+  if (NULL != context) {
+    libxs_predict_query_t info;
+    long observed = 0;
+    int i;
+    memset(&info, 0, sizeof(info));
+    libxs_predict_query(store, &info);
+    for (i = 0; i < info.nentries; ++i) {
+      /* sized for the widest input vector either profile uses */
+      double in[2 * TOKEN_EMB_DIM];
+      double out[1];
+      out[0] = 0.0;
+      libxs_predict_get(store, i, in, out);
+      if (0 < libxs_predict_prob_observe(NULL, store, context, in, 0,
+        out, NULL, NULL, 0, NULL, NULL, vocabulary, 1))
+      {
+        ++observed;
+      }
+    }
+    result = libxs_predict_prob_commit(store, context);
+    fprintf(stderr, "predict slot: warm-up observed %ld of %i entries, "
+      "commit %s\n", observed, info.nentries,
+      (EXIT_SUCCESS == result) ? "ok" : "FAILED");
+    libxs_predict_prob_destroy(context);
+  }
+  return result;
+}
+
+
 static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
   int order, int holdout, const char* kind, const libxs_predict_t* store,
@@ -9667,6 +9765,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
    * the slot abstains rather than silently falling back to frozen weights.
    */
   void* bank_context = NULL;
+  const int bank_frozen = ngram_bank_frozen();
   const int bank_vocab = (int)libxs_lexicon_size(lexicon);
   const double bank_rate = ngram_bank_rate();
   const double bank_share = ngram_bank_share();
@@ -9681,7 +9780,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   memset(expert_bytes, 0, sizeof(expert_bytes));
   memset(oracle_pick, 0, sizeof(oracle_pick));
   if (0 != bank && 0 != (bank_slots & (1u << NGRAM_BANK_PREDICT))
-    && NULL != store)
+    && NULL != store && 0 == bank_frozen)
   {
     /**
      * NULL means the model cannot be scored, which is a different situation
@@ -10072,11 +10171,23 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
           }
         }
         if (predict_nscored > 0) {
-          const double ent = predict_entropy_sum / (double)predict_nscored;
-          fprintf(stderr, "\n  predict slot: support=%d vocab=%d scored=%ld"
-            " escape entropy=%.3f%s", predict_support_last, bank_vocab,
-            predict_nscored, ent,
-            (ent > NGRAM_PREDICT_ENTROPY_MAX) ? " (UNSETTLED)" : "");
+          /**
+           * Frozen scoring reports no entropy: info aliases the context and
+           * there is none, so the point query cannot return it. Saying FROZEN
+           * rather than printing 0.000 keeps a missing diagnostic from reading
+           * as a converged one.
+           */
+          if (0 != bank_frozen) {
+            fprintf(stderr, "\n  predict slot: vocab=%d scored=%ld FROZEN"
+              " (order-independent)", bank_vocab, predict_nscored);
+          }
+          else {
+            const double ent = predict_entropy_sum / (double)predict_nscored;
+            fprintf(stderr, "\n  predict slot: support=%d vocab=%d scored=%ld"
+              " escape entropy=%.3f%s", predict_support_last, bank_vocab,
+              predict_nscored, ent,
+              (ent > NGRAM_PREDICT_ENTROPY_MAX) ? " (UNSETTLED)" : "");
+          }
         }
         fprintf(stderr, "\n  bank slots standalone (bpc where active):");
         for (b = 1; b <= NGRAM_BANK_LAST; ++b) {

@@ -3686,6 +3686,28 @@ LIBXS_API void libxs_predict_prob_destroy(void* context)
 }
 
 
+LIBXS_API int libxs_predict_prob_commit(libxs_predict_t* model,
+  const void* context)
+{
+  int result = EXIT_FAILURE;
+  if (NULL != model && NULL != model->escape_w
+    && 0 != internal_libxs_predict_ctx_valid(model, context))
+  {
+    internal_libxs_predict_ctx_t* ctx =
+      (internal_libxs_predict_ctx_t*)context;
+    int j;
+    result = EXIT_SUCCESS;
+    for (j = 0; j < model->noutputs; ++j) {
+      const double* w = internal_libxs_predict_ctx_weights(ctx, j);
+      double* dst = model->escape_w + (size_t)j * LIBXS_PREDICT_NESCAPE;
+      int e;
+      for (e = 0; e < LIBXS_PREDICT_NESCAPE; ++e) dst[e] = w[e];
+    }
+  }
+  return result;
+}
+
+
 LIBXS_API void libxs_predict_prob(libxs_lock_t* lock,
   const libxs_predict_t* model, void* context, const double inputs[],
   const double candidate[], double prob[],
