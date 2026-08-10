@@ -59,10 +59,18 @@
  */
 #define NGRAM_BANK_SKIP (NGRAM_ORDER_MAX + 1)
 #define NGRAM_BANK_PRIOR (NGRAM_ORDER_MAX + 2)
-#define NGRAM_BANK_LAST NGRAM_BANK_PRIOR
+#define NGRAM_BANK_PREDICT (NGRAM_ORDER_MAX + 3)
+#define NGRAM_BANK_LAST NGRAM_BANK_PREDICT
 #define NGRAM_BANK_MAX (NGRAM_BANK_LAST + 1)
 /** Ratio substituted for an expert that gave the target no mass at all. */
 #define NGRAM_BANK_RELMIN 1e-4
+/**
+ * Escape-bank entropy above which the predict slot's estimate is still settling.
+ * log2(13) == 3.700 is the uninformative prior; a figure taken while the bank is
+ * near it is not trustworthy, so the run reports the mean rather than assuming
+ * convergence.
+ */
+#define NGRAM_PREDICT_ENTROPY_MAX 3.5
 #define BPE_SYMBOL_MAX 32
 #define BPE_WORD_MAX 128
 #define BPE_MERGES_DEFAULT 750
@@ -70,7 +78,9 @@
 #define PREDICT_EVAL_FILE "converse.predict"
 #define CONVERSE_PATH_MAX 512
 #define CONV_TOPIC_MAX 64
-#define TOKEN_PREDICT_TRAIN_MAX 40000
+#if !defined(TOKEN_PREDICT_TRAIN_MAX)
+# define TOKEN_PREDICT_TRAIN_MAX 40000
+#endif
 #define TOKEN_PREDICT_EVAL_STRIDE 40
 #if !defined(TOKEN_EMB_DIM)
 # define TOKEN_EMB_DIM 16
@@ -520,7 +530,11 @@ static unsigned int ngram_bank_slots(void);
 static int ngram_bank_enabled(unsigned int slots, int slot);
 static const char* ngram_bank_slotname(int slot);
 static void ngram_bank_experts(const unsigned int hist[], int hlen,
-  int maxorder, unsigned int cur, unsigned int slots, ngram_expert_t expert[]);
+  int maxorder, unsigned int cur, unsigned int slots,
+  const libxs_predict_t* store, void* context, int use_emb, int vocabulary,
+  ngram_expert_t expert[]);
+static int token_input_vector(unsigned int prev2, unsigned int prev1,
+  int use_emb, double inputs[]);
 static double ngram_bank_pool(const double weight[],
   const ngram_expert_t expert[]);
 static int ngram_bank_geometric(void);
@@ -554,6 +568,14 @@ static const char* converse_stage_name[CONVERSE_STAGE_MAX];
 static double converse_stage_time[CONVERSE_STAGE_MAX];
 static int converse_stage_count = 0;
 static long corpus_chain_dropped = 0;
+/**
+ * Predict-slot diagnostics. The escape bank's entropy says whether its estimate
+ * has settled; a figure taken near the uninformative prior is not trustworthy,
+ * so the mean is reported rather than convergence being assumed.
+ */
+static double predict_entropy_sum = 0.0;
+static long predict_nscored = 0;
+static int predict_support_last = 0;
 static libxs_timer_tick_t converse_stage_tick = 0;
 static bpe_symbol_t* bpe_symbols = NULL;
 static int bpe_nsymbols = 0;
@@ -572,10 +594,16 @@ static int ngram_generate(libxs_registry_t* model, libxs_lexicon_t* lexicon,
   char* out, size_t out_size, double* order_mean, int* order_min_out);
 static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
-  int order, int holdout, const char* kind);
+  int order, int holdout, const char* kind, const libxs_predict_t* store,
+  int use_emb);
 static int ngram_gen_eval(libxs_registry_t* model,
   const libxs_registry_t* corpus, libxs_lexicon_t* lexicon,
-  const libxs_lexrule_t* rules, int nrules, int holdout, const char* kind);
+  const libxs_lexrule_t* rules, int nrules, int holdout, const char* kind,
+  const libxs_predict_t* store, int use_emb);
+static int ngram_gen_bank_rank(libxs_registry_t* model,
+  const unsigned int hist[], int hlen, int maxorder, unsigned int ids[], int n,
+  unsigned int slots, const libxs_predict_t* store, void* context,
+  int use_emb, int vocabulary, double weight[]);
 static void ngram_stats(const libxs_registry_t* model);
 static int ngram_gran_mode(void);
 static int predict_is_test(long index, int holdout);
@@ -715,6 +743,10 @@ int main(int argc, char* argv[])
       "                           (learned weight instead of fixed SKIP_MU).\n"
       "  CONVERSE_NGRAM_BANK_PRIOR=1 carry the unigram prior as a bank slot\n"
       "                           (a total expert where counts are partial).\n"
+      "  CONVERSE_NGRAM_BANK_PREDICT=1 carry libxs_predict as a bank slot\n"
+      "                           (distribution via prob_observe).\n"
+      "  CONVERSE_GEN_RELEVANCE=F require F content-word overlap between an\n"
+      "                           answer and its continuation (default 0=off).\n"
       "  CONVERSE_NGRAM_BANK_GEO=1 geometric (log-linear) pool instead of the\n"
       "                           linear one; exactly normalized.\n"
       "  CONVERSE_EMB_PROBE=w1,w2 print nearest embedding neighbors.\n"
@@ -1062,6 +1094,14 @@ int main(int argc, char* argv[])
         token_model = rerank_build(corpus, ngram_model, lexicon, rules,
           nrules, ngram_order, predict_profile, ngram_holdout);
       }
+      /* The expert bank can carry the predict store as a slot, which needs the
+         store in the plain n-gram path too. Gated on the slot being asked for,
+         so every other configuration stays byte-identical. */
+      else if (0 != (ngram_bank_slots() & (1u << NGRAM_BANK_PREDICT))) {
+        token_model = token_predict_build(corpus, lexicon, rules, nrules,
+          predict_profile, 0, ngram_holdout, 2);
+        converse_stage_end("token_predict");
+      }
     }
     converse_stage_begin();
     if (0 != predict_eval_mode) {
@@ -1116,11 +1156,12 @@ int main(int argc, char* argv[])
       }
       else if (NULL != getenv("CONVERSE_GEN_EVAL")) {
         mode_result = ngram_gen_eval(ngram_model, eval_corpus, lexicon, rules,
-          nrules, ngram_holdout, ngram_kind);
+          nrules, ngram_holdout, ngram_kind, token_model, use_embed);
       }
       else {
         mode_result = ngram_eval(ngram_model, eval_corpus, lexicon, rules,
-          nrules, ngram_order, ngram_holdout, ngram_kind);
+          nrules, ngram_order, ngram_holdout, ngram_kind, token_model,
+          use_embed);
       }
       if (0 == use_hier) ngram_stats(ngram_model);
       converse_stage_end("eval");
@@ -7328,6 +7369,11 @@ static unsigned int ngram_bank_slots(void)
   if (NULL != prior && '0' != prior[0] && '\0' != prior[0]) {
     result |= 1u << NGRAM_BANK_PRIOR;
   }
+  { const char* prd = getenv("CONVERSE_NGRAM_BANK_PREDICT");
+    if (NULL != prd && '0' != prd[0] && '\0' != prd[0]) {
+      result |= 1u << NGRAM_BANK_PREDICT;
+    }
+  }
   return result;
 }
 
@@ -7344,6 +7390,7 @@ static const char* ngram_bank_slotname(int slot)
   const char* result = name;
   if (NGRAM_BANK_SKIP == slot) result = "skip";
   else if (NGRAM_BANK_PRIOR == slot) result = "uni";
+  else if (NGRAM_BANK_PREDICT == slot) result = "prd";
   else sprintf(name, "o%d", slot);
   return result;
 }
@@ -7367,7 +7414,9 @@ static const char* ngram_bank_slotname(int slot)
  * has a floor at every position, including those where counts have nothing.
  */
 static void ngram_bank_experts(const unsigned int hist[], int hlen,
-  int maxorder, unsigned int cur, unsigned int slots, ngram_expert_t expert[])
+  int maxorder, unsigned int cur, unsigned int slots,
+  const libxs_predict_t* store, void* context, int use_emb, int vocabulary,
+  ngram_expert_t expert[])
 {
   const int skip_slot = (0 != (slots & (1u << NGRAM_BANK_SKIP))) ? 1 : 0;
   int slot;
@@ -7400,6 +7449,43 @@ static void ngram_bank_experts(const unsigned int hist[], int hlen,
     /* Zero history reaches the smoothed unigram prior with no backoff term. */
     expert[NGRAM_BANK_PRIOR].probability = ngramk_prob_exact(hist, 0, cur);
     expert[NGRAM_BANK_PRIOR].active = 1;
+  }
+  if (0 != (slots & (1u << NGRAM_BANK_PREDICT)) && NULL != store
+    && NULL != context && hlen >= 1)
+  {
+    /**
+     * The store is keyed on the last two tokens, so it speaks wherever one token
+     * of history exists -- including positions no count context attested, which
+     * is the reason to carry it. The escape mass covers the unattested
+     * remainder, so it is TOTAL: active whenever the output is scoreable.
+     *
+     * One call per position. prob_observe reports the distribution in effect
+     * BEFORE the observation and advances the escape bank only afterwards, so
+     * the ordering that keeps a stream figure honest is enforced by the library
+     * rather than by call sequence here.
+     */
+    const unsigned int prev1 = hist[hlen - 1];
+    const unsigned int prev2 = (hlen > 1) ? hist[hlen - 2] : 0;
+    libxs_predict_prob_info_t pinfo;
+    double in[2 * TOKEN_EMB_DIM];
+    const double candidate = (double)cur;
+    int nsupport;
+    token_input_vector(prev2, prev1, use_emb, in);
+    nsupport = libxs_predict_prob_observe(NULL, store, context, in, 0,
+      &candidate, NULL, NULL, 0, NULL, &pinfo, vocabulary, 1);
+    /**
+     * Mass mode only: a token id is discrete, so PDENSITY cannot arise, and an
+     * unexpected PNONE must surface as abstention rather than a silent zero.
+     */
+    if (0 < nsupport && NULL != pinfo.kind
+      && LIBXS_PREDICT_PMASS == pinfo.kind[0] && NULL != pinfo.prob)
+    {
+      expert[NGRAM_BANK_PREDICT].probability = pinfo.prob[0];
+      expert[NGRAM_BANK_PREDICT].active = 1;
+      predict_entropy_sum += pinfo.entropy;
+      predict_support_last = nsupport;
+      ++predict_nscored;
+    }
   }
 }
 
@@ -8865,6 +8951,81 @@ static void ngram_complete(libxs_registry_t* model, libxs_lexicon_t* lexicon,
  * continuation extends what was said. Non-questions keep the pure generation
  * probe. Continuation is labeled and its grounding reported.
  */
+/**
+ * Minimum content-word overlap for a continuation to be shown with an answer.
+ * Zero keeps the historical behaviour (attestation only), which is bit-exact.
+ */
+static double gen_relevance_min(void)
+{
+  double result = 0.0;
+  const char* env = getenv("CONVERSE_GEN_RELEVANCE");
+  if (NULL != env && '\0' != *env) {
+    const double v = atof(env);
+    if (v >= 0.0 && v <= 1.0) result = v;
+  }
+  return result;
+}
+
+
+/**
+ * Content-word overlap between two texts, as a fraction of the smaller content
+ * set. The same measure recomb_overlap applies to entry pairs, over lexeme
+ * streams instead: the seam here joins an answer to a generated continuation,
+ * neither of which is a corpus entry.
+ *
+ * The grounding gate already in place verifies that a continuation is deeply
+ * ATTESTED, which is not the same as being about the same thing -- a deep context
+ * match on a common word leads wherever that phrasing went in training, so a
+ * fluent continuation can drift to an unrelated scene. Shared content beyond stop
+ * words is the cheapest evidence of aboutness, and it needs no new machinery.
+ */
+static double gen_overlap(libxs_lexicon_t* lexicon,
+  const libxs_lexrule_t* rules, int nrules, const char* a, int alen,
+  const char* b, int blen)
+{
+  double result = 0.0;
+  libxs_lexeme_stream_t sa, sb;
+  libxs_lexeme_stream_init(&sa);
+  libxs_lexeme_stream_init(&sb);
+  if (EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &sa,
+      (const unsigned char*)a, (size_t)alen, rules, nrules, answer_lexnorms,
+      answer_lexnorms_size, 0)
+    && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &sb,
+      (const unsigned char*)b, (size_t)blen, rules, nrules, answer_lexnorms,
+      answer_lexnorms_size, 0))
+  {
+    size_t ia, ib;
+    int na = 0, nb = 0, shared = 0;
+    for (ia = 0; ia < sa.size; ++ia) {
+      const libxs_lexeme_t* la = sa.data + ia;
+      if (0 == la->id || 0 != (la->flags & LIBXS_LEXEME_STOP)) continue;
+      if (0 == (la->flags & (LIBXS_LEXEME_WORD | LIBXS_LEXEME_NUMBER))) continue;
+      ++na;
+      for (ib = 0; ib < sb.size; ++ib) {
+        if (sb.data[ib].id == la->id) {
+          ++shared;
+          break;
+        }
+      }
+    }
+    for (ib = 0; ib < sb.size; ++ib) {
+      const libxs_lexeme_t* lb = sb.data + ib;
+      if (0 != lb->id && 0 == (lb->flags & LIBXS_LEXEME_STOP)
+        && 0 != (lb->flags & (LIBXS_LEXEME_WORD | LIBXS_LEXEME_NUMBER)))
+      {
+        ++nb;
+      }
+    }
+    { const int smaller = (na < nb) ? na : nb;
+      if (0 < smaller) result = (double)shared / (double)smaller;
+    }
+  }
+  libxs_lexeme_stream_release(&sa);
+  libxs_lexeme_stream_release(&sb);
+  return result;
+}
+
+
 static void complete_respond(const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
   const libxs_predict_t* answer_model,
@@ -8885,10 +9046,23 @@ static void complete_respond(const libxs_registry_t* corpus,
       seed, seed_len, gen, sizeof(gen), &order_mean, &order_min);
     int grounded = (ntok > 0 && order_mean >= ngram_gen_contfloor()) ? 1 : 0;
     int composed = 0;
+    double relevance = -1.0;
+    /**
+     * Attested is not the same as relevant. The grounding gate above checks that
+     * the continuation is deep replay; this checks that it is about the same
+     * thing as the answer it is being appended to. Off by default (threshold 0),
+     * so the historical output is unchanged unless the gate is asked for.
+     */
+    if (0 != grounded) {
+      const double need = gen_relevance_min();
+      relevance = gen_overlap(lexicon, rules, nrules, seed, seed_len, gen,
+        (int)strlen(gen));
+      if (relevance < need) grounded = 0;
+    }
     if (0 != grounded) {
       printf("continuation: %s\n", gen);
-      printf("grounding: %d tokens, mean order %.1f, min order %d\n",
-        ntok, order_mean, order_min);
+      printf("grounding: %d tokens, mean order %.1f, min order %d,"
+        " relevance %.2f\n", ntok, order_mean, order_min, relevance);
     }
     /**
      * Composition is the LAST tier, tried only once replay has failed. A
@@ -8952,9 +9126,47 @@ static void complete_respond(const libxs_registry_t* corpus,
  * generation-native counterpart to BPC (which only scores one-step prediction).
  * Also reports the mean grounding order over generated tokens.
  */
+/**
+ * Reorder generative candidates by the expert bank instead of by raw count
+ * rank. Generation is where a slot has to earn its keep for real: BPC scores a
+ * distribution against a known target, whereas here the model must put the
+ * right word FIRST with no target in sight. A slot that lowers BPC but cannot
+ * change the argmax has not changed what the system produces.
+ *
+ * Weights are carried across positions exactly as in scoring, but the update is
+ * driven by the CHOSEN token, not the true one -- no target information may
+ * enter generation. The bank therefore adapts to its own trajectory here, which
+ * is the honest online setting.
+ */
+static int ngram_gen_bank_rank(libxs_registry_t* model,
+  const unsigned int hist[], int hlen, int maxorder, unsigned int ids[], int n,
+  unsigned int slots, const libxs_predict_t* store, void* context,
+  int use_emb, int vocabulary, double weight[])
+{
+  int result = 0;
+  if (1 < n) {
+    double best = -1.0;
+    int i;
+    for (i = 0; i < n; ++i) {
+      ngram_expert_t expert[NGRAM_BANK_MAX];
+      double pooled;
+      ngram_bank_experts(hist, hlen, maxorder, ids[i], slots, store, context,
+        use_emb, vocabulary, expert);
+      pooled = ngram_bank_pool(weight, expert);
+      if (pooled > best) {
+        best = pooled;
+        result = i;
+      }
+    }
+  }
+  return result;
+}
+
+
 static int ngram_gen_eval(libxs_registry_t* model,
   const libxs_registry_t* corpus, libxs_lexicon_t* lexicon,
-  const libxs_lexrule_t* rules, int nrules, int holdout, const char* kind)
+  const libxs_lexrule_t* rules, int nrules, int holdout, const char* kind,
+  const libxs_predict_t* store, int use_emb)
 {
   enum { GEN_SEED = 3, GEN_LOOK = 20 };
   int result = EXIT_FAILURE;
@@ -8962,10 +9174,31 @@ static int ngram_gen_eval(libxs_registry_t* model,
   long nsent_att = 0, sum_repro_att = 0, nsent_nov = 0, sum_repro_nov = 0;
   int maxorder = ngram_maxorder();
   int minorder = ngram_gen_minorder();
+  long gen_ranked = 0, gen_reordered = 0;
+  const int gen_bank = ngram_bank_probe();
+  const unsigned int bank_slots = ngram_bank_slots();
+  const int gen_vocab = (int)libxs_lexicon_size(lexicon);
+  double bank_weight[NGRAM_BANK_MAX];
+  void* gen_context = NULL;
   const void* key = NULL;
   size_t cursor = 0;
   void* value;
   if (NULL == model || NULL == corpus || NULL == lexicon) return EXIT_FAILURE;
+  { int k, nslot = 0;
+    for (k = 1; k <= NGRAM_BANK_LAST; ++k) {
+      if (0 != ngram_bank_enabled(bank_slots, k)) ++nslot;
+    }
+    for (k = 0; k < NGRAM_BANK_MAX; ++k) {
+      bank_weight[k] = (k >= 1 && k <= NGRAM_BANK_LAST
+        && 0 != ngram_bank_enabled(bank_slots, k)) ? 1.0 / (double)nslot : 0.0;
+    }
+  }
+  if (0 != gen_bank && 0 != (bank_slots & (1u << NGRAM_BANK_PREDICT))
+    && NULL != store)
+  {
+    gen_context = libxs_predict_prob_create(store);
+  }
+
   value = libxs_registry_begin(corpus, &key, &cursor);
   while (NULL != value) {
     const corpus_entry_t* entry = (const corpus_entry_t*)value;
@@ -9027,6 +9260,27 @@ static int ngram_gen_eval(libxs_registry_t* model,
               ids[0] = chosen;
             }
           }
+          if (0 != gen_bank && 1 < n) {
+            const int pick = ngram_gen_bank_rank(model, hist, hlen, maxorder,
+              ids, n, bank_slots, store, gen_context, use_emb, gen_vocab,
+              bank_weight);
+            ++gen_ranked;
+            if (0 != pick) ++gen_reordered;
+            if (0 != pick) {
+              const unsigned int chosen = ids[pick];
+              ids[pick] = ids[0];
+              ids[0] = chosen;
+            }
+            /* Adapt on the CHOSEN token: no target may enter generation. */
+            { ngram_expert_t expert[NGRAM_BANK_MAX];
+              double pooled;
+              ngram_bank_experts(hist, hlen, maxorder, ids[0], bank_slots,
+                store, gen_context, use_emb, gen_vocab, expert);
+              pooled = ngram_bank_pool(bank_weight, expert);
+              ngram_bank_update(bank_weight, expert, pooled,
+                ngram_bank_rate(), ngram_bank_share());
+            }
+          }
           /**
            * Classify the sentence by its SEED context only, before any token is
            * generated, so the split cannot be influenced by how far generation
@@ -9063,14 +9317,21 @@ static int ngram_gen_eval(libxs_registry_t* model,
     ++index;
     value = libxs_registry_next(corpus, &key, &cursor);
   }
+  libxs_predict_prob_destroy(gen_context);
   if (nsent > 0) {
     fprintf(stdout,
       "gen-eval[%s%s]: sentences=%ld mean-reproduced=%.2f "
-      "mean-order=%.2f minorder=%d\n",
+      "mean-order=%.2f minorder=%d%s\n",
       kind, (holdout > 0) ? ":heldout" : "", nsent,
       (double)sum_repro / (double)nsent,
       (gen_tokens > 0) ? (double)order_sum / (double)gen_tokens : 0.0,
-      minorder);
+      minorder, (0 != gen_bank) ? " bank" : "");
+    if (0 != gen_bank) {
+      fprintf(stderr, "  bank rerank: %ld of %ld positions reordered"
+        " (%.1f%%)\n", gen_reordered, gen_ranked,
+        (gen_ranked > 0) ? 100.0 * (double)gen_reordered / (double)gen_ranked
+          : 0.0);
+    }
     fprintf(stderr, "  seed split: attested %.1f%% of sentences"
       " (mean-reproduced=%.2f) | novel %.1f%% (mean-reproduced=%.2f)\n",
       100.0 * (double)nsent_att / (double)nsent,
@@ -9348,7 +9609,8 @@ static void slot_probe_run(const libxs_registry_t* corpus,
 
 static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
-  int order, int holdout, const char* kind)
+  int order, int holdout, const char* kind, const libxs_predict_t* store,
+  int use_emb)
 {
   int result = EXIT_FAILURE;
   long npairs = 0, ntop1 = 0, ntopk = 0, index = 0;
@@ -9396,6 +9658,16 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   const int bank = ngram_bank_probe();
   const unsigned int bank_slots = ngram_bank_slots();
   const int bank_geo = ngram_bank_geometric();
+  /**
+   * One scoring context for the whole run. The escape bank needs hundreds of
+   * observations to commit, so a per-entry stream would be all transient and no
+   * convergence; a per-run stream converges but makes the figure a function of
+   * ENTRY ORDER -- reproducible for a fixed corpus and iteration, not comparable
+   * across shuffles. A size of 0 means the model cannot be scored, in which case
+   * the slot abstains rather than silently falling back to frozen weights.
+   */
+  void* bank_context = NULL;
+  const int bank_vocab = (int)libxs_lexicon_size(lexicon);
   const double bank_rate = ngram_bank_rate();
   const double bank_share = ngram_bank_share();
   const int oracle = ngram_oracle_probe();
@@ -9408,6 +9680,19 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   memset(expert_bits, 0, sizeof(expert_bits));
   memset(expert_bytes, 0, sizeof(expert_bytes));
   memset(oracle_pick, 0, sizeof(oracle_pick));
+  if (0 != bank && 0 != (bank_slots & (1u << NGRAM_BANK_PREDICT))
+    && NULL != store)
+  {
+    /**
+     * NULL means the model cannot be scored, which is a different situation
+     * from passing NULL as the context (that selects frozen scoring on a model
+     * that is fine), so the slot abstains rather than silently freezing.
+     */
+    bank_context = libxs_predict_prob_create(store);
+    if (NULL == bank_context) {
+      fprintf(stderr, "predict slot: model cannot be scored, slot abstains\n");
+    }
+  }
   memset(bank_wsum, 0, sizeof(bank_wsum));
   memset(bank_active, 0, sizeof(bank_active));
   memset(bank_slot_bits, 0, sizeof(bank_slot_bits));
@@ -9551,7 +9836,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
                 double pooled, pbits;
                 int b;
                 ngram_bank_experts(hist, hlen, maxorder, cur, bank_slots,
-                  expert);
+                  store, bank_context, use_emb, bank_vocab, expert);
                 pooled = (0 != bank_geo)
                   ? ngram_bank_pool_geo(model, hist, hlen, maxorder, cur,
                     bank_weight, expert)
@@ -9786,6 +10071,13 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
               100.0 * (double)bank_active[b] / (double)bank_n);
           }
         }
+        if (predict_nscored > 0) {
+          const double ent = predict_entropy_sum / (double)predict_nscored;
+          fprintf(stderr, "\n  predict slot: support=%d vocab=%d scored=%ld"
+            " escape entropy=%.3f%s", predict_support_last, bank_vocab,
+            predict_nscored, ent,
+            (ent > NGRAM_PREDICT_ENTROPY_MAX) ? " (UNSETTLED)" : "");
+        }
         fprintf(stderr, "\n  bank slots standalone (bpc where active):");
         for (b = 1; b <= NGRAM_BANK_LAST; ++b) {
           if (bank_slot_bytes[b] > 0.0) {
@@ -9874,6 +10166,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
     }
     fclose(file);
   }
+  libxs_predict_prob_destroy(bank_context);
   return result;
 }
 
