@@ -14,6 +14,12 @@
 #include "libxs_sync.h"
 #include "libxs_str.h"
 
+/**
+ * Sentinel: pass as window to libxs_predict_set_series to request
+ * fingerprint-guided auto-detection at build time.
+ */
+#define LIBXS_PREDICT_AUTO_WINDOW 0
+
 
 /** Prediction mode flags (ORable). */
 typedef enum libxs_predict_mode_t {
@@ -91,6 +97,47 @@ LIBXS_EXTERN_C typedef struct libxs_predict_query_t {
    */
   int window;
 } libxs_predict_query_t;
+
+/** Kind of quantity libxs_predict_prob reports for an output. */
+typedef enum libxs_predict_pkind_t {
+  /** No result (blended or RF output, or model not scoreable). */
+  LIBXS_PREDICT_PNONE = 0,
+  /** Discrete output: the value is a probability mass. */
+  LIBXS_PREDICT_PMASS = 1,
+  /** Continuous output: the value is a probability density. */
+  LIBXS_PREDICT_PDENSITY = 2
+} libxs_predict_pkind_t;
+
+/** Per-output result of libxs_predict_prob. */
+LIBXS_EXTERN_C typedef struct libxs_predict_prob_info_t {
+  /** P(y|x) per output: mass or density according to kind. */
+  const double* prob;
+  /** Base-2 log of prob. Primary output: an improbable candidate underflows
+   *  prob to zero while its log stays representable. */
+  const double* logprob;
+  /** Density mode: (y - yhat)/h. Mass mode: 0. */
+  const double* zscore;
+  /** libxs_predict_pkind_t per output. */
+  const int* kind;
+  /** Non-zero if the candidate was attested in the local neighborhood. */
+  const int* attested;
+  /** Distinct attested values in the local support (mass mode). */
+  const int* support;
+  /** Mass reserved for values outside the local support (mass mode). */
+  const double* novel;
+  /**
+   * Sum of logprob over outputs. This assumes the outputs are conditionally
+   * independent given x; it is not a calibrated joint likelihood.
+   */
+  double total_logprob;
+  /** Number of outputs. */
+  int noutputs;
+  /** Cluster serving the query (-1 if blended). */
+  int cluster;
+  /** Escape-weight entropy in bits (0 == committed, log2(nexperts) == prior).
+   *  Read this to tell whether the escape estimate is still settling. */
+  double entropy;
+} libxs_predict_prob_info_t;
 
 
 /**
@@ -193,12 +240,6 @@ LIBXS_API void libxs_predict_set_consistency(libxs_predict_t* model,
  */
 LIBXS_API void libxs_predict_set_quantile(libxs_predict_t* model,
   double quantile);
-
-/**
- * Sentinel: pass as window to libxs_predict_set_series to request
- * fingerprint-guided auto-detection at build time.
- */
-#define LIBXS_PREDICT_AUTO_WINDOW 0
 
 /**
  * Declare timeseries structure: nseries co-observed series, each with
@@ -361,6 +402,125 @@ LIBXS_API void libxs_predict_inverse(libxs_lock_t* lock,
   const double target_outputs[], double inputs[],
   libxs_predict_info_t* info);
 
+/**
+ * Create a scoring context for one stream, or NULL if the model cannot be
+ * scored (not built, or no output carries a usable discrete support). Treat
+ * NULL as "cannot score" and abstain: it is a distinct situation from passing
+ * NULL as the context to a scoring call, which selects frozen scoring on a
+ * model that is fine.
+ *
+ * The context is bound to this model and this build. Rebuilding the model
+ * invalidates it -- the size depends on the largest support, which grows as
+ * entries are pushed -- and a scoring call given a stale context returns no
+ * result rather than using a buffer that is too small. Create a new one after
+ * any build.
+ *
+ * The natural stream is one run over the data: the escape weights need on the
+ * order of hundreds of observations to settle, so a context per corpus entry
+ * would never leave its uniform prior and would score worse than frozen mode.
+ * A context per document is worth it only when documents are themselves long.
+ *
+ * The cost of a per-run context is that results depend on the order entries
+ * are scored in. That is reproducible for a fixed corpus and fixed iteration,
+ * but not comparable across shuffles, and should not be reported as if it
+ * were. For a figure that is both converged and order-independent, score once
+ * with a context, save the model (the weights are serialized), then score with
+ * context == NULL -- frozen at converged weights, with no transient.
+ */
+LIBXS_API void* libxs_predict_prob_create(const libxs_predict_t* model);
+
+/** Destroy a scoring context (NULL is accepted). */
+LIBXS_API void libxs_predict_prob_destroy(void* context);
+
+/**
+ * Probability of a supplied candidate output given the inputs.
+ *
+ * Unlike libxs_predict_eval, which reports what the model would pick, this
+ * scores a value the caller supplies -- including one the model would never
+ * have picked. The same local evidence the kNN vote uses is read at the
+ * candidate instead of at its argmax.
+ *
+ * candidate: N values to score (in user space, before any transform).
+ * prob: N values written (may be NULL if only info is needed).
+ * info: optional per-output detail (may be NULL). Valid until the next call
+ *       on the same model with the same lock, or libxs_predict_destroy.
+ * vocabulary: for discrete outputs, the total number of distinct values the
+ *       caller considers possible. When > the attested support size, the
+ *       escape mass is divided over the unattested remainder so the returned
+ *       masses sum to one over the whole vocabulary. Pass 0 to normalize over
+ *       the attested support plus a single aggregate novel atom (reported via
+ *       info->novel).
+ * nblend: as libxs_predict_eval. Blended outputs report LIBXS_PREDICT_PNONE
+ *       rather than scoring against evidence the prediction did not use.
+ * context: per-stream state from libxs_predict_prob_create, or NULL.
+ *
+ * The escape weight that mixes local evidence with the fallback prior is
+ * learned per output from realized log loss, because no single value serves:
+ * the best rate was measured to range 0.10..0.80 across models and to differ
+ * by 4x between outputs of one model. That learning is stream state, not model
+ * state, so it lives in the caller's context:
+ *
+ * context != NULL: adaptive. The weights adapt over the stream and the model
+ *   is not modified, so one context per scoring thread scores independently
+ *   and reproducibly. Contexts must not be shared between concurrent calls.
+ *   The context also backs everything info points at, so info requires a
+ *   context and its contents stay valid until the next call using the same
+ *   context.
+ *
+ *   For scoring a stream, prefer libxs_predict_prob_observe: it reports the
+ *   distribution and observes the outcome in one call, so the ordering that
+ *   keeps the two honest cannot be got wrong. This entry point is for point
+ *   queries -- P(y|x) with no distribution -- which it answers without
+ *   enumerating the support.
+ * context == NULL: frozen. The model's stored weights are used and not
+ *   updated -- for a model loaded with converged weights this skips the
+ *   adaptation transient entirely. The model is strictly read-only, so
+ *   concurrent calls are safe and the result does not depend on call order.
+ *   info must be NULL in this mode; prob[] receives the values.
+ *
+ * For a discrete output the result is a mass and the masses over the support
+ * sum to exactly 1.0. For a continuous output it is a density, which
+ * integrates to one over the reals but must not be summed with masses --
+ * check info->kind before combining outputs.
+ */
+LIBXS_API void libxs_predict_prob(libxs_lock_t* lock,
+  const libxs_predict_t* model, void* context, const double inputs[],
+  const double candidate[], double prob[],
+  libxs_predict_prob_info_t* info, int vocabulary, int nblend);
+
+/**
+ * Distribution over one discrete output, plus optional observation of an
+ * outcome. This is the entry point for scoring a stream.
+ *
+ * The returned distribution is the one in effect *before* the observation, and
+ * the escape weights are advanced only afterwards. That ordering is what makes
+ * a stream figure honest, and it is enforced here rather than asked of the
+ * caller: reporting a distribution shaped by weights that had already seen the
+ * target yields a code length better than the truth, with no symptom to notice.
+ *
+ * output: which output to score.
+ * candidate: the observed value to score and learn from, or NULL to report the
+ *       distribution without observing anything (no weight moves, so the model
+ *       or context is left exactly as it was).
+ * values/probs: receive up to capacity entries, sorted by value. The return
+ *       value is the support size, which may exceed capacity, in which case
+ *       nothing is written. Both may be NULL to query the size alone.
+ * novel: receives the mass outside the support (may be NULL).
+ * info: optional (may be NULL, requires a context). Fields for the scored
+ *       output are filled; other outputs report LIBXS_PREDICT_PNONE.
+ *       total_logprob is the scored output's logprob.
+ * Returns the support size, or 0 if the output cannot be scored.
+ *
+ * Because normalization enumerates the whole support anyway, reporting the
+ * distribution costs no more than scoring a single candidate. vocabulary and
+ * context are as for libxs_predict_prob.
+ */
+LIBXS_API int libxs_predict_prob_observe(libxs_lock_t* lock,
+  const libxs_predict_t* model, void* context, const double inputs[],
+  int output, const double* candidate,
+  double values[], double probs[], int capacity, double* novel,
+  libxs_predict_prob_info_t* info, int vocabulary, int nblend);
+
 /** Query model statistics after build. */
 LIBXS_API void libxs_predict_query(const libxs_predict_t* model,
   libxs_predict_query_t* info);
@@ -416,8 +576,10 @@ LIBXS_API libxs_predict_t* libxs_predict_load(
  *           Any character in the string acts as a field separator.
  * inputs:   comma-separated column names or numeric indices for input
  *           parameters, or NULL for sequential columns 0..ninputs-1.
+ *           An empty or all-blank string is treated as NULL.
  * outputs:  comma-separated column names or numeric indices for output
  *           parameters, or NULL for sequential columns ninputs..ninputs+noutputs-1.
+ *           An empty or all-blank string is treated as NULL.
  *
  * The number of tokens in each string must match the model's ninputs/noutputs
  * respectively (as set at creation time).

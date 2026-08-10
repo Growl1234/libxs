@@ -140,9 +140,9 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     required += (size_t)cl->nentries * sizeof(uint16_t);
   }
   required += 1;
-  required += sizeof(uint32_t); /* trailing CRC32 */
   if (NULL != model->hknn_po_assignments && NULL != model->hknn_po_clusters) {
     const int ng = (model->hknn_ngroups > 0) ? model->hknn_ngroups : n;
+    required += sizeof(uint16_t) + (size_t)n * sizeof(uint16_t);
     required += (size_t)p * (size_t)ng * sizeof(uint16_t);
     for (j = 0; j < ng; ++j) {
       const int po_nc = model->hknn_po_nclusters[j];
@@ -161,6 +161,13 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
       }
     }
   }
+  /* converged escape weights, as in the flat path (see libxs_predict_save) */
+  if (NULL != model->escape_w) {
+    required += 2 * sizeof(uint8_t)
+      + (size_t)n * LIBXS_PREDICT_NESCAPE * sizeof(double);
+  }
+  else required += sizeof(uint8_t);
+  required += sizeof(uint32_t); /* trailing CRC32 */
   if (NULL == buffer) {
     *size = required;
   }
@@ -206,6 +213,17 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
       && NULL != model->hknn_po_clusters)
     {
       const int ng = (model->hknn_ngroups > 0) ? model->hknn_ngroups : n;
+      /**
+       * The group count is emitted because outputs may share a partition, in
+       * which case ng < n and a reader that assumed one group per output would
+       * consume the wrong number of assignment blocks and desynchronize for the
+       * remainder of the payload.  The per-output group map follows for the
+       * same reason: eval indexes it to find an output's partition.
+       */
+      WRITE_U16(ng);
+      for (j = 0; j < n; ++j) {
+        WRITE_U16((NULL != model->hknn_po_groups) ? model->hknn_po_groups[j] : j);
+      }
       for (j = 0; j < ng; ++j) {
         int i;
         for (i = 0; i < p; ++i) {
@@ -240,6 +258,13 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     else {
       WRITE_U8(0);
     }
+    if (NULL != model->escape_w) {
+      WRITE_U8(1);
+      WRITE_U8(LIBXS_PREDICT_NESCAPE);
+      WRITE_BLK(model->escape_w,
+        (size_t)n * LIBXS_PREDICT_NESCAPE * sizeof(double));
+    }
+    else WRITE_U8(0);
     { uint32_t crc = 0;
       result = internal_libxs_predict_crc(buffer,
         (size_t)(dst - (unsigned char*)buffer), &crc);
@@ -305,6 +330,20 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
         required += (size_t)model->rf->trees[c].nnodes * (2 + 8 + 2 + 2 + 1);
       }
     }
+    /**
+     * Converged escape weights, when the probability API has been used.  These
+     * are an optimization, not model state: a fresh bank re-learns them within a
+     * few hundred queries, at a measured cost of 0.004-0.03 bits.  Carrying them
+     * means a rebuilt or reloaded model does not re-pay that transient.  Written
+     * last and guarded by a presence flag so a reader that predates them, or a
+     * model that never scored a probability, is unaffected.
+     */
+    if (NULL != model->escape_w) {
+      required += 2 * sizeof(uint8_t);
+      required += (size_t)model->noutputs * LIBXS_PREDICT_NESCAPE
+        * sizeof(double);
+    }
+    else required += sizeof(uint8_t);
     required += sizeof(uint32_t); /* trailing CRC32 */
     if (NULL == buffer) {
       *size = required;
@@ -409,6 +448,13 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
           }
         }
       }
+      if (NULL != model->escape_w) {
+        WRITE_U8(1);
+        WRITE_U8(LIBXS_PREDICT_NESCAPE);
+        WRITE_BLK(model->escape_w,
+          (size_t)model->noutputs * LIBXS_PREDICT_NESCAPE * sizeof(double));
+      }
+      else WRITE_U8(0);
       { uint32_t crc = 0;
         result = internal_libxs_predict_crc(buffer,
           (size_t)(dst - (unsigned char*)buffer), &crc);
@@ -452,6 +498,44 @@ LIBXS_API_INLINE int internal_libxs_predict_avail(const unsigned char* src,
   int result = EXIT_SUCCESS;
   if (src > end || nelem > (size_t)(end - src) / esz) result = EXIT_FAILURE;
   return result;
+}
+
+
+/**
+ * Optional trailing escape-weight block, shared by both container formats.
+ * Absence is normal -- an older file, or a model that never scored a
+ * probability -- so a missing or mismatched block leaves the bank at its
+ * uniform prior rather than failing the load.  A different expert count means
+ * the grid changed, in which case the stored weights describe experts that no
+ * longer exist and must be ignored.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_read_escape(
+  libxs_predict_t* model, const unsigned char** src, const unsigned char* end)
+{
+  uint8_t present = 0;
+  if (*src < end
+    && EXIT_SUCCESS == internal_libxs_predict_read(src, end, &present, 1)
+    && 0 != present)
+  {
+    uint8_t nesc = 0;
+    const size_t nw = (size_t)model->noutputs * LIBXS_PREDICT_NESCAPE;
+    if (EXIT_SUCCESS == internal_libxs_predict_read(src, end, &nesc, 1)
+      && LIBXS_PREDICT_NESCAPE == nesc
+      && EXIT_SUCCESS == internal_libxs_predict_avail(*src, end,
+        nw, sizeof(double)))
+    {
+      double* w = (double*)malloc(nw * sizeof(double));
+      if (NULL != w) {
+        if (EXIT_SUCCESS == internal_libxs_predict_read(src, end, w,
+          nw * sizeof(double)))
+        {
+          free(model->escape_w);
+          model->escape_w = w;
+        }
+        else free(w);
+      }
+    }
+  }
 }
 
 
@@ -600,14 +684,31 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     }
   }
   if (EXIT_SUCCESS == ok && src < end && (int)nout > 1) {
-    int p = 0, i;
+    int p = 0, i, ng = (int)nout;
     uint8_t has_po_clusters = 0;
+    uint16_t ngroups = 0;
     for (c = 0; c < (int)nclust; ++c) p += model->clusters[c].nentries;
     model->nentries = p;
+    ok = internal_libxs_predict_read(&src, end, &ngroups, 2);
+    if (EXIT_SUCCESS == ok) {
+      if (0 < ngroups && (int)ngroups <= (int)nout) ng = (int)ngroups;
+      else ok = EXIT_FAILURE;
+    }
+    if (EXIT_SUCCESS == ok) {
+      model->hknn_ngroups = ng;
+      model->hknn_po_groups = (int*)calloc((size_t)nout, sizeof(int));
+      if (NULL == model->hknn_po_groups) ok = EXIT_FAILURE;
+    }
+    for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
+      uint16_t g = 0;
+      ok = internal_libxs_predict_read(&src, end, &g, 2);
+      if (EXIT_SUCCESS == ok && (int)g < ng) model->hknn_po_groups[j] = (int)g;
+      else ok = EXIT_FAILURE;
+    }
     model->hknn_po_assignments = (int**)calloc((size_t)nout, sizeof(int*));
     model->hknn_po_nclusters = (int*)calloc((size_t)nout, sizeof(int));
-    if (NULL != model->hknn_po_assignments) {
-      for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
+    if (EXIT_SUCCESS == ok && NULL != model->hknn_po_assignments) {
+      for (j = 0; j < ng && EXIT_SUCCESS == ok; ++j) {
         ok = internal_libxs_predict_avail(src, end, (size_t)p, sizeof(uint16_t));
         if (EXIT_SUCCESS == ok) {
           model->hknn_po_assignments[j] = (int*)malloc(
@@ -630,7 +731,8 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
       model->hknn_po_clusters = (internal_libxs_predict_cluster_t**)calloc(
         (size_t)nout, sizeof(internal_libxs_predict_cluster_t*));
       if (NULL == model->hknn_po_clusters) ok = EXIT_FAILURE;
-      for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
+      /* the writer emits one block per GROUP, not per output */
+      for (j = 0; j < ng && EXIT_SUCCESS == ok; ++j) {
         uint16_t po_nc = 0;
         int ci;
         ok = internal_libxs_predict_read(&src, end, &po_nc, 2);
@@ -706,7 +808,21 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     }
   }
   if (EXIT_SUCCESS == ok) {
+    /**
+     * The escape block is fixed-length and written last, so it is located from
+     * the end rather than by having consumed every preceding field.  The hknn
+     * reader tolerates a short read of optional sections, which would otherwise
+     * leave src mid-payload and skip the block silently.
+     */
+    const size_t esclen = 2 * sizeof(uint8_t)
+      + (size_t)nout * LIBXS_PREDICT_NESCAPE * sizeof(double);
+    if (src <= end && (size_t)(end - src) >= esclen) {
+      const unsigned char* esc = end - esclen;
+      internal_libxs_predict_read_escape(model, &esc, end);
+    }
     model->built = 1;
+    ++model->nbuild;
+    internal_libxs_predict_support_all(model);
   }
   else if (NULL != model) {
     libxs_predict_destroy(model);
@@ -1045,6 +1161,9 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         }
       }
     }
+    if (EXIT_SUCCESS == ok && 0 == hknn) {
+      internal_libxs_predict_read_escape(model, &src, end);
+    }
     /* the writer sizes the payload exactly: a remainder signals layout drift */
     if (EXIT_SUCCESS == ok && src != end) ok = EXIT_FAILURE;
     if (EXIT_SUCCESS == ok && 0 == hknn) {
@@ -1061,6 +1180,8 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         }
       }
       model->built = 1;
+      ++model->nbuild;
+      internal_libxs_predict_support_all(model);
     }
     else if (0 == hknn && NULL != model) {
       libxs_predict_destroy(model);

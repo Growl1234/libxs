@@ -91,6 +91,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree(
   nodes[0].feature = -1;
   nodes[0].left = -1;
   nodes[0].right = -1;
+  nodes[0].label = 0;
   sp = 1;
   while (sp > 0 && nnodes < max_nodes - 2) {
     const int si = stack_subset[--sp];
@@ -140,10 +141,20 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree(
         }
         else { nodes[ni].feature = -1; continue; }
       }
+      /**
+       * A child is created before it is known whether the stack has room to
+       * process it.  Its label must be initialized here: when sp saturates the
+       * node is never popped, and eval reads label unconditionally at a leaf.
+       * Left uninitialized it takes whatever the scratch allocator returned,
+       * which varies with allocation history and thread count -- the cause of
+       * run-to-run differences in RF results.  The parent's majority label is
+       * the correct fallback, being what a leaf at this point would predict.
+       */
       nodes[ni].left = nnodes;
       nodes[nnodes].feature = -1;
       nodes[nnodes].left = -1;
       nodes[nnodes].right = -1;
+      nodes[nnodes].label = best_label;
       if (sp < 64) {
         stack_subset[sp] = si;
         stack_count[sp] = nleft;
@@ -156,6 +167,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree(
       nodes[nnodes].feature = -1;
       nodes[nnodes].left = -1;
       nodes[nnodes].right = -1;
+      nodes[nnodes].label = best_label;
       if (sp < 64) {
         stack_subset[sp] = si + nleft;
         stack_count[sp] = nright;

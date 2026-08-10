@@ -186,6 +186,10 @@ libxs_predict_inverse
 libxs_predict_load
 libxs_predict_load_csv
 libxs_predict_lock
+libxs_predict_prob
+libxs_predict_prob_create
+libxs_predict_prob_destroy
+libxs_predict_prob_observe
 libxs_predict_push
 libxs_predict_query
 libxs_predict_save
@@ -236,6 +240,7 @@ libxs_shuffle2
 libxs_sort
 libxs_sort_smooth
 libxs_spatial_build
+libxs_spatial_build_codes
 libxs_spatial_destroy
 libxs_spatial_nearest
 libxs_stdio_acquire

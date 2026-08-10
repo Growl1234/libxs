@@ -40,6 +40,33 @@
 #define LIBXS_PREDICT_MALLOC(SIZE, POOL) internal_libxs_scratch_malloc(SIZE, &(POOL))
 #define LIBXS_PREDICT_FREE(PTR, POOL) internal_libxs_scratch_free(PTR, POOL)
 
+/**
+ * Which evidence served an output, as reported by the internal eval.  BLEND and
+ * RF carry no single source cluster: a scoring rule must either handle them
+ * explicitly or abstain rather than fall back to the primary cluster, which
+ * would silently score against evidence the prediction did not use.
+ */
+#define LIBXS_PREDICT_SRC_NONE     (-1)
+#define LIBXS_PREDICT_SRC_CLASSIFY 0
+#define LIBXS_PREDICT_SRC_INTERP   1
+#define LIBXS_PREDICT_SRC_BLEND    2
+#define LIBXS_PREDICT_SRC_RF       3
+
+/**
+ * Escape-rate experts for the probability escape.  The mixing weight that beats
+ * the local evidence alone was measured to range 0.10..0.80 across datasets --
+ * an order of magnitude, and far above any novelty frequency -- so no single
+ * default is defensible and no build-time estimate of it succeeded (LOO
+ * under-measures novelty 6-40x, coverage bins are flat).  A causal fixed-share
+ * bank over candidate rates lands within 0.03 bits of the per-dataset oracle
+ * rate without being told it, which is why the rate is learned per query from
+ * realized log loss rather than configured.
+ */
+#define LIBXS_PREDICT_NESCAPE 13
+#define LIBXS_PREDICT_ESCAPE_ETA 0.5
+#define LIBXS_PREDICT_ESCAPE_SHARE 0.01
+#define LIBXS_PREDICT_ESCAPE_RELMIN 1e-12
+
 
 typedef struct internal_libxs_predict_entry_t {
   double* inputs;
@@ -139,8 +166,24 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   double quality;
   double consistency;
   double quantile;
+  /** Per-output sorted distinct values and counts: the exact support the
+   *  probability normalizes over.  Derived from raw_outputs at build/load, so
+   *  the serialization format is unchanged. */
+  double** sup_vals;
+  double** sup_freq;
+  int* sup_n;
+  int* sup_tot;
+  /** Frozen escape weights, noutputs * LIBXS_PREDICT_NESCAPE. Written by
+   *  load, read when scoring without a context. */
+  double* escape_w;
+  /** Incremented by every build, so a scoring context can tell that the
+   *  model it was sized for is no longer the model in front of it. */
+  int nbuild;
   volatile int phase;
 };
+
+
+LIBXS_API_INLINE int internal_libxs_predict_support_all(libxs_predict_t* model);
 
 
 LIBXS_API_INLINE void internal_libxs_predict_free_clusters(libxs_predict_t* model)
@@ -173,6 +216,22 @@ LIBXS_API_INLINE void internal_libxs_predict_free_clusters(libxs_predict_t* mode
   model->assignments = NULL;
   free(model->eval_buf);
   model->eval_buf = NULL;
+  /* the support cache is derived from raw_outputs and must not outlive it */
+  if (NULL != model->sup_vals) {
+    int j;
+    for (j = 0; j < model->noutputs; ++j) {
+      free(model->sup_vals[j]);
+      free(model->sup_freq[j]);
+    }
+    free(model->sup_vals);
+    free(model->sup_freq);
+    free(model->sup_n);
+    free(model->sup_tot);
+    model->sup_vals = NULL;
+    model->sup_freq = NULL;
+    model->sup_n = NULL;
+    model->sup_tot = NULL;
+  }
   model->nclusters = 0;
   model->built = 0;
 }
@@ -541,29 +600,29 @@ LIBXS_API_INLINE double internal_libxs_predict_coverage(
 }
 
 
-LIBXS_API_INLINE double internal_libxs_predict_classify2(
+/**
+ * The local evidence a query draws on for one output: the k nearest neighbors
+ * within the cluster, their output values and distances, plus whether the query
+ * coincides with a stored point.  Every scoring rule in this file reads this
+ * same object -- the kNN vote reduces it to a winner, a probability reads it at
+ * an arbitrary value -- so the scan lives here once rather than being repeated
+ * per rule, where the tangent projection, per-output group filter and recency
+ * weighting would have to be kept in step by hand.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_evidence(
   const internal_libxs_predict_cluster_t* cl, const double* kd_pts,
   int nc, int m, const double* inputs, int output_j, int nouts,
-  int ndistinct, int extrapolate, int skip_local,
+  int extrapolate, int skip_local,
   const int* po_groups, int query_group,
-  double* confidence, double* out_variance,
-  double quantile, double* out_lower, double* out_upper,
-  int dispersion)
+  double* candidates, double* dists, int* out_nfound,
+  int* out_exact, int* out_exact_nearest, double* out_best)
 {
   const int k = cl->k_eff;
-  const int ndistinct_thresh = (int)(sqrt((double)nc) + 0.5);
-  double candidates[LIBXS_PREDICT_KNN];
-  double dists[LIBXS_PREDICT_KNN];
   double qtan[512];
   const double* qpts = inputs;
   const double* dpts = kd_pts;
   int dm = m;
-  double best_val = 0.0;
   int nfound = 0, exact = 0, exact_nearest = 0, i, max_idx = 0;
-  if (NULL != confidence) *confidence = 0.0;
-  if (NULL != out_variance) *out_variance = 0.0;
-  if (NULL != out_lower) *out_lower = 0.0;
-  if (NULL != out_upper) *out_upper = 0.0;
   if (NULL != cl->tangent && NULL != cl->kd_tan
     && cl->tdim > 0 && cl->tdim <= 512)
   {
@@ -579,57 +638,84 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
   }
   /* recency weighting needs sorted_idx, which a loaded flat model lacks */
   if (NULL == cl->sorted_idx) extrapolate = 0;
+  if (0 != extrapolate) {
+    for (i = 0; i < nc; ++i) {
+      if (cl->sorted_idx[i] > max_idx) max_idx = cl->sorted_idx[i];
+    }
+  }
+  for (i = 0; i < nc; ++i) {
+    double d2;
+    if (i == skip_local) continue;
+    d2 = libxs_dist2(qpts, dpts + (size_t)i * dm, dm);
+    if (0 != extrapolate && max_idx > 0) {
+      const double age = 1.0 - (double)cl->sorted_idx[i] / (double)max_idx;
+      d2 *= 1.0 + 0.5 * age;
+    }
+    if (NULL != po_groups && NULL != cl->sorted_idx && query_group >= 0
+      && po_groups[cl->sorted_idx[i]] != query_group)
+    {
+      continue;
+    }
+    /**
+     * An exact match is authoritative for the value wherever the scan finds
+     * it, not only when it happens to be admitted first.  Collapsing the
+     * spread is a separate question: with duplicate input vectors (9410 in
+     * the crystal set) a zero-distance neighbor is ordinary evidence, and
+     * reporting zero variance for it makes the compression criterion drop
+     * entries it must keep.  Hence nearest, tracked separately.
+     */
+    if (0.0 == d2) {
+      if (0 == exact) {
+        *out_best = cl->raw_outputs[(size_t)i * nouts + output_j];
+        exact = 1;
+      }
+      if (0 == nfound) exact_nearest = 1;
+    }
+    if (nfound < k) {
+      candidates[nfound] = cl->raw_outputs[(size_t)i * nouts + output_j];
+      dists[nfound] = sqrt(d2);
+      ++nfound;
+    }
+    else {
+      int worst = 0, wi;
+      for (wi = 1; wi < nfound; ++wi) {
+        if (dists[wi] > dists[worst]) worst = wi;
+      }
+      if (sqrt(d2) < dists[worst]) {
+        candidates[worst] = cl->raw_outputs[(size_t)i * nouts + output_j];
+        dists[worst] = sqrt(d2);
+      }
+    }
+  }
+  *out_nfound = nfound;
+  *out_exact = exact;
+  *out_exact_nearest = exact_nearest;
+}
+
+
+LIBXS_API_INLINE double internal_libxs_predict_classify2(
+  const internal_libxs_predict_cluster_t* cl, const double* kd_pts,
+  int nc, int m, const double* inputs, int output_j, int nouts,
+  int ndistinct, int extrapolate, int skip_local,
+  const int* po_groups, int query_group,
+  double* confidence, double* out_variance,
+  double quantile, double* out_lower, double* out_upper,
+  int dispersion)
+{
+  const int ndistinct_thresh = (int)(sqrt((double)nc) + 0.5);
+  double candidates[LIBXS_PREDICT_KNN];
+  double dists[LIBXS_PREDICT_KNN];
+  double best_val = 0.0;
+  int nfound = 0, exact = 0, exact_nearest = 0, i;
+  if (NULL != confidence) *confidence = 0.0;
+  if (NULL != out_variance) *out_variance = 0.0;
+  if (NULL != out_lower) *out_lower = 0.0;
+  if (NULL != out_upper) *out_upper = 0.0;
   if (nc > 0 && NULL != cl->raw_outputs) {
     best_val = cl->raw_outputs[output_j];
-    if (0 != extrapolate) {
-      for (i = 0; i < nc; ++i) {
-        if (cl->sorted_idx[i] > max_idx) max_idx = cl->sorted_idx[i];
-      }
-    }
-    for (i = 0; i < nc; ++i) {
-      double d2;
-      if (i == skip_local) continue;
-      d2 = libxs_dist2(qpts, dpts + (size_t)i * dm, dm);
-      if (0 != extrapolate && max_idx > 0) {
-        const double age = 1.0 - (double)cl->sorted_idx[i] / (double)max_idx;
-        d2 *= 1.0 + 0.5 * age;
-      }
-      if (NULL != po_groups && NULL != cl->sorted_idx && query_group >= 0
-        && po_groups[cl->sorted_idx[i]] != query_group)
-      {
-        continue;
-      }
-      /**
-       * An exact match is authoritative for the value wherever the scan finds
-       * it, not only when it happens to be admitted first.  Collapsing the
-       * spread is a separate question: with duplicate input vectors (9410 in
-       * the crystal set) a zero-distance neighbor is ordinary evidence, and
-       * reporting zero variance for it makes the compression criterion drop
-       * entries it must keep.  Hence nearest, tracked separately.
-       */
-      if (0.0 == d2) {
-        if (0 == exact) {
-          best_val = cl->raw_outputs[(size_t)i * nouts + output_j];
-          exact = 1;
-        }
-        if (0 == nfound) exact_nearest = 1;
-      }
-      if (nfound < k) {
-        candidates[nfound] = cl->raw_outputs[(size_t)i * nouts + output_j];
-        dists[nfound] = sqrt(d2);
-        ++nfound;
-      }
-      else {
-        int worst = 0, wi;
-        for (wi = 1; wi < nfound; ++wi) {
-          if (dists[wi] > dists[worst]) worst = wi;
-        }
-        if (sqrt(d2) < dists[worst]) {
-          candidates[worst] = cl->raw_outputs[(size_t)i * nouts + output_j];
-          dists[worst] = sqrt(d2);
-        }
-      }
-    }
+    internal_libxs_predict_evidence(cl, kd_pts, nc, m, inputs, output_j, nouts,
+      extrapolate, skip_local, po_groups, query_group,
+      candidates, dists, &nfound, &exact, &exact_nearest, &best_val);
     if (NULL != out_variance) {
       if (0 != exact_nearest || nfound <= 1) {
         *out_variance = 0;
@@ -792,6 +878,25 @@ LIBXS_API libxs_predict_t* libxs_predict_create(int ninputs, int noutputs)
 
 LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
 {
+  if (NULL != model) {
+    if (NULL != model->sup_vals) {
+      int j;
+      for (j = 0; j < model->noutputs; ++j) {
+        free(model->sup_vals[j]);
+        free(model->sup_freq[j]);
+      }
+    }
+    free(model->sup_vals);
+    free(model->sup_freq);
+    free(model->sup_n);
+    free(model->sup_tot);
+    free(model->escape_w);
+    model->sup_vals = NULL;
+    model->sup_freq = NULL;
+    model->sup_n = NULL;
+    model->sup_tot = NULL;
+    model->escape_w = NULL;
+  }
   if (NULL != model) {
     int i;
     internal_libxs_predict_free_clusters(model);
@@ -2245,6 +2350,13 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
     }
     if (EXIT_SUCCESS == result) {
       model->built = 1;
+      ++model->nbuild;
+      /**
+       * The probability support is built here rather than on first use: a lazy
+       * cache would make the first scoring call in every stream a write to
+       * shared state, which is exactly what the context exists to avoid.
+       */
+      internal_libxs_predict_support_all(model);
       if (model->smooth < 0) {
         int nsmooth = 0, ntotal_modes = 0, j;
         for (c = 0; c < nclusters; ++c) {
@@ -2301,8 +2413,20 @@ LIBXS_API int libxs_predict_build_task(libxs_lock_t* lock,
 }
 
 
-LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* model,
-  const double inputs[], double outputs[], libxs_predict_info_t* info, int nblend)
+/**
+ * Evaluation with optional reporting of which evidence served each output.
+ * Deciding that is what most of this function does -- flat versus per-output
+ * hKNN cluster, classify versus interpolate, blended or not -- and a scoring
+ * rule that needs the same decision must not re-derive it.  src[j] receives the
+ * cluster the value came from and src_mode[j] whether it was a kNN vote, so a
+ * probability can read the identical evidence this dispatch selected.  Both are
+ * optional; passing NULL yields exactly the public eval behavior.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
+  const libxs_predict_t* model, const double inputs[], double outputs[],
+  libxs_predict_info_t* info, int nblend,
+  const internal_libxs_predict_cluster_t** src, int* src_mode,
+  int* src_out, int* src_nout)
 {
   LIBXS_ASSERT(NULL != model && 0 != model->built && NULL != inputs);
   {
@@ -2321,6 +2445,16 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
     double local_buf[256];
     double *vals, *errs, *conf, *var, *lo, *hi, best_dist;
     int *rels, c, j, best_c = 0;
+    if (NULL != src || NULL != src_mode || NULL != src_out
+      || NULL != src_nout)
+    {
+      for (j = 0; j < n; ++j) {
+        if (NULL != src) src[j] = NULL;
+        if (NULL != src_mode) src_mode[j] = LIBXS_PREDICT_SRC_NONE;
+        if (NULL != src_out) src_out[j] = j;
+        if (NULL != src_nout) src_nout[j] = n;
+      }
+    }
     if ((model->naux > 0 || model->nderiv > 0) && model->nseries > 0) {
       const int w = model->window;
       const double* aux = (model->naux > 0)
@@ -2421,6 +2555,8 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
         var[j] = 0;
         errs[j] = 0;
         rels[j] = 0;
+        if (NULL != src) src[j] = NULL;
+        if (NULL != src_mode) src_mode[j] = LIBXS_PREDICT_SRC_RF;
       }
       if (NULL != info) {
         info->cluster = -1;
@@ -2467,13 +2603,20 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
                     pcl, pcl->kd_pts, pcl->nentries, m, norm_inputs,
                     lj, gsz, pcl->ndistinct[lj], extrapolate, -1, NULL, -1,
                     &po_conf, &po_var, qi, &lo[j], &hi[j], model->dispersion);
+                  if (NULL != src) src[j] = pcl;
+                  if (NULL != src_out) src_out[j] = lj;
+                  if (NULL != src_nout) src_nout[j] = gsz;
                 }
                 else {
                   vals[j] = internal_libxs_predict_classify2(
                     cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
                     cl->ndistinct[j], extrapolate, -1, NULL, -1,
                     &po_conf, &po_var, qi, &lo[j], &hi[j], model->dispersion);
+                  if (NULL != src) src[j] = cl;
+                  if (NULL != src_out) src_out[j] = j;
+                  if (NULL != src_nout) src_nout[j] = n;
                 }
+                if (NULL != src_mode) src_mode[j] = LIBXS_PREDICT_SRC_CLASSIFY;
               }
               internal_libxs_predict_classify(
                 cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
@@ -2489,6 +2632,10 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
                 &conf[j], &var[j], qi, &lo[j], &hi[j], model->dispersion);
               errs[j] = 0;
               rels[j] = 0;
+              if (NULL != src) src[j] = cl;
+              if (NULL != src_out) src_out[j] = j;
+              if (NULL != src_nout) src_nout[j] = n;
+              if (NULL != src_mode) src_mode[j] = LIBXS_PREDICT_SRC_CLASSIFY;
             }
           }
           else if (0 != use_classify) {
@@ -2498,6 +2645,10 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
               &conf[j], &var[j], qi, &lo[j], &hi[j], model->dispersion);
             errs[j] = 0;
             rels[j] = 0;
+            if (NULL != src) src[j] = cl;
+            if (NULL != src_out) src_out[j] = j;
+            if (NULL != src_nout) src_nout[j] = n;
+            if (NULL != src_mode) src_mode[j] = LIBXS_PREDICT_SRC_CLASSIFY;
           }
           else {
             const double t = (0 != extrapolate)
@@ -2514,6 +2665,10 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
             conf[j] = 1.0;
             var[j] = 0;
             rels[j] = 1;
+            if (NULL != src) src[j] = cl;
+            if (NULL != src_out) src_out[j] = j;
+            if (NULL != src_nout) src_nout[j] = n;
+            if (NULL != src_mode) src_mode[j] = LIBXS_PREDICT_SRC_INTERP;
           }
         }
       }
@@ -2620,6 +2775,8 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
               wsum += w;
             }
             if (wsum > 0) {
+              if (NULL != src) src[j] = NULL;
+              if (NULL != src_mode) src_mode[j] = LIBXS_PREDICT_SRC_BLEND;
               vals[j] = blend_val / wsum;
               conf[j] = blend_conf / wsum;
               var[j] = blend_var / wsum;
@@ -2869,6 +3026,15 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock, const libxs_predict_t* mod
 }
 
 
+LIBXS_API void libxs_predict_eval(libxs_lock_t* lock,
+  const libxs_predict_t* model, const double inputs[], double outputs[],
+  libxs_predict_info_t* info, int nblend)
+{
+  internal_libxs_predict_eval_ex(lock, model, inputs, outputs, info, nblend,
+    NULL, NULL, NULL, NULL);
+}
+
+
 LIBXS_API void libxs_predict_eval_batch_task(
   const libxs_predict_t* model,
   const double inputs_batch[], double outputs_batch[],
@@ -2994,6 +3160,834 @@ LIBXS_API void libxs_predict_inverse(libxs_lock_t* lock,
     }
     if (NULL != lock) LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
   }
+}
+
+
+
+/**
+ * Sorted distinct values and counts for one output, built from the clusters'
+ * raw_outputs so a loaded model works without entries.  This is the support the
+ * probability normalizes over: exact values, never tolerance balls, because
+ * independently placed balls can overlap or leave gaps and the masses would
+ * then not sum to one.  Derived state only -- the serialized format is
+ * unchanged.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_support(libxs_predict_t* model,
+  int j)
+{
+  int result = EXIT_SUCCESS;
+  const int n = model->noutputs;
+  if (NULL == model->sup_vals) {
+    model->sup_vals = (double**)calloc((size_t)n, sizeof(double*));
+    model->sup_freq = (double**)calloc((size_t)n, sizeof(double*));
+    model->sup_n = (int*)calloc((size_t)n, sizeof(int));
+    model->sup_tot = (int*)calloc((size_t)n, sizeof(int));
+    if (NULL == model->sup_vals || NULL == model->sup_freq
+      || NULL == model->sup_n || NULL == model->sup_tot)
+    {
+      result = EXIT_FAILURE;
+    }
+  }
+  if (EXIT_SUCCESS == result && NULL == model->sup_vals[j]) {
+    int total = 0, c;
+    for (c = 0; c < model->nclusters; ++c) {
+      if (NULL != model->clusters[c].raw_outputs) {
+        total += model->clusters[c].nentries;
+      }
+    }
+    if (0 < total) {
+      double* all = (double*)malloc((size_t)total * sizeof(double));
+      if (NULL != all) {
+        int at = 0, i, nd = 1;
+        for (c = 0; c < model->nclusters; ++c) {
+          const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
+          if (NULL != cl->raw_outputs) {
+            for (i = 0; i < cl->nentries; ++i) {
+              all[at++] = cl->raw_outputs[(size_t)i * n + j];
+            }
+          }
+        }
+        libxs_sort(all, at, sizeof(double), libxs_cmp_f64, NULL);
+        for (i = 1; i < at; ++i) {
+          if (all[i] != all[i - 1]) ++nd;
+        }
+        model->sup_vals[j] = (double*)malloc((size_t)nd * sizeof(double));
+        model->sup_freq[j] = (double*)calloc((size_t)nd, sizeof(double));
+        if (NULL != model->sup_vals[j] && NULL != model->sup_freq[j]) {
+          int k = 0;
+          model->sup_vals[j][0] = all[0];
+          model->sup_freq[j][0] = 1;
+          for (i = 1; i < at; ++i) {
+            if (all[i] != all[i - 1]) model->sup_vals[j][++k] = all[i];
+            model->sup_freq[j][k] += 1;
+          }
+          for (i = 0; i < nd; ++i) model->sup_freq[j][i] /= at;
+          model->sup_n[j] = nd;
+          model->sup_tot[j] = at;
+        }
+        else result = EXIT_FAILURE;
+        free(all);
+      }
+      else result = EXIT_FAILURE;
+    }
+    else result = EXIT_FAILURE;
+  }
+  return result;
+}
+
+
+LIBXS_API_INLINE int internal_libxs_predict_support_index(
+  const double vals[], int n, double v)
+{
+  int lo = 0, hi = n - 1, result = -1;
+  while (lo <= hi && 0 > result) {
+    const int mid = lo + (hi - lo) / 2;
+    if (vals[mid] < v) lo = mid + 1;
+    else if (vals[mid] > v) hi = mid - 1;
+    else result = mid;
+  }
+  return result;
+}
+
+
+/**
+ * Normalize to sum exactly 1.0.  Dividing by a compensated total is not
+ * sufficient: the quotients round individually.  The residual is placed on the
+ * largest element, where the relative perturbation is smallest, and then
+ * corrected once more in the same order the verification sums, so the element
+ * absorbs precisely the error the accumulation makes.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_prob_norm(double p[], int n,
+  double scratch[])
+{
+  if (0 < n) {
+    const double total = libxs_sum2(p, n);
+    int i, imax = 0;
+    if (0 < total) {
+      for (i = 0; i < n; ++i) p[i] /= total;
+    }
+    else {
+      for (i = 0; i < n; ++i) p[i] = 1.0 / n;
+    }
+    for (i = 1; i < n; ++i) {
+      if (p[i] > p[imax]) imax = i;
+    }
+    for (i = 0; i < n; ++i) {
+      if (i != imax) scratch[i - (i > imax ? 1 : 0)] = p[i];
+    }
+    { const double rest = (1 < n) ? libxs_sum2(scratch, n - 1) : 0.0;
+      double dev;
+      p[imax] = 1.0 - rest;
+      dev = libxs_sum2(p, n) - 1.0;
+      if (0 != dev) p[imax] -= dev;
+    }
+  }
+}
+
+
+/**
+ * One causal fixed-share step over the escape-rate experts: multiplicative
+ * log-loss update toward the experts that beat the mixture, then a uniform
+ * share redistributed so an expert that was wrong for a stretch can recover.
+ * Scored strictly after the reported probability is committed, so no target
+ * information enters it.  The ratio is floored only where exactly zero, which
+ * would otherwise zero an expert permanently -- the uniform recovery term only
+ * reaches slots that still hold mass.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_escape_update(double weight[],
+  const double plik[], double mixture)
+{
+  double total = 0;
+  int i;
+  for (i = 0; i < LIBXS_PREDICT_NESCAPE; ++i) {
+    double relative = (mixture > 0) ? (plik[i] / mixture) : 1.0;
+    if (!(relative > 0.0)) relative = LIBXS_PREDICT_ESCAPE_RELMIN;
+    weight[i] *= pow(relative, LIBXS_PREDICT_ESCAPE_ETA);
+    total += weight[i];
+  }
+  if (0 < total) {
+    const double uniform = 1.0 / LIBXS_PREDICT_NESCAPE;
+    for (i = 0; i < LIBXS_PREDICT_NESCAPE; ++i) {
+      weight[i] = (1.0 - LIBXS_PREDICT_ESCAPE_SHARE) * weight[i] / total
+        + LIBXS_PREDICT_ESCAPE_SHARE * uniform;
+    }
+  }
+}
+
+
+
+static const double internal_libxs_predict_escape_rate[
+  LIBXS_PREDICT_NESCAPE] =
+{
+  0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02,
+  0.05, 0.10, 0.20, 0.35, 0.55, 0.80
+};
+
+
+/**
+ * Distribution over one discrete output at the query.  Each escape-rate expert
+ * mixes the local kNN evidence with the global frequency prior at its own rate;
+ * the reported distribution is the bank-weighted average of the experts, and the
+ * bank weights are then updated from how well each expert scored the value the
+ * caller actually asked about.  A single default rate is not available: the
+ * best rate was measured to range 0.10..0.80 across datasets.
+ *
+ * p receives ns+1 entries -- the support followed by the aggregate mass of
+ * everything outside it.  With vocabulary > ns that trailing mass is what each
+ * unattested value shares; with vocabulary == 0 it is reported as-is via
+ * out_novel and the support masses sum to 1 - novel.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_dist(
+  const libxs_predict_t* model, const double* weight,
+  const internal_libxs_predict_cluster_t* cl, const double* norm_inputs,
+  int j, int out_j, int nouts, int extrapolate, int vocabulary,
+  double* p, double* scratch, int stride, double* out_entropy)
+{
+  const int ns = model->sup_n[j];
+  const double* sv = model->sup_vals[j];
+  const double* sf = model->sup_freq[j];
+  double candidates[LIBXS_PREDICT_KNN];
+  double dists[LIBXS_PREDICT_KNN];
+  double* local = scratch + stride;
+  double best = 0, wsum, ent = 0;
+  int nfound = 0, exact = 0, exact_nearest = 0, i, e;
+  int result = EXIT_SUCCESS;
+  const int nvoc = (vocabulary > ns) ? vocabulary : ns;
+  const int outside = nvoc - ns;
+  internal_libxs_predict_evidence(cl, cl->kd_pts, cl->nentries,
+    model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL, -1,
+    candidates, dists, &nfound, &exact, &exact_nearest, &best);
+  for (i = 0; i < ns; ++i) local[i] = 0;
+  for (i = 0; i < nfound; ++i) {
+    const int si = internal_libxs_predict_support_index(sv, ns, candidates[i]);
+    if (0 <= si) local[si] += (dists[i] > 0.0) ? (1.0 / dists[i]) : 1e30;
+  }
+  wsum = libxs_sum2(local, ns);
+  if (0 < wsum) {
+    for (i = 0; i < ns; ++i) local[i] /= wsum;
+  }
+  else { /* no local evidence: the prior is all there is */
+    for (i = 0; i < ns; ++i) local[i] = sf[i];
+  }
+  /**
+   * An expert with rate r puts (1-r) on the local evidence and r on the escape.
+   * The escape is the frequency prior smoothed over the declared vocabulary by
+   * add-one, so every value the caller considers possible keeps positive mass:
+   * an attested value the neighborhood happens to miss must not be scored
+   * impossible, and neither must an unattested one.  Without a vocabulary the
+   * escape is the prior over the attested support and the novel atom stays
+   * empty, because mass for values the caller has not enumerated would make the
+   * total meaningless.
+   */
+  for (i = 0; i <= ns; ++i) p[i] = 0;
+  { const double tot = (double)model->sup_tot[j];
+    const double den = tot + (double)nvoc;
+    for (e = 0; e < LIBXS_PREDICT_NESCAPE; ++e) {
+      const double w = weight[e];
+      const double r = internal_libxs_predict_escape_rate[e];
+      for (i = 0; i < ns; ++i) {
+        const double esc = (0 < outside)
+          ? ((sf[i] * tot + 1.0) / den) : sf[i];
+        p[i] += w * ((1.0 - r) * local[i] + r * esc);
+      }
+      if (0 < outside) p[ns] += w * r * (double)outside / den;
+      if (0 < w) ent -= w * log(w) / log(2.0);
+    }
+  }
+  internal_libxs_predict_prob_norm(p, ns + 1, scratch);
+  if (NULL != out_entropy) *out_entropy = ent;
+  if (!(libxs_sum2(p, ns + 1) > 0)) result = EXIT_FAILURE;
+  return result;
+}
+
+
+/**
+ * Score the observed value under every expert and advance the bank.  Kept apart
+ * from the distribution so the reported probability is fully committed before
+ * any weight moves: the update is causal, and a caller that scores the same
+ * query twice must get the same answer the first time.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_dist_learn(
+  const libxs_predict_t* model, double* weight, int j, const double* local,
+  int truth, int vocabulary)
+{
+  const int ns = model->sup_n[j];
+  const double* sf = model->sup_freq[j];
+  const int outside = ((vocabulary > ns) ? vocabulary : ns) - ns;
+  double plik[LIBXS_PREDICT_NESCAPE];
+  double mix = 0;
+  int e;
+  { const int nvoc = (vocabulary > ns) ? vocabulary : ns;
+    const double tot = (double)model->sup_tot[j];
+    const double den = tot + (double)nvoc;
+    for (e = 0; e < LIBXS_PREDICT_NESCAPE; ++e) {
+      const double r = internal_libxs_predict_escape_rate[e];
+      if (0 <= truth && truth < ns) {
+        const double esc = (0 < outside)
+          ? ((sf[truth] * tot + 1.0) / den) : sf[truth];
+        plik[e] = (1.0 - r) * local[truth] + r * esc;
+      }
+      else {
+        plik[e] = (0 < outside) ? (r / den) : 0.0;
+      }
+      mix += weight[e] * plik[e];
+    }
+  }
+  internal_libxs_predict_escape_update(weight, plik, mix);
+}
+
+
+
+/**
+ * Layout of a caller-owned scoring context.  Everything a call mutates lives
+ * here rather than in the model, so concurrent streams cannot interfere and the
+ * model stays read-only while scoring.  The escape weights are per output
+ * because the rate that suits one output does not suit another: within a single
+ * PVC model the best rate was measured at 0.55, 0.80 and 0.20 for three of its
+ * outputs, and one shared bank can only converge to a compromise none of them
+ * wants.
+ */
+typedef struct internal_libxs_predict_ctx_t {
+  uint32_t magic;
+  /**
+   * Which model and which build this context was sized for.  The size depends
+   * on the largest support, which grows when a model is rebuilt after more
+   * entries are pushed, so a context outliving a rebuild is undersized rather
+   * than merely stale.  Stamping both lets scoring refuse it instead of
+   * re-initializing into a buffer that is too small.
+   */
+  const void* model;
+  int nbuild;
+  int noutputs;
+  int maxsup;
+  /* followed by: escape weights [n * NESCAPE], dist p, norm scratch,
+     local evidence, the per-output reporting arrays, the int arrays, then the
+     per-call dispatch buffers */
+} internal_libxs_predict_ctx_t;
+
+#define LIBXS_PREDICT_CTX_MAGIC 0x58535043U /* "XSPC" */
+
+
+LIBXS_API_INLINE size_t internal_libxs_predict_ctx_size(int n, int maxsup)
+{
+  const size_t stride = (size_t)maxsup + 2;
+  size_t bytes = sizeof(internal_libxs_predict_ctx_t);
+  bytes += (size_t)n * LIBXS_PREDICT_NESCAPE * sizeof(double);
+  bytes += 3 * stride * sizeof(double);  /* p, norm scratch, local */
+  bytes += 4 * (size_t)n * sizeof(double); /* prob, logprob, zscore, novel */
+  bytes += 3 * (size_t)n * sizeof(int);  /* kind, attested, support */
+  /**
+   * The dispatch buffers eval_ex fills, and the values it writes, live here
+   * too: they are noutputs-sized with a lifetime of one call, so allocating
+   * them per call would put a malloc/free pair on every scored position.
+   */
+  bytes += (size_t)n * sizeof(void*);   /* src */
+  bytes += 3 * (size_t)n * sizeof(int); /* smode, sout, snout */
+  bytes += (size_t)n * sizeof(double);  /* vals */
+  return bytes;
+}
+
+
+/**
+ * Build the support cache for every output.  Called at build and load so that
+ * scoring only reads it: a lazily-built cache would be a write to shared state
+ * on the first call of every stream.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_support_all(libxs_predict_t* model)
+{
+  int result = EXIT_SUCCESS;
+  int j;
+  for (j = 0; j < model->noutputs && EXIT_SUCCESS == result; ++j) {
+    result = internal_libxs_predict_support(model, j);
+  }
+  if (EXIT_SUCCESS == result && NULL == model->escape_w) {
+    const size_t nw = (size_t)model->noutputs * LIBXS_PREDICT_NESCAPE;
+    model->escape_w = (double*)malloc(nw * sizeof(double));
+    if (NULL != model->escape_w) {
+      size_t i;
+      for (i = 0; i < nw; ++i) {
+        model->escape_w[i] = 1.0 / LIBXS_PREDICT_NESCAPE;
+      }
+    }
+    else result = EXIT_FAILURE;
+  }
+  return result;
+}
+
+
+LIBXS_API_INLINE int internal_libxs_predict_maxsup(const libxs_predict_t* model)
+{
+  int j, maxsup = 0;
+  if (NULL != model->sup_n) {
+    for (j = 0; j < model->noutputs; ++j) {
+      if (model->sup_n[j] > maxsup) maxsup = model->sup_n[j];
+    }
+  }
+  return maxsup;
+}
+
+
+/**
+ * Zero means the model cannot be scored, and must be reachable for that to be a
+ * usable signal: the support build allocates per output and can fail for some
+ * outputs while leaving the array itself non-NULL, and the size formula is
+ * positive even when every support is empty.  Reporting a plausible size for
+ * such a model would let a caller allocate, score, and receive PNONE for every
+ * output -- a build failure indistinguishable from a model that simply has no
+ * discrete outputs.  So every output is required to carry a usable support, and
+ * the weights must exist.
+ */
+LIBXS_API_INLINE size_t internal_libxs_predict_ctx_bytes(
+  const libxs_predict_t* model)
+{
+  size_t result = 0;
+  if (NULL != model && 0 != model->built && NULL != model->sup_n
+    && NULL != model->sup_vals && NULL != model->sup_freq
+    && NULL != model->sup_tot && NULL != model->escape_w)
+  {
+    const int maxsup = internal_libxs_predict_maxsup(model);
+    int j, usable = (0 < maxsup) ? 1 : 0;
+    for (j = 0; j < model->noutputs && 0 != usable; ++j) {
+      if (0 >= model->sup_n[j] || NULL == model->sup_vals[j]
+        || NULL == model->sup_freq[j] || 0 >= model->sup_tot[j])
+      {
+        usable = 0;
+      }
+    }
+    if (0 != usable) {
+      result = internal_libxs_predict_ctx_size(model->noutputs, maxsup);
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Validate a caller-supplied context against the model in front of it.  A
+ * context that was not produced by libxs_predict_prob_create for this model and
+ * build is rejected rather than adapted: its buffers may be smaller than this
+ * model needs, so re-initializing in place would overrun them.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_ctx_valid(
+  const libxs_predict_t* model, const void* context)
+{
+  const internal_libxs_predict_ctx_t* ctx =
+    (const internal_libxs_predict_ctx_t*)context;
+  return (NULL != ctx && LIBXS_PREDICT_CTX_MAGIC == ctx->magic
+    && ctx->model == (const void*)model
+    && ctx->nbuild == model->nbuild
+    && ctx->noutputs == model->noutputs) ? 1 : 0;
+}
+
+
+/**
+ * A context that was supplied but does not belong to this model and build must
+ * make the call fail, not quietly fall back to frozen scoring: the caller asked
+ * for an adapting stream, and silently giving them a different estimator is the
+ * kind of substitution that produces a plausible wrong number with no symptom.
+ * Passing NULL deliberately is the only way to select frozen mode.
+ */
+LIBXS_API_INLINE internal_libxs_predict_ctx_t* internal_libxs_predict_ctx(
+  const libxs_predict_t* model, void* context)
+{
+  return (0 != internal_libxs_predict_ctx_valid(model, context))
+    ? (internal_libxs_predict_ctx_t*)context : NULL;
+}
+
+
+LIBXS_API_INLINE double* internal_libxs_predict_ctx_weights(
+  internal_libxs_predict_ctx_t* ctx, int j)
+{
+  return (double*)((unsigned char*)ctx
+    + sizeof(internal_libxs_predict_ctx_t))
+    + (size_t)j * LIBXS_PREDICT_NESCAPE;
+}
+
+
+LIBXS_API_INLINE double* internal_libxs_predict_ctx_scratch(
+  internal_libxs_predict_ctx_t* ctx)
+{
+  return (double*)((unsigned char*)ctx
+    + sizeof(internal_libxs_predict_ctx_t))
+    + (size_t)ctx->noutputs * LIBXS_PREDICT_NESCAPE;
+}
+
+
+/** Start of the per-call dispatch buffers, past the reporting arrays. */
+LIBXS_API_INLINE void* internal_libxs_predict_ctx_disp(
+  internal_libxs_predict_ctx_t* ctx)
+{
+  const size_t stride = (size_t)ctx->maxsup + 2;
+  double* base = internal_libxs_predict_ctx_scratch(ctx);
+  return (void*)((unsigned char*)(base + 3 * stride + 4 * ctx->noutputs)
+    + 3 * (size_t)ctx->noutputs * sizeof(int));
+}
+
+
+LIBXS_API void* libxs_predict_prob_create(const libxs_predict_t* model)
+{
+  void* result = NULL;
+  const size_t size = internal_libxs_predict_ctx_bytes(model);
+  if (0 < size) {
+    result = libxs_malloc(internal_libxs_default_pool, size,
+      LIBXS_MALLOC_AUTO);
+    if (NULL != result) {
+      internal_libxs_predict_ctx_t* ctx =
+        (internal_libxs_predict_ctx_t*)result;
+      const size_t nw = (size_t)model->noutputs * LIBXS_PREDICT_NESCAPE;
+      double* w = (double*)((unsigned char*)ctx
+        + sizeof(internal_libxs_predict_ctx_t));
+      size_t i;
+      memset(result, 0, size);
+      ctx->magic = LIBXS_PREDICT_CTX_MAGIC;
+      ctx->model = (const void*)model;
+      ctx->nbuild = model->nbuild;
+      ctx->noutputs = model->noutputs;
+      ctx->maxsup = internal_libxs_predict_maxsup(model);
+      /* seed from the model's weights so a loaded, converged model does not
+         re-pay the adaptation transient on every fresh stream */
+      for (i = 0; i < nw; ++i) {
+        w[i] = (NULL != model->escape_w)
+          ? model->escape_w[i] : (1.0 / LIBXS_PREDICT_NESCAPE);
+      }
+    }
+  }
+  return result;
+}
+
+
+LIBXS_API void libxs_predict_prob_destroy(void* context)
+{
+  if (NULL != context) {
+    internal_libxs_predict_ctx_t* ctx =
+      (internal_libxs_predict_ctx_t*)context;
+    if (LIBXS_PREDICT_CTX_MAGIC == ctx->magic) {
+      ctx->magic = 0;
+      libxs_free(context);
+    }
+  }
+}
+
+
+LIBXS_API void libxs_predict_prob(libxs_lock_t* lock,
+  const libxs_predict_t* model, void* context, const double inputs[],
+  const double candidate[], double prob[],
+  libxs_predict_prob_info_t* info, int vocabulary, int nblend)
+{
+  LIBXS_ASSERT(NULL != model && 0 != model->built && NULL != inputs
+    && NULL != candidate);
+  /* info aliases the context, so reporting requires one */
+  LIBXS_ASSERT(NULL == info || NULL != context);
+  if (NULL != model->sup_n && NULL != model->sup_vals
+    && (NULL == context
+      || 0 != internal_libxs_predict_ctx_valid(model, context)))
+  {
+    const int n = model->noutputs;
+    internal_libxs_predict_ctx_t* ctx =
+      internal_libxs_predict_ctx(model, context);
+    const int maxsup = internal_libxs_predict_maxsup(model);
+    const int stride = maxsup + 2;
+    double dflt[LIBXS_PREDICT_NESCAPE];
+    /**
+     * Adaptive scoring takes every buffer from the context, so the path is
+     * allocation-free.  Frozen scoring has no context and allocates once from
+     * the library pool rather than repeatedly from the system allocator.
+     */
+    int scratch_pool = 0;
+    const internal_libxs_predict_cluster_t** src = NULL;
+    int *smode, *sout, *snout;
+    double *vals, *local = NULL;
+    if (NULL != ctx) {
+      unsigned char* d = (unsigned char*)internal_libxs_predict_ctx_disp(ctx);
+      src = (const internal_libxs_predict_cluster_t**)d;
+      d += (size_t)n * sizeof(void*);
+      smode = (int*)d; d += (size_t)n * sizeof(int);
+      sout = (int*)d; d += (size_t)n * sizeof(int);
+      snout = (int*)d; d += (size_t)n * sizeof(int);
+      vals = (double*)d;
+    }
+    else {
+      const size_t nb = (size_t)n * sizeof(void*)
+        + 3 * (size_t)n * sizeof(int) + (size_t)n * sizeof(double)
+        + (size_t)3 * stride * sizeof(double);
+      unsigned char* d = (unsigned char*)LIBXS_PREDICT_MALLOC(nb,
+        scratch_pool);
+      src = (const internal_libxs_predict_cluster_t**)d;
+      if (NULL != d) {
+        d += (size_t)n * sizeof(void*);
+        smode = (int*)d; d += (size_t)n * sizeof(int);
+        sout = (int*)d; d += (size_t)n * sizeof(int);
+        snout = (int*)d; d += (size_t)n * sizeof(int);
+        vals = (double*)d; d += (size_t)n * sizeof(double);
+        local = (double*)d;
+      }
+      else { smode = NULL; sout = NULL; snout = NULL; vals = NULL; }
+    }
+    if (NULL != lock) LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
+    if (NULL != src && NULL != smode && NULL != sout && NULL != snout
+      && NULL != vals && (NULL != ctx || NULL != local))
+    {
+      double* base = (NULL != ctx)
+        ? internal_libxs_predict_ctx_scratch(ctx) : local;
+      double* p = base;
+      double* scratch = p + stride;
+      double* pr = (NULL != ctx) ? (base + 3 * stride) : NULL;
+      double* lp = (NULL != pr) ? (pr + n) : NULL;
+      double* zs = (NULL != lp) ? (lp + n) : NULL;
+      double* nv = (NULL != zs) ? (zs + n) : NULL;
+      int* kind = (NULL != nv) ? (int*)(nv + n) : NULL;
+      int* att = (NULL != kind) ? (kind + n) : NULL;
+      int* sup = (NULL != att) ? (att + n) : NULL;
+      double total = 0, ent = 0, entsum = 0;
+      int j, nent = 0;
+      if (NULL == ctx) {
+        int e;
+        for (e = 0; e < LIBXS_PREDICT_NESCAPE; ++e) {
+          dflt[e] = 1.0 / LIBXS_PREDICT_NESCAPE;
+        }
+      }
+      internal_libxs_predict_eval_ex(NULL, model, inputs, vals, NULL,
+        nblend, src, smode, sout, snout);
+      for (j = 0; j < n; ++j) {
+        const int ns = model->sup_n[j];
+        /* frozen mode reads the model's weights and never writes them */
+        double* w = (NULL != ctx)
+          ? internal_libxs_predict_ctx_weights(ctx, j)
+          : ((NULL != model->escape_w)
+            ? (model->escape_w + (size_t)j * LIBXS_PREDICT_NESCAPE) : dflt);
+        double cand = candidate[j];
+        double pj = 0, lpj = -DBL_MAX, zj = 0, nvj = 0;
+        int kj = LIBXS_PREDICT_PNONE, aj = 0;
+        if (NULL != model->transforms) {
+          cand = internal_libxs_predict_fwd(model->transforms[j], cand);
+        }
+        if (LIBXS_PREDICT_SRC_CLASSIFY == smode[j] && NULL != src[j]
+          && 0 < ns)
+        {
+          if (EXIT_SUCCESS == internal_libxs_predict_dist(model, w, src[j],
+            inputs, j, sout[j], snout[j], 0, vocabulary, p, scratch, stride,
+            &ent))
+          {
+            const int si = internal_libxs_predict_support_index(
+              model->sup_vals[j], ns, cand);
+            const int outside = ((vocabulary > ns) ? vocabulary : ns) - ns;
+            const double* ev = scratch + stride;
+            entsum += ent;
+            ++nent;
+            kj = LIBXS_PREDICT_PMASS;
+            nvj = p[ns];
+            if (0 <= si) {
+              pj = p[si];
+              aj = (0 != ev[si]) ? 1 : 0;
+            }
+            else if (0 < outside) pj = p[ns] / outside;
+            lpj = (pj > 0) ? (log(pj) / log(2.0)) : -DBL_MAX;
+            if (NULL != ctx) {
+              internal_libxs_predict_dist_learn(model, w, j, ev, si,
+                vocabulary);
+            }
+          }
+        }
+        else if (LIBXS_PREDICT_SRC_INTERP == smode[j] && NULL != src[j]) {
+          /**
+           * A continuous target has no mass at a point.  The bandwidth is
+           * floored by the stored fit residual so the density cannot claim
+           * more precision than the fit actually has.
+           */
+          const internal_libxs_predict_cluster_t* cl = src[j];
+          const double rms = (NULL != cl->out_rms && cl->out_rms[j] > 0)
+            ? cl->out_rms[j] : 0;
+          const double sd = (NULL != cl->out_var && cl->out_var[j] > 0)
+            ? sqrt(cl->out_var[j]) : 0;
+          const double h = (rms > 0) ? rms : ((sd > 0) ? sd : 1.0);
+          const double d = (cand - vals[j]) / h;
+          const double norm = h * sqrt(2.0 * 3.14159265358979323846);
+          kj = LIBXS_PREDICT_PDENSITY;
+          zj = d;
+          pj = exp(-0.5 * d * d) / norm;
+          lpj = (-0.5 * d * d - log(norm)) / log(2.0);
+          aj = 1;
+        }
+        if (NULL != prob) prob[j] = pj;
+        if (NULL != pr) {
+          pr[j] = pj; lp[j] = lpj; zs[j] = zj; nv[j] = nvj;
+          kind[j] = kj; att[j] = aj; sup[j] = ns;
+        }
+        if (-DBL_MAX != lpj) total += lpj;
+      }
+      if (NULL != info) {
+        info->prob = pr;
+        info->logprob = lp;
+        info->zscore = zs;
+        info->kind = kind;
+        info->attested = att;
+        info->support = sup;
+        info->novel = nv;
+        info->total_logprob = total;
+        info->noutputs = n;
+        info->cluster = -1;
+        /* mean over the outputs that carry a bank: a single output's value
+           would depend on which one happened to be scored last */
+        info->entropy = (0 < nent) ? (entsum / nent) : 0.0;
+      }
+    }
+    if (NULL != lock) LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
+    if (NULL == ctx) LIBXS_PREDICT_FREE((void*)src, scratch_pool);
+  }
+}
+
+
+/**
+ * Report the distribution for one output and, optionally, observe an outcome --
+ * in that order, inside one call.  Splitting these across two entry points made
+ * the ordering a caller obligation with no failure symptom: observing first
+ * yields a distribution shaped by weights that already saw the target, which is
+ * better than the truth and looks entirely plausible.  Here the guarantee is
+ * structural: the masses are copied out before any weight moves.
+ */
+LIBXS_API int libxs_predict_prob_observe(libxs_lock_t* lock,
+  const libxs_predict_t* model, void* context, const double inputs[],
+  int output, const double* candidate,
+  double values[], double probs[], int capacity, double* novel,
+  libxs_predict_prob_info_t* info, int vocabulary, int nblend)
+{
+  int result = 0;
+  LIBXS_ASSERT(NULL != model && 0 != model->built && NULL != inputs);
+  /* info aliases the context, and observing requires somewhere to learn into */
+  LIBXS_ASSERT(NULL == info || NULL != context);
+  if (NULL != model->sup_n && NULL != model->sup_vals
+    && 0 <= output && output < model->noutputs
+    && (NULL == context
+      || 0 != internal_libxs_predict_ctx_valid(model, context)))
+  {
+    const int n = model->noutputs;
+    internal_libxs_predict_ctx_t* ctx =
+      internal_libxs_predict_ctx(model, context);
+    const int stride = internal_libxs_predict_maxsup(model) + 2;
+    double dflt[LIBXS_PREDICT_NESCAPE];
+    int scratch_pool = 0;
+    const internal_libxs_predict_cluster_t** src = NULL;
+    int *smode, *sout, *snout;
+    double* local = NULL;
+    if (NULL != ctx) {
+      unsigned char* d = (unsigned char*)internal_libxs_predict_ctx_disp(ctx);
+      src = (const internal_libxs_predict_cluster_t**)d;
+      d += (size_t)n * sizeof(void*);
+      smode = (int*)d; d += (size_t)n * sizeof(int);
+      sout = (int*)d; d += (size_t)n * sizeof(int);
+      snout = (int*)d;
+    }
+    else {
+      const size_t nb = (size_t)n * sizeof(void*)
+        + 3 * (size_t)n * sizeof(int)
+        + (size_t)3 * stride * sizeof(double);
+      unsigned char* d = (unsigned char*)LIBXS_PREDICT_MALLOC(nb,
+        scratch_pool);
+      src = (const internal_libxs_predict_cluster_t**)d;
+      if (NULL != d) {
+        d += (size_t)n * sizeof(void*);
+        smode = (int*)d; d += (size_t)n * sizeof(int);
+        sout = (int*)d; d += (size_t)n * sizeof(int);
+        snout = (int*)d; d += (size_t)n * sizeof(int);
+        local = (double*)d;
+      }
+      else { smode = NULL; sout = NULL; snout = NULL; }
+    }
+    if (NULL != lock) LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
+    if (NULL != src && NULL != smode && NULL != sout && NULL != snout
+      && (NULL != ctx || NULL != local))
+    {
+      double* p = (NULL != ctx)
+        ? internal_libxs_predict_ctx_scratch(ctx) : local;
+      double* scratch = p + stride;
+      double* w = (NULL != ctx)
+        ? internal_libxs_predict_ctx_weights(ctx, output)
+        : ((NULL != model->escape_w)
+          ? (model->escape_w + (size_t)output * LIBXS_PREDICT_NESCAPE)
+          : dflt);
+      double ent = 0;
+      if (NULL == ctx) {
+        int e;
+        for (e = 0; e < LIBXS_PREDICT_NESCAPE; ++e) {
+          dflt[e] = 1.0 / LIBXS_PREDICT_NESCAPE;
+        }
+      }
+      internal_libxs_predict_eval_ex(NULL, model, inputs, NULL, NULL,
+        nblend, src, smode, sout, snout);
+      if (LIBXS_PREDICT_SRC_CLASSIFY == smode[output] && NULL != src[output]
+        && EXIT_SUCCESS == internal_libxs_predict_dist(model, w, src[output],
+          inputs, output, sout[output], snout[output], 0, vocabulary, p,
+          scratch, stride, &ent))
+      {
+        const int ns = model->sup_n[output];
+        const int outside = ((vocabulary > ns) ? vocabulary : ns) - ns;
+        const double* ev = scratch + stride;
+        double cand = 0;
+        int si = -1;
+        result = ns;
+        if (NULL != candidate) {
+          cand = (NULL != model->transforms)
+            ? internal_libxs_predict_fwd(model->transforms[output], *candidate)
+            : *candidate;
+          si = internal_libxs_predict_support_index(
+            model->sup_vals[output], ns, cand);
+        }
+        /* everything reported is taken before the bank is touched */
+        if (ns <= capacity && NULL != values && NULL != probs) {
+          memcpy(values, model->sup_vals[output],
+            (size_t)ns * sizeof(double));
+          memcpy(probs, p, (size_t)ns * sizeof(double));
+        }
+        if (NULL != novel) *novel = p[ns];
+        LIBXS_ASSERT(1.0 == libxs_sum2(p, ns + 1));
+        if (NULL != info) {
+          double* pr = internal_libxs_predict_ctx_scratch(ctx) + 3 * stride;
+          double* lp = pr + n;
+          double* zs = lp + n;
+          double* nv = zs + n;
+          int* kind = (int*)(nv + n);
+          int* att = kind + n;
+          int* sup = att + n;
+          int j;
+          for (j = 0; j < n; ++j) {
+            pr[j] = 0; lp[j] = -DBL_MAX; zs[j] = 0; nv[j] = 0;
+            kind[j] = LIBXS_PREDICT_PNONE; att[j] = 0;
+            sup[j] = model->sup_n[j];
+          }
+          nv[output] = p[ns];
+          kind[output] = LIBXS_PREDICT_PMASS;
+          if (NULL != candidate) {
+            if (0 <= si) {
+              pr[output] = p[si];
+              att[output] = (0 != ev[si]) ? 1 : 0;
+            }
+            else if (0 < outside) pr[output] = p[ns] / outside;
+            lp[output] = (pr[output] > 0)
+              ? (log(pr[output]) / log(2.0)) : -DBL_MAX;
+          }
+          info->prob = pr;
+          info->logprob = lp;
+          info->zscore = zs;
+          info->kind = kind;
+          info->attested = att;
+          info->support = sup;
+          info->novel = nv;
+          info->total_logprob = lp[output];
+          info->noutputs = n;
+          info->cluster = -1;
+          info->entropy = ent;
+        }
+        /* only now may the weights move */
+        if (NULL != candidate && NULL != ctx) {
+          internal_libxs_predict_dist_learn(model, w, output, ev, si,
+            vocabulary);
+        }
+      }
+    }
+    if (NULL != lock) LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
+    if (NULL == ctx) LIBXS_PREDICT_FREE((void*)src, scratch_pool);
+  }
+  return result;
 }
 
 
