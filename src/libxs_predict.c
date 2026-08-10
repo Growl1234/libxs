@@ -617,7 +617,14 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
   double* candidates, double* dists, int* out_nfound,
   int* out_exact, int* out_exact_nearest, double* out_best)
 {
-  const int k = cl->k_eff;
+  /**
+   * k_eff sizes the caller's candidates/dists arrays, and on a loaded model it
+   * comes from a file byte, so the bound is clamped here rather than assumed.
+   * The loaders reject an out-of-range value, but keeping the clamp local means
+   * the writes cannot exceed the arrays whatever the caller passed.
+   */
+  const int k = (cl->k_eff < LIBXS_PREDICT_KNN)
+    ? ((0 < cl->k_eff) ? cl->k_eff : 1) : LIBXS_PREDICT_KNN;
   double qtan[512];
   const double* qpts = inputs;
   const double* dpts = kd_pts;
@@ -734,21 +741,31 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
     if (NULL != out_lower && NULL != out_upper && quantile > 0
       && nfound > 1 && 0 == exact_nearest)
     {
-      double weights[LIBXS_PREDICT_KNN];
-      double sorted_v[LIBXS_PREDICT_KNN];
-      double sorted_w[LIBXS_PREDICT_KNN];
+      /**
+       * Zero-initialized because nfound arrives through a pointer from the
+       * evidence scan: nothing at this point proves it positive, so a reader
+       * cannot see that the first element was written.  The loops below are
+       * bounded by nfound in any case, but leaving the arrays indeterminate
+       * makes the code depend on that proof holding, which it does not across
+       * the extraction boundary.
+       */
+      double weights[LIBXS_PREDICT_KNN] = { 0 };
+      double sorted_v[LIBXS_PREDICT_KNN] = { 0 };
+      double sorted_w[LIBXS_PREDICT_KNN] = { 0 };
+      const int nq = (nfound < LIBXS_PREDICT_KNN)
+        ? nfound : LIBXS_PREDICT_KNN;
       double wsum = 0;
       int si, sj;
-      for (i = 0; i < nfound; ++i) {
+      for (i = 0; i < nq; ++i) {
         weights[i] = (dists[i] > 0.0) ? (1.0 / dists[i]) : 1e30;
         wsum += weights[i];
       }
-      for (i = 0; i < nfound; ++i) {
+      for (i = 0; i < nq; ++i) {
         sorted_v[i] = candidates[i];
         sorted_w[i] = weights[i] / wsum;
       }
-      for (si = 0; si < nfound - 1; ++si) {
-        for (sj = si + 1; sj < nfound; ++sj) {
+      for (si = 0; si < nq - 1; ++si) {
+        for (sj = si + 1; sj < nq; ++sj) {
           if (sorted_v[sj] < sorted_v[si]) {
             double tv = sorted_v[si], tw = sorted_w[si];
             sorted_v[si] = sorted_v[sj]; sorted_w[si] = sorted_w[sj];
@@ -758,14 +775,14 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
       }
       { double cum = 0;
         *out_lower = sorted_v[0];
-        for (i = 0; i < nfound; ++i) {
+        for (i = 0; i < nq; ++i) {
           cum += sorted_w[i];
           if (cum >= quantile) { *out_lower = sorted_v[i]; break; }
         }
       }
       { double cum = 0;
-        *out_upper = sorted_v[nfound - 1];
-        for (i = nfound - 1; i >= 0; --i) {
+        *out_upper = sorted_v[nq - 1];
+        for (i = nq - 1; i >= 0; --i) {
           cum += sorted_w[i];
           if (cum >= quantile) { *out_upper = sorted_v[i]; break; }
         }
