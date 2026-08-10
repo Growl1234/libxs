@@ -452,19 +452,32 @@ def _parse_slide(text):
     }
     i = _skip_blank(lines, 0)
 
+    # A slide may open with a reveal.js attribute comment ("<!-- .slide: ... -->",
+    # e.g. a background image or a class). It is deck styling, not content, and
+    # it hid the heading from the detection below, so the "## " line fell through
+    # into the body and reached the slide verbatim. Skip it only when a heading
+    # follows: on a figure-only slide the comment is all there is, and skipping
+    # it unconditionally dropped the slide entirely.
+    if i < len(lines):
+        stripped = lines[i].strip()
+        if stripped.startswith("<!--") and stripped.endswith("-->"):
+            j = _skip_blank(lines, i + 1)
+            if j < len(lines) and re.match(r"^#{1,3} ", lines[j]):
+                i = j
+
     h1 = False
     if i < len(lines) and re.match(r"^# (?!#)", lines[i]):
-        slide["title"] = lines[i][2:].strip()
+        slide["title"] = _typographic(lines[i][2:].strip())
         h1 = True
         i = _skip_blank(lines, i + 1)
         if i < len(lines) and lines[i].startswith("## "):
-            slide["subtitle"] = lines[i][3:].strip()
+            slide["subtitle"] = _typographic(lines[i][3:].strip())
             i += 1
     elif i < len(lines) and lines[i].startswith("## "):
-        slide["title"] = lines[i][3:].strip()
+        slide["title"] = _typographic(lines[i][3:].strip())
         i += 1
     elif i < len(lines) and lines[i].startswith("### "):
-        slide["title"] = lines[i][4:].strip()
+        slide["title"] = _typographic(lines[i][4:].strip())
         i += 1
 
     cur = None
@@ -638,6 +651,16 @@ def _parse_slide(text):
             if cur:
                 slide["blocks"].append(cur)
                 cur = None
+            i += 1
+            continue
+
+        # Indented continuation of the preceding bullet. Without this the line
+        # started a new text block, so inline markup spanning the wrap (a
+        # "**title** wrapped over two source lines") never matched and the
+        # asterisks reached the slide verbatim.
+        if cur and cur["type"] == "bullets" and cur["items"] \
+                and line[:1] in (" ", "\t"):
+            cur["items"][-1] += " " + line.strip()
             i += 1
             continue
 
