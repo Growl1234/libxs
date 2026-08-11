@@ -53,6 +53,7 @@ nav:
   - Malloc: libxs_malloc.md
   - Memory: libxs_mem.md
   - String: libxs_str.md
+  - N-gram: libxs_ngram.md
   - Token: libxs_token.md
   - Timer: libxs_timer.md
   - CPUID: libxs_cpuid.md
@@ -63,6 +64,7 @@ nav:
   - Hash: libxs_hash.md
   - Perm: libxs_perm.md
   - Hist: libxs_hist.md
+  - Mix: libxs_mix.md
   - MHD: libxs_mhd.md
   - RNG: libxs_rng.md
 - Samples:

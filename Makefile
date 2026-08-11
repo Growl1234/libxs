@@ -143,6 +143,7 @@ HEADERS_MAIN := \
           $(ROOTINC)/$(PROJECT)_math.h \
           $(ROOTINC)/$(PROJECT)_mem.h \
           $(ROOTINC)/$(PROJECT)_mhd.h \
+          $(ROOTINC)/$(PROJECT)_mix.h \
           $(ROOTINC)/$(PROJECT)_ngram.h \
           $(ROOTINC)/$(PROJECT)_perm.h \
           $(ROOTINC)/$(PROJECT)_predict.h \
@@ -160,7 +161,7 @@ SRCFILES := $(patsubst %,$(ROOTSRC)/%, \
           $(PROJECT)_cpuid_arm.c $(PROJECT)_cpuid_rv64.c $(PROJECT)_cpuid_x86.c \
           $(PROJECT)_hash.c $(PROJECT)_hist.c $(PROJECT)_main.c $(PROJECT)_malloc.c \
           $(PROJECT)_gemm.c $(PROJECT)_math.c $(PROJECT)_mem.c $(PROJECT)_mhd.c \
-          $(PROJECT)_ngram.c $(PROJECT)_perm.c \
+          $(PROJECT)_mix.c $(PROJECT)_ngram.c $(PROJECT)_perm.c \
           $(PROJECT)_predict.c $(PROJECT)_reg.c $(PROJECT)_rng.c $(PROJECT)_str.c \
           $(PROJECT)_sync.c $(PROJECT)_textrule.c $(PROJECT)_timer.c $(PROJECT)_token.c $(PROJECT)_utils.c)
 

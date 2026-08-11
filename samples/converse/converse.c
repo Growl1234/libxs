@@ -2,6 +2,7 @@
 #include <libxs/libxs_token.h>
 #include <libxs/libxs_ngram.h>
 #include <libxs/libxs_math.h>
+#include <libxs/libxs_mix.h>
 #include <libxs/libxs_perm.h>
 #include <libxs/libxs_str.h>
 #include <libxs/libxs_mem.h>
@@ -7641,30 +7642,39 @@ static double ngram_bank_share(void)
  * and clamping it would perturb the order-only weights that are otherwise
  * bit-exact to the pre-slot bank.
  */
+/**
+ * Spread the slot-indexed experts into the parallel arrays libxs_mix takes. Slot
+ * 0 is unused here and holds weight zero, so the shared primitive skips it on
+ * the same weight>0 test the local loop used.
+ */
+static void ngram_bank_view(libxs_mix_t* mix, double weight[],
+  const ngram_expert_t expert[], double prob[], int active[],
+  double rate, double share)
+{
+  int slot;
+  for (slot = 0; slot < NGRAM_BANK_MAX; ++slot) {
+    prob[slot] = expert[slot].probability;
+    active[slot] = (slot >= 1 && slot <= NGRAM_BANK_LAST)
+      ? expert[slot].active : 0;
+  }
+  mix->weight = weight;
+  mix->nslot = NGRAM_BANK_MAX;
+  mix->rate = rate;
+  mix->share = share;
+  mix->relmin = NGRAM_BANK_RELMIN;
+}
+
+
 static void ngram_bank_update(double weight[], const ngram_expert_t expert[],
   double mixture, double rate, double share)
 {
-  double total = 0.0;
-  int slot, nactive = 0;
-  for (slot = 1; slot <= NGRAM_BANK_LAST; ++slot) {
-    if (weight[slot] > 0.0 && 0 != expert[slot].active) {
-      double relative = (mixture > 0.0)
-        ? expert[slot].probability / mixture : 1.0;
-      if (!(relative > 0.0)) relative = NGRAM_BANK_RELMIN;
-      weight[slot] *= pow(relative, rate);
-      total += weight[slot];
-      ++nactive;
-    }
-  }
-  if (total > 0.0 && nactive > 0) {
-    const double uniform = 1.0 / (double)nactive;
-    for (slot = 1; slot <= NGRAM_BANK_LAST; ++slot) {
-      if (weight[slot] > 0.0 && 0 != expert[slot].active) {
-        weight[slot] = (1.0 - share) * weight[slot] / total
-          + share * uniform;
-      }
-    }
-  }
+  libxs_mix_t mix;
+  double prob[NGRAM_BANK_MAX];
+  int active[NGRAM_BANK_MAX];
+  ngram_bank_view(&mix, weight, expert, prob, active, rate, share);
+  /* the caller's mixture, which carries the log-loss floor ngram_bank_pool
+     applies; recomputing it here would drop that floor */
+  libxs_mix_update(&mix, prob, active, mixture);
 }
 
 
@@ -7961,15 +7971,19 @@ static double ngram_bank_pool_geo(libxs_registry_t* model,
 static double ngram_bank_pool(const double weight[],
   const ngram_expert_t expert[])
 {
-  double pooled = 0.0, wtotal = 0.0;
+  libxs_mix_t mix;
+  double copy[NGRAM_BANK_MAX];
+  double prob[NGRAM_BANK_MAX];
+  int active[NGRAM_BANK_MAX];
+  double pooled;
   int slot;
-  for (slot = 1; slot <= NGRAM_BANK_LAST; ++slot) {
-    if (weight[slot] > 0.0 && 0 != expert[slot].active) {
-      pooled += weight[slot] * expert[slot].probability;
-      wtotal += weight[slot];
-    }
-  }
-  if (wtotal > 0.0) pooled /= wtotal;
+  /* pool does not write the weights, but the view type is mutable; copying the
+     few slots keeps the const contract instead of casting it away */
+  for (slot = 0; slot < NGRAM_BANK_MAX; ++slot) copy[slot] = weight[slot];
+  ngram_bank_view(&mix, copy, expert, prob, active, 0.0, 0.0);
+  pooled = libxs_mix_pool(&mix, prob, active);
+  /* the log-loss floor stays here: the primitive reports what it computed and
+     leaves the choice of floor to the caller that takes the logarithm */
   return (pooled > 0.0) ? pooled : 1e-12;
 }
 

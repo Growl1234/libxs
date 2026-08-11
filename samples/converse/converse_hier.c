@@ -679,32 +679,40 @@ static int hier_expert_rank(const hier_ppm_t* model,
 static void hier_expert_update(double weight[], const double probability[],
   int maxorder, double mixture, double rate, double share)
 {
-  double total = 0.0;
-  int order, nactive = 0;
+  libxs_mix_t mix;
+  int active[HIER_EXPERT_MAX];
+  int order;
   /**
    * Only experts that were initialized participate. The expert index space is
    * sized for the deepest supported byte order, so when a shallower order is
    * configured the unused slots hold weight zero; giving them share mass would
-   * spend probability on experts that never produce one.
+   * spend probability on experts that never produce one. The weight>0 test the
+   * shared primitive applies covers that, and the mask retires the slots past
+   * the configured order.
    */
-  for (order = 0; order <= maxorder; ++order) {
-    if (weight[order] > 0.0) {
-      const double relative = (mixture > 0.0)
-        ? probability[order] / mixture : 1.0;
-      weight[order] *= pow(relative, rate);
-      total += weight[order];
-      ++nactive;
-    }
+  for (order = 0; order < HIER_EXPERT_MAX; ++order) {
+    active[order] = (order <= maxorder) ? 1 : 0;
   }
-  if (total > 0.0 && nactive > 0) {
-    const double uniform = 1.0 / (double)nactive;
-    for (order = 0; order <= maxorder; ++order) {
-      if (weight[order] > 0.0) {
-        weight[order] = (1.0 - share) * weight[order] / total
-          + share * uniform;
-      }
-    }
-  }
+  mix.weight = weight;
+  mix.nslot = HIER_EXPERT_MAX;
+  mix.rate = rate;
+  mix.share = share;
+  /**
+   * No ratio floor here, which preserves this consumer bit-for-bit. It is a
+   * latent defect rather than a choice: an expert that once gave the outcome no
+   * mass is multiplied by exactly zero and the share term cannot revive it,
+   * because share only reaches slots that still hold mass. Left as it was so the
+   * extraction changes nothing measurable; fixing it is a separate change with
+   * its own measurement.
+   */
+  mix.relmin = 0.0;
+  /**
+   * The caller's mixture, not a recomputed one: it is accumulated over a WIDER
+   * slot set than this update walks (the word and skip experts sit past
+   * maxorder), so pooling here would divide by a different weight mass and
+   * silently change every byte-side number.
+   */
+  libxs_mix_update(&mix, probability, active, mixture);
 }
 
 

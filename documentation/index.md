@@ -15,6 +15,7 @@ of [LIBXSMM](https://github.com/libxsmm/libxsmm).
 | [Malloc][dmal]   | `libxs_malloc.h`   | Pool allocator (no system calls at steady) |
 | [Memory][dmem]   | `libxs_mem.h`      | Byte compare, matrix copy/transpose        |
 | [String][dstr]   | `libxs_str.h`      | Edit distance, substring, similarity       |
+| [N-gram][dngr]   | `libxs_ngram.h`    | Variable-order n-gram counts and backoff   |
 | [Token][dtok]    | `libxs_token.h`    | Reversible metatokens and lexical IDs      |
 | [Timer][dtmr]    | `libxs_timer.h`    | High-resolution timing via calibrated TSC  |
 | [CPUID][dcpu]    | `libxs_cpuid.h`    | CPU feature detection (SSE..AVX-512, etc.) |
@@ -25,6 +26,7 @@ of [LIBXSMM](https://github.com/libxsmm/libxsmm).
 | [Hash][dhash]    | `libxs_hash.h`     | CRC32, Adler-32, string hashing            |
 | [Perm][dperm]    | `libxs_perm.h`     | Shuffle, kd-tree, Hilbert/Morton curves    |
 | [Hist][dhist]    | `libxs_hist.h`     | Thread-safe histogram, running statistics  |
+| [Mix][dmix]      | `libxs_mix.h`      | Fixed-share mixture over expert banks      |
 | [MHD][dmhd]      | `libxs_mhd.h`      | Read/write MetaImage (MHD/MHA) files       |
 | [RNG][drng]      | `libxs_rng.h`      | Pseudo-random generation (SplitMix64)      |
 
@@ -33,6 +35,7 @@ of [LIBXSMM](https://github.com/libxsmm/libxsmm).
 [dmal]: libxs_malloc.md
 [dmem]: libxs_mem.md
 [dstr]: libxs_str.md
+[dngr]: libxs_ngram.md
 [dtok]: libxs_token.md
 [dtmr]: libxs_timer.md
 [dcpu]: libxs_cpuid.md
@@ -43,6 +46,7 @@ of [LIBXSMM](https://github.com/libxsmm/libxsmm).
 [dhash]: libxs_hash.md
 [dperm]: libxs_perm.md
 [dhist]: libxs_hist.md
+[dmix]: libxs_mix.md
 [dmhd]: libxs_mhd.md
 [drng]: libxs_rng.md
 

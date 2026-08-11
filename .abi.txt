@@ -147,6 +147,12 @@ libxs_mhd_read_header
 libxs_mhd_typeinfo
 libxs_mhd_typename
 libxs_mhd_write
+libxs_mix_create
+libxs_mix_destroy
+libxs_mix_observe
+libxs_mix_pool
+libxs_mix_reset
+libxs_mix_update
 libxs_mod_inverse
 libxs_mod_inverse_u32
 libxs_morton
