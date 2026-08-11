@@ -96,6 +96,8 @@ LIBXS_EXTERN_C typedef struct libxs_predict_query_t {
    * window buffer supplied to libxs_predict_eval.
    */
   int window;
+  /** Window views actually built (see set_series_bank; 1 when disabled). */
+  int nbank;
 } libxs_predict_query_t;
 
 /** Kind of quantity libxs_predict_prob reports for an output. */
@@ -181,20 +183,6 @@ LIBXS_API void libxs_predict_set_weights(libxs_predict_t* model,
  */
 LIBXS_API void libxs_predict_set_transform(libxs_predict_t* model,
   int output, int transform);
-
-/**
- * Fold neighbor dispersion into the confidence of many-valued outputs.
- * 0 (default): such an output reports confidence 1.0, because a continuous
- *   target has no vote fraction; read info->variance for its spread.
- * non-zero: confidence becomes 1/(1 + spread/cluster-spread), so a threshold
- *   can gate on it. Suppressed while extrapolating (timeseries recency
- *   weighting), where it was measured to hurt.
- * Enable this where neighbor spread is informative -- it lowered spatial
- * prediction error in the earthquake sample. It is not a generalization gain
- * everywhere: on the GPU-tuning table it raises gated precision only for
- * queries whose inputs were in the training set.
- */
-LIBXS_API void libxs_predict_set_dispersion(libxs_predict_t* model, int enable);
 
 /**
  * Set the number of forward-inverse-forward refinement iterations.
@@ -296,6 +284,35 @@ LIBXS_API void libxs_predict_set_series_deriv(libxs_predict_t* model,
  */
 LIBXS_API void libxs_predict_set_series_aux(libxs_predict_t* model,
   int naux);
+
+/**
+ * Average the forecast over nbank views of the window, each seeing a
+ * different amount of history: the first view uses the whole window, and
+ * each subsequent one halves the lags of the one before it, keeping the
+ * most recent. Short and long views fail on different queries, so
+ * averaging them removes error neither removes alone -- measured on the
+ * monthly sunspot series, two views lower the six-month-ahead error 21.8
+ * to 20.2 and the one-month-ahead error 17.5 to 16.9.
+ *
+ * The views share one corpus, one partition and one neighbor index: they
+ * differ only in which lags the distance reads, so a second view costs a
+ * weight vector rather than a second model. That the partition can be
+ * shared is measured, not assumed -- independently partitioned views
+ * scored within 0.5% of shared ones -- because the gain comes from the
+ * views seeing different amounts of history and not from their
+ * disagreeing about which entries are neighbors.
+ *
+ * nbank: number of views (1 or less disables, default 1). A view whose
+ *   window would fall below two lags is not created, so the effective
+ *   count is reported by query.nbank.
+ *
+ * Requires series mode. Must be called before build. Note that a view
+ * zeroes the weight of the lags it does not read, which makes the stored
+ * entries unrecoverable on load exactly as feature selection does: such a
+ * model still predicts, but libxs_predict_inverse abstains.
+ */
+LIBXS_API void libxs_predict_set_series_bank(libxs_predict_t* model,
+  int nbank);
 
 /**
  * Set which series index to predict (0-based, default: 0).

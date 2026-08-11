@@ -198,7 +198,6 @@ libxs_predict_set_central
 libxs_predict_set_consistency
 libxs_predict_set_decompose
 libxs_predict_set_diff
-libxs_predict_set_dispersion
 libxs_predict_set_mode
 libxs_predict_set_quantile
 libxs_predict_set_refine

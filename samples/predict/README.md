@@ -67,6 +67,7 @@ Timeseries forecasting using sliding-window nearest-neighbor prediction.
     ./predict_sunspots.x <csvfile> [train_fraction] [compress[Q]] [hknn|rf]
 
     NOPHASE=1  Drop the solar-cycle phase input.
+    NOBANK=1   Use a single window view instead of the bank.
 
 ### Example
 
@@ -84,6 +85,18 @@ most: t+6 improves 23.70 -> 21.77, t+3 20.72 -> 18.94, while t+1 is
 unchanged within noise (17.42 -> 17.52) because the recent window already
 determines the next month.
 
+The forecast is averaged over two views of the window
+(libxs_predict_set_series_bank), the second reading half the lags of the
+first, which is what lowers t+1 as well (17.52 -> 16.79) and takes t+6 to
+20.30.  The views share one corpus, one partition and one neighbor index --
+a view drops the lags it does not read from the distance -- so a second view
+costs a lag count rather than a second model.  The shorter length is derived
+rather than searched: every short partner from 3 to 9 beats the single
+window, but which one wins at which horizon does not hold from horizon to
+horizon, so the views are averaged instead of selected.  A longer partner
+does not help.  A third view reaches 20.14 at t+6, so depth is available but
+not required.
+
 ### Data Source
 
 Monthly mean total sunspot number from
@@ -98,12 +111,6 @@ Predict earthquake magnitude from geographic location and depth.
 ### Usage
 
     ./predict_earthquakes.x <usgs_csv> [train_fraction] [compress[Q]] [hknn|rf]
-
-    DISPERSION=0  Disable folding neighbor spread into the confidence of
-                  continuous outputs (libxs_predict_set_dispersion).
-                  On by default: it lowers magnitude error for kNN
-                  (0.265 -> 0.259) and hknn (0.263 -> 0.254), but raises
-                  it for rf (0.355 -> 0.365), which does not use the vote.
 
 The kNN vote reports the median rather than the mean here, which
 libxs_predict_set_central selects automatically: magnitude is

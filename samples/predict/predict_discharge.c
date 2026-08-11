@@ -87,6 +87,9 @@ int main(int argc, char* argv[])
       libxs_predict_set_transform(model, -1, LIBXS_PREDICT_LOG);
 #if defined(DISCHARGE_USE_API)
       libxs_predict_set_series(model, 1, window_req);
+      { const char* kenv = getenv("BANK");
+        if (NULL != kenv) libxs_predict_set_series_bank(model, atoi(kenv));
+      }
       libxs_predict_set_series_deriv(model, NDIFFS);
       libxs_predict_set_series_aux(model, 1);
       for (t = 0; t < train_end; ++t) {

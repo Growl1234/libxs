@@ -75,6 +75,9 @@ int main(int argc, char* argv[])
       int t;
       libxs_predict_set_mode(model, LIBXS_PREDICT_TEMPORAL);
       libxs_predict_set_series(model, NSERIES, window_req);
+      { const char* kenv = getenv("BANK");
+        if (NULL != kenv) libxs_predict_set_series_bank(model, atoi(kenv));
+      }
       libxs_predict_set_target(model, 0);
       libxs_predict_set_decompose(model,
         (0 <= decompose) ? decompose : LIBXS_PREDICT_SPREAD);

@@ -30,11 +30,21 @@
 #if !defined(LIBXS_PREDICT_KNN)
 #  define LIBXS_PREDICT_KNN 32
 #endif
+/* Outputs a window bank can average without allocating (see libxs_predict_eval). */
+#if !defined(LIBXS_PREDICT_HMAX)
+#  define LIBXS_PREDICT_HMAX 128
+#endif
 #if !defined(LIBXS_PREDICT_LSQ_NOISE)
 #  define LIBXS_PREDICT_LSQ_NOISE 0.05
 #endif
 #if !defined(LIBXS_PREDICT_LSQ_MINRATIO)
 #  define LIBXS_PREDICT_LSQ_MINRATIO 2
+#endif
+#if !defined(LIBXS_PREDICT_BLEND_CONF)
+#  define LIBXS_PREDICT_BLEND_CONF 0.7
+#endif
+#if !defined(LIBXS_PREDICT_BLEND_N)
+#  define LIBXS_PREDICT_BLEND_N 3
 #endif
 
 #define LIBXS_PREDICT_MALLOC(SIZE, POOL) internal_libxs_scratch_malloc(SIZE, &(POOL))
@@ -98,6 +108,15 @@ typedef struct internal_libxs_predict_cluster_t {
   int tdim;
 } internal_libxs_predict_cluster_t;
 
+/**
+ * One window view: the distance reads only the most recent w lags of each of
+ * s series, out of full lags stored per series.  NULL or w == full means the
+ * whole window, which is the only view a non-series model has.
+ */
+typedef struct internal_libxs_predict_view_t {
+  int w, s, full;
+} internal_libxs_predict_view_t;
+
 typedef struct internal_libxs_predict_order_ctx_t {
   libxs_predict_t* model;
   int nclusters;
@@ -158,10 +177,12 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   int nseries, window, target, decompose;
   int naux, nderiv;
   int nts, ts_capacity;
+  /** Window views: nbank requested, bank_w[] lags each view reads. */
+  int nbank;
+  int* bank_w;
   int diff_mode, diff_order;
   int refine;
   int tangent;
-  int dispersion;
   /** Requested central tendency (0/negative: decide per output at build). */
   int central;
   /** Per-output resolved choice, noutputs entries, NULL until built. */
@@ -189,6 +210,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
 
 LIBXS_API_INLINE int internal_libxs_predict_support_all(libxs_predict_t* model);
 LIBXS_API_INLINE void internal_libxs_predict_central_all(libxs_predict_t* model);
+LIBXS_API_INLINE void internal_libxs_predict_bank_all(libxs_predict_t* model);
 
 
 LIBXS_API_INLINE void internal_libxs_predict_free_clusters(libxs_predict_t* model)
@@ -616,13 +638,38 @@ LIBXS_API_INLINE double internal_libxs_predict_coverage(
  * per rule, where the tangent projection, per-output group filter and recency
  * weighting would have to be kept in step by hand.
  */
+/**
+ * Squared distance restricted to a window view: the full distance less the
+ * coordinates the view does not read.  Subtracting the terms is what a zero
+ * weight would have done, and it needs no second copy of the points.
+ */
+LIBXS_API_INLINE double internal_libxs_predict_viewdist2(const double* a,
+  const double* b, int m, const internal_libxs_predict_view_t* view)
+{
+  double result = libxs_dist2(a, b, m);
+  if (NULL != view && view->w < view->full && 0 < view->s) {
+    int si, li;
+    for (si = 0; si < view->s; ++si) {
+      for (li = 0; li < view->full - view->w; ++li) {
+        const int c = si * view->full + li;
+        const double d = a[c] - b[c];
+        result -= d * d;
+      }
+    }
+    if (0 > result) result = 0;
+  }
+  return result;
+}
+
+
 LIBXS_API_INLINE void internal_libxs_predict_evidence(
   const internal_libxs_predict_cluster_t* cl, const double* kd_pts,
   int nc, int m, const double* inputs, int output_j, int nouts,
   int extrapolate, int skip_local,
   const int* po_groups, int query_group,
   double* candidates, double* dists, int* out_nfound,
-  int* out_exact, int* out_exact_nearest, double* out_best)
+  int* out_exact, int* out_exact_nearest, double* out_best,
+  const internal_libxs_predict_view_t* view)
 {
   /**
    * k_eff sizes the caller's candidates/dists arrays, and on a loaded model it
@@ -661,6 +708,26 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
     double d2;
     if (i == skip_local) continue;
     d2 = libxs_dist2(qpts, dpts + (size_t)i * dm, dm);
+    if (NULL != view && view->w < view->full && qpts == inputs) {
+      /**
+       * A view reads only the most recent view_w lags of each series.  Rather
+       * than pack a second copy of the points, the older lags are removed from
+       * the distance they already contributed: subtracting a coordinate's term
+       * is what a zero weight would have done, and it leaves the corpus, the
+       * partition and the neighbor index shared.  Skipped when the tangent
+       * projection is active, because there the coordinates are no longer lags.
+       */
+      const double* row = dpts + (size_t)i * dm;
+      int si, li;
+      for (si = 0; si < view->s; ++si) {
+        for (li = 0; li < view->full - view->w; ++li) {
+          const int c = si * view->full + li;
+          const double d = qpts[c] - row[c];
+          d2 -= d * d;
+        }
+      }
+      if (0 > d2) d2 = 0;
+    }
     if (0 != extrapolate && max_idx > 0) {
       const double age = 1.0 - (double)cl->sorted_idx[i] / (double)max_idx;
       d2 *= 1.0 + 0.5 * age;
@@ -727,7 +794,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
   const int* po_groups, int query_group,
   double* confidence, double* out_variance,
   double quantile, double* out_lower, double* out_upper,
-  int dispersion, int central)
+  int central, const internal_libxs_predict_view_t* view)
 {
   const int ndistinct_thresh = (int)(sqrt((double)nc) + 0.5);
   double candidates[LIBXS_PREDICT_KNN];
@@ -742,7 +809,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
     best_val = cl->raw_outputs[output_j];
     internal_libxs_predict_evidence(cl, kd_pts, nc, m, inputs, output_j, nouts,
       extrapolate, skip_local, po_groups, query_group,
-      candidates, dists, &nfound, &exact, &exact_nearest, &best_val);
+      candidates, dists, &nfound, &exact, &exact_nearest, &best_val, view);
     if (NULL != out_variance) {
       if (0 != exact_nearest || nfound <= 1) {
         *out_variance = 0;
@@ -862,30 +929,13 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
         }
         if (NULL != confidence) {
           /**
-           * A many-valued output has no vote fraction.  By default this stays
-           * 1.0 and callers read info->variance for the neighborhood spread.
-           * Opt in via set_dispersion to fold that spread into confidence:
-           * measured better where spread is informative (earthquake MAE 0.265
-           * -> 0.259) and worse under recency weighting (SOI +29%), so it is
-           * suppressed when extrapolating.  On the GPU-tuning table it lifts
-           * gated precision but only in the attested bucket, so it is not a
-           * generalization gain -- hence opt-in rather than default.
+           * A many-valued output has no vote fraction, so it reports 1.0 and
+           * callers read info->variance for the neighborhood spread.  Folding
+           * that spread into the confidence instead was measured and removed:
+           * it lowered quality wherever it applied once the blended-cluster
+           * count was derived from the confidence rather than fixed.
            */
-          if (0 == dispersion || 0 != extrapolate) {
-            *confidence = 1.0;
-          }
-          else {
-            const double cvar = (NULL != cl->out_var) ? cl->out_var[output_j] : 0.0;
-            const double csd = sqrt(cvar);
-            double wvar = 0;
-            for (i = 0; i < nfound; ++i) {
-              const double wi = (dists[i] > 0.0) ? (1.0 / dists[i]) : 1e30;
-              const double d = candidates[i] - wavg;
-              wvar += wi * d * d;
-            }
-            wvar = (wsum > 0.0) ? wvar / wsum : 0.0;
-            *confidence = (csd > 0.0) ? 1.0 / (1.0 + sqrt(wvar) / csd) : 1.0;
-          }
+          *confidence = 1.0;
         }
       }
       else {
@@ -921,11 +971,12 @@ LIBXS_API_INLINE double internal_libxs_predict_classify(
   const internal_libxs_predict_cluster_t* cl, const double* kd_pts,
   int nc, int m, const double* inputs, int output_j, int nouts,
   int ndistinct, int extrapolate, int skip_local,
-  double* confidence, double* out_variance, int dispersion, int central)
+  double* confidence, double* out_variance, int central,
+  const internal_libxs_predict_view_t* view)
 {
   return internal_libxs_predict_classify2(cl, kd_pts, nc, m, inputs,
     output_j, nouts, ndistinct, extrapolate, skip_local,
-    NULL, -1, confidence, out_variance, 0, NULL, NULL, dispersion, central);
+    NULL, -1, confidence, out_variance, 0, NULL, NULL, central, view);
 }
 
 
@@ -939,6 +990,7 @@ LIBXS_API libxs_predict_t* libxs_predict_create(int ninputs, int noutputs)
       model->noutputs = noutputs;
       model->eval_mode = LIBXS_PREDICT_AUTO;
       model->diff_mode = -1;
+      model->nbank = 1;
     }
   }
   return model;
@@ -984,6 +1036,7 @@ LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
     free(model->transforms);
     free(model->ts_buf);
     free(model->aux_buf);
+    free(model->bank_w);
     free(model->decompose_mat);
     free(model->hknn_assignments);
     if (NULL != model->hknn_po_assignments) {
@@ -1053,12 +1106,6 @@ LIBXS_API void libxs_predict_set_mode(libxs_predict_t* model, int mode)
   model->eval_mode = mode;
 }
 
-
-LIBXS_API void libxs_predict_set_dispersion(libxs_predict_t* model, int enable)
-{
-  LIBXS_ASSERT(NULL != model);
-  model->dispersion = enable;
-}
 
 
 LIBXS_API void libxs_predict_set_central(libxs_predict_t* model, int mode)
@@ -1168,6 +1215,13 @@ LIBXS_API void libxs_predict_set_series(libxs_predict_t* model, int nseries, int
     model->nseries = nseries;
     model->window = window;
   }
+}
+
+
+LIBXS_API void libxs_predict_set_series_bank(libxs_predict_t* model, int nbank)
+{
+  LIBXS_ASSERT(NULL != model);
+  model->nbank = (1 < nbank) ? nbank : 1;
 }
 
 
@@ -2418,7 +2472,7 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
             const double actual = cl->raw_outputs[(size_t)k * n + j];
             const double pred = internal_libxs_predict_classify(
               cl, cl->kd_pts, nc, m, cl->kd_pts + (size_t)k * m,
-              j, n, cl->ndistinct[j], 0, k, NULL, NULL, 0, 0);
+              j, n, cl->ndistinct[j], 0, k, NULL, NULL, 0, NULL);
             const double res = pred - actual;
             sse += res * res;
           }
@@ -2436,6 +2490,7 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
        */
       internal_libxs_predict_support_all(model);
       if (0 >= model->central) internal_libxs_predict_central_all(model);
+      internal_libxs_predict_bank_all(model);
       if (model->smooth < 0) {
         int nsmooth = 0, ntotal_modes = 0, j;
         for (c = 0; c < nclusters; ++c) {
@@ -2505,7 +2560,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
   const libxs_predict_t* model, const double inputs[], double outputs[],
   libxs_predict_info_t* info, int nblend,
   const internal_libxs_predict_cluster_t** src, int* src_mode,
-  int* src_out, int* src_nout)
+  int* src_out, int* src_nout, const internal_libxs_predict_view_t* view)
 {
   LIBXS_ASSERT(NULL != model && 0 != model->built && NULL != inputs);
   {
@@ -2609,9 +2664,19 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
     for (j = 0; j < n; ++j) { lo[j] = 0; hi[j] = 0; }
     if (nblend < 0) nblend = 0;
     if (nblend > model->nclusters) nblend = model->nclusters;
-    best_dist = libxs_dist2(norm_inputs, model->clusters[0].centroid, m);
+    /**
+     * A view routes the query by the lags it reads, not by the whole window:
+     * the partition is shared, but which cluster serves a short view is its own
+     * decision, and forcing the full-window choice on it was measured to give
+     * up most of the bank's gain (sunspots, six months ahead: 21.2 against
+     * 20.2).  internal_libxs_predict_viewdist2 removes the older lags from the
+     * distance exactly as the neighbor scan does.
+     */
+    best_dist = internal_libxs_predict_viewdist2(norm_inputs,
+      model->clusters[0].centroid, m, view);
     for (c = 1; c < model->nclusters; ++c) {
-      const double d = libxs_dist2(norm_inputs, model->clusters[c].centroid, m);
+      const double d = internal_libxs_predict_viewdist2(norm_inputs,
+        model->clusters[c].centroid, m, view);
       if (d < best_dist && model->clusters[c].nentries > 0) {
         best_dist = d; best_c = c;
       }
@@ -2681,8 +2746,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                   vals[j] = internal_libxs_predict_classify2(
                     pcl, pcl->kd_pts, pcl->nentries, m, norm_inputs,
                     lj, gsz, pcl->ndistinct[lj], extrapolate, -1, NULL, -1,
-                    &po_conf, &po_var, qi, &lo[j], &hi[j], model->dispersion,
-                    internal_libxs_predict_central(model, j));
+                    &po_conf, &po_var, qi, &lo[j], &hi[j],
+                    internal_libxs_predict_central(model, j), view);
                   if (NULL != src) src[j] = pcl;
                   if (NULL != src_out) src_out[j] = lj;
                   if (NULL != src_nout) src_nout[j] = gsz;
@@ -2691,8 +2756,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                   vals[j] = internal_libxs_predict_classify2(
                     cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
                     cl->ndistinct[j], extrapolate, -1, NULL, -1,
-                    &po_conf, &po_var, qi, &lo[j], &hi[j], model->dispersion,
-                    internal_libxs_predict_central(model, j));
+                    &po_conf, &po_var, qi, &lo[j], &hi[j],
+                    internal_libxs_predict_central(model, j), view);
                   if (NULL != src) src[j] = cl;
                   if (NULL != src_out) src_out[j] = j;
                   if (NULL != src_nout) src_nout[j] = n;
@@ -2702,8 +2767,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
               internal_libxs_predict_classify(
                 cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
                 cl->ndistinct[j], extrapolate, -1, &conf[j], &var[j],
-                model->dispersion,
-                internal_libxs_predict_central(model, j));
+                internal_libxs_predict_central(model, j), view);
               errs[j] = 0;
               rels[j] = 0;
             }
@@ -2711,8 +2775,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
               vals[j] = internal_libxs_predict_classify2(
                 cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
                 cl->ndistinct[j], extrapolate, -1, NULL, -1,
-                &conf[j], &var[j], qi, &lo[j], &hi[j], model->dispersion,
-                internal_libxs_predict_central(model, j));
+                &conf[j], &var[j], qi, &lo[j], &hi[j],
+                internal_libxs_predict_central(model, j), view);
               errs[j] = 0;
               rels[j] = 0;
               if (NULL != src) src[j] = cl;
@@ -2725,8 +2789,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
             vals[j] = internal_libxs_predict_classify2(
               cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
               cl->ndistinct[j], extrapolate, -1, NULL, -1,
-              &conf[j], &var[j], qi, &lo[j], &hi[j], model->dispersion,
-              internal_libxs_predict_central(model, j));
+              &conf[j], &var[j], qi, &lo[j], &hi[j],
+              internal_libxs_predict_central(model, j), view);
             errs[j] = 0;
             rels[j] = 0;
             if (NULL != src) src[j] = cl;
@@ -2770,7 +2834,42 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
         double avg_conf = 0;
         for (j = 0; j < n; ++j) avg_conf += conf[j];
         avg_conf /= n;
-        if (avg_conf < 0.7) nblend = LIBXS_MIN(3, model->nclusters);
+        /**
+         * How many clusters to average is read from the confidence rather than
+         * fixed: the vote's own agreement says how far the evidence reaches.
+         * A committed vote needs one cluster, and the count grows as agreement
+         * falls, because a query whose neighborhood disagrees is one whose
+         * regime the partition split.  Measured on the earthquake case, where
+         * confidence averages 0.45: three clusters give MAE 0.256 and the
+         * curve only flattens near 0.243, so the former fixed 3 was leaving
+         * most of the blending gain unclaimed.
+         */
+        if (avg_conf < LIBXS_PREDICT_BLEND_CONF) {
+          /**
+           * Only a many-valued output benefits from reaching further: its
+           * estimate is an average, so more clusters average more evidence.
+           * A few-valued output reports the winning vote fraction instead, and
+           * additional clusters dilute the argmax rather than sharpen it --
+           * measured on the GPU-tuning table, where growing the count cost AL
+           * 1.5 points of gated precision.  The distinction is the one the
+           * vote itself already makes.
+           */
+          int nmany = 0;
+          for (j = 0; j < n; ++j) {
+            const int thresh = (int)(sqrt((double)cl->nentries) + 0.5);
+            if (cl->ndistinct[j] > thresh) ++nmany;
+          }
+          if (nmany > n / 2) {
+            const double reach = (LIBXS_PREDICT_BLEND_CONF - avg_conf)
+              / LIBXS_PREDICT_BLEND_CONF;
+            const int nb = LIBXS_PREDICT_BLEND_N
+              + (int)(reach * reach * model->nclusters + 0.5);
+            nblend = LIBXS_MIN(nb, model->nclusters);
+          }
+          else {
+            nblend = LIBXS_MIN(LIBXS_PREDICT_BLEND_N, model->nclusters);
+          }
+        }
         else if (model->smooth > 0) {
           const double radius = sqrt(best_dist) * (1.0 + model->smooth);
           int nb = 1;
@@ -2835,8 +2934,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                 const double v = internal_libxs_predict_classify2(
                   cl2, cl2->kd_pts, cl2->nentries, m, norm_inputs, j, n,
                   cl2->ndistinct[j], extrapolate, -1, NULL, -1,
-                  &cj_conf, &cj_var, qi, &cj_lo, &cj_hi, model->dispersion,
-                  internal_libxs_predict_central(model, j));
+                  &cj_conf, &cj_var, qi, &cj_lo, &cj_hi,
+                  internal_libxs_predict_central(model, j), view);
                 blend_val += w * v;
                 blend_conf += w * cj_conf;
                 blend_var += w * cj_var;
@@ -2926,9 +3025,27 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
           (size_t)m * sizeof(double), canon_pool);
         if (NULL != canon) {
           for (j = 0; j < n; ++j) {
+            /**
+             * The inverse reads the whole output vector to recover one set of
+             * inputs, so whatever it is given for output j reaches every other
+             * output's re-prediction.  It is therefore given the vote's mean
+             * even where the model reports the median: the median is the
+             * better answer for j, but substituting it here moves the inputs
+             * that j's neighbors are refined from, which measured as a real
+             * loss on them (GPU-tuning AL: 99.4% gated precision to 97.9%)
+             * for no gain on j.  What the caller receives is unaffected --
+             * only the point the refinement pass inverts through.
+             */
+            const double vj = (0 == internal_libxs_predict_central(model, j))
+              ? vals[j]
+              : internal_libxs_predict_classify(&model->clusters[best_c],
+                  model->clusters[best_c].kd_pts,
+                  model->clusters[best_c].nentries, m, norm_inputs, j, n,
+                  model->clusters[best_c].ndistinct[j], extrapolate, -1,
+                  NULL, NULL, 0, view);
             target[j] = (NULL != model->transforms)
-              ? internal_libxs_predict_inv(model->transforms[j], vals[j])
-              : vals[j];
+              ? internal_libxs_predict_inv(model->transforms[j], vj)
+              : vj;
           }
           libxs_predict_inverse(NULL, model, target, canon, NULL);
           { double refined[128], rconf[128];
@@ -2963,8 +3080,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                         refined[j] = internal_libxs_predict_classify(
                           rcl, rcl->kd_pts, rcl->nentries, m, rnorm, j, n,
                           rcl->ndistinct[j], extrapolate, -1, &rc_conf, NULL,
-                          model->dispersion,
-                internal_libxs_predict_central(model, j));
+                          internal_libxs_predict_central(model, j), view);
                         rconf[j] = rc_conf;
                       }
                       else {
@@ -3116,8 +3232,41 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock,
   const libxs_predict_t* model, const double inputs[], double outputs[],
   libxs_predict_info_t* info, int nblend)
 {
-  internal_libxs_predict_eval_ex(lock, model, inputs, outputs, info, nblend,
-    NULL, NULL, NULL, NULL);
+  LIBXS_ASSERT(NULL != model);
+  if (1 >= model->nbank || NULL == model->bank_w || NULL == outputs) {
+    internal_libxs_predict_eval_ex(lock, model, inputs, outputs, info, nblend,
+      NULL, NULL, NULL, NULL, NULL);
+  }
+  else {
+    /**
+     * Every view queries the same corpus, the same partition and the same
+     * neighbor index; they differ only in how many of the most recent lags the
+     * distance reads.  info describes the first view, the one that reads the
+     * whole window, so a caller reading confidence sees the primary model
+     * rather than an average of incomparable numbers.
+     */
+    const int n = model->noutputs;
+    double acc[LIBXS_PREDICT_HMAX];
+    int b, j, nacc = 0;
+    if (n > LIBXS_PREDICT_HMAX) {
+      internal_libxs_predict_eval_ex(lock, model, inputs, outputs, info, nblend,
+        NULL, NULL, NULL, NULL, NULL);
+      return;
+    }
+    for (j = 0; j < n; ++j) acc[j] = 0;
+    for (b = 0; b < model->nbank; ++b) {
+      internal_libxs_predict_view_t view;
+      view.w = model->bank_w[b];
+      view.s = model->nseries;
+      view.full = model->bank_w[0];
+      internal_libxs_predict_eval_ex(lock, model, inputs, outputs,
+        (0 == b) ? info : NULL, nblend, NULL, NULL, NULL, NULL,
+        (0 == b) ? NULL : &view);
+      for (j = 0; j < n; ++j) acc[j] += outputs[j];
+      ++nacc;
+    }
+    for (j = 0; j < n; ++j) outputs[j] = acc[j] / nacc;
+  }
 }
 
 
@@ -3442,7 +3591,7 @@ LIBXS_API_INLINE int internal_libxs_predict_dist(
   const int outside = nvoc - ns;
   internal_libxs_predict_evidence(cl, cl->kd_pts, cl->nentries,
     model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL, -1,
-    candidates, dists, &nfound, &exact, &exact_nearest, &best);
+    candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL);
   for (i = 0; i < ns; ++i) local[i] = 0;
   for (i = 0; i < nfound; ++i) {
     const int si = internal_libxs_predict_support_index(sv, ns, candidates[i]);
@@ -3536,7 +3685,7 @@ LIBXS_API_INLINE int internal_libxs_predict_point(
   const int si = internal_libxs_predict_support_index(sv, ns, v);
   internal_libxs_predict_evidence(cl, cl->kd_pts, cl->nentries,
     model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL, -1,
-    candidates, dists, &nfound, &exact, &exact_nearest, &best);
+    candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL);
   /* Accumulate evidence per DISTINCT support entry, as the dense path does by
      indexing into local[]; a value can be returned by several neighbors. */
   for (i = 0; i < nfound; ++i) {
@@ -3767,6 +3916,54 @@ LIBXS_API_INLINE size_t internal_libxs_predict_ctx_size(int n, int maxsup)
 
 
 /**
+ * Resolve the window views once the effective window is known.  Each view
+ * halves the lags of the one before it and keeps the most recent, stopping
+ * before a view would read fewer than two lags.  Only the lag count is stored:
+ * a view is applied by zeroing the weight of the lags it does not read, so the
+ * corpus, the partition and the neighbor index are shared.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_bank_all(libxs_predict_t* model)
+{
+  const int nreq = model->nbank;
+  model->nbank = 1;
+  /**
+   * A view drops the oldest lags of each series, which presumes the inputs are
+   * still lags.  A rotation (PCA) or a mode decomposition (SPREAD) replaces them
+   * with combinations spanning the whole window, where dropping a coordinate
+   * removes a mode rather than a span of history: measured on the SOI pair,
+   * views raised the error at every horizon (0.58 to 0.63 at six months).  Such
+   * a model keeps the single view it would have had.
+   */
+  if (1 < nreq && 0 < model->nseries && 0 < model->window
+    && (LIBXS_PREDICT_RAW == model->decompose
+      || LIBXS_PREDICT_HKNN == model->decompose))
+  {
+    const int w = model->window - ((0 < model->diff_order) ? model->diff_order : 0);
+    if (3 < w) {
+      int* wv = (int*)malloc((size_t)nreq * sizeof(int));
+      if (NULL != wv) {
+        int i = 0;
+        wv[0] = w;
+        for (i = 1; i < nreq; ++i) {
+          const int half = (wv[i - 1] + 1) / 2;
+          if (half < 2) break;
+          wv[i] = half;
+        }
+        if (1 < i) {
+          free(model->bank_w);
+          model->bank_w = wv;
+          model->nbank = i;
+        }
+        else {
+          free(wv);
+        }
+      }
+    }
+  }
+}
+
+
+/**
  * Decide per output whether the vote reports the mean or the median, by
  * scoring both against the entries the model was built from.  Each entry is
  * predicted with itself excluded (skip_local), so the comparison is not the
@@ -3801,9 +3998,9 @@ LIBXS_API_INLINE void internal_libxs_predict_central_all(libxs_predict_t* model)
             const double* x = cl->kd_pts + (size_t)k * m;
             const double actual = cl->raw_outputs[(size_t)k * n + j];
             const double a = internal_libxs_predict_classify(cl, cl->kd_pts,
-              nc, m, x, j, n, cl->ndistinct[j], 0, k, NULL, NULL, 0, 0);
+              nc, m, x, j, n, cl->ndistinct[j], 0, k, NULL, NULL, 0, NULL);
             const double d = internal_libxs_predict_classify(cl, cl->kd_pts,
-              nc, m, x, j, n, cl->ndistinct[j], 0, k, NULL, NULL, 0, 1);
+              nc, m, x, j, n, cl->ndistinct[j], 0, k, NULL, NULL, 1, NULL);
             err_avg += LIBXS_FABS(a - actual);
             err_med += LIBXS_FABS(d - actual);
             ++nscored;
@@ -4108,7 +4305,7 @@ LIBXS_API void libxs_predict_prob(libxs_lock_t* lock,
         }
       }
       internal_libxs_predict_eval_ex(NULL, model, inputs, vals, NULL,
-        nblend, src, smode, sout, snout);
+        nblend, src, smode, sout, snout, NULL);
       for (j = 0; j < n; ++j) {
         const int ns = model->sup_n[j];
         /* frozen mode reads the model's weights and never writes them */
@@ -4292,7 +4489,7 @@ LIBXS_API int libxs_predict_prob_observe(libxs_lock_t* lock,
         }
       }
       internal_libxs_predict_eval_ex(NULL, model, inputs, NULL, NULL,
-        nblend, src, smode, sout, snout);
+        nblend, src, smode, sout, snout, NULL);
       /**
        * Nothing to report but the outcome to learn from: the caller asked for no
        * values, no probs, no novel and no info, so the distribution is never
@@ -4432,6 +4629,7 @@ LIBXS_API void libxs_predict_query(
   info->iterations = model->iterations;
   info->diff_order = model->diff_order;
   info->window = (model->nseries > 0) ? model->window : 0;
+  info->nbank = (0 < model->nbank) ? model->nbank : 1;
 }
 
 

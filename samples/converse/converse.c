@@ -540,6 +540,12 @@ static double ngram_bank_pool(const double weight[],
 static int ngram_bank_geometric(void);
 static int ngram_bank_frozen(void);
 static int ngram_bank_warmup(libxs_predict_t* store, int vocabulary);
+static void ngram_syllable_probe(void);
+static void ngram_hist_push(unsigned int hist[], int* hlen, int cap,
+  unsigned int id);
+static void ngram_syllable_oracle(libxs_registry_t* model,
+  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
+  const libxs_registry_t* corpus, int holdout, int maxorder);
 static int ngram_bank_support(libxs_registry_t* model, const unsigned int hist[],
   int hlen, int maxorder, unsigned int ids[], int max);
 static double ngram_bank_pool_geo(libxs_registry_t* model,
@@ -757,6 +763,9 @@ int main(int argc, char* argv[])
       "                           answer and its continuation (default 0=off).\n"
       "  CONVERSE_NGRAM_BANK_GEO=1 geometric (log-linear) pool instead of the\n"
       "                           linear one; exactly normalized.\n"
+      "  CONVERSE_SYLLABLE_PROBE=w1,w2 print the syllable split of each word.\n"
+      "  CONVERSE_SYLLABLE_ORACLE=1 bound any cut rule: cheapest split per word\n"
+      "                           vs the heuristic's, over held-out words.\n"
       "  CONVERSE_EMB_PROBE=w1,w2 print nearest embedding neighbors.\n"
       "  CONVERSE_EMB_BACKFILL=0  disable rare-token vector backfill.\n"
       "  CONVERSE_RECOMB=N        recombination probe over N sentences.\n"
@@ -929,6 +938,8 @@ int main(int argc, char* argv[])
   answer_relation_rules_load_file(converse_path_norm);
   answer_relation_rules_load_file(converse_path_relation);
   answer_relation_rules_report(stderr);
+  /* Needs no corpus and no model, so it runs before any of them is built. */
+  ngram_syllable_probe();
 
   /**
    * A warm start reuses the persisted corpus, lexicon, and predictor instead
@@ -1183,6 +1194,12 @@ int main(int argc, char* argv[])
           use_embed);
       }
       if (0 == use_hier) ngram_stats(ngram_model);
+      /* Bounds any cut rule against the model just trained, so it runs after
+         the store exists and reads only held-out entries. */
+      if (NULL != getenv("CONVERSE_SYLLABLE_ORACLE") && NULL != ngram_model) {
+        ngram_syllable_oracle(ngram_model, lexicon, rules, nrules, eval_corpus,
+          ngram_holdout, ngram_maxorder());
+      }
       converse_stage_end("eval");
       converse_stage_report();
     }
@@ -6621,6 +6638,75 @@ static int ngram_is_vowel(unsigned char c)
 
 
 /**
+ * Decode one UTF-8 sequence, reporting its length so a caller can advance by
+ * whole letters.  Only what a vowel test needs: the code point and the width.
+ * An invalid or truncated sequence reports width 1 so scanning always advances
+ * and a malformed byte is simply not a vowel.
+ */
+static unsigned long ngram_utf8_decode(const char* text, int len, int* width)
+{
+  const unsigned char* p = (const unsigned char*)text;
+  unsigned long result;
+  int w = 1;
+  if (0 == (p[0] & 0x80)) result = p[0];
+  else if (0xC0 == (p[0] & 0xE0) && 1 < len && 0x80 == (p[1] & 0xC0)) {
+    result = ((unsigned long)(p[0] & 0x1F) << 6) | (unsigned long)(p[1] & 0x3F);
+    w = 2;
+  }
+  else if (0xE0 == (p[0] & 0xF0) && 2 < len && 0x80 == (p[1] & 0xC0)
+    && 0x80 == (p[2] & 0xC0))
+  {
+    result = ((unsigned long)(p[0] & 0x0F) << 12)
+      | ((unsigned long)(p[1] & 0x3F) << 6) | (unsigned long)(p[2] & 0x3F);
+    w = 3;
+  }
+  else if (0xF0 == (p[0] & 0xF8) && 3 < len && 0x80 == (p[1] & 0xC0)
+    && 0x80 == (p[2] & 0xC0) && 0x80 == (p[3] & 0xC0))
+  {
+    result = ((unsigned long)(p[0] & 0x07) << 18)
+      | ((unsigned long)(p[1] & 0x3F) << 12)
+      | ((unsigned long)(p[2] & 0x3F) << 6) | (unsigned long)(p[3] & 0x3F);
+    w = 4;
+  }
+  else result = p[0];
+  if (NULL != width) *width = w;
+  return result;
+}
+
+
+/**
+ * Vowel test over CODE POINTS rather than bytes.  The byte test cannot see an
+ * encoded letter at all, so every accented vowel read as a consonant and the
+ * splitter cut German and French words at the wrong places -- a defect, not a
+ * tuning choice.  Latin-1 Supplement and Latin Extended-A cover the vowels of
+ * the languages this corpus set contains; anything outside is not claimed as a
+ * vowel rather than guessed at.
+ */
+static int ngram_is_vowel_cp(unsigned long cp)
+{
+  int result = 0;
+  if (cp < 128) result = ngram_is_vowel((unsigned char)cp);
+  else if (0xC0 <= cp && 0x24F >= cp) {
+    /* fold to the base letter: the accented ranges run in blocks whose
+       residues mod the block size follow the base vowel order */
+    static const char* const vowels = "aeiouy";
+    unsigned long base = 0;
+    if (0xC0 <= cp && 0xFF >= cp) {
+      static const char latin1[64] = {
+        'a','a','a','a','a','a','a','c','e','e','e','e','i','i','i','i',
+        'd','n','o','o','o','o','o','x','o','u','u','u','u','y','t','s',
+        'a','a','a','a','a','a','a','c','e','e','e','e','i','i','i','i',
+        'd','n','o','o','o','o','o','/','o','u','u','u','u','y','t','y'
+      };
+      base = (unsigned long)latin1[cp - 0xC0];
+    }
+    if (0 != base && NULL != strchr(vowels, (int)base)) result = 1;
+  }
+  return result;
+}
+
+
+/**
  * A UTF-8 continuation or lead byte counts as a word character so that a pivot
  * span stays whole on a non-ASCII corpus: ctype rejects every byte of an encoded
  * letter, which would cut a German word mid-letter and offer the fragments as
@@ -6866,31 +6952,111 @@ static int bpe_encode_run(const char* text, int len, libxs_lexeme_t tokens[],
  * cut before a consonant that is followed by a vowel, once the current piece
  * already contains a vowel. Caps piece length; always ends at word end.
  */
+/**
+ * Whether the consonant run text[a,b) is a legal syllable ONSET, i.e. may begin
+ * a syllable in this orthography.
+ *
+ * This is the notion the previous rule lacked entirely: it cut before the last
+ * consonant preceding a vowel, which splits `strength` inside `ngth` and
+ * `rhythm` inside `thm` because it cannot tell a cluster from a coda. Maximal
+ * onset says the onset takes as many consonants as may legally start a syllable
+ * and the rest stay as the coda of the previous one.
+ *
+ * The digraph list is English-leaning and that is a KNOWN limit, recorded rather
+ * than hidden: syllabification is strongly language-dependent (German compounds,
+ * sch/tsch; Italian near-perfect CV), which is exactly the per-language cost
+ * this project has refused to pay by hand. It is here to make the unit
+ * measurable at all -- the current output is wrong on words a speaker of any of
+ * these languages reads correctly -- not as the final rule.
+ */
+static int ngram_onset_legal(const char* text, int a, int b)
+{
+  const int n = b - a;
+  int result = 0;
+  if (0 >= n) result = 1; /* empty onset is always legal */
+  else if (1 == n) result = 1;
+  else if (2 == n) {
+    static const char* const two[] = {
+      "bl","br","ch","cl","cr","dr","fl","fr","gl","gn","gr","kl","kn","kr",
+      "ph","pl","pr","qu","sc","sh","sk","sl","sm","sn","sp","st","sw","th",
+      "tr","tw","wh","wr","ts","pf","sz","gh","dw","vr","zw",
+      NULL
+    };
+    int k;
+    char c0 = (char)tolower((unsigned char)text[a]);
+    char c1 = (char)tolower((unsigned char)text[a + 1]);
+    for (k = 0; NULL != two[k] && 0 == result; ++k) {
+      if (two[k][0] == c0 && two[k][1] == c1) result = 1;
+    }
+  }
+  else if (3 == n) {
+    static const char* const three[] = {
+      "chr","phr","sch","scr","shr","spl","spr","str","thr","tsch",
+      NULL
+    };
+    int k;
+    char c0 = (char)tolower((unsigned char)text[a]);
+    char c1 = (char)tolower((unsigned char)text[a + 1]);
+    char c2 = (char)tolower((unsigned char)text[a + 2]);
+    for (k = 0; NULL != three[k] && 0 == result; ++k) {
+      if (three[k][0] == c0 && three[k][1] == c1 && three[k][2] == c2) {
+        result = 1;
+      }
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Split a word into syllable-like pieces by maximal onset.
+ *
+ * Walk the letters (code points, so an encoded vowel is seen); after a vowel has
+ * been seen, a run of consonants followed by another vowel is a boundary, and
+ * the cut goes as late as legality allows: try the longest legal onset first and
+ * shorten it until the remainder before it is non-empty. A word with no vowel at
+ * all stays one piece rather than being chopped at a fixed width, which is what
+ * produced `stre|ngth`.
+ */
 static int ngram_syllable_split(const char* text, int wlen, int piece_begin[],
   int piece_len[], int max)
 {
   int result = 0;
   int start = 0, i = 0, seen_vowel = 0;
   while (i < wlen && result < max) {
-    int cut = 0;
-    if (i > start) {
-      unsigned char c = (unsigned char)text[i];
-      if (0 != seen_vowel && 0 == ngram_is_vowel(c)
-        && i + 1 < wlen && 0 != ngram_is_vowel((unsigned char)text[i + 1]))
-      {
-        cut = 1;
+    int w = 1;
+    const unsigned long cp = ngram_utf8_decode(text + i, wlen - i, &w);
+    if (0 == ngram_is_vowel_cp(cp)) {
+      if (0 != seen_vowel) {
+        /* scan the whole consonant run, then decide where it divides */
+        int run = i, j = i, cut;
+        while (j < wlen) {
+          int wj = 1;
+          const unsigned long cj = ngram_utf8_decode(text + j, wlen - j, &wj);
+          if (0 != ngram_is_vowel_cp(cj)) break;
+          j += wj;
+        }
+        if (j < wlen) { /* a vowel follows, so this run spans a boundary */
+          cut = run;
+          while (cut < j && 0 == ngram_onset_legal(text, cut, j)) ++cut;
+          /* never cut at the piece start: that would emit an empty piece */
+          if (cut <= start) cut = (start < j) ? j : wlen;
+          if (cut > start && cut < wlen) {
+            piece_begin[result] = start;
+            piece_len[result] = cut - start;
+            ++result;
+            start = cut;
+            seen_vowel = 0;
+          }
+          i = (cut > i) ? cut : j;
+          continue;
+        }
+        i = j; /* trailing consonants: they belong to the final piece */
+        continue;
       }
-      else if (i - start >= NGRAM_NATIVE_WIDTH && 0 != seen_vowel) cut = 1;
     }
-    if (0 != cut) {
-      piece_begin[result] = start;
-      piece_len[result] = i - start;
-      ++result;
-      start = i;
-      seen_vowel = 0;
-    }
-    if (0 != ngram_is_vowel((unsigned char)text[i])) seen_vowel = 1;
-    ++i;
+    else seen_vowel = 1;
+    i += w;
   }
   if (start < wlen && result < max) {
     piece_begin[result] = start;
@@ -6995,6 +7161,137 @@ static int ngram_metatoken_tokens(libxs_lexicon_t* lexicon,
   libxs_token_stream_release(&stream);
   libxs_tokenizer_destroy(tokenizer);
   return result;
+}
+
+
+/**
+ * Cost in bits of emitting one word as the pieces implied by a cut mask, scored
+ * against the trained store. Bit i of mask means "cut before letter i+1".
+ *
+ * THE TRAP THIS AVOIDS: a candidate split invents pieces the training text never
+ * contained, and an unknown piece has NO id. Scoring only the pieces that happen
+ * to be known would make exotic splits look free -- fewer scored positions, less
+ * accumulated cost -- and the oracle would "win" by producing garbage. So a
+ * piece with no id is charged the unigram floor rather than skipped, which is the
+ * honest price of a unit the model cannot represent.
+ *
+ * Returns bits, and writes the piece count. Scoring is done with create=0: the
+ * oracle must not grow the lexicon it is measuring against.
+ */
+static double ngram_syllable_cost(libxs_registry_t* model,
+  libxs_lexicon_t* lexicon, const char* word, int wlen, unsigned long mask,
+  const unsigned int hist_in[], int hlen_in, int maxorder, int* out_npiece)
+{
+  const double inv_log2 = 1.0 / log(2.0);
+  unsigned int hist[NGRAM_ORDER_MAX];
+  double bits = 0.0;
+  int hlen = hlen_in, npiece = 0, at = 0, i;
+  for (i = 0; i < hlen && i < NGRAM_ORDER_MAX; ++i) hist[i] = hist_in[i];
+  for (i = 1; i <= wlen; ++i) {
+    /* a cut before letter i, or the end of the word, closes a piece */
+    if (wlen == i || 0 != (mask & (1UL << (i - 1)))) {
+      char buf[LIBXS_LEXEME_MAXBYTES + 1];
+      int plen = i - at;
+      if (0 < plen && plen <= (int)sizeof(buf) - 1) {
+        unsigned int id;
+        memcpy(buf, word + at, (size_t)plen);
+        id = libxs_lexicon_id(lexicon, buf, plen, LIBXS_LEXEME_WORD, 0);
+        if (0 != id) {
+          const double p = ngramk_prob(model, hist, hlen, maxorder, id);
+          bits -= log((p > 0.0) ? p : 1e-12) * inv_log2;
+          ngram_hist_push(hist, &hlen, NGRAM_ORDER_MAX, id);
+        }
+        else {
+          /* unrepresentable piece: charge the floor, do not extend history */
+          bits -= log(1e-12) * inv_log2;
+        }
+        ++npiece;
+      }
+      at = i;
+    }
+  }
+  if (NULL != out_npiece) *out_npiece = npiece;
+  return bits;
+}
+
+
+/**
+ * Per-word split ORACLE: the cheapest cut set over all candidates, which bounds
+ * what ANY cut rule -- hand-written or learned -- can achieve on this corpus.
+ *
+ * The decision rule was pre-committed before this was written (and is the reason
+ * to write it): if the oracle is not materially better than the maximal-onset
+ * repair, a learned splitter CANNOT PAY and the line is dropped. Exactly how
+ * CONVERSE_NGRAM_ORACLE bounded order selection at 2.018 and closed that route.
+ *
+ * Words longer than ORACLE_MAXLEN are left to the heuristic: the candidate space
+ * is 2^(n-1), so an exhaustive oracle is only honest where it is affordable, and
+ * silently sampling a subset would report a bound that is not one.
+ */
+static void ngram_syllable_oracle(libxs_registry_t* model,
+  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
+  const libxs_registry_t* corpus, int holdout, int maxorder)
+{
+  enum { ORACLE_MAXLEN = 12 };
+  const void* key = NULL;
+  size_t cursor = 0;
+  void* value;
+  double heur_bits = 0.0, oracle_bits = 0.0, single_bits = 0.0;
+  long nword = 0, nskipped = 0, nheur_optimal = 0;
+  long index = 0;
+  value = libxs_registry_begin(corpus, &key, &cursor);
+  while (NULL != value) {
+    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    const int is_test = (0 == holdout || 0 != predict_is_test(index, holdout));
+    if (0 != is_test && entry->text_len > 0) {
+      int pos = 0;
+      while (pos < entry->text_len) {
+        const char* text = entry->text;
+        if (0 == ngram_is_wordchar((unsigned char)text[pos])) { ++pos; continue; }
+        { int wlen = 0;
+          while (pos + wlen < entry->text_len
+            && 0 != ngram_is_wordchar((unsigned char)text[pos + wlen])) ++wlen;
+          if (1 < wlen && ORACLE_MAXLEN >= wlen) {
+            int begin[LIBXS_LEXEME_MAXBYTES], plen[LIBXS_LEXEME_MAXBYTES];
+            const int np = ngram_syllable_split(text + pos, wlen, begin, plen,
+              LIBXS_LEXEME_MAXBYTES);
+            const unsigned long ncand = 1UL << (wlen - 1);
+            unsigned long mask, hmask = 0, best_mask = 0;
+            double best = -1.0, hcost;
+            int k;
+            /* the heuristic's own cut set, as a mask */
+            for (k = 1; k < np; ++k) hmask |= 1UL << (begin[k] - 1);
+            hcost = ngram_syllable_cost(model, lexicon, text + pos, wlen,
+              hmask, NULL, 0, maxorder, NULL);
+            for (mask = 0; mask < ncand; ++mask) {
+              const double c = ngram_syllable_cost(model, lexicon, text + pos,
+                wlen, mask, NULL, 0, maxorder, NULL);
+              if (best < 0.0 || c < best) { best = c; best_mask = mask; }
+            }
+            heur_bits += hcost;
+            oracle_bits += best;
+            single_bits += ngram_syllable_cost(model, lexicon, text + pos,
+              wlen, 0, NULL, 0, maxorder, NULL);
+            if (best_mask == hmask) ++nheur_optimal;
+            ++nword;
+          }
+          else if (1 < wlen) ++nskipped;
+          pos += wlen;
+        }
+      }
+    }
+    LIBXS_UNUSED(rules); LIBXS_UNUSED(nrules);
+    ++index;
+    value = libxs_registry_next(corpus, &key, &cursor);
+  }
+  if (0 < nword) {
+    fprintf(stderr, "syllable oracle (words 2..%d letters, n=%ld, skipped %ld"
+      " longer):\n  heuristic=%.3f bits/word | ORACLE=%.3f | whole-word=%.3f"
+      " | heuristic optimal for %.1f%% of words\n", (int)ORACLE_MAXLEN, nword,
+      nskipped, heur_bits / (double)nword, oracle_bits / (double)nword,
+      single_bits / (double)nword,
+      100.0 * (double)nheur_optimal / (double)nword);
+  }
 }
 
 
@@ -8296,6 +8593,35 @@ static void token_emb_backfill(libxs_lexicon_t* lexicon,
         for (d = 0; d < TOKEN_EMB_DIM; ++d) emb[d] *= norm;
       }
     }
+  }
+}
+
+
+/**
+ * Print the split of comma-separated words, so the splitter can be inspected on
+ * the words it is known to get wrong without running a corpus. The unit was
+ * never fairly evaluated because the output was broken; a probe makes the repair
+ * checkable in one command instead of inferred from a BPC delta.
+ */
+static void ngram_syllable_probe(void)
+{
+  const char* probe = getenv("CONVERSE_SYLLABLE_PROBE");
+  while (NULL != probe && '\0' != *probe) {
+    const char* end = strchr(probe, ',');
+    const int len = (NULL != end) ? (int)(end - probe) : (int)strlen(probe);
+    if (0 < len && LIBXS_LEXEME_MAXBYTES >= len) {
+      int begin[LIBXS_LEXEME_MAXBYTES], plen[LIBXS_LEXEME_MAXBYTES];
+      const int np = ngram_syllable_split(probe, len, begin, plen,
+        LIBXS_LEXEME_MAXBYTES);
+      int k;
+      fprintf(stderr, "syllable[%.*s]:", len, probe);
+      for (k = 0; k < np; ++k) {
+        fprintf(stderr, "%s%.*s", (0 < k) ? "|" : " ", plen[k],
+          probe + begin[k]);
+      }
+      fprintf(stderr, " (%d pieces)\n", np);
+    }
+    probe = (NULL != end) ? (end + 1) : NULL;
   }
 }
 

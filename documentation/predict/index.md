@@ -151,8 +151,9 @@ Well, if you know how to predict...
 
 Note: confidence = (sum of weights voting for winner) / (sum of all weights).
 A continuous output has no winner to count, so it reports 1.0 and callers read
-info->variance instead; libxs_predict_set_dispersion optionally turns that
-spread into a confidence (used by the earthquake sample).
+info->variance instead. Folding that spread into the confidence was tried and
+removed: it measured worse on every case it applied to once the number of
+blended clusters was derived from the confidence rather than fixed.
 
 ---
 
@@ -195,11 +196,11 @@ a confidence-gated predictor can provide it or abstain.
 | Domain | Ours | Literature | Confidence |
 | --- | ---: | ---: | --- |
 | ETT** (H=96) | MSE 0.244 | 0.370–0.449 | 0 parameters, 1 CPU core |
-| Sunspots | MAE 17.4 | MAE 19.8–45.5 | 1.0 (dense cycles) |
+| Sunspots | MAE 16.8 (20.3 at t+6) | MAE 19.8–45.5 | 1.0 (dense cycles) |
 | Discharge | 0.22 err/σ | 0.10–0.47 err/σ | 1.0 (seasonal) |
 | SOI* | nRMSE 0.11 (0.07 hKNN) | 0.23–0.55 | 1.0 (spread modes) |
-| Earthquakes | MAE 0.259 (0.254 hKNN) | 0.184–0.283 | 0.462 (ambiguous) |
-| Crystals | 79.6% → 95.0% (conf ≥ 0.9) | ≈75–80% | 54% gated coverage |
+| Earthquakes | MAE 0.249 (0.241 hKNN) | 0.184–0.283 | 0.702 (ambiguous) |
+| Crystals | 79.6% → 95.2% (conf ≥ 0.9) | ≈75–80% | 53% gated coverage |
 
 Confidence separates dense-coverage domains from genuinely ambiguous
 ones.  Literature comparisons are orienting — different features, splits,

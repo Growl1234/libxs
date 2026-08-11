@@ -107,6 +107,9 @@ int main(int argc, char* argv[])
       libxs_predict_set_mode(model, LIBXS_PREDICT_TEMPORAL);
       libxs_predict_set_decompose(model, decompose);
       libxs_predict_set_series(model, nseries, window_req);
+      { const char* kenv = getenv("BANK");
+        if (NULL != kenv) libxs_predict_set_series_bank(model, atoi(kenv));
+      }
       libxs_predict_set_target(model, target);
       for (s = 0; s < nseries; ++s) avg_corr[s] = 1.0;
       if (0 != attend && nseries > 1) {

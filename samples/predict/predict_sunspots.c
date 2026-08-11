@@ -16,7 +16,7 @@
 # include <omp.h>
 #endif
 
-enum { WINDOW_DEF = 12, HORIZON = 6, WMAX = 160, PMAX = 400 };
+enum { WINDOW_DEF = 12, HORIZON = 6, WMAX = 160, PMAX = 400, NBANK = 2 };
 
 static int load_sunspots(const char* filename, double** values, int* count);
 static int cycle_period(const double* series, int n);
@@ -35,6 +35,8 @@ int main(int argc, char* argv[])
   int decompose = LIBXS_PREDICT_RAW;
   const char* penv = getenv("NOPHASE");
   const int nophase = (NULL != penv) ? atoi(penv) : 0;
+  const char* benv = getenv("NOBANK");
+  const int nobank = (NULL != benv) ? atoi(benv) : 0;
   double quality = 0, consistency = 0;
   int argi, result = EXIT_FAILURE;
   double* series = NULL;
@@ -61,7 +63,8 @@ int main(int argc, char* argv[])
       "  Timeseries prediction using sliding-window kNN.\n"
       "  Input: SILSO monthly sunspot CSV (semicolon-delimited).\n"
       "  Default train_fraction: 0.8\n"
-      "  NOPHASE=1 drops the solar-cycle phase input.\n", argv[0]);
+      "  NOPHASE=1 drops the solar-cycle phase input.\n"
+      "  NOBANK=1 uses a single window instead of the bank.\n", argv[0]);
   }
   else if (0 < load_sunspots(filename, &series, &total)) {
     const int train_end = LIBXS_MAX((int)(total * split + 0.5), WMAX + 1);
@@ -84,6 +87,7 @@ int main(int argc, char* argv[])
       libxs_predict_set_decompose(model, decompose);
       libxs_predict_set_series(model, 1, window_req);
       if (0 != naux) libxs_predict_set_series_aux(model, naux);
+      libxs_predict_set_series_bank(model, (0 != nobank) ? 1 : NBANK);
       if (0.0 != consistency) libxs_predict_set_consistency(model, consistency);
       for (t = 0; t < train_end; ++t) {
         double step[2];
@@ -114,6 +118,9 @@ int main(int argc, char* argv[])
           qi.nentries, total - train_end);
         fprintf(stdout, "Built: %d clusters, %.1fx compression, order=%d"
           " (%.2f s)\n", qi.nclusters, qi.compression, qi.order, dt_build);
+        if (1 < qi.nbank) {
+          fprintf(stdout, "Window bank: %d views\n", qi.nbank);
+        }
         tick = libxs_timer_tick();
         for (t = train_end; t <= total - HORIZON; ++t) {
           double inputs[WMAX + 1], outputs[HORIZON];
