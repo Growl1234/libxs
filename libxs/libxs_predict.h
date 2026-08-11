@@ -503,6 +503,13 @@ LIBXS_API int libxs_predict_prob_commit(libxs_predict_t* model,
  *   concurrent calls are safe and the result does not depend on call order.
  *   info must be NULL in this mode; prob[] receives the values.
  *
+ *   Frozen scoring of a discrete output costs O(k log n) in the neighbor count
+ *   rather than O(n) in the support size: no weight moves, so the mass follows
+ *   in closed form from the escape prior instead of being read out of an
+ *   enumerated distribution. The result is identical to the distribution's,
+ *   not an approximation of it, so this is the entry point to prefer when the
+ *   support is large and only P(y|x) is wanted.
+ *
  * For a discrete output the result is a mass and the masses over the support
  * sum to exactly 1.0. For a continuous output it is a density, which
  * integrates to one over the reals but must not be summed with masses --

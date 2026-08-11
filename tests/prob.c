@@ -57,6 +57,49 @@ static libxs_predict_t* build_model(void)
 
 
 /**
+ * The frozen point query computes the mass in closed form instead of
+ * enumerating the support, so it must agree with the distribution the observing
+ * entry point reports for the same value -- to the last bit, since it is the
+ * same quantity and not an approximation of it.
+ *
+ * A wrong tail term is exactly what this catches: it would still produce a
+ * plausible number, and every downstream figure would be quietly wrong.
+ * Compared against a FRESH context so no adaptation intervenes.
+ */
+static int check_point_matches_dist(const libxs_predict_t* model)
+{
+  int result = EXIT_SUCCESS;
+  int step;
+  for (step = 0; step < NCTX * 3 && EXIT_SUCCESS == result; ++step) {
+    double in[2], target, point = 0.0;
+    double values[NCLASS], probs[NCLASS];
+    void* context = libxs_predict_prob_create(model);
+    int ns;
+    stream_fill(in, &target, step);
+    libxs_predict_prob(NULL, model, NULL, in, &target, &point, NULL,
+      NCLASS, 1);
+    /* candidate NULL: report the distribution, move no weight */
+    ns = libxs_predict_prob_observe(NULL, model, context, in, 0, NULL,
+      values, probs, NCLASS, NULL, NULL, NCLASS, 1);
+    if (0 < ns && ns <= NCLASS) {
+      double dense = 0.0;
+      int i;
+      for (i = 0; i < ns; ++i) {
+        if (values[i] == target) dense = probs[i];
+      }
+      if (fabs(dense - point) > 1e-12) {
+        fprintf(stderr, "point query disagrees with the distribution at "
+          "step %d: %.17g vs %.17g\n", step, point, dense);
+        result = EXIT_FAILURE;
+      }
+    }
+    libxs_predict_prob_destroy(context);
+  }
+  return result;
+}
+
+
+/**
  * Score the stream frozen (context == NULL) and return the total code length.
  * Frozen scoring reads the model's weights and writes nothing, so this is a
  * pure function of the model -- which is the property under test.
@@ -103,6 +146,57 @@ static int check_order_independent(const libxs_predict_t* model)
       fwd, rev);
     result = EXIT_FAILURE;
   }
+  return result;
+}
+
+
+/**
+ * Observing WITHOUT asking for the distribution takes the sparse path, which
+ * computes the bank update from the local evidence at one index instead of a
+ * full distribution. It must move the weights to exactly the same place as the
+ * dense path, or a warm-up would converge somewhere the reported figure does
+ * not. Compared through the code length a committed model then assigns, which
+ * is what any downstream number actually depends on.
+ */
+static int check_sparse_learn_matches_dense(void)
+{
+  int result = EXIT_FAILURE;
+  libxs_predict_t* dense = build_model();
+  libxs_predict_t* sparse = build_model();
+  if (NULL != dense && NULL != sparse) {
+    void* cd = libxs_predict_prob_create(dense);
+    void* cs = libxs_predict_prob_create(sparse);
+    if (NULL != cd && NULL != cs) {
+      double values[NCLASS], probs[NCLASS];
+      int step;
+      for (step = 0; step < NCTX * NREP; ++step) {
+        double in[2], target;
+        stream_fill(in, &target, step);
+        /* dense: asks for the distribution, so takes the enumerating path */
+        libxs_predict_prob_observe(NULL, dense, cd, in, 0, &target,
+          values, probs, NCLASS, NULL, NULL, NCLASS, 1);
+        /* sparse: asks for nothing, so takes the closed-form path */
+        libxs_predict_prob_observe(NULL, sparse, cs, in, 0, &target,
+          NULL, NULL, 0, NULL, NULL, NCLASS, 1);
+      }
+      if (EXIT_SUCCESS == libxs_predict_prob_commit(dense, cd)
+        && EXIT_SUCCESS == libxs_predict_prob_commit(sparse, cs))
+      {
+        const double a = frozen_bits(dense, NCTX * 4);
+        const double b = frozen_bits(sparse, NCTX * 4);
+        if (fabs(a - b) > 1e-12) {
+          fprintf(stderr, "sparse learning diverged from dense: "
+            "%.17g vs %.17g\n", a, b);
+        }
+        else result = EXIT_SUCCESS;
+      }
+      else fprintf(stderr, "commit failed during sparse comparison\n");
+    }
+    libxs_predict_prob_destroy(cd);
+    libxs_predict_prob_destroy(cs);
+  }
+  libxs_predict_destroy(dense);
+  libxs_predict_destroy(sparse);
   return result;
 }
 
@@ -224,6 +318,12 @@ int main(int argc, char* argv[])
   if (NULL == model) {
     fprintf(stderr, "model could not be built\n");
     result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS == result) {
+    result = check_point_matches_dist(model);
+  }
+  if (EXIT_SUCCESS == result) {
+    result = check_sparse_learn_matches_dense();
   }
   if (EXIT_SUCCESS == result) {
     result = check_commit_moves_weights(model);

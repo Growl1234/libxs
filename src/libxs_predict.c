@@ -3419,11 +3419,203 @@ LIBXS_API_INLINE int internal_libxs_predict_dist(
 
 
 /**
+ * Mass of ONE value, without enumerating the support.
+ *
+ * The distribution routine costs NESCAPE * ns per call because it writes every
+ * support entry.  It does not have to: local evidence reaches at most KNN
+ * entries, so all but those carry pure escape mass, which is a closed-form
+ * function of the frequency prior.  Writing
+ *
+ *   A = sum_e w_e (1 - r_e),  B = sum_e w_e r_e
+ *
+ * every entry is A * local[i] + B * esc(i), and the normalizer follows from
+ * sum_i esc(i) == (tot + ns) / den, because the stored frequencies sum to one.
+ * So the total needs the KNN-bounded evidence set explicitly and the remaining
+ * ns - |set| entries in closed form.
+ *
+ * This is EXACT, not an approximation: no mass is truncated and no tail is
+ * folded into the escape.  It is the same quantity the distribution reports,
+ * computed in O(KNN log ns) instead of O(NESCAPE * ns).  A top-k truncation was
+ * the plan until the KNN bound on local evidence made an exact form available;
+ * an approximation would have needed its own error budget and a separate name,
+ * and this needs neither.
+ *
+ * Returns EXIT_SUCCESS and writes *out_prob (the mass at value v, or the
+ * per-value share of the novel mass when v is outside the support) plus
+ * *out_novel (the aggregate novel mass).
+ */
+LIBXS_API_INLINE int internal_libxs_predict_point(
+  const libxs_predict_t* model, const double* weight,
+  const internal_libxs_predict_cluster_t* cl, const double* norm_inputs,
+  int j, int out_j, int nouts, int extrapolate, int vocabulary, double v,
+  double* out_prob, double* out_novel, int* out_attested, double* out_local)
+{
+  const int ns = model->sup_n[j];
+  const double* sv = model->sup_vals[j];
+  const double* sf = model->sup_freq[j];
+  double candidates[LIBXS_PREDICT_KNN];
+  double dists[LIBXS_PREDICT_KNN];
+  double local[LIBXS_PREDICT_KNN];
+  int index[LIBXS_PREDICT_KNN];
+  double best = 0, wsum = 0, a = 0, b = 0, esc_sum = 0, mass, novel;
+  int nfound = 0, exact = 0, exact_nearest = 0, nlocal = 0, i, e;
+  int result = EXIT_SUCCESS;
+  const int nvoc = (vocabulary > ns) ? vocabulary : ns;
+  const int outside = nvoc - ns;
+  const double tot = (double)model->sup_tot[j];
+  const double den = tot + (double)nvoc;
+  const int si = internal_libxs_predict_support_index(sv, ns, v);
+  internal_libxs_predict_evidence(cl, cl->kd_pts, cl->nentries,
+    model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL, -1,
+    candidates, dists, &nfound, &exact, &exact_nearest, &best);
+  /* Accumulate evidence per DISTINCT support entry, as the dense path does by
+     indexing into local[]; a value can be returned by several neighbors. */
+  for (i = 0; i < nfound; ++i) {
+    const int k = internal_libxs_predict_support_index(sv, ns, candidates[i]);
+    if (0 <= k) {
+      const double d = (dists[i] > 0.0) ? (1.0 / dists[i]) : 1e30;
+      int at = -1, q;
+      for (q = 0; q < nlocal && 0 > at; ++q) {
+        if (index[q] == k) at = q;
+      }
+      if (0 <= at) local[at] += d;
+      else if (nlocal < LIBXS_PREDICT_KNN) {
+        index[nlocal] = k;
+        local[nlocal] = d;
+        ++nlocal;
+      }
+      wsum += d;
+    }
+  }
+  for (e = 0; e < LIBXS_PREDICT_NESCAPE; ++e) {
+    const double r = internal_libxs_predict_escape_rate[e];
+    a += weight[e] * (1.0 - r);
+    b += weight[e] * r;
+  }
+  /**
+   * With no local evidence the dense path falls back to the prior over the whole
+   * support, which is not sparse -- but then local[i] == sf[i], so the entry
+   * value collapses to (a + b * scale) * sf[i] and the total is still closed.
+   */
+  for (i = 0; i < nlocal; ++i) {
+    const int k = index[i];
+    esc_sum += (0 < outside) ? ((sf[k] * tot + 1.0) / den) : sf[k];
+  }
+  { /* mass at v, and the totals needed to normalize */
+    const double all_esc = (0 < outside) ? ((tot + (double)ns) / den) : 1.0;
+    const double tail = b * (all_esc - esc_sum);
+    double head = 0, at_v = 0;
+    if (0 < wsum) {
+      for (i = 0; i < nlocal; ++i) {
+        const int k = index[i];
+        const double le = local[i] / wsum;
+        const double es = (0 < outside) ? ((sf[k] * tot + 1.0) / den) : sf[k];
+        const double pk = a * le + b * es;
+        head += pk;
+        if (k == si) at_v = pk;
+      }
+      if (0 <= si && 0 == at_v) { /* attested, but no neighbor voted for it */
+        at_v = b * ((0 < outside) ? ((sf[si] * tot + 1.0) / den) : sf[si]);
+      }
+    }
+    else { /* prior-only: every entry is (a + b*scale) * sf[i] */
+      head = 0;
+      if (0 <= si) {
+        const double es = (0 < outside)
+          ? ((sf[si] * tot + 1.0) / den) : sf[si];
+        at_v = a * sf[si] + b * es;
+      }
+    }
+    novel = (0 < outside) ? (b * (double)outside / den) : 0.0;
+    { /* the same total the dense path divides by */
+      const double total = (0 < wsum)
+        ? (head + tail + novel)
+        : (a + b * ((0 < outside) ? (tot + (double)ns) / den : 1.0) + novel);
+      if (total > 0) {
+        mass = (0 <= si) ? (at_v / total)
+          : ((0 < outside) ? ((novel / total) / (double)outside) : 0.0);
+        novel /= total;
+      }
+      else {
+        mass = 0;
+        novel = 0;
+        result = EXIT_FAILURE;
+      }
+    }
+  }
+  if (NULL != out_prob) *out_prob = mass;
+  if (NULL != out_novel) *out_novel = novel;
+  if (NULL != out_attested) {
+    int a_flag = 0;
+    for (i = 0; i < nlocal && 0 == a_flag; ++i) {
+      if (index[i] == si && local[i] > 0) a_flag = 1;
+    }
+    *out_attested = a_flag;
+  }
+  /**
+   * The normalized local evidence AT THE OBSERVED VALUE, which is the only
+   * element of the dense local[] array the bank update ever reads.  Returning
+   * it lets an adaptive stream skip the dense pass as well: the update needs one
+   * scalar, not a distribution.
+   */
+  if (NULL != out_local) {
+    double le = 0;
+    if (0 <= si) {
+      if (0 < wsum) {
+        for (i = 0; i < nlocal; ++i) {
+          if (index[i] == si) le = local[i] / wsum;
+        }
+      }
+      else le = sf[si]; /* prior-only fallback, as the dense path */
+    }
+    *out_local = le;
+  }
+  return result;
+}
+
+
+/**
  * Score the observed value under every expert and advance the bank.  Kept apart
  * from the distribution so the reported probability is fully committed before
  * any weight moves: the update is causal, and a caller that scores the same
  * query twice must get the same answer the first time.
  */
+/**
+ * The bank update given the local evidence AT THE TRUTH only.  The dense form
+ * below reads local[truth] and nothing else, so this is the same update with the
+ * array replaced by the one value it uses -- which is what lets the sparse
+ * scoring path adapt without materializing a distribution.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_dist_learn_at(
+  const libxs_predict_t* model, double* weight, int j, double local_truth,
+  int truth, int vocabulary)
+{
+  const int ns = model->sup_n[j];
+  const double* sf = model->sup_freq[j];
+  const int outside = ((vocabulary > ns) ? vocabulary : ns) - ns;
+  double plik[LIBXS_PREDICT_NESCAPE];
+  double mix = 0;
+  int e;
+  { const int nvoc = (vocabulary > ns) ? vocabulary : ns;
+    const double tot = (double)model->sup_tot[j];
+    const double den = tot + (double)nvoc;
+    for (e = 0; e < LIBXS_PREDICT_NESCAPE; ++e) {
+      const double r = internal_libxs_predict_escape_rate[e];
+      if (0 <= truth && truth < ns) {
+        const double esc = (0 < outside)
+          ? ((sf[truth] * tot + 1.0) / den) : sf[truth];
+        plik[e] = (1.0 - r) * local_truth + r * esc;
+      }
+      else {
+        plik[e] = (0 < outside) ? (r / den) : 0.0;
+      }
+      mix += weight[e] * plik[e];
+    }
+  }
+  internal_libxs_predict_escape_update(weight, plik, mix);
+}
+
+
 LIBXS_API_INLINE void internal_libxs_predict_dist_learn(
   const libxs_predict_t* model, double* weight, int j, const double* local,
   int truth, int vocabulary)
@@ -3801,6 +3993,24 @@ LIBXS_API void libxs_predict_prob(libxs_lock_t* lock,
           cand = internal_libxs_predict_fwd(model->transforms[j], cand);
         }
         if (LIBXS_PREDICT_SRC_CLASSIFY == smode[j] && NULL != src[j]
+          && 0 < ns && NULL == ctx)
+        {
+          /**
+           * Frozen point query: no weight moves, so the local evidence the dense
+           * path leaves in scratch is not needed afterwards and the mass can be
+           * had in closed form.  Same number, O(KNN log ns) instead of
+           * O(NESCAPE * ns) -- which is what this entry point already documents.
+           * Entropy is a property of the distribution and is not reported here.
+           */
+          if (EXIT_SUCCESS == internal_libxs_predict_point(model, w, src[j],
+            inputs, j, sout[j], snout[j], 0, vocabulary, cand, &pj, &nvj, &aj,
+            NULL))
+          {
+            kj = LIBXS_PREDICT_PMASS;
+            lpj = (pj > 0) ? (log(pj) / log(2.0)) : -DBL_MAX;
+          }
+        }
+        else if (LIBXS_PREDICT_SRC_CLASSIFY == smode[j] && NULL != src[j]
           && 0 < ns)
         {
           if (EXIT_SUCCESS == internal_libxs_predict_dist(model, w, src[j],
@@ -3953,7 +4163,36 @@ LIBXS_API int libxs_predict_prob_observe(libxs_lock_t* lock,
       }
       internal_libxs_predict_eval_ex(NULL, model, inputs, NULL, NULL,
         nblend, src, smode, sout, snout);
+      /**
+       * Nothing to report but the outcome to learn from: the caller asked for no
+       * values, no probs, no novel and no info, so the distribution is never
+       * read and only the bank update needs anything.  That update reads the
+       * local evidence at ONE index, so the sparse form computes the same
+       * weights in O(k log n) instead of O(NESCAPE * n).  This is the warm-up
+       * shape -- converge the bank over a training split -- which at a large
+       * support was the dominant cost of getting an order-independent figure.
+       */
       if (LIBXS_PREDICT_SRC_CLASSIFY == smode[output] && NULL != src[output]
+        && NULL != ctx && NULL != candidate && NULL == values && NULL == probs
+        && NULL == novel && NULL == info)
+      {
+        const int ns = model->sup_n[output];
+        const double cand = (NULL != model->transforms)
+          ? internal_libxs_predict_fwd(model->transforms[output], *candidate)
+          : *candidate;
+        double local_truth = 0;
+        if (EXIT_SUCCESS == internal_libxs_predict_point(model, w, src[output],
+          inputs, output, sout[output], snout[output], 0, vocabulary, cand,
+          NULL, NULL, NULL, &local_truth))
+        {
+          const int si = internal_libxs_predict_support_index(
+            model->sup_vals[output], ns, cand);
+          result = ns;
+          internal_libxs_predict_dist_learn_at(model, w, output, local_truth,
+            si, vocabulary);
+        }
+      }
+      else if (LIBXS_PREDICT_SRC_CLASSIFY == smode[output] && NULL != src[output]
         && EXIT_SUCCESS == internal_libxs_predict_dist(model, w, src[output],
           inputs, output, sout[output], snout[output], 0, vocabulary, p,
           scratch, stride, &ent))

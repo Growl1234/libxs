@@ -750,6 +750,9 @@ int main(int argc, char* argv[])
       "  CONVERSE_NGRAM_BANK_FROZEN=1 warm up the predict slot on the training\n"
       "                           entries, commit, then score frozen: the\n"
       "                           figure stops depending on iteration order.\n"
+      "  CONVERSE_NGRAM_BANK_WARMUP=N observe only the first N entries during\n"
+      "                           warm-up (0=all); the bank settles long before\n"
+      "                           the store is exhausted.\n"
       "  CONVERSE_GEN_RELEVANCE=F require F content-word overlap between an\n"
       "                           answer and its continuation (default 0=off).\n"
       "  CONVERSE_NGRAM_BANK_GEO=1 geometric (log-linear) pool instead of the\n"
@@ -1105,14 +1108,18 @@ int main(int argc, char* argv[])
       else if (0 != (ngram_bank_slots() & (1u << NGRAM_BANK_PREDICT))) {
         token_model = token_predict_build(corpus, lexicon, rules, nrules,
           predict_profile, 0, ngram_holdout, 2);
+        /* Separate timers: one stage covering both made a slow build
+           indistinguishable from slow scoring, and attributing the cost to the
+           wrong one of those is how a fix gets aimed at the wrong code. */
+        converse_stage_end("predict_build");
         /* Converge and publish the escape weights BEFORE scoring, so frozen
            mode freezes something converged rather than the uniform prior. The
            model is mutable only here, which is also the only place it may be
            written: scoring requires it read-only. */
         if (0 != ngram_bank_frozen() && NULL != token_model) {
           ngram_bank_warmup(token_model, (int)libxs_lexicon_size(lexicon));
+          converse_stage_end("predict_warmup");
         }
-        converse_stage_end("token_predict");
       }
     }
     converse_stage_begin();
@@ -9680,10 +9687,25 @@ static int ngram_bank_warmup(libxs_predict_t* store, int vocabulary)
   if (NULL != context) {
     libxs_predict_query_t info;
     long observed = 0;
-    int i;
+    int i, nwarm;
     memset(&info, 0, sizeof(info));
     libxs_predict_query(store, &info);
-    for (i = 0; i < info.nentries; ++i) {
+    /**
+     * How many entries the warm-up observes. The escape bank needs hundreds of
+     * observations to settle, not hundreds of thousands, but each observation
+     * costs a scan of every entry in the cluster -- so observing the whole store
+     * is quadratic in the store size while buying convergence that a prefix
+     * already reached. A bound makes that trade measurable rather than assumed;
+     * 0 keeps the full pass.
+     */
+    nwarm = info.nentries;
+    { const char* env = getenv("CONVERSE_NGRAM_BANK_WARMUP");
+      if (NULL != env) {
+        const int n = atoi(env);
+        if (0 < n && n < nwarm) nwarm = n;
+      }
+    }
+    for (i = 0; i < nwarm; ++i) {
       /* sized for the widest input vector either profile uses */
       double in[2 * TOKEN_EMB_DIM];
       double out[1];
@@ -9696,8 +9718,8 @@ static int ngram_bank_warmup(libxs_predict_t* store, int vocabulary)
       }
     }
     result = libxs_predict_prob_commit(store, context);
-    fprintf(stderr, "predict slot: warm-up observed %ld of %i entries, "
-      "commit %s\n", observed, info.nentries,
+    fprintf(stderr, "predict slot: warm-up observed %ld of %i entries"
+      " (bound %i), commit %s\n", observed, info.nentries, nwarm,
       (EXIT_SUCCESS == result) ? "ok" : "FAILED");
     libxs_predict_prob_destroy(context);
   }
