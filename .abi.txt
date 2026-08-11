@@ -203,6 +203,7 @@ libxs_predict_set_quantile
 libxs_predict_set_refine
 libxs_predict_set_series
 libxs_predict_set_series_aux
+libxs_predict_set_series_bank
 libxs_predict_set_series_deriv
 libxs_predict_set_smooth
 libxs_predict_set_target

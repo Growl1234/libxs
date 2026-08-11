@@ -70,34 +70,27 @@ Timeseries forecasting using sliding-window nearest-neighbor prediction.
 
     NOPHASE=1  Drop the solar-cycle phase input.
     NOBANK=1   Use a single window view instead of the bank.
+    WINDOW=n   Fix the window (default: auto).  WINDOW=-1 selects it by
+               trial instead, which costs about 7x the build time and picks
+               9 rather than 14 here (mean error over six months 18.71 ->
+               18.30).  WINDOW=-w also offers w as a candidate.
 
 ### Example
 
     ./predict_sunspots.x predict_sunspots.csv 0.8
 
 The sample carries one auxiliary input alongside the window
-(libxs_predict_set_series_aux): months since the most recent minimum of
-the smoothed series, i.e. the phase of the solar cycle.  Two windows that
-look numerically alike can sit on opposite sides of a maximum, and the
-cycle rises faster than it falls, so the raw window alone cannot tell
-them apart.  The period is measured from the training slice by
-autocorrelation (125 months here) and the smoothing and search windows
-follow from it, so nothing is tuned by hand.  Longer horizons gain the
-most: t+6 improves 23.70 -> 21.77, t+3 20.72 -> 18.94, while t+1 is
-unchanged within noise (17.42 -> 17.52) because the recent window already
-determines the next month.
+(libxs_predict_set_series_aux): the phase of the solar cycle, measured from
+the training slice so nothing is tuned by hand.  Longer horizons gain the
+most (t+6 23.70 -> 21.77, t+3 20.72 -> 18.94); t+1 is unchanged.  NOPHASE=1
+drops it.
 
 The forecast is averaged over two views of the window
 (libxs_predict_set_series_bank), the second reading half the lags of the
-first, which is what lowers t+1 as well (17.52 -> 16.79) and takes t+6 to
-20.30.  The views share one corpus, one partition and one neighbor index --
-a view drops the lags it does not read from the distance -- so a second view
-costs a lag count rather than a second model.  The shorter length is derived
-rather than searched: every short partner from 3 to 9 beats the single
-window, but which one wins at which horizon does not hold from horizon to
-horizon, so the views are averaged instead of selected.  A longer partner
-does not help.  A third view reaches 20.14 at t+6, so depth is available but
-not required.
+first: t+1 improves 17.52 -> 16.79 and t+6 20.30, at no extra corpus.  Pass a
+larger count for more views (a third reaches 20.14 at t+6); NOBANK=1 drops
+back to one.  Views are unavailable under a decomposition, where the inputs
+are no longer lags.
 
 ### Data Source
 
@@ -114,13 +107,10 @@ Predict earthquake magnitude from geographic location and depth.
 
     ./predict_earthquakes.x <usgs_csv> [train_fraction] [compress[Q]] [hknn|rf]
 
-The kNN vote reports the median rather than the mean here, which
-libxs_predict_set_central selects automatically: magnitude is
-Gutenberg-Richter distributed, so the neighborhood is right-skewed and
-absolute error is minimized by the median (0.259 -> 0.256 for kNN,
-0.254 -> 0.247 for hknn). The choice is made per output at build time
-from the pushed entries alone; the sunspot sample keeps the mean for all
-six horizons under the same rule.
+The kNN vote reports the median rather than the mean here.
+libxs_predict_set_central picks that per output at build time and needs no
+argument (0.265 -> 0.249 for kNN, 0.263 -> 0.241 for hknn); pass 1 or 2 to
+force median or mean.
 
 ### Example
 
@@ -218,11 +208,8 @@ cubic(7).
 ## predict_bits
 
 Code length of a held-out stream in bits per event, under the model and
-under the training distribution of the same output.  A point estimate says
-how close the model gets; this says whether the inputs carry information
-about the output at all.  A model can post a competitive error while knowing
-nothing its own marginal did not already know, and only the second question
-distinguishes those cases.
+under the training distribution of the same output.  Use it to ask whether
+the inputs inform the output at all, which an error figure does not answer.
 
 ### Usage
 
@@ -235,20 +222,14 @@ distinguishes those cases.
 
 ### Example
 
-Magnitude is not determined by location, and depth is.  The second command
-is the control for the first: a null result is also what a broken
-measurement reports, so the instrument has to be shown detecting
-information where information exists.
+Run a control alongside any such measurement: a null result is also what a
+broken setup reports, so pair the question with one whose answer is known.
 
     ./predict_bits.x predict_earthquakes.csv latitude,longitude,depth mag 0.8 68
     ./predict_bits.x predict_earthquakes.csv latitude,longitude,mag depth 0.8 9000
 
-The first reports 3.265 bits against the training distribution's 3.248 --
-the model is very slightly worse than knowing only the global
-Gutenberg-Richter distribution.  The second reports 1.478 bits on attested
-events against 7.615, an eight-fold reduction.  The earthquake sample's low
-confidence is therefore not a calibration artifact to be fixed but the
-honest information content of its inputs.
+Magnitude is not determined by location (3.265 bits against the training
+distribution's 3.248) and depth is (1.478 against 7.615).
 
 ## predict_ett
 

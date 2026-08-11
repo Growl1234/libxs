@@ -1212,8 +1212,8 @@ LIBXS_API_INLINE double internal_libxs_predict_inv(int transform, double v)
 LIBXS_API void libxs_predict_set_series(libxs_predict_t* model, int nseries, int window)
 {
   LIBXS_ASSERT(NULL != model);
-  if (NULL != model && 0 < nseries && 0 <= window
-    && (0 == window || nseries * window <= model->ninputs))
+  if (NULL != model && 0 < nseries
+    && (0 >= window || nseries * window <= model->ninputs))
   {
     model->nseries = nseries;
     model->window = window;
@@ -1955,6 +1955,184 @@ LIBXS_API_INLINE double internal_libxs_predict_ts_window_score(
 }
 
 
+/**
+ * Score one window by building the model the caller will actually get.
+ *
+ * Each fold trains on a prefix of the pushed timesteps and is scored on the
+ * tail that follows it, so no validation window is ever in the corpus that
+ * predicts it.  One contiguous tail is one stretch of the series and for a
+ * long cycle that is not a sample of it -- the bare sunspot model ranked four
+ * lags above nine on its last two cycles and the opposite way on the held-out
+ * years -- so the cut point walks forward and later cuts weigh more, the model
+ * being built to predict what follows the data it has.  Interleaving the folds
+ * instead would leave the exact window in the training set for the neighbor
+ * search to find, which reads as near-perfect accuracy for every candidate.
+ *
+ * Returns the weighted mean absolute error over the horizon, or a large value
+ * if the window cannot be scored.
+ */
+LIBXS_API_INLINE double internal_libxs_predict_ts_window_probe(
+  const libxs_predict_t* model, int w, int nfold)
+{
+  const int s = model->nseries;
+  const int a = model->naux;
+  const int h = model->noutputs;
+  const int nts = model->nts;
+  const int nwin = nts - w - h + 1;
+  const int nval = (nwin / 5 > 256) ? 256 : ((nwin / 5 > 0) ? (nwin / 5) : 1);
+  double result = 1e30;
+  if (nwin >= 8) {
+    double fold_err = 0, fold_wsum = 0;
+    int f;
+    for (f = 0; f < nfold; ++f) {
+      const int cut = nts - (nfold - f) * nval;
+      const double fw = (double)(f + 1);
+      if (cut > w + h) {
+        libxs_predict_t* probe = libxs_predict_create(s * w + a + model->nderiv, h);
+        if (NULL != probe) {
+          double* step = (double*)malloc((size_t)(s + a) * sizeof(double));
+          double* x = (double*)malloc((size_t)(s * w + a + model->nderiv) * sizeof(double));
+          double* y = (double*)malloc((size_t)h * sizeof(double));
+          if (NULL != step && NULL != x && NULL != y) {
+            double err = 0;
+            int t, j, nsc = 0;
+            probe->eval_mode = model->eval_mode;
+            probe->decompose = model->decompose;
+            probe->target = model->target;
+            probe->diff_mode = model->diff_mode;
+            probe->consistency = model->consistency;
+            probe->smooth = model->smooth;
+            probe->central = model->central;
+            probe->nbank = model->nbank;
+            probe->nderiv = model->nderiv;
+            probe->naux = a;
+            probe->nseries = s;
+            probe->window = w;
+            if (NULL != model->transforms) {
+              int o;
+              for (o = 0; o < h; ++o) {
+                libxs_predict_set_transform(probe, o, model->transforms[o]);
+              }
+            }
+            for (t = 0; t < cut; ++t) {
+              for (j = 0; j < s; ++j) step[j] = model->ts_buf[(size_t)t * s + j];
+              for (j = 0; j < a; ++j) {
+                step[s + j] = model->aux_buf[(size_t)t * a + j];
+              }
+              libxs_predict_push(NULL, probe, step, NULL);
+            }
+            if (EXIT_SUCCESS == libxs_predict_build(probe, 0, 2, 0.0)) {
+              libxs_predict_query_t qi;
+              LIBXS_MEMZERO(&qi);
+              libxs_predict_query(probe, &qi);
+              for (t = cut; t + h <= cut + nval && t + h <= nts; ++t) {
+                const int we = qi.window;
+                if (t >= we) {
+                  for (j = 0; j < we * s; ++j) {
+                    x[j] = model->ts_buf[(size_t)(t - we) * s + j];
+                  }
+                  for (j = 0; j < a; ++j) {
+                    x[we * s + j] = model->aux_buf[(size_t)(t - 1) * a + j];
+                  }
+                  libxs_predict_eval(NULL, probe, x, y, NULL, 1);
+                  for (j = 0; j < h; ++j) {
+                    const double d = y[j]
+                      - model->ts_buf[(size_t)(t + j) * s + model->target];
+                    err += (d < 0) ? -d : d;
+                  }
+                  ++nsc;
+                }
+              }
+              if (0 < nsc) {
+                const double fs = err / ((double)nsc * h);
+                fold_err += fw * fs;
+                fold_wsum += fw;
+              }
+            }
+          }
+          free(y); free(x); free(step);
+          libxs_predict_destroy(probe);
+        }
+      }
+    }
+    if (0 < fold_wsum) result = fold_err / fold_wsum;
+  }
+  return result;
+}
+
+
+/**
+ * Window selection by measurement rather than by proxy.
+ *
+ * The cheap path scores a flat kNN over the window features, which is biased
+ * toward short windows: its error grows with the feature count for a reason the
+ * built model does not share, since that one partitions and sizes its own
+ * neighborhood.  On the monthly sunspot series the proxy score rises
+ * monotonically, so its minimum is always the shortest candidate and the choice
+ * falls to a tolerance rather than to a measurement.  This path removes the
+ * proxy instead of correcting it, and needs no tolerance.
+ *
+ * It walks the same geometric grid and stops after two candidates fail to
+ * improve: the measured error against window is unimodal only up to noise -- it
+ * wiggles by 0.07 around its minimum on one of the cases here -- so two rises is
+ * the weaker claim that does hold, where a bracketing search could descend into
+ * the wiggle.  A golden-section search was measured against this and rejected:
+ * reaching unit precision over the same span costs about as many builds as the
+ * grid has points, spent resolving differences smaller than the noise.
+ * Bisection does not apply at all, locating a root rather than a minimum.
+ *
+ * Two ways to spend fewer builds were measured and only one kept.  Searching
+ * between the winner's neighbors added three candidates and changed the
+ * selected window on none of the three series measured -- the grid is already
+ * finer than the curve near its minimum -- so it is gone, and with it a third
+ * of the cost.  Abandoning a candidate that trails the incumbent on the
+ * cheapest fold would save another quarter, but it selected a worse window on
+ * one series of three: the fold that is cheapest to build is also the one
+ * trained on the least data, and it ranked two windows in the opposite order
+ * from the full set.  A margin would only move the arbitrariness into the
+ * margin, so all folds are scored for every candidate the walk reaches.
+ *
+ * The cost is one build per fold per candidate, roughly an order of magnitude
+ * more build time than the proxy, which is why a negative window has to ask
+ * for it.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_ts_window_exact(
+  const libxs_predict_t* model, int wcap, int guess)
+{
+  const char* fe = getenv("LIBXS_PREDICT_WINDOW_FOLDS");
+  const int nfold = (NULL != fe) ? LIBXS_MAX(atoi(fe), 1) : 3;
+  int grid[32], ngrid = 0, result = 0;
+  double wf = 4.0;
+  while ((int)(wf + 0.5) <= wcap && ngrid < 30) {
+    const int cw = (int)(wf + 0.5);
+    if (0 == ngrid || cw != grid[ngrid - 1]) grid[ngrid++] = cw;
+    wf *= 1.5;
+  }
+  if (0 == ngrid || grid[ngrid - 1] != wcap) grid[ngrid++] = wcap;
+  if (4 <= guess && guess <= wcap && ngrid < 32) {
+    int k = 0;
+    while (k < ngrid && grid[k] != guess) ++k;
+    if (k == ngrid) grid[ngrid++] = guess;
+  }
+  { double best = 1e30;
+    int i, nrise = 0;
+    for (i = 0; i < ngrid && nrise < 2; ++i) {
+      const double score = internal_libxs_predict_ts_window_probe(
+        model, grid[i], nfold);
+      if (score < best) {
+        best = score;
+        result = grid[i];
+        nrise = 0;
+      }
+      else if (score < 1e29) {
+        ++nrise;
+      }
+    }
+  }
+  return result;
+}
+
+
 LIBXS_API_INLINE int internal_libxs_predict_ts_window(
   const libxs_predict_t* model, int wmax)
 {
@@ -2028,8 +2206,12 @@ LIBXS_API_INLINE void internal_libxs_predict_ts_expand(libxs_predict_t* model)
   int raw_pool = 0;
   double* raw;
   int t;
-  if (0 == model->window) {
-    model->window = internal_libxs_predict_ts_window(model, model->ninputs);
+  if (0 >= model->window) {
+    const int guess = -model->window;
+    const int wcap = internal_libxs_predict_ts_window_cap(model, model->ninputs);
+    model->window = (0 == guess)
+      ? internal_libxs_predict_ts_window(model, model->ninputs)
+      : internal_libxs_predict_ts_window_exact(model, wcap, guess);
     if (0 >= model->window) return;
   }
   if (model->diff_mode > 0) {

@@ -254,6 +254,19 @@ LIBXS_API void libxs_predict_set_central(libxs_predict_t* model, int mode);
  * bounded above by the ninputs provided at create; the effective window
  * is reported via query.window and must be used by the caller to size
  * the raw window at eval.
+ *
+ * A negative window selects the window by trial instead: candidates are built
+ * as the caller's model and scored on held-back timesteps, minimizing mean
+ * absolute error over the whole horizon rather than the next step alone. The
+ * magnitude, when at least 4, is offered as one more candidate.
+ *
+ * Expect roughly an order of magnitude more build time (0.9 s to 6.3 s on the
+ * monthly sunspot series), and read the selected window from query.window as
+ * usual. Worth requesting where the window is a strong lever -- a series whose
+ * structure spans a good part of it, forecast a few steps ahead. Not worth it
+ * on a large corpus with a long horizon: on ETTh1 at 96 steps the best window
+ * beats the default one by 0.7% and costs minutes to find.
+ * LIBXS_PREDICT_WINDOW_FOLDS overrides the number of held-back splits (3).
  * When set, push(lock, model, values, NULL) accumulates one timestep
  * (nseries + naux values: the series first, then the auxiliary features);
  * build constructs sliding windows internally. Must be called before push.

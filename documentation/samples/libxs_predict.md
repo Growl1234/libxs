@@ -1,6 +1,6 @@
 # Predict Samples
 
-Eight executables demonstrating fingerprint-guided prediction:
+Nine executables demonstrating fingerprint-guided prediction:
 
 - **predict_params** -- Parameter prediction from structured CSV
   (GPU kernel tuning, configuration databases).
@@ -17,6 +17,8 @@ Eight executables demonstrating fingerprint-guided prediction:
   using SPREAD decomposition on two correlated price series.
 - **predict_crystal** -- Crystal system classification from composition
   features (AFLOW ICSD, 7 classes, 60K entries).
+- **predict_bits** -- Held-out code length under the model against the
+  training distribution: whether the inputs inform the output at all.
 - **predict_ett** -- ETT (Electricity Transformer Temperature) hourly
   forecasting with univariate, multivariate, PCA, and local-attention
   modes (ETTh1, standard benchmark for timeseries LLMs).
@@ -60,9 +62,29 @@ Timeseries forecasting using sliding-window nearest-neighbor prediction.
 
     ./predict_sunspots.x <csvfile> [train_fraction] [compress[Q]] [hknn|rf]
 
+    NOPHASE=1  Drop the solar-cycle phase input.
+    NOBANK=1   Use a single window view instead of the bank.
+    WINDOW=n   Fix the window (default: auto).  WINDOW=-1 selects it by
+               trial instead, which costs about 7x the build time and picks
+               9 rather than 14 here (mean error over six months 18.71 ->
+               18.30).  WINDOW=-w also offers w as a candidate.
+
 ### Example
 
     ./predict_sunspots.x predict_sunspots.csv 0.8
+
+The sample carries one auxiliary input alongside the window
+(libxs_predict_set_series_aux): the phase of the solar cycle, measured from
+the training slice so nothing is tuned by hand.  Longer horizons gain the
+most (t+6 23.70 -> 21.77, t+3 20.72 -> 18.94); t+1 is unchanged.  NOPHASE=1
+drops it.
+
+The forecast is averaged over two views of the window
+(libxs_predict_set_series_bank), the second reading half the lags of the
+first: t+1 improves 17.52 -> 16.79 and t+6 20.30, at no extra corpus.  Pass a
+larger count for more views (a third reaches 20.14 at t+6); NOBANK=1 drops
+back to one.  Views are unavailable under a decomposition, where the inputs
+are no longer lags.
 
 ### Data Source
 
@@ -76,6 +98,11 @@ Predict earthquake magnitude from geographic location and depth.
 ### Usage
 
     ./predict_earthquakes.x <usgs_csv> [train_fraction] [compress[Q]] [hknn|rf]
+
+The kNN vote reports the median rather than the mean here.
+libxs_predict_set_central picks that per output at build time and needs no
+argument (0.265 -> 0.249 for kNN, 0.263 -> 0.241 for hknn); pass 1 or 2 to
+force median or mean.
 
 ### Example
 
@@ -160,6 +187,32 @@ AFLOW ICSD catalog (free for academic use).
 (37 features). Crystal systems: triclinic(1), monoclinic(2),
 orthorhombic(3), tetragonal(4), trigonal(5), hexagonal(6),
 cubic(7).
+## predict_bits
+
+Code length of a held-out stream in bits per event, under the model and
+under the training distribution of the same output.  Use it to ask whether
+the inputs inform the output at all, which an error figure does not answer.
+
+### Usage
+
+    ./predict_bits.x <csvfile> <innames> <outname> [fraction] [vocabulary] [hknn]
+
+    vocabulary  Distinct values the caller considers possible.  0 uses the
+                attested support plus one aggregate novel atom, so an
+                unattested outcome costs infinite bits; pass a count above
+                the support size to keep the figure finite.
+
+### Example
+
+Run a control alongside any such measurement: a null result is also what a
+broken setup reports, so pair the question with one whose answer is known.
+
+    ./predict_bits.x predict_earthquakes.csv latitude,longitude,depth mag 0.8 68
+    ./predict_bits.x predict_earthquakes.csv latitude,longitude,mag depth 0.8 9000
+
+Magnitude is not determined by location (3.265 bits against the training
+distribution's 3.248) and depth is (1.478 against 7.615).
+
 ## predict_ett
 
 ETT (Electricity Transformer Temperature) hourly forecasting.
