@@ -663,14 +663,16 @@ LIBXS_API_INLINE double internal_libxs_predict_viewdist2(const double* a,
 
 
 LIBXS_API_INLINE void internal_libxs_predict_evidence(
-  const internal_libxs_predict_cluster_t* cl, const double* kd_pts,
-  int nc, int m, const double* inputs, int output_j, int nouts,
+  const internal_libxs_predict_cluster_t* cl,
+  int m, const double* inputs, int output_j, int nouts,
   int extrapolate, int skip_local,
   const int* po_groups, int query_group,
   double* candidates, double* dists, int* out_nfound,
   int* out_exact, int* out_exact_nearest, double* out_best,
   const internal_libxs_predict_view_t* view)
 {
+  const double* kd_pts = cl->kd_pts;
+  const int nc = cl->nentries;
   /**
    * k_eff sizes the caller's candidates/dists arrays, and on a loaded model it
    * comes from a file byte, so the bound is clamped here rather than assumed.
@@ -788,14 +790,15 @@ LIBXS_API_INLINE int internal_libxs_predict_central(
 
 
 LIBXS_API_INLINE double internal_libxs_predict_classify2(
-  const internal_libxs_predict_cluster_t* cl, const double* kd_pts,
-  int nc, int m, const double* inputs, int output_j, int nouts,
+  const internal_libxs_predict_cluster_t* cl,
+  int m, const double* inputs, int output_j, int nouts,
   int ndistinct, int extrapolate, int skip_local,
   const int* po_groups, int query_group,
   double* confidence, double* out_variance,
   double quantile, double* out_lower, double* out_upper,
   int central, const internal_libxs_predict_view_t* view)
 {
+  const int nc = cl->nentries;
   const int ndistinct_thresh = (int)(sqrt((double)nc) + 0.5);
   double candidates[LIBXS_PREDICT_KNN];
   double dists[LIBXS_PREDICT_KNN];
@@ -807,7 +810,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
   if (NULL != out_upper) *out_upper = 0.0;
   if (nc > 0 && NULL != cl->raw_outputs) {
     best_val = cl->raw_outputs[output_j];
-    internal_libxs_predict_evidence(cl, kd_pts, nc, m, inputs, output_j, nouts,
+    internal_libxs_predict_evidence(cl, m, inputs, output_j, nouts,
       extrapolate, skip_local, po_groups, query_group,
       candidates, dists, &nfound, &exact, &exact_nearest, &best_val, view);
     if (NULL != out_variance) {
@@ -968,13 +971,13 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
 
 
 LIBXS_API_INLINE double internal_libxs_predict_classify(
-  const internal_libxs_predict_cluster_t* cl, const double* kd_pts,
-  int nc, int m, const double* inputs, int output_j, int nouts,
+  const internal_libxs_predict_cluster_t* cl,
+  int m, const double* inputs, int output_j, int nouts,
   int ndistinct, int extrapolate, int skip_local,
   double* confidence, double* out_variance, int central,
   const internal_libxs_predict_view_t* view)
 {
-  return internal_libxs_predict_classify2(cl, kd_pts, nc, m, inputs,
+  return internal_libxs_predict_classify2(cl, m, inputs,
     output_j, nouts, ndistinct, extrapolate, skip_local,
     NULL, -1, confidence, out_variance, 0, NULL, NULL, central, view);
 }
@@ -1849,7 +1852,7 @@ LIBXS_API_INLINE void internal_libxs_predict_ts_window_feat(
 
 
 LIBXS_API_INLINE double internal_libxs_predict_ts_window_score(
-  const libxs_predict_t* model, int w, int objective)
+  const libxs_predict_t* model, int w)
 {
   const int s = model->nseries;
   const int h = model->noutputs;
@@ -1858,7 +1861,16 @@ LIBXS_API_INLINE double internal_libxs_predict_ts_window_score(
   const int m = s * w + model->nderiv + model->naux;
   const int nwin = nts - w - h + 1;
   double result = 1e30;
-  const int nsteps = (0 != objective) ? h : 1;
+  /**
+   * The proxy scores the first step only.  Scoring the whole horizon instead
+   * was available as a switch and is not kept: it moves the selected window
+   * (14 to 20 on the monthly sunspot series) and recovers 0.1 of the 2.8
+   * points that window selection costs at six steps
+   * (Section 5, "What Automatic Selection Costs" in the paper), so the
+   * objective was never what made the proxy prefer short windows.  A switch
+   * that changes the model and buys nothing is worse than no switch.
+   */
+  const int nsteps = 1;
   const int nval = (nwin / 5 > 256) ? 256 : (nwin / 5 > 0 ? nwin / 5 : 1);
   const int ntrain = nwin - nval;
   if (nwin >= 8 && 0 < m && ntrain >= 4) {
@@ -1959,8 +1971,6 @@ LIBXS_API_INLINE int internal_libxs_predict_ts_window(
      */
     const int can_score = (model->nseries <= 1);
     if (0 != can_score) {
-      const char* oenv = getenv("LIBXS_PREDICT_WINDOW_OBJECTIVE");
-      const int objective = (NULL != oenv) ? atoi(oenv) : 0;
       const double eps = 0.12;
       int grid[32];
       double score[32];
@@ -1974,7 +1984,7 @@ LIBXS_API_INLINE int internal_libxs_predict_ts_window(
       }
       if (0 == ngrid || grid[ngrid - 1] != wcap) grid[ngrid++] = wcap;
       for (i = 0; i < ngrid; ++i) {
-        score[i] = internal_libxs_predict_ts_window_score(model, grid[i], objective);
+        score[i] = internal_libxs_predict_ts_window_score(model, grid[i]);
         if (score[i] < score[best_i]) best_i = i;
       }
       if (score[best_i] < 1e29) {
@@ -2471,7 +2481,7 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
           for (k = 0; k < nc; ++k) {
             const double actual = cl->raw_outputs[(size_t)k * n + j];
             const double pred = internal_libxs_predict_classify(
-              cl, cl->kd_pts, nc, m, cl->kd_pts + (size_t)k * m,
+              cl, m, cl->kd_pts + (size_t)k * m,
               j, n, cl->ndistinct[j], 0, k, NULL, NULL, 0, NULL);
             const double res = pred - actual;
             sse += res * res;
@@ -2744,7 +2754,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
               { double po_conf = 0, po_var = 0;
                 if (pcl->nentries > 0 && NULL != pcl->kd_pts) {
                   vals[j] = internal_libxs_predict_classify2(
-                    pcl, pcl->kd_pts, pcl->nentries, m, norm_inputs,
+                    pcl, m, norm_inputs,
                     lj, gsz, pcl->ndistinct[lj], extrapolate, -1, NULL, -1,
                     &po_conf, &po_var, qi, &lo[j], &hi[j],
                     internal_libxs_predict_central(model, j), view);
@@ -2754,7 +2764,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                 }
                 else {
                   vals[j] = internal_libxs_predict_classify2(
-                    cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
+                    cl, m, norm_inputs, j, n,
                     cl->ndistinct[j], extrapolate, -1, NULL, -1,
                     &po_conf, &po_var, qi, &lo[j], &hi[j],
                     internal_libxs_predict_central(model, j), view);
@@ -2765,7 +2775,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                 if (NULL != src_mode) src_mode[j] = LIBXS_PREDICT_SRC_CLASSIFY;
               }
               internal_libxs_predict_classify(
-                cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
+                cl, m, norm_inputs, j, n,
                 cl->ndistinct[j], extrapolate, -1, &conf[j], &var[j],
                 internal_libxs_predict_central(model, j), view);
               errs[j] = 0;
@@ -2773,7 +2783,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
             }
             else {
               vals[j] = internal_libxs_predict_classify2(
-                cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
+                cl, m, norm_inputs, j, n,
                 cl->ndistinct[j], extrapolate, -1, NULL, -1,
                 &conf[j], &var[j], qi, &lo[j], &hi[j],
                 internal_libxs_predict_central(model, j), view);
@@ -2787,7 +2797,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
           }
           else if (0 != use_classify) {
             vals[j] = internal_libxs_predict_classify2(
-              cl, cl->kd_pts, cl->nentries, m, norm_inputs, j, n,
+              cl, m, norm_inputs, j, n,
               cl->ndistinct[j], extrapolate, -1, NULL, -1,
               &conf[j], &var[j], qi, &lo[j], &hi[j],
               internal_libxs_predict_central(model, j), view);
@@ -2932,7 +2942,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
               if (0 != use_classify) {
                 double cj_conf = 1.0, cj_var = 0, cj_lo = 0, cj_hi = 0;
                 const double v = internal_libxs_predict_classify2(
-                  cl2, cl2->kd_pts, cl2->nentries, m, norm_inputs, j, n,
+                  cl2, m, norm_inputs, j, n,
                   cl2->ndistinct[j], extrapolate, -1, NULL, -1,
                   &cj_conf, &cj_var, qi, &cj_lo, &cj_hi,
                   internal_libxs_predict_central(model, j), view);
@@ -3038,9 +3048,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
              */
             const double vj = (0 == internal_libxs_predict_central(model, j))
               ? vals[j]
-              : internal_libxs_predict_classify(&model->clusters[best_c],
-                  model->clusters[best_c].kd_pts,
-                  model->clusters[best_c].nentries, m, norm_inputs, j, n,
+              : internal_libxs_predict_classify(&model->clusters[best_c], m, norm_inputs, j, n,
                   model->clusters[best_c].ndistinct[j], extrapolate, -1,
                   NULL, NULL, 0, view);
             target[j] = (NULL != model->transforms)
@@ -3078,7 +3086,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                       if (0 != use_classify) {
                         double rc_conf = 0;
                         refined[j] = internal_libxs_predict_classify(
-                          rcl, rcl->kd_pts, rcl->nentries, m, rnorm, j, n,
+                          rcl, m, rnorm, j, n,
                           rcl->ndistinct[j], extrapolate, -1, &rc_conf, NULL,
                           internal_libxs_predict_central(model, j), view);
                         rconf[j] = rc_conf;
@@ -3589,7 +3597,7 @@ LIBXS_API_INLINE int internal_libxs_predict_dist(
   int result = EXIT_SUCCESS;
   const int nvoc = (vocabulary > ns) ? vocabulary : ns;
   const int outside = nvoc - ns;
-  internal_libxs_predict_evidence(cl, cl->kd_pts, cl->nentries,
+  internal_libxs_predict_evidence(cl,
     model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL, -1,
     candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL);
   for (i = 0; i < ns; ++i) local[i] = 0;
@@ -3683,7 +3691,7 @@ LIBXS_API_INLINE int internal_libxs_predict_point(
   const double tot = (double)model->sup_tot[j];
   const double den = tot + (double)nvoc;
   const int si = internal_libxs_predict_support_index(sv, ns, v);
-  internal_libxs_predict_evidence(cl, cl->kd_pts, cl->nentries,
+  internal_libxs_predict_evidence(cl,
     model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL, -1,
     candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL);
   /* Accumulate evidence per DISTINCT support entry, as the dense path does by
@@ -3997,10 +4005,8 @@ LIBXS_API_INLINE void internal_libxs_predict_central_all(libxs_predict_t* model)
           for (k = 0; k < nc; ++k) {
             const double* x = cl->kd_pts + (size_t)k * m;
             const double actual = cl->raw_outputs[(size_t)k * n + j];
-            const double a = internal_libxs_predict_classify(cl, cl->kd_pts,
-              nc, m, x, j, n, cl->ndistinct[j], 0, k, NULL, NULL, 0, NULL);
-            const double d = internal_libxs_predict_classify(cl, cl->kd_pts,
-              nc, m, x, j, n, cl->ndistinct[j], 0, k, NULL, NULL, 1, NULL);
+            const double a = internal_libxs_predict_classify(cl, m, x, j, n, cl->ndistinct[j], 0, k, NULL, NULL, 0, NULL);
+            const double d = internal_libxs_predict_classify(cl, m, x, j, n, cl->ndistinct[j], 0, k, NULL, NULL, 1, NULL);
             err_avg += LIBXS_FABS(a - actual);
             err_med += LIBXS_FABS(d - actual);
             ++nscored;

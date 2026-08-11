@@ -41,7 +41,8 @@ XFILES := $(OUTDIR)/predict_params.x $(OUTDIR)/predict_sunspots.x \
           $(OUTDIR)/predict_earthquakes.x $(OUTDIR)/predict_discharge.x \
           $(OUTDIR)/predict_soi.x $(OUTDIR)/predict_stock.x \
           $(OUTDIR)/predict_crystal.x $(OUTDIR)/predict_ett.x \
-          $(OUTDIR)/predict_prob.x $(OUTDIR)/predict_dist.x
+          $(OUTDIR)/predict_prob.x $(OUTDIR)/predict_dist.x \
+          $(OUTDIR)/predict_bits.x
 
 .PHONY: all
 all: $(XFILES)
@@ -75,6 +76,9 @@ $(OUTDIR)/predict_ett.x: $(OUTDIR)/.make $(BLDDIR)/predict_ett-c.o $(XLIB)
 
 $(OUTDIR)/predict_prob.x: $(OUTDIR)/.make $(BLDDIR)/predict_prob-c.o $(XLIB)
 	$(LD) -o $@ $(BLDDIR)/predict_prob-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+
+$(OUTDIR)/predict_bits.x: $(OUTDIR)/.make $(BLDDIR)/predict_bits-c.o $(XLIB)
+	$(LD) -o $@ $(BLDDIR)/predict_bits-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
 $(OUTDIR)/predict_dist.x: $(OUTDIR)/.make $(BLDDIR)/predict_dist-c.o $(XLIB)
 	$(LD) -o $@ $(BLDDIR)/predict_dist-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)

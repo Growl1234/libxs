@@ -1,6 +1,6 @@
 # Predict Samples
 
-Eight executables demonstrating fingerprint-guided prediction:
+Nine executables demonstrating fingerprint-guided prediction:
 
 - **predict_params** -- Parameter prediction from structured CSV
   (GPU kernel tuning, configuration databases).
@@ -17,6 +17,8 @@ Eight executables demonstrating fingerprint-guided prediction:
   using SPREAD decomposition on two correlated price series.
 - **predict_crystal** -- Crystal system classification from composition
   features (AFLOW ICSD, 7 classes, 60K entries).
+- **predict_bits** -- Held-out code length under the model against the
+  training distribution: whether the inputs inform the output at all.
 - **predict_ett** -- ETT (Electricity Transformer Temperature) hourly
   forecasting with univariate, multivariate, PCA, and local-attention
   modes (ETTh1, standard benchmark for timeseries LLMs).
@@ -212,6 +214,41 @@ AFLOW ICSD catalog (free for academic use).
 orthorhombic(3), tetragonal(4), trigonal(5), hexagonal(6),
 cubic(7).
 
+
+## predict_bits
+
+Code length of a held-out stream in bits per event, under the model and
+under the training distribution of the same output.  A point estimate says
+how close the model gets; this says whether the inputs carry information
+about the output at all.  A model can post a competitive error while knowing
+nothing its own marginal did not already know, and only the second question
+distinguishes those cases.
+
+### Usage
+
+    ./predict_bits.x <csvfile> <innames> <outname> [fraction] [vocabulary] [hknn]
+
+    vocabulary  Distinct values the caller considers possible.  0 uses the
+                attested support plus one aggregate novel atom, so an
+                unattested outcome costs infinite bits; pass a count above
+                the support size to keep the figure finite.
+
+### Example
+
+Magnitude is not determined by location, and depth is.  The second command
+is the control for the first: a null result is also what a broken
+measurement reports, so the instrument has to be shown detecting
+information where information exists.
+
+    ./predict_bits.x predict_earthquakes.csv latitude,longitude,depth mag 0.8 68
+    ./predict_bits.x predict_earthquakes.csv latitude,longitude,mag depth 0.8 9000
+
+The first reports 3.265 bits against the training distribution's 3.248 --
+the model is very slightly worse than knowing only the global
+Gutenberg-Richter distribution.  The second reports 1.478 bits on attested
+events against 7.615, an eight-fold reduction.  The earthquake sample's low
+confidence is therefore not a calibration artifact to be fixed but the
+honest information content of its inputs.
 
 ## predict_ett
 
