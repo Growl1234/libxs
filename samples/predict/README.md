@@ -66,9 +66,23 @@ Timeseries forecasting using sliding-window nearest-neighbor prediction.
 
     ./predict_sunspots.x <csvfile> [train_fraction] [compress[Q]] [hknn|rf]
 
+    NOPHASE=1  Drop the solar-cycle phase input.
+
 ### Example
 
     ./predict_sunspots.x predict_sunspots.csv 0.8
+
+The sample carries one auxiliary input alongside the window
+(libxs_predict_set_series_aux): months since the most recent minimum of
+the smoothed series, i.e. the phase of the solar cycle.  Two windows that
+look numerically alike can sit on opposite sides of a maximum, and the
+cycle rises faster than it falls, so the raw window alone cannot tell
+them apart.  The period is measured from the training slice by
+autocorrelation (125 months here) and the smoothing and search windows
+follow from it, so nothing is tuned by hand.  Longer horizons gain the
+most: t+6 improves 23.70 -> 21.77, t+3 20.72 -> 18.94, while t+1 is
+unchanged within noise (17.42 -> 17.52) because the recent window already
+determines the next month.
 
 ### Data Source
 

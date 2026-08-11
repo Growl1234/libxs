@@ -16,9 +16,12 @@
 # include <omp.h>
 #endif
 
-enum { WINDOW_DEF = 12, HORIZON = 6, WMAX = 160 };
+enum { WINDOW_DEF = 12, HORIZON = 6, WMAX = 160, PMAX = 400 };
 
 static int load_sunspots(const char* filename, double** values, int* count);
+static int cycle_period(const double* series, int n);
+static int cycle_phase(const double* series, int n, int period,
+  double* phase);
 
 
 int main(int argc, char* argv[])
@@ -30,6 +33,8 @@ int main(int argc, char* argv[])
   const int ninputs = (0 < window_req) ? window_req : WMAX;
   int window = window_req;
   int decompose = LIBXS_PREDICT_RAW;
+  const char* penv = getenv("NOPHASE");
+  const int nophase = (NULL != penv) ? atoi(penv) : 0;
   double quality = 0, consistency = 0;
   int argi, result = EXIT_FAILURE;
   double* series = NULL;
@@ -55,12 +60,22 @@ int main(int argc, char* argv[])
       "Usage: %s <sunspot_csv> [train_fraction] [compress[Q]] [hknn|rf]\n"
       "  Timeseries prediction using sliding-window kNN.\n"
       "  Input: SILSO monthly sunspot CSV (semicolon-delimited).\n"
-      "  Default train_fraction: 0.8\n", argv[0]);
+      "  Default train_fraction: 0.8\n"
+      "  NOPHASE=1 drops the solar-cycle phase input.\n", argv[0]);
   }
   else if (0 < load_sunspots(filename, &series, &total)) {
     const int train_end = LIBXS_MAX((int)(total * split + 0.5), WMAX + 1);
-    libxs_predict_t* model = libxs_predict_create(ninputs, HORIZON);
+    const int period = (0 == nophase) ? cycle_period(series, train_end) : 0;
+    double* phase = (double*)malloc((size_t)total * sizeof(double));
+    const int naux = (0 < period && NULL != phase
+      && EXIT_SUCCESS == cycle_phase(series, total, period, phase)) ? 1 : 0;
+    libxs_predict_t* model = libxs_predict_create(ninputs + naux, HORIZON);
     fprintf(stdout, "Loaded %d monthly sunspot values from %s\n", total, filename);
+    if (0 != naux) {
+      fprintf(stdout, "Cycle period %d months (%.1f years) from training"
+        " autocorrelation; phase carried as one auxiliary input\n",
+        period, period / 12.0);
+    }
     if (NULL != model) {
       libxs_timer_tick_t tick;
       double dt_build, dt_eval;
@@ -68,9 +83,13 @@ int main(int argc, char* argv[])
       libxs_predict_set_mode(model, LIBXS_PREDICT_TEMPORAL);
       libxs_predict_set_decompose(model, decompose);
       libxs_predict_set_series(model, 1, window_req);
+      if (0 != naux) libxs_predict_set_series_aux(model, naux);
       if (0.0 != consistency) libxs_predict_set_consistency(model, consistency);
       for (t = 0; t < train_end; ++t) {
-        libxs_predict_push(NULL, model, &series[t], NULL);
+        double step[2];
+        step[0] = series[t];
+        step[1] = (0 != naux) ? phase[t] : 0.0;
+        libxs_predict_push(NULL, model, step, NULL);
       }
       tick = libxs_timer_tick();
 #if defined(_OPENMP)
@@ -90,16 +109,18 @@ int main(int argc, char* argv[])
         LIBXS_MEMZERO(&qi);
         libxs_predict_query(model, &qi);
         window = qi.window;
-        fprintf(stdout, "Window=%d, Horizon=%d, Train=%d, Test=%d\n",
-          window, HORIZON, qi.nentries, total - train_end);
+        fprintf(stdout, "Window=%d%s, Horizon=%d, Train=%d, Test=%d\n",
+          window, (0 != naux) ? " (+cycle phase)" : "", HORIZON,
+          qi.nentries, total - train_end);
         fprintf(stdout, "Built: %d clusters, %.1fx compression, order=%d"
           " (%.2f s)\n", qi.nclusters, qi.compression, qi.order, dt_build);
         tick = libxs_timer_tick();
         for (t = train_end; t <= total - HORIZON; ++t) {
-          double inputs[WMAX], outputs[HORIZON];
+          double inputs[WMAX + 1], outputs[HORIZON];
           libxs_predict_info_t info;
           int i;
           for (i = 0; i < window; ++i) inputs[i] = series[t - window + i];
+          if (0 != naux) inputs[window] = phase[t - 1];
           libxs_predict_eval(NULL, model, inputs, outputs, &info, 1);
           for (h = 0; h < HORIZON; ++h) {
             const double err = LIBXS_FABS(outputs[h] - series[t + h]);
@@ -124,11 +145,95 @@ int main(int argc, char* argv[])
       }
       libxs_predict_destroy(model);
     }
+    free(phase);
     free(series);
   }
   else {
     fprintf(stderr, "Failed to load sunspot data from %s\n", filename);
   }
+  return result;
+}
+
+
+/**
+ * Dominant period of the series in samples, from the first local maximum of
+ * the autocorrelation after its initial decay.  Measured on the training
+ * slice only, so the phase feature it parameterizes carries no knowledge of
+ * the held-out tail.  Returns 0 when no periodicity is found.
+ */
+static int cycle_period(const double* series, int n)
+{
+  int result = 0;
+  if (2 < n) {
+    double mean = 0, denom = 0;
+    int i, lag, rising = 0;
+    double best = 0;
+    for (i = 0; i < n; ++i) mean += series[i];
+    mean /= n;
+    for (i = 0; i < n; ++i) {
+      const double d = series[i] - mean;
+      denom += d * d;
+    }
+    if (0 < denom) {
+      const int lmax = LIBXS_MIN(PMAX, n / 2);
+      double prev = 1.0;
+      for (lag = 1; lag < lmax; ++lag) {
+        double acc = 0;
+        for (i = 0; i + lag < n; ++i) {
+          acc += (series[i] - mean) * (series[i + lag] - mean);
+        }
+        acc /= denom;
+        if (0 == rising) {
+          if (acc > prev) rising = 1;
+        }
+        else if (acc > best) {
+          best = acc;
+          result = lag;
+        }
+        else if (0 < result) {
+          lag = lmax;
+        }
+        prev = acc;
+      }
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Months since the most recent minimum of the smoothed series, evaluated
+ * causally: every value reads only samples at or before its own index, so the
+ * feature is available at eval time and cannot leak the future.  Two windows
+ * are derived from the period rather than tuned -- a tenth of a cycle
+ * smooths the monthly noise, half a cycle bounds the search for the minimum.
+ */
+static int cycle_phase(const double* series, int n, int period, double* phase)
+{
+  int result = EXIT_FAILURE;
+  double* smooth = (double*)malloc((size_t)n * sizeof(double));
+  if (NULL != smooth && 0 < period) {
+    const int nsmooth = LIBXS_MAX(3, period / 10);
+    const int look = LIBXS_MAX(nsmooth + 1, period / 2);
+    int i;
+    for (i = 0; i < n; ++i) {
+      const int lo = LIBXS_MAX(0, i - nsmooth + 1);
+      double acc = 0;
+      int k;
+      for (k = lo; k <= i; ++k) acc += series[k];
+      smooth[i] = acc / (i - lo + 1);
+    }
+    for (i = 0; i < n; ++i) {
+      const int lo = LIBXS_MAX(0, i - look);
+      int argmin = lo, k;
+      for (k = lo; k <= i; ++k) {
+        if (smooth[k] < smooth[argmin]) argmin = k;
+      }
+      phase[i] = (double)(i - argmin);
+    }
+    result = EXIT_SUCCESS;
+  }
+  free(smooth);
   return result;
 }
 
