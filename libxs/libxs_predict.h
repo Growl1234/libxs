@@ -242,6 +242,21 @@ LIBXS_API void libxs_predict_set_quantile(libxs_predict_t* model,
   double quantile);
 
 /**
+ * Select the central tendency the kNN vote reports for a many-valued output:
+ * the weighted mean, or the unweighted median of the same neighbors.
+ * The median minimizes absolute error where the neighborhood is skewed, which
+ * a heavy-tailed target (earthquake magnitude, discharge) generally is.
+ *
+ * mode == 1: median, whether or not the vote extrapolates.
+ * mode == 2: mean, the historical behavior, never the median.
+ * mode == 0 (default) or negative: automatic. Both aggregations are scored at
+ *   build time on a held-back tail of the pushed entries and the better one is
+ *   kept, per output, so a model whose outputs differ in skew does not have to
+ *   settle for one choice. Negative additionally prints the decision.
+ */
+LIBXS_API void libxs_predict_set_central(libxs_predict_t* model, int mode);
+
+/**
  * Declare timeseries structure: nseries co-observed series, each with
  * the given window size. noutputs is the forecast horizon. When window
  * is positive, ninputs must equal nseries * window + nderiv + naux (see

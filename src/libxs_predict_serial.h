@@ -823,6 +823,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     model->built = 1;
     ++model->nbuild;
     internal_libxs_predict_support_all(model);
+    if (0 >= model->central) internal_libxs_predict_central_all(model);
   }
   else if (NULL != model) {
     libxs_predict_destroy(model);
@@ -1182,6 +1183,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
       model->built = 1;
       ++model->nbuild;
       internal_libxs_predict_support_all(model);
+      if (0 >= model->central) internal_libxs_predict_central_all(model);
     }
     else if (0 == hknn && NULL != model) {
       libxs_predict_destroy(model);

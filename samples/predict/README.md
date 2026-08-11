@@ -91,6 +91,14 @@ Predict earthquake magnitude from geographic location and depth.
                   (0.265 -> 0.259) and hknn (0.263 -> 0.254), but raises
                   it for rf (0.355 -> 0.365), which does not use the vote.
 
+The kNN vote reports the median rather than the mean here, which
+libxs_predict_set_central selects automatically: magnitude is
+Gutenberg-Richter distributed, so the neighborhood is right-skewed and
+absolute error is minimized by the median (0.259 -> 0.256 for kNN,
+0.254 -> 0.247 for hknn). The choice is made per output at build time
+from the pushed entries alone; the sunspot sample keeps the mean for all
+six horizons under the same rule.
+
 ### Example
 
     ./predict_earthquakes.x predict_earthquakes.csv
