@@ -4833,13 +4833,18 @@ LIBXS_API void libxs_predict_query(
   info->diff_order = model->diff_order;
   info->window = (model->nseries > 0) ? model->window : 0;
   info->nbank = (0 < model->nbank) ? model->nbank : 1;
-  { int c;
+  { double sqsum = 0;
+    int c;
     info->nscan = 0;
     for (c = 0; c < model->nclusters; ++c) {
+      const double n = (double)model->clusters[c].nentries;
       if (info->nscan < model->clusters[c].nentries) {
         info->nscan = model->clusters[c].nentries;
       }
+      sqsum += n * n;
     }
+    info->escan = (0 < model->nentries)
+      ? (sqsum / (double)model->nentries) : 0.0;
   }
 }
 

@@ -257,7 +257,28 @@ static const answer_predict_profile_t answer_predict_profiles[] = {
   { "temporal", LIBXS_PREDICT_TEMPORAL, LIBXS_PREDICT_RAW, 0, 1, 0.0, -1.0, 1, ANSWER_PREDICT_INPUTS, 0, 1 },
   { "rf", LIBXS_PREDICT_CLASSIFY, LIBXS_PREDICT_RF, 0, 1, 0.0, 0.0, 0, 0, 0, 0 },
   { "fisher", LIBXS_PREDICT_AUTO, LIBXS_PREDICT_FISHER, 0, 1, 0.0, 0.0, 0, 0, 0, 0 },
-  { "hknn", LIBXS_PREDICT_CLASSIFY, LIBXS_PREDICT_HKNN, 0, 1, 0.0, 0.0, 0, 0, 0, 0 }
+  { "hknn", LIBXS_PREDICT_CLASSIFY, LIBXS_PREDICT_HKNN, 0, 1, 0.0, 0.0, 0, 0, 0, 0 },
+  /**
+   * The two cells that complete the mode x decompose square. "raw" is
+   * (AUTO,RAW) and "hknn" is (CLASSIFY,HKNN), so those two differ in BOTH
+   * variables and a difference between them cannot be attributed. These fill in
+   * (CLASSIFY,RAW) and (AUTO,HKNN) so the partition can be varied with the mode
+   * held fixed, and the other way round.
+   */
+  { "classify", LIBXS_PREDICT_CLASSIFY, LIBXS_PREDICT_RAW, 0, 1, 0.0, 0.0, 0, 0, 0, 0 },
+  { "autohknn", LIBXS_PREDICT_AUTO, LIBXS_PREDICT_HKNN, 0, 1, 0.0, 0.0, 0, 0, 0, 0 },
+  /**
+   * k-means with the cluster count raised rather than auto-selected, kept as the
+   * record of a REFUTED hypothesis: raising it does not buy the scan back for
+   * free. Measured at 2 MB, 40000 entries -- auto (200 clusters) scans 3819 on
+   * average for bpc 2.176; 1000 clusters scans 1594 for 2.184; the kd-tree
+   * partition scans 155 for 2.180. So more clusters is dominated on BOTH axes,
+   * and across all three the bits track the scan: a smaller cluster is less
+   * local evidence, so the cost and the estimate are the same quantity. Only an
+   * INDEX over an unchanged cluster can be free, which is why that is the
+   * remaining option and a partition tweak is not.
+   */
+  { "raw1k", LIBXS_PREDICT_AUTO, LIBXS_PREDICT_RAW, 1000, 1, 0.0, 0.0, 0, 0, 0, 0 }
 };
 
 static char converse_path_corpus[CONVERSE_PATH_MAX] = CORPUS_FILE;
@@ -10036,9 +10057,11 @@ static int ngram_bank_warmup(libxs_predict_t* store, int vocabulary)
        cost of this pass -- printed because a bound that looks small can still be
        quadratic against a large cluster. */
     fprintf(stderr, "predict slot: warm-up observed %ld of %i entries"
-      " (bound %i, scan %i of %i clusters => %.1fM pair-ops), commit %s\n",
-      observed, info.nentries, nwarm, info.nscan, info.nclusters,
-      1e-6 * (double)observed * (double)info.nscan,
+      " (bound %i, %i clusters, scan max=%i avg=%.0f mean=%.0f"
+      " => %.1fM pair-ops), commit %s\n",
+      observed, info.nentries, nwarm, info.nclusters, info.nscan, info.escan,
+      (0 < info.nclusters) ? ((double)info.nentries / info.nclusters) : 0.0,
+      1e-6 * (double)observed * info.escan,
       (EXIT_SUCCESS == result) ? "ok" : "FAILED");
     libxs_predict_prob_destroy(context);
   }

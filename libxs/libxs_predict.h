@@ -109,6 +109,17 @@ LIBXS_EXTERN_C typedef struct libxs_predict_query_t {
    * the reason this is reported rather than left to be discovered.
    */
   int nscan;
+  /**
+   * Candidates an AVERAGE query scans: sum over clusters of n_c^2 divided by the
+   * entry count, because a query falls in cluster c with probability n_c/N and
+   * then walks n_c entries.
+   *
+   * Read together with nscan this separates two different problems that cost the
+   * same at the worst case. Near nentries/nclusters, the partition is even and
+   * only an index can reduce the scan. Near nscan, a few large clusters absorb
+   * most queries and rebalancing the partition is the cheaper fix.
+   */
+  double escan;
 } libxs_predict_query_t;
 
 /** Kind of quantity libxs_predict_prob reports for an output. */
