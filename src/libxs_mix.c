@@ -7,7 +7,7 @@
 * Further information: https://github.com/hfp/libxs/                          *
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
-#include <libxs_mix.h>
+#include <libxs/libxs_mix.h>
 
 
 LIBXS_API int libxs_mix_create(libxs_mix_t* mix, int nslot,
