@@ -8,9 +8,11 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 #include <libxs/libxs_gemm.h>
-
 #include <stdio.h>
 
+
+/** Upper bound on LIBXS_GEMM_JIT_WARMUP (default: 8) taken by this test. */
+#define TEST_MAXWARMUP 64
 
 #define TEST_CHECK(EXPR) do { \
   if (!(EXPR)) { \
@@ -26,6 +28,41 @@ static int jit_create_sgemm_calls;
 static int jit_get_sgemm_calls;
 static int jit_call_calls;
 static int xgemm_call_calls;
+static void* jit_call_jitter;
+static int jit_handle;
+
+
+static void test_dgemm_jit(void* jitter,
+  const double* a, const double* b, double* c)
+{
+  LIBXS_UNUSED(a); LIBXS_UNUSED(b); LIBXS_UNUSED(c);
+  jit_call_jitter = jitter;
+  ++jit_call_calls;
+}
+
+
+static void test_sgemm_jit(void* jitter,
+  const float* a, const float* b, float* c)
+{
+  LIBXS_UNUSED(a); LIBXS_UNUSED(b); LIBXS_UNUSED(c);
+  jit_call_jitter = jitter;
+  ++jit_call_calls;
+}
+
+
+static void test_xgemm_call(const void* param)
+{
+  LIBXS_UNUSED(param);
+  ++xgemm_call_calls;
+}
+
+
+static void* test_vptr(void (*fn)(void))
+{
+  union { void (*fn)(void); void* vp; } u;
+  u.fn = fn;
+  return u.vp;
+}
 
 
 static int test_jit_create_dgemm(void** jitter,
@@ -38,7 +75,7 @@ static int test_jit_create_dgemm(void** jitter,
   LIBXS_UNUSED(alpha); LIBXS_UNUSED(lda); LIBXS_UNUSED(ldb);
   LIBXS_UNUSED(beta); LIBXS_UNUSED(ldc);
   ++jit_create_dgemm_calls;
-  return 1; /* MKL_NO_JIT */
+  return 1; /* MKL_NO_JIT, handle left unpopulated */
 }
 
 
@@ -46,7 +83,7 @@ static void* test_jit_get_dgemm(void* jitter)
 {
   LIBXS_UNUSED(jitter);
   ++jit_get_dgemm_calls;
-  return NULL;
+  return test_vptr((void (*)(void))test_dgemm_jit);
 }
 
 
@@ -60,7 +97,7 @@ static int test_jit_create_sgemm(void** jitter,
   LIBXS_UNUSED(alpha); LIBXS_UNUSED(lda); LIBXS_UNUSED(ldb);
   LIBXS_UNUSED(beta); LIBXS_UNUSED(ldc);
   ++jit_create_sgemm_calls;
-  return 1; /* MKL_NO_JIT */
+  return 1; /* MKL_NO_JIT, handle left unpopulated */
 }
 
 
@@ -68,32 +105,7 @@ static void* test_jit_get_sgemm(void* jitter)
 {
   LIBXS_UNUSED(jitter);
   ++jit_get_sgemm_calls;
-  return NULL;
-}
-
-
-static void test_dgemm_jit(void* jitter,
-  const double* a, const double* b, double* c)
-{
-  LIBXS_UNUSED(jitter); LIBXS_UNUSED(a);
-  LIBXS_UNUSED(b); LIBXS_UNUSED(c);
-  ++jit_call_calls;
-}
-
-
-static void test_sgemm_jit(void* jitter,
-  const float* a, const float* b, float* c)
-{
-  LIBXS_UNUSED(jitter); LIBXS_UNUSED(a);
-  LIBXS_UNUSED(b); LIBXS_UNUSED(c);
-  ++jit_call_calls;
-}
-
-
-static void test_xgemm_call(const void* param)
-{
-  LIBXS_UNUSED(param);
-  ++xgemm_call_calls;
+  return test_vptr((void (*)(void))test_sgemm_jit);
 }
 
 
@@ -119,7 +131,8 @@ static int test_missing_jit_handle(void)
   shape.m = 2; shape.n = 2; shape.k = 2;
   shape.lda = 2; shape.ldb = 2; shape.ldc = 2;
   shape.alpha = 1.0;
-  for (i = 0; i < 8; ++i) {
+  config = NULL;
+  for (i = 0; i < TEST_MAXWARMUP && 0 == jit_create_dgemm_calls; ++i) {
     config = libxs_gemm_dispatch_rt(&shape, NULL, &backend, registry);
   }
   TEST_CHECK(NULL != config);
@@ -130,7 +143,8 @@ static int test_missing_jit_handle(void)
   TEST_CHECK(NULL != config->dgemm_blas);
 
   shape.datatype = LIBXS_DATATYPE_F32;
-  for (i = 0; i < 8; ++i) {
+  config = NULL;
+  for (i = 0; i < TEST_MAXWARMUP && 0 == jit_create_sgemm_calls; ++i) {
     config = libxs_gemm_dispatch_rt(&shape, NULL, &backend, registry);
   }
   TEST_CHECK(NULL != config);
@@ -163,6 +177,40 @@ static int test_incomplete_jit_config(void)
   TEST_CHECK(0 == jit_call_calls);
   TEST_CHECK(2 == xgemm_call_calls);
 
+  LIBXS_MEMZERO(&config);
+  config.jitter = &jit_handle;
+  config.xgemm = test_xgemm_call;
+  libxs_gemm_call(&config, NULL, NULL, NULL);
+  TEST_CHECK(0 == jit_call_calls);
+  TEST_CHECK(3 == xgemm_call_calls);
+
+  return EXIT_SUCCESS;
+}
+
+
+static int test_complete_jit_config(void)
+{
+  libxs_gemm_config_t config;
+
+  LIBXS_MEMZERO(&config);
+  config.dgemm_jit = test_dgemm_jit;
+  config.jitter = &jit_handle;
+  config.xgemm = test_xgemm_call;
+  libxs_gemm_call(&config, NULL, NULL, NULL);
+  TEST_CHECK(1 == jit_call_calls);
+  TEST_CHECK(3 == xgemm_call_calls);
+  TEST_CHECK(&jit_handle == jit_call_jitter);
+
+  LIBXS_MEMZERO(&config);
+  config.sgemm_jit = test_sgemm_jit;
+  config.jitter = &jit_handle;
+  config.xgemm = test_xgemm_call;
+  jit_call_jitter = NULL;
+  libxs_gemm_call(&config, NULL, NULL, NULL);
+  TEST_CHECK(2 == jit_call_calls);
+  TEST_CHECK(3 == xgemm_call_calls);
+  TEST_CHECK(&jit_handle == jit_call_jitter);
+
   return EXIT_SUCCESS;
 }
 
@@ -171,5 +219,6 @@ int main(void)
 {
   int result = test_missing_jit_handle();
   if (EXIT_SUCCESS == result) result = test_incomplete_jit_config();
+  if (EXIT_SUCCESS == result) result = test_complete_jit_config();
   return result;
 }

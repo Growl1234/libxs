@@ -304,43 +304,51 @@ LIBXS_API_INLINE void libxs_gemm_call(
   const void* a, const void* b, void* c)
 {
   LIBXS_ASSERT(NULL != config);
-  if (NULL != config->dgemm_jit && NULL != config->jitter) {
-    config->dgemm_jit(config->jitter, (const double*)a, (const double*)b, (double*)c);
+  { /**
+     * snapshot the pair: another thread can complete the config during JIT
+     * warm-up, hence checking and calling must use the same values
+     */
+    const libxs_gemm_djit_t dgemm_jit = config->dgemm_jit;
+    const libxs_gemm_sjit_t sgemm_jit = config->sgemm_jit;
+    void* jitter = config->jitter;
+    if (NULL != dgemm_jit && NULL != jitter) {
+      dgemm_jit(jitter, (const double*)a, (const double*)b, (double*)c);
+    }
+    else if (NULL != sgemm_jit && NULL != jitter) {
+      sgemm_jit(jitter, (const float*)a, (const float*)b, (float*)c);
+    }
+    else if (NULL != config->xgemm) {
+      libxs_gemm_param_t xparam;
+      LIBXS_MEMZERO(&xparam);
+      xparam.a[0] = a;
+      xparam.b[0] = b;
+      xparam.c[0] = c;
+      config->xgemm(&xparam);
+    }
+    else if (LIBXS_DATATYPE_F64 == config->shape.datatype
+      && NULL != config->dgemm_blas)
+    {
+      config->dgemm_blas(
+        &config->shape.transa, &config->shape.transb,
+        &config->shape.m, &config->shape.n, &config->shape.k,
+        &config->shape.alpha, (const double*)a, &config->shape.lda,
+        (const double*)b, &config->shape.ldb,
+        &config->shape.beta, (double*)c, &config->shape.ldc);
+    }
+    else if (LIBXS_DATATYPE_F32 == config->shape.datatype
+      && NULL != config->sgemm_blas)
+    {
+      const float falpha = (float)config->shape.alpha;
+      const float fbeta = (float)config->shape.beta;
+      config->sgemm_blas(
+        &config->shape.transa, &config->shape.transb,
+        &config->shape.m, &config->shape.n, &config->shape.k,
+        &falpha, (const float*)a, &config->shape.lda,
+        (const float*)b, &config->shape.ldb,
+        &fbeta, (float*)c, &config->shape.ldc);
+    }
+    else LIBXS_ASSERT_MSG(0, "invalid config");
   }
-  else if (NULL != config->sgemm_jit && NULL != config->jitter) {
-    config->sgemm_jit(config->jitter, (const float*)a, (const float*)b, (float*)c);
-  }
-  else if (NULL != config->xgemm) {
-    libxs_gemm_param_t xparam;
-    LIBXS_MEMZERO(&xparam);
-    xparam.a[0] = a;
-    xparam.b[0] = b;
-    xparam.c[0] = c;
-    config->xgemm(&xparam);
-  }
-  else if (LIBXS_DATATYPE_F64 == config->shape.datatype
-    && NULL != config->dgemm_blas)
-  {
-    config->dgemm_blas(
-      &config->shape.transa, &config->shape.transb,
-      &config->shape.m, &config->shape.n, &config->shape.k,
-      &config->shape.alpha, (const double*)a, &config->shape.lda,
-      (const double*)b, &config->shape.ldb,
-      &config->shape.beta, (double*)c, &config->shape.ldc);
-  }
-  else if (LIBXS_DATATYPE_F32 == config->shape.datatype
-    && NULL != config->sgemm_blas)
-  {
-    const float falpha = (float)config->shape.alpha;
-    const float fbeta = (float)config->shape.beta;
-    config->sgemm_blas(
-      &config->shape.transa, &config->shape.transb,
-      &config->shape.m, &config->shape.n, &config->shape.k,
-      &falpha, (const float*)a, &config->shape.lda,
-      (const float*)b, &config->shape.ldb,
-      &fbeta, (float*)c, &config->shape.ldc);
-  }
-  else LIBXS_ASSERT_MSG(0, "invalid config");
 }
 
 /**
