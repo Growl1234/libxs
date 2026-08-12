@@ -481,7 +481,8 @@ LIBXS_API int libxs_mhd_element_comparison(void* dst, const libxs_mhd_element_ha
     result = libxs_diff(src, dst, (unsigned char)typesize);
   }
   else { /* conversion into destination type */
-    char element[LIBXS_MHD_MAX_ELEMSIZE];
+    /* libxs_diff loads in 16-Byte chunks, hence vector-width scratch */
+    char element[LIBXS_MAX(LIBXS_MHD_MAX_ELEMSIZE, 16)];
     result = libxs_mhd_element_conversion(element, dst_info,
       src_type, src, src_min, src_max, 0, NULL);
     if (EXIT_SUCCESS == result) {

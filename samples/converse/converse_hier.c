@@ -1,6 +1,7 @@
 #include <libxs/libxs.h>
 #include <libxs/libxs_token.h>
 #include <libxs/libxs_ngram.h>
+#include <libxs/libxs_mix.h>
 
 #include "converse.h"
 #include "converse_hier.h"

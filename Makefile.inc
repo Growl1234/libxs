@@ -389,10 +389,19 @@ CXX_VERSION_FLAG ?= $(CC_VERSION_FLAG)
 
 # check if the Intel Development Tools are available
 # 1: classic, 2: next-gen (opt-in)
-INTEL ?= $(strip $(if $(filter 2,$(words $(filter icpc% icpx% icc% icx% Intel%, \
+INTEL_AUTO := $(strip $(if $(filter 2,$(words $(filter icpc% icpx% icc% icx% Intel%, \
   $(shell $(CXX) $(CXX_VERSION_FLAG) | head -n1 | $(CUT) -d' ' -f1) \
   $(shell $(CC)  $(CC_VERSION_FLAG)  | head -n1 | $(CUT) -d' ' -f1)) )), \
   $(if $(IFXBIN),2,1),0))
+INTEL ?= $(INTEL_AUTO)
+
+# Intel-specific flags are only valid for an Intel compiler (GNU=0 or CC=icx)
+ifneq (0,$(INTEL))
+  ifeq (0,$(INTEL_AUTO))
+    $(info WARNING: INTEL=$(INTEL) ignored since $(CC) is not an Intel compiler (use GNU=0)!)
+    override INTEL := 0
+  endif
+endif
 
 ifneq (0,$(INTEL))
   ifeq (,$(shell echo "$${FC}"))
