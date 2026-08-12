@@ -389,11 +389,18 @@ CXX_VERSION_FLAG ?= $(CC_VERSION_FLAG)
 
 # check if the Intel Development Tools are available
 # 1: classic, 2: next-gen (opt-in)
-INTEL_AUTO := $(strip $(if $(filter 2,$(words $(filter icpc% icpx% icc% icx% Intel%, \
+INTEL_NPROBE := $(words $(filter icpc% icpx% icc% icx% Intel%, \
   $(shell $(CXX) $(CXX_VERSION_FLAG) | head -n1 | $(CUT) -d' ' -f1) \
-  $(shell $(CC)  $(CC_VERSION_FLAG)  | head -n1 | $(CUT) -d' ' -f1)) )), \
+  $(shell $(CC)  $(CC_VERSION_FLAG)  | head -n1 | $(CUT) -d' ' -f1)))
+INTEL_AUTO := $(strip $(if $(filter 2,$(INTEL_NPROBE)), \
   $(if $(IFXBIN),2,1),0))
 INTEL ?= $(INTEL_AUTO)
+
+# Intel-specific treatment requires CC and CXX of the same family, i.e.
+# a missing compiler (icpc was removed) disables it entirely
+ifeq (1,$(INTEL_NPROBE))
+  $(info WARNING: CC=$(CC) and CXX=$(CXX) are not the same compiler family!)
+endif
 
 # Intel-specific flags are only valid for an Intel compiler (GNU=0 or CC=icx)
 ifneq (0,$(INTEL))
