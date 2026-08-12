@@ -391,6 +391,61 @@ query fills a statistics struct (cluster count, entry count,
 compression ratio, polynomial order, diff_order).
 get retrieves the i-th pushed entry (0-based).
 
+`nscan` reports the entries in the largest cluster, which is what
+a neighbour query walks in the worst case: local evidence is
+gathered by scanning a cluster, so scoring cost grows with `nscan`
+rather than with `nentries`. Read it to know what a query costs
+before paying for it -- a model whose partition is skewed, or built
+with a single cluster, puts most or all entries on that path.
+
+## Probability
+
+```C
+void* libxs_predict_prob_create(const libxs_predict_t* model);
+void libxs_predict_prob_destroy(void* context);
+int libxs_predict_prob_commit(libxs_predict_t* model,
+  const void* context);
+
+void libxs_predict_prob(libxs_lock_t* lock,
+  const libxs_predict_t* model, void* context,
+  const double inputs[], const double candidate[], double prob[],
+  libxs_predict_prob_info_t* info, int vocabulary, int nblend);
+int libxs_predict_prob_observe(libxs_lock_t* lock,
+  const libxs_predict_t* model, void* context,
+  const double inputs[], int output, const double* candidate,
+  double values[], double probs[], int capacity, double* novel,
+  libxs_predict_prob_info_t* info, int vocabulary, int nblend);
+int libxs_predict_prob_support(const libxs_predict_t* model,
+  int output, double values[], int capacity);
+```
+
+Where eval reports what the model would pick, these score a value
+the caller supplies -- including one the model would never pick.
+`prob` is a point query for P(y|x); `prob_observe` reports the
+distribution over one discrete output and optionally observes the
+outcome, in that order, so weights cannot be advanced before the
+reported value is committed.
+
+The escape weight mixing local evidence with the fallback prior is
+learned per output from realized log loss, and that learning is
+stream state rather than model state, so it lives in a context:
+
+- `context != NULL` -- adaptive; the weights adapt over the stream
+  and the model is not modified.
+- `context == NULL` -- frozen; the model's stored weights are used
+  and never written, so results do not depend on call order.
+
+`prob_commit` copies a context's converged weights into the model.
+It is required before frozen scoring means anything: without it the
+model still holds its uniform prior, and freezing at that prior
+scores far worse than adapting.
+
+`prob_support` returns the attested support of a discrete output
+(distinct values, sorted ascending), writing up to `capacity`
+entries and nothing at all when the support is larger. The support
+is fixed after build, so this reads it directly instead of through
+a scoring call.
+
 ## Persistence
 
 ```C
@@ -453,6 +508,9 @@ typedef struct libxs_predict_query_t {
   int nentries;
   int iterations;
   int diff_order;
+  int window;   /* effective sliding window (0 if series mode off) */
+  int nbank;    /* window views built (1 when disabled) */
+  int nscan;    /* entries in the LARGEST cluster */
 } libxs_predict_query_t;
 ```
 

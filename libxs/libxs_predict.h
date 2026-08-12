@@ -98,6 +98,17 @@ LIBXS_EXTERN_C typedef struct libxs_predict_query_t {
   int window;
   /** Window views actually built (see set_series_bank; 1 when disabled). */
   int nbank;
+  /**
+   * Entries in the LARGEST cluster, which is the number of candidates a
+   * neighbour query scans in the worst case: local evidence is gathered by
+   * walking a cluster, so scoring cost grows with this and not with nentries.
+   *
+   * Read it to know what a query costs before paying for it. A model built with
+   * one cluster puts every entry here, so scoring is linear in the corpus -- easy
+   * to miss until a run that was affordable at one scale is not at the next, and
+   * the reason this is reported rather than left to be discovered.
+   */
+  int nscan;
 } libxs_predict_query_t;
 
 /** Kind of quantity libxs_predict_prob reports for an output. */
@@ -597,6 +608,23 @@ LIBXS_API int libxs_predict_prob_observe(libxs_lock_t* lock,
   int output, const double* candidate,
   double values[], double probs[], int capacity, double* novel,
   libxs_predict_prob_info_t* info, int vocabulary, int nblend);
+
+/**
+ * The attested support of a discrete output: the distinct values the model has
+ * seen, sorted ascending. Returns the support size, or 0 if the output has none
+ * (not built, or continuous).
+ *
+ * values: receives up to capacity entries (may be NULL to query the size alone).
+ *       Nothing is written when the support exceeds capacity, so a caller can
+ *       size a buffer from one call and fill it with a second.
+ *
+ * The support is fixed once the model is built, so this reads it directly rather
+ * than through a scoring call. Obtaining it from libxs_predict_prob_observe
+ * requires supplying inputs that are irrelevant to the answer and discarding a
+ * distribution that was computed only to be thrown away.
+ */
+LIBXS_API int libxs_predict_prob_support(const libxs_predict_t* model,
+  int output, double values[], int capacity);
 
 /** Query model statistics after build. */
 LIBXS_API void libxs_predict_query(const libxs_predict_t* model,

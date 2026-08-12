@@ -9,9 +9,6 @@
 ******************************************************************************/
 #include <libxs_mix.h>
 
-#include <stdlib.h>
-#include <math.h>
-
 
 LIBXS_API int libxs_mix_create(libxs_mix_t* mix, int nslot,
   double rate, double share, double relmin)

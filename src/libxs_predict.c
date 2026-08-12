@@ -4784,6 +4784,24 @@ LIBXS_API int libxs_predict_prob_observe(libxs_lock_t* lock,
 }
 
 
+LIBXS_API int libxs_predict_prob_support(const libxs_predict_t* model,
+  int output, double values[], int capacity)
+{
+  int result = 0;
+  if (NULL != model && 0 != model->built && 0 <= output
+    && output < model->noutputs && NULL != model->sup_n
+    && NULL != model->sup_vals && NULL != model->sup_vals[output])
+  {
+    result = model->sup_n[output];
+    if (NULL != values && result <= capacity) {
+      memcpy(values, model->sup_vals[output],
+        (size_t)result * sizeof(double));
+    }
+  }
+  return result;
+}
+
+
 LIBXS_API void libxs_predict_query(
   const libxs_predict_t* model, libxs_predict_query_t* info)
 {
@@ -4818,6 +4836,14 @@ LIBXS_API void libxs_predict_query(
   info->diff_order = model->diff_order;
   info->window = (model->nseries > 0) ? model->window : 0;
   info->nbank = (0 < model->nbank) ? model->nbank : 1;
+  { int c;
+    info->nscan = 0;
+    for (c = 0; c < model->nclusters; ++c) {
+      if (info->nscan < model->clusters[c].nentries) {
+        info->nscan = model->clusters[c].nentries;
+      }
+    }
+  }
 }
 
 

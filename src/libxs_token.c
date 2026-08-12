@@ -8,6 +8,7 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 #include <libxs/libxs_token.h>
+#include <libxs/libxs_str.h>
 
 
 typedef struct internal_libxs_lexicon_entry_t {
@@ -247,15 +248,7 @@ LIBXS_API_INLINE
 size_t internal_libxs_token_codepoint_size(const unsigned char* text,
   size_t size, size_t pos)
 {
-  size_t result = 1;
-  if (NULL != text && pos < size) {
-    const unsigned char lead = text[pos];
-    if (0xC0u <= lead && lead < 0xE0u) result = 2;
-    else if (0xE0u <= lead && lead < 0xF0u) result = 3;
-    else if (0xF0u <= lead && lead < 0xF8u) result = 4;
-    if (size - pos < result) result = size - pos;
-  }
-  return result;
+  return libxs_utf8_size(text, size, pos);
 }
 
 

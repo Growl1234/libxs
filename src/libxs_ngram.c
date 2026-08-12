@@ -9,8 +9,6 @@
 ******************************************************************************/
 #include <libxs/libxs_ngram.h>
 #include <libxs/libxs_mem.h>
-#include <stdlib.h>
-#include <math.h>
 
 
 typedef struct internal_libxs_ngram_key_t {
@@ -19,7 +17,8 @@ typedef struct internal_libxs_ngram_key_t {
 } internal_libxs_ngram_key_t;
 
 
-static void internal_libxs_ngram_key(internal_libxs_ngram_key_t* key,
+LIBXS_API_INLINE
+void internal_libxs_ngram_key(internal_libxs_ngram_key_t* key,
   const unsigned int hist[], int hlen, int n)
 {
   int i;
@@ -29,7 +28,8 @@ static void internal_libxs_ngram_key(internal_libxs_ngram_key_t* key,
 }
 
 
-static void internal_libxs_ngram_add(libxs_ngram_entry_t* entry,
+LIBXS_API_INLINE
+void internal_libxs_ngram_add(libxs_ngram_entry_t* entry,
   unsigned int succ_id)
 {
   unsigned int slot;
@@ -61,7 +61,8 @@ static void internal_libxs_ngram_add(libxs_ngram_entry_t* entry,
 }
 
 
-static double internal_libxs_ngram_relfreq(const libxs_ngram_entry_t* entry,
+LIBXS_API_INLINE
+double internal_libxs_ngram_relfreq(const libxs_ngram_entry_t* entry,
   unsigned int succ_id)
 {
   double result = 0.0;
@@ -78,7 +79,8 @@ static double internal_libxs_ngram_relfreq(const libxs_ngram_entry_t* entry,
 }
 
 
-static int internal_libxs_ngram_topk(const libxs_ngram_entry_t* entry,
+LIBXS_API_INLINE
+int internal_libxs_ngram_topk(const libxs_ngram_entry_t* entry,
   unsigned int out_ids[], int k)
 {
   int result = 0;
@@ -108,7 +110,8 @@ static int internal_libxs_ngram_topk(const libxs_ngram_entry_t* entry,
 }
 
 
-static double internal_libxs_ngram_prior(const libxs_ngram_t* model,
+LIBXS_API_INLINE
+double internal_libxs_ngram_prior(const libxs_ngram_t* model,
   unsigned int id)
 {
   double result = 0.0;

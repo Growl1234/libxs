@@ -74,6 +74,36 @@ LIBXS_API int libxs_stridiff(const char a[], const char b[],
 LIBXS_API size_t libxs_format_value(char buffer[],
   int buffer_size, size_t nbytes, const char scale[], const char* unit, int base);
 
+/**
+ * Bytes spanned by the UTF-8 sequence at text[pos], taken from the LEAD BYTE
+ * alone and clamped to the bytes that remain. Always at least 1, so a scan over
+ * malformed input still advances instead of standing still.
+ *
+ * This is the lenient form, for walking text a codepoint at a time: it does not
+ * inspect continuation bytes, so a truncated or corrupt sequence is stepped over
+ * by its declared width rather than rejected. Use libxs_utf8_decode when the
+ * codepoint VALUE is wanted, because that requires the sequence to be valid.
+ */
+LIBXS_API size_t libxs_utf8_size(const unsigned char text[], size_t size,
+  size_t pos);
+
+/**
+ * Decode one UTF-8 sequence at text[0], writing the bytes consumed to *width
+ * (may be NULL). Returns the code point.
+ *
+ * This is the strict form: a sequence that is truncated, or whose continuation
+ * bytes are not continuation bytes, yields the LEAD BYTE as the value and a
+ * width of 1. A caller testing a property of the code point (is it a vowel, is
+ * it punctuation) must not be handed a value assembled from bytes that do not
+ * belong to it, and width 1 keeps such a caller advancing.
+ *
+ * Note the deliberate difference from libxs_utf8_size, which reports the width a
+ * lead byte CLAIMS. On well-formed text the two agree; on malformed text the
+ * lenient form skips the claimed span while this one skips one byte.
+ */
+LIBXS_API unsigned long libxs_utf8_decode(const unsigned char text[],
+  size_t size, int* width);
+
 /* header-only: include implementation (deferred from libxs_macros.h) */
 #if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \
  && !defined(LIBXS_PREDICT_H)

@@ -6639,39 +6639,13 @@ static int ngram_is_vowel(unsigned char c)
 
 
 /**
- * Decode one UTF-8 sequence, reporting its length so a caller can advance by
- * whole letters.  Only what a vowel test needs: the code point and the width.
- * An invalid or truncated sequence reports width 1 so scanning always advances
- * and a malformed byte is simply not a vowel.
+ * Signed-length adapter over libxs_utf8_decode, which is the strict form: an
+ * invalid or truncated sequence reports width 1, so scanning always advances and
+ * a malformed byte is simply not a vowel.
  */
 static unsigned long ngram_utf8_decode(const char* text, int len, int* width)
 {
-  const unsigned char* p = (const unsigned char*)text;
-  unsigned long result;
-  int w = 1;
-  if (0 == (p[0] & 0x80)) result = p[0];
-  else if (0xC0 == (p[0] & 0xE0) && 1 < len && 0x80 == (p[1] & 0xC0)) {
-    result = ((unsigned long)(p[0] & 0x1F) << 6) | (unsigned long)(p[1] & 0x3F);
-    w = 2;
-  }
-  else if (0xE0 == (p[0] & 0xF0) && 2 < len && 0x80 == (p[1] & 0xC0)
-    && 0x80 == (p[2] & 0xC0))
-  {
-    result = ((unsigned long)(p[0] & 0x0F) << 12)
-      | ((unsigned long)(p[1] & 0x3F) << 6) | (unsigned long)(p[2] & 0x3F);
-    w = 3;
-  }
-  else if (0xF0 == (p[0] & 0xF8) && 3 < len && 0x80 == (p[1] & 0xC0)
-    && 0x80 == (p[2] & 0xC0) && 0x80 == (p[3] & 0xC0))
-  {
-    result = ((unsigned long)(p[0] & 0x07) << 18)
-      | ((unsigned long)(p[1] & 0x3F) << 12)
-      | ((unsigned long)(p[2] & 0x3F) << 6) | (unsigned long)(p[3] & 0x3F);
-    w = 4;
-  }
-  else result = p[0];
-  if (NULL != width) *width = w;
-  return result;
+  return libxs_utf8_decode((const unsigned char*)text, (size_t)len, width);
 }
 
 
@@ -10058,8 +10032,13 @@ static int ngram_bank_warmup(libxs_predict_t* store, int vocabulary)
       }
     }
     result = libxs_predict_prob_commit(store, context);
+    /* nscan is the candidates ONE observation walks, so the product is the real
+       cost of this pass -- printed because a bound that looks small can still be
+       quadratic against a large cluster. */
     fprintf(stderr, "predict slot: warm-up observed %ld of %i entries"
-      " (bound %i), commit %s\n", observed, info.nentries, nwarm,
+      " (bound %i, scan %i of %i clusters => %.1fM pair-ops), commit %s\n",
+      observed, info.nentries, nwarm, info.nscan, info.nclusters,
+      1e-6 * (double)observed * (double)info.nscan,
       (EXIT_SUCCESS == result) ? "ok" : "FAILED");
     libxs_predict_prob_destroy(context);
   }

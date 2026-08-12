@@ -100,6 +100,87 @@ static int check_point_matches_dist(const libxs_predict_t* model)
 
 
 /**
+ * nscan must report the candidates a neighbour query actually walks. The model
+ * here is built with one cluster, so every entry lands in it and scoring is
+ * linear in the corpus -- precisely the configuration whose cost was invisible
+ * from the API until this field existed.
+ */
+static int check_scan_cost_reported(const libxs_predict_t* model)
+{
+  int result = EXIT_FAILURE;
+  libxs_predict_query_t info;
+  memset(&info, 0, sizeof(info));
+  libxs_predict_query(model, &info);
+  if (1 != info.nclusters) {
+    fprintf(stderr, "expected a single-cluster model, got %d\n",
+      info.nclusters);
+  }
+  else if (info.nscan != info.nentries) {
+    fprintf(stderr, "nscan %d for %d entries in one cluster\n",
+      info.nscan, info.nentries);
+  }
+  else if (0 >= info.nscan) {
+    fprintf(stderr, "nscan not reported (%d)\n", info.nscan);
+  }
+  else result = EXIT_SUCCESS;
+  return result;
+}
+
+
+/**
+ * The direct support accessor must report exactly what the scoring path reports:
+ * same size, same values, same order. That is the whole point of having it -- a
+ * second source of truth for the support would be worse than none.
+ */
+static int check_support_matches_scoring(const libxs_predict_t* model)
+{
+  int result = EXIT_FAILURE;
+  double direct[NCLASS], scored[NCLASS], probs[NCLASS];
+  void* context = libxs_predict_prob_create(model);
+  const int nd = libxs_predict_prob_support(model, 0, direct, NCLASS);
+  if (NULL != context) {
+    double in[2], target;
+    int ns;
+    stream_fill(in, &target, 0);
+    ns = libxs_predict_prob_observe(NULL, model, context, in, 0, NULL,
+      scored, probs, NCLASS, NULL, NULL, NCLASS, 1);
+    if (nd != ns) {
+      fprintf(stderr, "support size %d, scoring reports %d\n", nd, ns);
+    }
+    else {
+      int i, bad = 0;
+      for (i = 0; i < nd; ++i) {
+        if (direct[i] != scored[i]) bad = 1;
+      }
+      if (0 != bad) fprintf(stderr, "support values differ from scoring\n");
+      /* size-only query must agree without writing anything */
+      else if (nd != libxs_predict_prob_support(model, 0, NULL, 0)) {
+        fprintf(stderr, "size-only query disagreed\n");
+      }
+      /* too small a buffer must report the size and write nothing */
+      else {
+        double guard[NCLASS];
+        int j;
+        for (j = 0; j < NCLASS; ++j) guard[j] = -1.0;
+        if (nd != libxs_predict_prob_support(model, 0, guard, nd - 1)) {
+          fprintf(stderr, "undersized query did not report the size\n");
+        }
+        else if (-1.0 != guard[0]) {
+          fprintf(stderr, "undersized query wrote into the buffer\n");
+        }
+        else if (0 != libxs_predict_prob_support(model, 99, direct, NCLASS)) {
+          fprintf(stderr, "out-of-range output was not rejected\n");
+        }
+        else result = EXIT_SUCCESS;
+      }
+    }
+    libxs_predict_prob_destroy(context);
+  }
+  return result;
+}
+
+
+/**
  * Score the stream frozen (context == NULL) and return the total code length.
  * Frozen scoring reads the model's weights and writes nothing, so this is a
  * pure function of the model -- which is the property under test.
@@ -318,6 +399,12 @@ int main(int argc, char* argv[])
   if (NULL == model) {
     fprintf(stderr, "model could not be built\n");
     result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS == result) {
+    result = check_scan_cost_reported(model);
+  }
+  if (EXIT_SUCCESS == result) {
+    result = check_support_matches_scoring(model);
   }
   if (EXIT_SUCCESS == result) {
     result = check_point_matches_dist(model);

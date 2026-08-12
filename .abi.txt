@@ -197,6 +197,7 @@ libxs_predict_prob_commit
 libxs_predict_prob_create
 libxs_predict_prob_destroy
 libxs_predict_prob_observe
+libxs_predict_prob_support
 libxs_predict_push
 libxs_predict_query
 libxs_predict_save
@@ -307,3 +308,5 @@ libxs_typename
 libxs_typesize
 libxs_unshuffle
 libxs_unshuffle2
+libxs_utf8_decode
+libxs_utf8_size

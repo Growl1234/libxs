@@ -3,7 +3,8 @@
 Header: `libxs_str.h`
 
 Case-insensitive string search, edit distance, word-level
-matching and difference, similarity scoring, and value formatting.
+matching and difference, similarity scoring, UTF-8 code point
+iteration, and value formatting.
 
 ## Substring Search
 
@@ -139,6 +140,46 @@ comma). Leading and trailing whitespace within each token is
 trimmed. Returns a pointer into `str` at the token start, or
 NULL if `index` is out of range. Optional `length` receives the
 trimmed token length.
+
+## UTF-8 Code Points
+
+```C
+size_t libxs_utf8_size(const unsigned char text[], size_t size,
+  size_t pos);
+unsigned long libxs_utf8_decode(const unsigned char text[],
+  size_t size, int* width);
+```
+
+Two entry points because the right answer for malformed input
+depends on the question being asked.
+
+`libxs_utf8_size` is **lenient**: it reports the width the lead
+byte at `text[pos]` claims, clamped to the bytes that remain, and
+never less than 1 so a scan always advances. It does not inspect
+continuation bytes. Use it to walk text a code point at a time.
+
+`libxs_utf8_decode` is **strict**: it returns the code point and
+writes the bytes consumed to `width` (may be NULL). A sequence
+that is truncated, or whose continuation bytes are not
+continuation bytes, yields the **lead byte** as the value and a
+width of 1. Use it when the code point value is wanted.
+
+On well-formed text the two agree, and a scan by either covers the
+string exactly once. They diverge only on malformed input, where
+the lenient form skips the claimed span and the strict form skips
+one byte:
+
+| Input        | `utf8_size` | `utf8_decode`     |
+|--------------|-------------|-------------------|
+| `41`         | 1           | U+0041, width 1   |
+| `C3 A4`      | 2           | U+00E4, width 2   |
+| `E2 80 99`   | 3           | U+2019, width 3   |
+| `C3 78`      | 2           | U+00C3, width 1   |
+| `C3` (alone) | 1 (clamped) | U+00C3, width 1   |
+
+The strict rule exists because a caller that tests a property of
+the value -- is this a vowel, is this punctuation -- must not be
+handed a code point assembled from bytes that do not belong to it.
 
 ## Value Formatting
 

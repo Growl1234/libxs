@@ -307,6 +307,62 @@ LIBXS_API int libxs_stridiff(const char a[], const char b[],
 }
 
 
+LIBXS_API size_t libxs_utf8_size(const unsigned char text[], size_t size,
+  size_t pos)
+{
+  size_t result = 1;
+  if (NULL != text && pos < size) {
+    const unsigned char lead = text[pos];
+    if (0xC0u <= lead && lead < 0xE0u) result = 2;
+    else if (0xE0u <= lead && lead < 0xF0u) result = 3;
+    else if (0xF0u <= lead && lead < 0xF8u) result = 4;
+    if (size - pos < result) result = size - pos;
+  }
+  return result;
+}
+
+
+LIBXS_API unsigned long libxs_utf8_decode(const unsigned char text[],
+  size_t size, int* width)
+{
+  unsigned long result = 0;
+  int span = 1;
+  if (NULL != text && 0 < size) {
+    result = text[0];
+    if (0 == (text[0] & 0x80u)) {
+      span = 1;
+    }
+    else if (0xC0u == (text[0] & 0xE0u) && 1 < size
+      && 0x80u == (text[1] & 0xC0u))
+    {
+      result = ((unsigned long)(text[0] & 0x1Fu) << 6)
+        | (unsigned long)(text[1] & 0x3Fu);
+      span = 2;
+    }
+    else if (0xE0u == (text[0] & 0xF0u) && 2 < size
+      && 0x80u == (text[1] & 0xC0u) && 0x80u == (text[2] & 0xC0u))
+    {
+      result = ((unsigned long)(text[0] & 0x0Fu) << 12)
+        | ((unsigned long)(text[1] & 0x3Fu) << 6)
+        | (unsigned long)(text[2] & 0x3Fu);
+      span = 3;
+    }
+    else if (0xF0u == (text[0] & 0xF8u) && 3 < size
+      && 0x80u == (text[1] & 0xC0u) && 0x80u == (text[2] & 0xC0u)
+      && 0x80u == (text[3] & 0xC0u))
+    {
+      result = ((unsigned long)(text[0] & 0x07u) << 18)
+        | ((unsigned long)(text[1] & 0x3Fu) << 12)
+        | ((unsigned long)(text[2] & 0x3Fu) << 6)
+        | (unsigned long)(text[3] & 0x3Fu);
+      span = 4;
+    }
+  }
+  if (NULL != width) *width = span;
+  return result;
+}
+
+
 LIBXS_API size_t libxs_format_value(char buffer[],
   int buffer_size, size_t nbytes, const char scale[], const char* unit, int base)
 {

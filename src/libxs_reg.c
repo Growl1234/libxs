@@ -9,8 +9,6 @@
 ******************************************************************************/
 #include <libxs/libxs_reg.h>
 #include <libxs/libxs_mem.h>
-#include <stdlib.h>
-#include <string.h>
 
 #if !defined(LIBXS_LOCK)
 # define LIBXS_LOCK LIBXS_LOCK_DEFAULT

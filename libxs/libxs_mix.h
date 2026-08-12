@@ -10,11 +10,6 @@
 #ifndef LIBXS_MIX_H
 #define LIBXS_MIX_H
 
-/**
- * Only the macro layer: a header that pulls in a module which itself defers
- * libxs_source.h would have the implementation included before this file has
- * declared libxs_mix_t, and the header-only build would not compile.
- */
 #include "libxs_macros.h"
 
 /**
