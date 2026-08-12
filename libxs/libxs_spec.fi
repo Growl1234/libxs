@@ -72,6 +72,7 @@
         PUBLIC :: libxs_gemm_backend_t
         PUBLIC :: libxs_gemm_shape_t, libxs_gemm_config_t
         PUBLIC :: LIBXS_GEMM_FLAGS_DEFAULT, LIBXS_GEMM_FLAG_NOLOCK
+        PUBLIC :: LIBXS_GEMM_FLAG_OWNJIT
         PUBLIC :: libxs_gemm_call
         PUBLIC :: libxs_gemm_release
         PUBLIC :: libxs_gemm_batch, libxs_gemm_batch_task
@@ -136,9 +137,11 @@
      &    LIBXS_DATATYPE_UNKNOWN = 12
 
         !> GEMM batch flags (bitfield).
+        !> LIBXS_GEMM_FLAG_OWNJIT marks the config owning the JIT handle.
         INTEGER(C_INT), PARAMETER ::                                    &
      &    LIBXS_GEMM_FLAGS_DEFAULT = 0,                                 &
-     &    LIBXS_GEMM_FLAG_NOLOCK   = 1
+     &    LIBXS_GEMM_FLAG_NOLOCK   = 1,                                 &
+     &    LIBXS_GEMM_FLAG_OWNJIT   = 2
 
         !> Target architectures and ISA extensions.
         INTEGER(C_INT), PARAMETER ::                                    &

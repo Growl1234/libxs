@@ -48,7 +48,7 @@ int main(int argc, char* argv[])
   double *a_data = NULL, *b_data = NULL, *c_data = NULL;
   const void **a_ptrs = NULL, **b_ptrs = NULL;
   void **c_ptrs = NULL;
-  libxs_gemm_config_t config;
+  libxs_gemm_config_t config, *cfg;
   libxs_matdiff_t check_diff;
   double duration = 0;
   libxs_timer_tick_t t0, t1;
@@ -103,7 +103,7 @@ int main(int argc, char* argv[])
   }
 
   /* configure locking: enable locks when duplicates exist */
-  { libxs_gemm_config_t* cfg = libxs_gemm_dispatch(
+  { cfg = libxs_gemm_dispatch(
       LIBXS_DATATYPE(double), 'N', 'N', m, n, k, lda, ldb, ldc,
       &alpha, &beta, NULL);
     if (NULL != cfg) {
@@ -173,7 +173,7 @@ int main(int argc, char* argv[])
     printf("checksum=%.6e\n", check_diff.l1_ref + check_diff.l1_tst);
   }
 
-  libxs_gemm_release(&config);
+  libxs_gemm_release(cfg); /* registry-owned config */
   free(a_data); free(b_data); free(c_data);
   free(a_ptrs); free(b_ptrs); free(c_ptrs);
   libxs_finalize();

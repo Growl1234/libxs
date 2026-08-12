@@ -31,6 +31,7 @@ int main(int argc, char* argv[])
   int batchsize[MAX_GROUPS];
   double alpha_array[MAX_GROUPS], beta_array[MAX_GROUPS];
   libxs_gemm_config_t configs[MAX_GROUPS];
+  libxs_gemm_config_t* cfgs[MAX_GROUPS];
   const void **a_ptrs = NULL, **b_ptrs = NULL;
   void **c_ptrs = NULL;
   double *storage = NULL;
@@ -56,10 +57,11 @@ int main(int argc, char* argv[])
     total_gflops += 2.0 * dim * dim * dim * batch_per_group * 1E-9;
 
     /* dispatch a JIT kernel per group (each group has its own shape) */
-    { libxs_gemm_config_t* cfg = libxs_gemm_dispatch(
+    { libxs_gemm_config_t *const cfg = libxs_gemm_dispatch(
         LIBXS_DATATYPE(double), 'N', 'N', dim, dim, dim,
         lda_array[g], ldb_array[g], ldc_array[g],
         alpha_array + g, beta_array + g, NULL);
+      cfgs[g] = cfg;
       if (NULL != cfg) {
         configs[g] = *cfg;
         printf("  group %d: JIT kernel dispatched (M=%d)\n", g, dim);
@@ -177,7 +179,8 @@ int main(int argc, char* argv[])
     printf("checksum=%.6e\n", check_diff.l1_ref + check_diff.l1_tst);
   }
 
-  for (g = 0; g < ng; ++g) libxs_gemm_release(configs + g);
+  /* registry-owned configs: releasing an alias is a no-op */
+  for (g = 0; g < ng; ++g) libxs_gemm_release(cfgs[g]);
   free(a_ptrs); free(b_ptrs); free(c_ptrs); free(storage);
   libxs_finalize();
   return result;

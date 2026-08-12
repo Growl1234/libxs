@@ -28,6 +28,7 @@ static int jit_create_sgemm_calls;
 static int jit_get_sgemm_calls;
 static int jit_call_calls;
 static int xgemm_call_calls;
+static int jit_create_handle_calls;
 static void* jit_call_jitter;
 static int jit_handle;
 
@@ -106,6 +107,27 @@ static void* test_jit_get_sgemm(void* jitter)
   LIBXS_UNUSED(jitter);
   ++jit_get_sgemm_calls;
   return test_vptr((void (*)(void))test_sgemm_jit);
+}
+
+
+static int test_jit_create_handle(void** jitter,
+  int layout, int transa, int transb, int m, int n, int k,
+  double alpha, int lda, int ldb, double beta, int ldc)
+{
+  LIBXS_UNUSED(layout); LIBXS_UNUSED(transa); LIBXS_UNUSED(transb);
+  LIBXS_UNUSED(m); LIBXS_UNUSED(n); LIBXS_UNUSED(k);
+  LIBXS_UNUSED(alpha); LIBXS_UNUSED(lda); LIBXS_UNUSED(ldb);
+  LIBXS_UNUSED(beta); LIBXS_UNUSED(ldc);
+  *jitter = &jit_handle;
+  ++jit_create_handle_calls;
+  return 0; /* MKL_JIT_SUCCESS */
+}
+
+
+static void* test_jit_get_handle(void* jitter)
+{
+  LIBXS_UNUSED(jitter);
+  return test_vptr((void (*)(void))test_dgemm_jit);
 }
 
 
@@ -215,10 +237,86 @@ static int test_complete_jit_config(void)
 }
 
 
+static int test_double_dispatch(void)
+{
+  libxs_gemm_backend_t backend;
+  libxs_gemm_shape_t shape, kshape;
+  libxs_gemm_config_t *config, *kernel;
+  libxs_registry_t* registry;
+  int i;
+
+  LIBXS_MEMZERO(&backend);
+  backend.jit_create_dgemm = test_jit_create_handle;
+  backend.jit_get_dgemm = test_jit_get_handle;
+
+  registry = libxs_registry_create();
+  TEST_CHECK(NULL != registry);
+  LIBXS_MEMZERO(&shape);
+  shape.datatype = LIBXS_DATATYPE_F64;
+  shape.transa = 'N'; shape.transb = 'T';
+  shape.m = 8; shape.n = 8; shape.k = 8;
+  shape.lda = 16; shape.ldb = 16; shape.ldc = 16;
+  shape.alpha = 1.0; shape.beta = 0.0;
+  kshape = shape;
+  kshape.ldc = 8; kshape.beta = 1.0;
+  config = NULL;
+  for (i = 0; i < TEST_MAXWARMUP && 0 == jit_create_handle_calls; ++i) {
+    config = libxs_gemm_dispatch_rt(&shape, &kshape, &backend, registry);
+  }
+  /* a kernel is generated even though warm-up registered the shape first */
+  TEST_CHECK(1 == jit_create_handle_calls);
+  TEST_CHECK(NULL != config);
+  TEST_CHECK(NULL != config->dgemm_jit);
+  TEST_CHECK(&jit_handle == config->jitter);
+  kernel = (libxs_gemm_config_t*)libxs_registry_get(
+    registry, &kshape, sizeof(kshape), NULL);
+  TEST_CHECK(NULL != kernel);
+  TEST_CHECK(config->jitter == kernel->jitter);
+  /* exactly one config owns the handle, hence it is released once */
+  TEST_CHECK(0 != (LIBXS_GEMM_FLAG_OWNJIT & kernel->flags));
+  TEST_CHECK(0 == (LIBXS_GEMM_FLAG_OWNJIT & config->flags));
+  libxs_gemm_release(config); /* alias: must not release the handle */
+  TEST_CHECK(&jit_handle == kernel->jitter);
+  TEST_CHECK(0 != (LIBXS_GEMM_FLAG_OWNJIT & kernel->flags));
+
+  /* the mock handle must not reach the JIT-provider's destructor */
+  kernel->jitter = NULL;
+  kernel->flags = LIBXS_GEMM_FLAGS_DEFAULT;
+  libxs_gemm_release_registry(registry);
+  return EXIT_SUCCESS;
+}
+
+
+static int test_release_ownership(void)
+{
+  libxs_gemm_config_t config;
+
+  LIBXS_MEMZERO(&config);
+  config.dgemm_jit = test_dgemm_jit;
+  config.jitter = &jit_handle;
+  libxs_gemm_release(&config); /* not owned: nothing is released */
+  TEST_CHECK(test_dgemm_jit == config.dgemm_jit);
+  TEST_CHECK(&jit_handle == config.jitter);
+
+  LIBXS_MEMZERO(&config);
+  config.dgemm_jit = test_dgemm_jit;
+  config.flags = LIBXS_GEMM_FLAG_OWNJIT; /* owned, but no handle */
+  libxs_gemm_release(&config);
+#if defined(mkl_jit_create_dgemm)
+  TEST_CHECK(NULL == config.dgemm_jit);
+  TEST_CHECK(0 == (LIBXS_GEMM_FLAG_OWNJIT & config.flags));
+#endif
+
+  return EXIT_SUCCESS;
+}
+
+
 int main(void)
 {
   int result = test_missing_jit_handle();
   if (EXIT_SUCCESS == result) result = test_incomplete_jit_config();
   if (EXIT_SUCCESS == result) result = test_complete_jit_config();
+  if (EXIT_SUCCESS == result) result = test_double_dispatch();
+  if (EXIT_SUCCESS == result) result = test_release_ownership();
   return result;
 }

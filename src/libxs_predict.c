@@ -1284,7 +1284,6 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_apply(
       LIBXS_DATATYPE_F64, 'N', 'N', m, 1, m, m, m, m,
       &alpha, &beta, NULL);
     libxs_gemm_call(gemm, model->decompose_mat, raw, out);
-    libxs_gemm_release(gemm);
   }
   else {
     memcpy(out, raw, (size_t)m * sizeof(double));
@@ -1302,7 +1301,6 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_inverse(
       LIBXS_DATATYPE_F64, 'T', 'N', m, 1, m, m, m, m,
       &alpha, &beta, NULL);
     libxs_gemm_call(gemm, model->decompose_mat, modes, raw);
-    libxs_gemm_release(gemm);
   }
   else {
     memcpy(raw, modes, (size_t)m * sizeof(double));
@@ -1523,7 +1521,6 @@ LIBXS_API_INLINE void internal_libxs_predict_pca_build(libxs_predict_t* model)
                 (size_t)m * sizeof(double));
             }
             libxs_gemm_call(gemm, model->decompose_mat, xmat, ymat);
-            libxs_gemm_release(gemm);
           }
           for (i = 0; i < p; ++i) {
             memcpy(model->entries[i].inputs, ymat + (size_t)i * m,

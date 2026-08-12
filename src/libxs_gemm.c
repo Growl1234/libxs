@@ -457,7 +457,7 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
       }
     }
     if (NULL == result && NULL != reg) {
-      const int jit_allowed = (0 >= internal_libxs_gemm_jit_warmup
+      const int jit_allowed = (1 >= internal_libxs_gemm_jit_warmup
         || NULL != libxs_registry_get((const libxs_registry_t*)reg,
             shape, sizeof(*shape), libxs_registry_lock(reg)));
       const libxs_gemm_config_t* kernel = NULL;
@@ -466,9 +466,16 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
       config.warmup = (0 != jit_allowed)
         ? internal_libxs_gemm_jit_warmup : 1;
       if (0 != memcmp(shape, kernel_shape, sizeof(*shape))) {
-        kernel = (const libxs_gemm_config_t*)libxs_registry_get(
-          (const libxs_registry_t*)reg,
-          kernel_shape, sizeof(*kernel_shape), libxs_registry_lock(reg));
+        const libxs_gemm_config_t *const cached =
+          (const libxs_gemm_config_t*)libxs_registry_get(
+            (const libxs_registry_t*)reg,
+            kernel_shape, sizeof(*kernel_shape), libxs_registry_lock(reg));
+        /* a warm-up entry carries no kernel, hence it is not reused */
+        if (NULL != cached && (NULL != cached->dgemm_jit
+          || NULL != cached->sgemm_jit || NULL != cached->xgemm))
+        {
+          kernel = cached;
+        }
       }
       config.shape = *shape;
       if (NULL != kernel) {
@@ -526,6 +533,8 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
             void* fn = jgd(jitter);
             if (NULL != fn) LIBXS_FPTR_FROM_VPTR(libxs_gemm_djit_t, config.dgemm_jit, fn);
             config.jitter = jitter;
+            config.flags = (libxs_gemm_flags_t)
+              (config.flags | LIBXS_GEMM_FLAG_OWNJIT);
           }
         }
         else if (0 != use_jit && 0 != use_kernel
@@ -542,6 +551,8 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
             void* fn = jgs(jitter);
             if (NULL != fn) LIBXS_FPTR_FROM_VPTR(libxs_gemm_sjit_t, config.sgemm_jit, fn);
             config.jitter = jitter;
+            config.flags = (libxs_gemm_flags_t)
+              (config.flags | LIBXS_GEMM_FLAG_OWNJIT);
           }
         }
         if (NULL == config.dgemm_jit && NULL == config.sgemm_jit
@@ -582,7 +593,10 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
           config.dgemm_blas = internal_libxs_dgemm_default;
           config.sgemm_blas = internal_libxs_sgemm_default;
         }
-        if (0 != memcmp(shape, kernel_shape, sizeof(*shape))) {
+        if (0 != memcmp(shape, kernel_shape, sizeof(*shape))
+          && (NULL != config.dgemm_jit || NULL != config.sgemm_jit
+            || NULL != config.xgemm))
+        {
           libxs_gemm_config_t kconfig;
           LIBXS_MEMZERO(&kconfig);
           kconfig.shape = *kernel_shape;
@@ -590,10 +604,16 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
           kconfig.sgemm_jit = config.sgemm_jit;
           kconfig.xgemm = config.xgemm;
           kconfig.jitter = config.jitter;
+          kconfig.flags = config.flags;
           kconfig.dgemm_blas = config.dgemm_blas;
           kconfig.sgemm_blas = config.sgemm_blas;
-          libxs_registry_set(reg, kernel_shape, sizeof(*kernel_shape),
-            &kconfig, sizeof(kconfig), libxs_registry_lock(reg));
+          /* the kernel entry owns the handle shared with this config */
+          if (NULL != libxs_registry_set(reg, kernel_shape, sizeof(*kernel_shape),
+            &kconfig, sizeof(kconfig), libxs_registry_lock(reg)))
+          {
+            config.flags = (libxs_gemm_flags_t)
+              (config.flags & ~LIBXS_GEMM_FLAG_OWNJIT);
+          }
         }
       }
       result = (libxs_gemm_config_t*)libxs_registry_set(

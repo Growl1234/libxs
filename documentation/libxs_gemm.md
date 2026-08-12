@@ -168,12 +168,17 @@ The caller must ensure config is non-NULL (dispatch succeeded).
 ## Release
 
 ```C
-void libxs_gemm_release(const libxs_gemm_config_t* config);
+void libxs_gemm_release(libxs_gemm_config_t* config);
 ```
 
-Release resources (e.g., MKL jitter handle) held by config.
-In debug builds (NDEBUG not defined), zeros the config to
-poison use-after-release.
+Release resources (e.g., MKL jitter handle) held by config, and
+clear the JIT kernel such that config falls back to XGEMM/BLAS.
+A handle can be shared by several configs (double dispatch), hence
+only the owning config (LIBXS_GEMM_FLAG_OWNJIT, set by dispatch)
+releases it and a handle is released exactly once. A dispatched
+config is owned by the registry, i.e., releasing it affects every
+user of that registry: release at teardown, or rely on
+libxs_gemm_release_registry.
 
 ```C
 void libxs_gemm_release_registry(libxs_registry_t* registry);
@@ -331,8 +336,8 @@ kernel call (MKL JIT or LIBXSMM when available).
                            attempted. Shapes called fewer than N
                            times use the BLAS fallback; only shapes
                            with proven reuse pay the JIT compile
-                           cost. Set to 0 to compile immediately
-                           on first miss (default: 8).
+                           cost. Set to 0 or 1 to compile
+                           immediately on first miss (default: 8).
     LIBXS_GEMM_PRINT=N    Print dispatch info every N-th call
                            to stderr (requires compile-time gate).
     LIBXS_SYRK_PRINT=N    Print DSYRK/DSYR2K BLAS fallback calls

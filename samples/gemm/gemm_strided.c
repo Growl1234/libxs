@@ -31,7 +31,7 @@ int main(int argc, char* argv[])
   const int stride_a = lda * k, stride_b = ldb * n, stride_c = ldc * n;
   const double gflops_per_op = 2.0 * m * n * k * 1E-9;
   double *a = NULL, *b = NULL, *c = NULL;
-  libxs_gemm_config_t config;
+  libxs_gemm_config_t config, *cfg;
   libxs_matdiff_t check_diff;
   double duration = 0;
   libxs_timer_tick_t t0, t1;
@@ -54,7 +54,7 @@ int main(int argc, char* argv[])
   LIBXS_MATRNG(int, double, 0, b, k, (size_t)n * batchsize, ldb, 1.0);
   LIBXS_MATRNG(int, double, 0, c, m, (size_t)n * batchsize, ldc, 1.0);
 
-  { libxs_gemm_config_t* cfg = libxs_gemm_dispatch(
+  { cfg = libxs_gemm_dispatch(
       LIBXS_DATATYPE(double), 'N', 'N', m, n, k, lda, ldb, ldc,
       &alpha, &beta, NULL);
     if (NULL != cfg) {
@@ -121,7 +121,7 @@ int main(int argc, char* argv[])
     printf("checksum=%.6e\n", check_diff.l1_ref + check_diff.l1_tst);
   }
 
-  libxs_gemm_release(&config);
+  libxs_gemm_release(cfg); /* registry-owned config */
   free(a); free(b); free(c);
   libxs_finalize();
   return result;

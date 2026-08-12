@@ -1253,6 +1253,10 @@ ifneq (0,$(INTEL))
   endif
   CXXFLAGS += -Wall -diag-disable 1879,3415,3948,10006,10010,10411,10441,11074,11076,13003,13379
   CFLAGS += -Wall -diag-disable 1879,3415,3948,10006,10010,10411,10441,11074,11076,13003,13379
+  ifneq (0,$(ICX)) # SIMD hints the optimizer cannot always satisfy
+    CXXFLAGS += -Wno-pass-failed
+    CFLAGS += -Wno-pass-failed
+  endif
   ifneq (0,$(UNUSED))
     CXXFLAGS += -Wno-unused-function
     CFLAGS += -Wno-unused-function
@@ -1307,9 +1311,6 @@ ifneq (0,$(INTEL))
       ifeq (,$(filter-out 0,$(FORCE_CXX)))
         CSTD := -std=c89
       endif
-    else ifneq (0,$(ICX))
-      CXXFLAGS += -Wno-pass-failed
-      CFLAGS += -Wno-pass-failed
     endif
     ifeq (,$(strip $(GFC)))
       FCFLAGS += $(FFORM_FLAG)
@@ -1321,7 +1322,7 @@ ifneq (0,$(INTEL))
   ifeq (,$(strip $(GFC)))
     # flag specifying output directory must be last
     FMFLAGS += -module
-  else ifeq (0,$(ICX))
+  else # GNU Fortran, e.g., combined with an Intel C compiler
     FMFLAGS += -J
   endif
   # avoid turning OpenMP limits into an error (-Werror)

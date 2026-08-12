@@ -120,10 +120,15 @@ typedef struct libxs_gemm_backend_t {
   libxs_gemm_sblas_t sgemm_blas;
 } libxs_gemm_backend_t;
 
-/** Flags controlling GEMM batch synchronization (bitfield). */
+/**
+ * Flags controlling GEMM batch synchronization (bitfield).
+ * LIBXS_GEMM_FLAG_OWNJIT is set by dispatch and marks the single
+ * config owning config->jitter (other configs alias the handle).
+ */
 typedef enum libxs_gemm_flags_t {
   LIBXS_GEMM_FLAGS_DEFAULT = 0,
-  LIBXS_GEMM_FLAG_NOLOCK = 1
+  LIBXS_GEMM_FLAG_NOLOCK = 1,
+  LIBXS_GEMM_FLAG_OWNJIT = 2
 } libxs_gemm_flags_t;
 
 /**
@@ -353,16 +358,29 @@ LIBXS_API_INLINE void libxs_gemm_call(
 
 /**
  * Release resources acquired by libxs_gemm_dispatch (e.g., MKL jitter).
- * Safe to call even if dispatch was not used or returned zero.
+ * Only the owning config (LIBXS_GEMM_FLAG_OWNJIT) releases the handle,
+ * hence aliasing configs are left alone and a handle is released once.
+ * The JIT kernel is cleared, i.e., the config falls back to XGEMM/BLAS.
+ * A dispatched config is owned by the registry and shared with all users
+ * of that registry, hence release it at teardown (or rely on
+ * libxs_gemm_release_registry). Safe to call even if dispatch was not
+ * used or returned zero.
  */
-LIBXS_API_INLINE void libxs_gemm_release(const libxs_gemm_config_t* config) {
-  if (NULL != config) {
+LIBXS_API_INLINE void libxs_gemm_release(libxs_gemm_config_t* config) {
 #if defined(mkl_jit_create_dgemm)
+  if (NULL != config && 0 != (LIBXS_GEMM_FLAG_OWNJIT & config->flags)) {
     if (NULL != config->jitter) {
       mkl_jit_destroy(config->jitter);
     }
-#endif
+    config->dgemm_jit = NULL;
+    config->sgemm_jit = NULL;
+    config->jitter = NULL;
+    config->flags = (libxs_gemm_flags_t)
+      (config->flags & ~LIBXS_GEMM_FLAG_OWNJIT);
   }
+#else
+  LIBXS_UNUSED(config);
+#endif
 }
 
 /**
