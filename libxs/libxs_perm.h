@@ -218,6 +218,33 @@ LIBXS_API int libxs_kdtree_nearest(
   const double* pts, const int* idx, const unsigned char* used,
   int n, int ndims, int stride, const double* query, double max_dist2);
 
+/**
+ * Find the k nearest points to query[0..ndims-1] within squared Euclidean
+ * distance max_dist2. Writes point indices to out_idx and their squared
+ * distances to out_dist2, both SORTED ASCENDING by distance, and returns how
+ * many were written (0..k; fewer than k when n or max_dist2 bounds it).
+ * The used array (may be NULL) marks points to skip (non-zero = skip).
+ *
+ * The result is EXACT: the same k points a linear scan would pick, in the same
+ * order. The tree only avoids visiting subtrees that cannot contain a closer
+ * point, so this replaces a scan without changing what the scan would answer --
+ * the distinction that matters when the neighbours feed an estimate rather than
+ * only a ranking.
+ *
+ * A kd-tree stops paying as dimension rises: it beats a scan while n is large
+ * against 2^ndims, and degenerates toward visiting every node beyond roughly ten
+ * dimensions. Prefer a scan there rather than paying for the tree as well.
+ *
+ * Requires a tree built by libxs_kdtree_build with config == NULL (or a config
+ * whose split is NULL), because the query recomputes the split dimension as
+ * depth % ndims -- as libxs_kdtree_nearest does. A tree built with a custom
+ * split function does not record its choices and cannot be searched this way.
+ */
+LIBXS_API int libxs_kdtree_knearest(
+  const double* pts, const int* idx, const unsigned char* used,
+  int n, int ndims, int stride, const double* query, double max_dist2,
+  int out_idx[], double out_dist2[], int k);
+
 /** Convenience wrappers for 2D (interleaved x,y layout). */
 LIBXS_API_INLINE void libxs_kdtree2d_build(double* pts, int* idx, int n) {
   libxs_kdtree_build(pts, idx, n, 2, 2, NULL);

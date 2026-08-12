@@ -211,6 +211,33 @@ Find the nearest point to query[0..ndims-1] within squared
 Euclidean distance max_dist2. Returns the point index or -1.
 The used array (may be NULL) marks consumed points.
 
+```C
+int libxs_kdtree_knearest(const double* pts, const int* idx,
+  const unsigned char* used, int n, int ndims, int stride,
+  const double* query, double max_dist2,
+  int out_idx[], double out_dist2[], int k);
+```
+
+Find the k nearest points, writing indices to out_idx and their
+squared distances to out_dist2, both sorted ascending, and
+returning how many were written (0..k; fewer when n or max_dist2
+bounds it).
+
+The result is exact: the same k points a linear scan would pick,
+in the same order. The tree only skips subtrees that cannot hold a
+closer point, so it replaces a scan without changing the answer --
+which matters when the neighbours feed an estimate rather than
+only a ranking.
+
+Both searches require a tree built with `config == NULL` (or a
+config whose `split` is NULL), because the query recomputes the
+split dimension as `depth % ndims`. A tree built with a custom
+split function does not record its choices and cannot be searched.
+
+A kd-tree stops paying as dimension rises: it beats a scan while n
+is large against 2^ndims, and degenerates toward visiting every
+node beyond roughly ten dimensions. Prefer a scan there.
+
 Convenience wrappers for 2D (interleaved x,y layout):
 
 ```C

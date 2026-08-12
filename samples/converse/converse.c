@@ -606,6 +606,16 @@ static long corpus_chain_dropped = 0;
 static double predict_entropy_sum = 0.0;
 static long predict_nscored = 0;
 static int predict_support_last = 0;
+/**
+ * Does the slot's kNN vote contribute anything, or is its value entirely the
+ * learned escape over the frequency prior? The inputs are RAW TOKEN IDS, so
+ * Euclidean distance between them is meaningless and the vote may be reading
+ * noise. info->attested says whether the observed token received any local
+ * evidence at all, which splits the slot's own bits into the part the vote
+ * touched and the part it did not.
+ */
+static long predict_att_n = 0, predict_unatt_n = 0;
+static double predict_att_bits = 0.0, predict_unatt_bits = 0.0;
 static libxs_timer_tick_t converse_stage_tick = 0;
 static bpe_symbol_t* bpe_symbols = NULL;
 static int bpe_nsymbols = 0;
@@ -7600,7 +7610,14 @@ static double ngram_bank_rate(void)
   const char* env = getenv("CONVERSE_NGRAM_BANK_RATE");
   if (NULL != env && '\0' != *env) {
     const double v = atof(env);
-    if (v > 0.0 && v <= 4.0) result = v;
+    /**
+     * Zero is ACCEPTED: it means the weights never move from their uniform
+     * prior, which is the control the learned weighting has to beat and the
+     * only way to read the rate sweep's endpoint. Rejecting it silently
+     * substituted the default, so a run labelled rate 0 was measured at 0.15
+     * and looked like evidence that the rate does not matter.
+     */
+    if (v >= 0.0 && v <= 4.0) result = v;
   }
   return result;
 }
@@ -7807,6 +7824,17 @@ static void ngram_bank_experts(const unsigned int hist[], int hlen,
         predict_entropy_sum += pinfo.entropy;
         predict_support_last = nsupport;
         ++predict_nscored;
+        { const double bits = -log((pinfo.prob[0] > 0.0)
+            ? pinfo.prob[0] : 1e-12) / log(2.0);
+          if (NULL != pinfo.attested && 0 != pinfo.attested[0]) {
+            ++predict_att_n;
+            predict_att_bits += bits;
+          }
+          else {
+            ++predict_unatt_n;
+            predict_unatt_bits += bits;
+          }
+        }
       }
     }
     else {
@@ -10090,6 +10118,15 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   long ntrunc = 0, ntrunc_top1 = 0;
   double trunc_bits = 0.0, trunc_bytes = 0.0;
   double oracle_bits = 0.0;
+  /**
+   * The oracle split by whether the full-order context recurred. Aggregate
+   * calibration gains in this project have consistently come from the attested
+   * side while the novel side stayed put, so a bound that does not separate them
+   * cannot say whether reweighting has anything left to offer where generation
+   * actually fails.
+   */
+  double oracle_deep_bits = 0.0, oracle_shallow_bits = 0.0;
+  long oracle_extra = 0;
   double expert_bits[NGRAM_ORDER_MAX + 1];
   double expert_bytes[NGRAM_ORDER_MAX + 1];
   long oracle_pick[NGRAM_ORDER_MAX + 1];
@@ -10097,6 +10134,14 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   long sel_total[NGRAM_ORDER_MAX + 1];
   long sel_mixed[NGRAM_ORDER_MAX + 1];
   long sel_low[NGRAM_ORDER_MAX + 1];
+  /**
+   * How often the KIND-DIFFERENT slot is the cheapest member, bucketed by the
+   * matched context length the model already reports. The oracle reads the
+   * target, so its 0.188 bits are only reachable if an OBSERVABLE feature
+   * separates those positions: if the share is flat across buckets, no selector
+   * keyed on this feature can find them and the headroom is not reachable.
+   */
+  long sel_extra[NGRAM_ORDER_MAX + 1];
   double sel_bits = 0.0;
   const int sel_order = ngram_select_order();
   double entry_bytes = 0.0;
@@ -10178,6 +10223,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   memset(sel_total, 0, sizeof(sel_total));
   memset(sel_mixed, 0, sizeof(sel_mixed));
   memset(sel_low, 0, sizeof(sel_low));
+  memset(sel_extra, 0, sizeof(sel_extra));
   memset(novel_match, 0, sizeof(novel_match));
   memset(novel_match_bits, 0, sizeof(novel_match_bits));
   memset(novel_match_bytes, 0, sizeof(novel_match_bytes));
@@ -10265,7 +10311,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
             if (0 != oracle) {
               int k;
               double best = bits;
-              int bestk = 0;
+              int bestk = 0, best_extra = 0;
               const double w = (curlen > 0) ? (double)curlen : 1.0;
               for (k = 1; k <= maxorder && k <= hlen; ++k) {
                 double pk = ngramk_prob(model, hist + (hlen - k), k, k, cur);
@@ -10319,10 +10365,32 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
                     bank_slot_bytes[b] += w;
                   }
                 }
+                /**
+                 * Extend the bound to the WHOLE pool, not just the fixed orders.
+                 * Any per-position reweighting can at best put all its mass on
+                 * the cheapest member available at that position, so taking the
+                 * minimum over every active slot -- including the ones that
+                 * differ in kind -- bounds what ANY mixing rule over this
+                 * evidence could reach. Without the extra slots the bound would
+                 * flatter a pool it does not cover.
+                 */
+                for (b = NGRAM_ORDER_MAX + 1; b <= NGRAM_BANK_LAST; ++b) {
+                  if (0 != expert[b].active) {
+                    const double pb = expert[b].probability;
+                    const double bb = -log((pb > 0.0) ? pb : 1e-12) * inv_log2;
+                    if (bb < best) {
+                      best = bb;
+                      best_extra = 1;
+                      ++oracle_extra;
+                    }
+                  }
+                }
                 ngram_bank_update(bank_weight, expert, pooled, bank_rate,
                   bank_share);
               }
               oracle_bits += best;
+              if (0 != deep) oracle_deep_bits += best;
+              else oracle_shallow_bits += best;
               /* bestk==0 means no single-order expert beat the mixture. */
               if (0 == bestk) ++oracle_mixed;
               else ++oracle_pick[bestk];
@@ -10339,6 +10407,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
               { const int mm = (matched < 0) ? 0
                   : ((matched > NGRAM_ORDER_MAX) ? NGRAM_ORDER_MAX : matched);
                 ++sel_total[mm];
+                if (0 != best_extra) ++sel_extra[mm];
                 if (0 == bestk) ++sel_mixed[mm];
                 else if (1 == bestk) ++sel_low[mm];
                 /**
@@ -10493,6 +10562,18 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
       fprintf(stderr, " | ORACLE=%.3f (mixed=%.3f)\n",
         (sum_bytes > 0.0) ? oracle_bits / sum_bytes : 0.0,
         (sum_bytes > 0.0) ? sum_bits / sum_bytes : 0.0);
+      /**
+       * The bound where it matters. A mechanism that only improves the attested
+       * side cannot help generation on unseen material, and the novel column is
+       * what any reweighting of this evidence could reach there.
+       */
+      fprintf(stderr, "  ORACLE split: attested=%.3f (of %.3f) |"
+        " novel=%.3f (of %.3f) | extra-slot wins=%ld\n",
+        (deep_bytes > 0.0) ? oracle_deep_bits / deep_bytes : 0.0,
+        (deep_bytes > 0.0) ? deep_bits / deep_bytes : 0.0,
+        (shallow_bytes > 0.0) ? oracle_shallow_bits / shallow_bytes : 0.0,
+        (shallow_bytes > 0.0) ? shallow_bits / shallow_bytes : 0.0,
+        oracle_extra);
       fprintf(stderr, "  oracle picks:");
       for (k = 1; k <= NGRAM_ORDER_MAX; ++k) {
         if (oracle_pick[k] > 0) {
@@ -10508,6 +10589,22 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
           fprintf(stderr, " m%d=%.0f/%.0f", k,
             100.0 * (double)sel_low[k] / (double)sel_total[k],
             100.0 * (double)sel_mixed[k] / (double)sel_total[k]);
+        }
+      }
+      /**
+       * The reachability test for the oracle's remaining headroom. A share that
+       * varies across buckets is a selector waiting to be written; a flat share
+       * means this feature cannot tell those positions apart and the headroom
+       * stays with the oracle.
+       */
+      if (0 < oracle_extra) {
+        fprintf(stderr, "\n  kind-different slot cheapest, by matched context:");
+        for (k = 0; k <= NGRAM_ORDER_MAX; ++k) {
+          if (sel_total[k] > 0) {
+            fprintf(stderr, " m%d=%.0f%%(n=%ld)", k,
+              100.0 * (double)sel_extra[k] / (double)sel_total[k],
+              sel_total[k]);
+          }
         }
       }
       if (0 != bank && bank_n > 0) {
@@ -10551,6 +10648,23 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
               " escape entropy=%.3f%s", predict_support_last, bank_vocab,
               predict_nscored, ent,
               (ent > NGRAM_PREDICT_ENTROPY_MAX) ? " (UNSETTLED)" : "");
+          }
+          /**
+           * How much of the slot is the kNN vote. Bits are per position, not per
+           * byte, so they compare only with each other -- the question is
+           * whether the positions the vote reached are cheaper than the rest and
+           * how many there are.
+           */
+          if (0 < predict_att_n + predict_unatt_n) {
+            const long tot = predict_att_n + predict_unatt_n;
+            fprintf(stderr, "\n  predict slot local evidence: attested %.1f%%"
+              " (%.3f bits/pos) | none %.1f%% (%.3f bits/pos)",
+              100.0 * (double)predict_att_n / (double)tot,
+              (0 < predict_att_n)
+                ? predict_att_bits / (double)predict_att_n : 0.0,
+              100.0 * (double)predict_unatt_n / (double)tot,
+              (0 < predict_unatt_n)
+                ? predict_unatt_bits / (double)predict_unatt_n : 0.0);
           }
         }
         fprintf(stderr, "\n  bank slots standalone (bpc where active):");

@@ -102,6 +102,7 @@ libxs_itrans_batch
 libxs_itrans_task
 libxs_kahan_sum
 libxs_kdtree_build
+libxs_kdtree_knearest
 libxs_kdtree_nearest
 libxs_kdtree_partition
 libxs_lcm

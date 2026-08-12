@@ -76,6 +76,21 @@
 #define LIBXS_PREDICT_ESCAPE_ETA 0.5
 #define LIBXS_PREDICT_ESCAPE_SHARE 0.01
 #define LIBXS_PREDICT_ESCAPE_RELMIN 1e-12
+/**
+ * Half-width of the window internal_libxs_predict_local_error reads around a
+ * position to estimate how much the output varies there. The buffer it fills is
+ * 2*R+1 wide, so the two must move together -- they were the same constant
+ * written twice, which is a way for one to be changed and the other not.
+ *
+ * The value is not derived from anything: it is neither tied to the neighbor
+ * count nor to the cluster size beyond the tiny-cluster clamp. Points adjacent
+ * in this order are adjacent in space (the entries are Hilbert-sorted), so a
+ * wider window reaches further spatially -- but a Hilbert curve leaves a
+ * subsquare from time to time, and across such a break adjacency in the order
+ * stops implying adjacency in space. A width chosen against that structure
+ * would be a change in behaviour and wants its own measurement.
+ */
+#define LIBXS_PREDICT_LOCAL_RADIUS 4
 
 
 typedef struct internal_libxs_predict_entry_t {
@@ -388,13 +403,13 @@ LIBXS_API_INLINE double internal_libxs_predict_local_error(
 {
   double result = cl->errors[output_j];
   const int nc = cl->nentries;
-  const int radius = LIBXS_MIN(4, nc / 2);
+  const int radius = LIBXS_MIN(LIBXS_PREDICT_LOCAL_RADIUS, nc / 2);
   if (radius >= 2 && NULL != model->entries && NULL != cl->sorted_idx) {
     const int lo = LIBXS_MAX(pos - radius, 0);
     const int hi = LIBXS_MIN(pos + radius, nc - 1);
     const int len = hi - lo + 1;
     if (len >= 3) {
-      double local[9];
+      double local[2 * LIBXS_PREDICT_LOCAL_RADIUS + 1];
       libxs_fprint_t fp;
       const size_t shape = (size_t)len;
       int k;

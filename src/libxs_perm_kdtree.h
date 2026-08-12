@@ -146,9 +146,23 @@ LIBXS_API_INLINE void internal_libxs_kdtree_build(
           else break;
         }
       }
+      /**
+       * idx[mid] is the PIVOT and belongs to neither subtree, exactly as the
+       * two-dimensional specialization above splits and as the query traversals
+       * assume when they read the split value from idx[mid] and descend
+       * [lo,mid) and [mid+1,hi).
+       *
+       * Recursing into [mid,hi) instead put the pivot in the right subtree, so
+       * every deeper node of that subtree sat at a different position than a
+       * query computes for [mid+1,hi). The searches then pruned against split
+       * values belonging to other nodes and discarded regions that held closer
+       * points: libxs_kdtree_nearest returned a non-nearest point on 6 of 20
+       * random three-dimensional queries. The 2-D path was unaffected, which is
+       * why the callers in libxs_math (all two-dimensional) never saw it.
+       */
       internal_libxs_kdtree_build(pts, idx, lo, mid,
         ndims, stride, min_leaf, split_fn, split_ctx, depth + 1);
-      internal_libxs_kdtree_build(pts, idx, mid, hi,
+      internal_libxs_kdtree_build(pts, idx, mid + 1, hi,
         ndims, stride, min_leaf, split_fn, split_ctx, depth + 1);
     }
   }
@@ -315,3 +329,99 @@ LIBXS_API int libxs_kdtree_nearest(
 }
 
 
+
+
+LIBXS_EXTERN_C typedef struct internal_libxs_kdtree_knn_ctx_t {
+  const double* pts;
+  const int* idx;
+  const unsigned char* used;
+  const double* query;
+  int* out_idx;
+  double* out_dist2;
+  double max_dist2;
+  int ndims, stride, k, count;
+} internal_libxs_kdtree_knn_ctx_t;
+
+
+/**
+ * Offer one point to the running k-best set, which is kept sorted ascending so
+ * the worst member is always last and the caller receives an ordered result
+ * without a second pass.  k is small in practice, so an insertion costs less
+ * than maintaining a heap.
+ */
+LIBXS_API_INLINE void internal_libxs_kdtree_knn_add(
+  internal_libxs_kdtree_knn_ctx_t* ctx, int pi)
+{
+  double d2 = 0;
+  int dd;
+  for (dd = 0; dd < ctx->ndims; ++dd) {
+    const double d = ctx->pts[(size_t)pi * ctx->stride + dd] - ctx->query[dd];
+    d2 += d * d;
+  }
+  if (d2 <= ctx->max_dist2
+    && (ctx->count < ctx->k || d2 < ctx->out_dist2[ctx->count - 1]))
+  {
+    int at = (ctx->count < ctx->k) ? ctx->count++ : (ctx->k - 1);
+    while (0 < at && ctx->out_dist2[at - 1] > d2) {
+      ctx->out_dist2[at] = ctx->out_dist2[at - 1];
+      ctx->out_idx[at] = ctx->out_idx[at - 1];
+      --at;
+    }
+    ctx->out_dist2[at] = d2;
+    ctx->out_idx[at] = pi;
+  }
+}
+
+
+/**
+ * Same traversal as internal_libxs_kdtree_find: idx[mid] is the pivot for this
+ * node and the subtrees are [lo,mid) and [mid+1,hi).  The far side is entered
+ * only while the k-best set is short or the split plane is nearer than its worst
+ * member, which is what makes the search exact rather than approximate.
+ */
+LIBXS_API_INLINE void internal_libxs_kdtree_knn_visit(
+  internal_libxs_kdtree_knn_ctx_t* ctx, int lo, int hi, int depth)
+{
+  if (lo < hi) {
+    const int mid = lo + (hi - lo) / 2;
+    const int pi = ctx->idx[mid];
+    const int kd = depth % ctx->ndims;
+    double dist;
+    int near_lo, near_hi, far_lo, far_hi;
+    if (NULL == ctx->used || 0 == ctx->used[pi]) {
+      internal_libxs_kdtree_knn_add(ctx, pi);
+    }
+    dist = ctx->query[kd] - ctx->pts[(size_t)pi * ctx->stride + kd];
+    if (dist <= 0) {
+      near_lo = lo; near_hi = mid; far_lo = mid + 1; far_hi = hi;
+    }
+    else {
+      near_lo = mid + 1; near_hi = hi; far_lo = lo; far_hi = mid;
+    }
+    internal_libxs_kdtree_knn_visit(ctx, near_lo, near_hi, depth + 1);
+    if (ctx->count < ctx->k || dist * dist < ctx->out_dist2[ctx->count - 1]) {
+      internal_libxs_kdtree_knn_visit(ctx, far_lo, far_hi, depth + 1);
+    }
+  }
+}
+
+
+LIBXS_API int libxs_kdtree_knearest(
+  const double* pts, const int* idx, const unsigned char* used,
+  int n, int ndims, int stride, const double* query, double max_dist2,
+  int out_idx[], double out_dist2[], int k)
+{
+  int result = 0;
+  if (NULL != pts && NULL != idx && NULL != query && NULL != out_idx
+    && NULL != out_dist2 && 0 < n && 0 < ndims && 0 < k)
+  {
+    internal_libxs_kdtree_knn_ctx_t ctx;
+    ctx.pts = pts; ctx.idx = idx; ctx.used = used; ctx.query = query;
+    ctx.out_idx = out_idx; ctx.out_dist2 = out_dist2;
+    ctx.max_dist2 = max_dist2;
+    ctx.ndims = ndims; ctx.stride = stride; ctx.k = k; ctx.count = 0;
+    internal_libxs_kdtree_knn_visit(&ctx, 0, n, 0);
+    result = ctx.count;
+  }
+  return result;
+}

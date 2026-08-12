@@ -162,8 +162,147 @@ static void decode_hilbert_bits(
 }
 
 
+#define KNN_MAXN 512
+#define KNN_MAXK 32
+#define KNN_MAXD 8
+
+
+/**
+ * Linear-scan oracle: the k nearest by brute force, sorted ascending. The kd-tree
+ * search must agree with this exactly -- it is meant to avoid visiting subtrees
+ * that cannot hold a closer point, not to approximate the answer, and only a
+ * reference computed a different way can show the pruning has not cut too much.
+ */
+static int knn_oracle(const double* pts, int n, int ndims, int stride,
+  const double* query, double max_dist2, int* out_idx, double* out_d2, int k)
+{
+  int count = 0, i;
+  for (i = 0; i < n; ++i) {
+    double d2 = 0;
+    int dd;
+    for (dd = 0; dd < ndims; ++dd) {
+      const double d = pts[(size_t)i * stride + dd] - query[dd];
+      d2 += d * d;
+    }
+    if (d2 <= max_dist2 && (count < k || d2 < out_d2[count - 1])) {
+      int at = (count < k) ? count++ : (k - 1);
+      while (0 < at && out_d2[at - 1] > d2) {
+        out_d2[at] = out_d2[at - 1];
+        out_idx[at] = out_idx[at - 1];
+        --at;
+      }
+      out_d2[at] = d2;
+      out_idx[at] = i;
+    }
+  }
+  return count;
+}
+
+
+/**
+ * Compare the tree against the oracle. Distances are compared rather than
+ * indices, because ties at equal distance may legitimately resolve to different
+ * points -- with duplicate coordinates several points ARE the same answer, and
+ * demanding one particular index would fail the test for a correct result.
+ */
+static int knn_check(const double* pts, int* idx, int n, int ndims,
+  const double* query, double max_dist2, int k, int line)
+{
+  int tidx[KNN_MAXK], oidx[KNN_MAXK], i;
+  double td2[KNN_MAXK], od2[KNN_MAXK];
+  const int nt = libxs_kdtree_knearest(pts, idx, NULL, n, ndims, ndims,
+    query, max_dist2, tidx, td2, k);
+  const int no = knn_oracle(pts, n, ndims, ndims, query, max_dist2,
+    oidx, od2, k);
+  if (nt != no) {
+    FPRINTF(stderr, "ERROR line #%i: knn found %i, oracle %i\n", line, nt, no);
+    return 0;
+  }
+  for (i = 0; i < nt; ++i) {
+    if (td2[i] != od2[i]) {
+      FPRINTF(stderr, "ERROR line #%i: knn d2[%i]=%g, oracle %g\n",
+        line, i, td2[i], od2[i]);
+      return 0;
+    }
+    if (0 < i && td2[i - 1] > td2[i]) {
+      FPRINTF(stderr, "ERROR line #%i: knn result not sorted\n", line);
+      return 0;
+    }
+  }
+  return 1;
+}
+
+
+static void knn_fill(double* pts, int n, int ndims, unsigned int seed, int mod)
+{
+  int i, dd;
+  for (i = 0; i < n; ++i) {
+    for (dd = 0; dd < ndims; ++dd) {
+      seed = seed * 1103515245u + 12347u;
+      pts[(size_t)i * ndims + dd] = (double)((seed >> 8) % (unsigned int)mod);
+    }
+  }
+}
+
+
 int main(void)
 {
+  /* kd-tree k-nearest must equal a linear scan, over a spread of shapes */
+  { static double pts[KNN_MAXN * KNN_MAXD];
+    static int idx[KNN_MAXN];
+    const int dims[] = { 1, 2, 3, 8 };
+    const int counts[] = { 1, 2, 7, 64, 512 };
+    int di, ci, ki, t;
+    for (di = 0; di < 4; ++di) {
+      const int ndims = dims[di];
+      for (ci = 0; ci < 5; ++ci) {
+        const int n = counts[ci];
+        /* mod 5 forces many duplicate coordinates and hence distance ties */
+        for (t = 0; t < 2; ++t) {
+          const int mod = (0 == t) ? 1000 : 5;
+          int i;
+          knn_fill(pts, n, ndims, (unsigned int)(1 + di * 97 + ci * 13 + t), mod);
+          for (i = 0; i < n; ++i) idx[i] = i;
+          libxs_kdtree_build(pts, idx, n, ndims, ndims, NULL);
+          for (ki = 0; ki < 4; ++ki) {
+            const int k = (0 == ki) ? 1 : ((1 == ki) ? 3 : ((2 == ki) ? 32 : 2));
+            double query[KNN_MAXD];
+            int dd;
+            /* a query AT a stored point exercises the exact-match case */
+            for (dd = 0; dd < ndims; ++dd) query[dd] = pts[dd];
+            if (!knn_check(pts, idx, n, ndims, query, 1e300, k, __LINE__)) {
+              exit(EXIT_FAILURE);
+            }
+            for (dd = 0; dd < ndims; ++dd) query[dd] = 1.5 + 3.0 * dd;
+            if (!knn_check(pts, idx, n, ndims, query, 1e300, k, __LINE__)) {
+              exit(EXIT_FAILURE);
+            }
+            /* a radius bound must drop the far members, not reorder the near */
+            if (!knn_check(pts, idx, n, ndims, query, 50.0, k, __LINE__)) {
+              exit(EXIT_FAILURE);
+            }
+          }
+        }
+      }
+    }
+  }
+  /* k larger than the point count reports what exists, not k */
+  { double pts[3 * 2];
+    int idx[3], out_idx[KNN_MAXK], got;
+    double out_d2[KNN_MAXK], query[2];
+    int i;
+    pts[0] = 0; pts[1] = 0; pts[2] = 1; pts[3] = 0; pts[4] = 0; pts[5] = 2;
+    for (i = 0; i < 3; ++i) idx[i] = i;
+    libxs_kdtree_build(pts, idx, 3, 2, 2, NULL);
+    query[0] = 0; query[1] = 0;
+    got = libxs_kdtree_knearest(pts, idx, NULL, 3, 2, 2, query, 1e300,
+      out_idx, out_d2, 16);
+    if (3 != got || 0.0 != out_d2[0]) {
+      FPRINTF(stderr, "ERROR line #%i: k>n gave %i\n", __LINE__, got);
+      exit(EXIT_FAILURE);
+    }
+  }
+
   /* direct in-place sort of doubles */
   { double data[] = {5.0, -1.0, 3.0, 0.0, 2.0, -4.0, 1.0};
     libxs_sort(data, 7, sizeof(double), libxs_cmp_f64, NULL);
