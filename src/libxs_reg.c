@@ -670,6 +670,12 @@ LIBXS_API int libxs_registry_get_copy(const libxs_registry_t* registry,
 }
 
 
+LIBXS_API size_t libxs_registry_size(const libxs_registry_t* registry)
+{
+  return (NULL != registry) ? (size_t)registry->size : 0;
+}
+
+
 LIBXS_API int libxs_registry_info(const libxs_registry_t* registry, libxs_registry_info_t* info)
 {
   int result = EXIT_FAILURE;

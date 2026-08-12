@@ -457,7 +457,10 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
       }
     }
     if (NULL == result && NULL != reg) {
+      /* an empty registry cannot prove reuse by counting dispatches, e.g.,
+         a caller dispatching once and calling the kernel many times */
       const int jit_allowed = (1 >= internal_libxs_gemm_jit_warmup
+        || 0 == libxs_registry_size((const libxs_registry_t*)reg)
         || NULL != libxs_registry_get((const libxs_registry_t*)reg,
             shape, sizeof(*shape), libxs_registry_lock(reg)));
       const libxs_gemm_config_t* kernel = NULL;

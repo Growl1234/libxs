@@ -158,6 +158,7 @@ static int test_missing_jit_handle(void)
     config = libxs_gemm_dispatch_rt(&shape, NULL, &backend, registry);
   }
   TEST_CHECK(NULL != config);
+  TEST_CHECK(1 == i); /* empty registry: no warm-up needed */
   TEST_CHECK(1 == jit_create_dgemm_calls);
   TEST_CHECK(0 == jit_get_dgemm_calls);
   TEST_CHECK(NULL == config->dgemm_jit);

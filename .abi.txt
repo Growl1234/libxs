@@ -234,6 +234,7 @@ libxs_registry_next_length
 libxs_registry_remove
 libxs_registry_save
 libxs_registry_set
+libxs_registry_size
 libxs_registry_value_size
 libxs_remainder
 libxs_rid

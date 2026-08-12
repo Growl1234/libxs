@@ -128,6 +128,9 @@ LIBXS_API void libxs_registry_remove(libxs_registry_t* registry, const void* key
 LIBXS_API int libxs_registry_extract(libxs_registry_t* registry, const void* key, size_t key_size,
   void* value_out, size_t value_size, libxs_lock_t* LIBXS_ARGDEF(lock, NULL));
 
+/** Number of entries (libxs_registry_info without inspecting entries). */
+LIBXS_API size_t libxs_registry_size(const libxs_registry_t* registry);
+
 /** Get information about the registry. */
 LIBXS_API int libxs_registry_info(const libxs_registry_t* registry, libxs_registry_info_t* info);
 

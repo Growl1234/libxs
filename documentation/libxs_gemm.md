@@ -336,8 +336,12 @@ kernel call (MKL JIT or LIBXSMM when available).
                            attempted. Shapes called fewer than N
                            times use the BLAS fallback; only shapes
                            with proven reuse pay the JIT compile
-                           cost. Set to 0 or 1 to compile
-                           immediately on first miss (default: 8).
+                           cost. Reuse is counted per dispatch, hence
+                           the first shape of an empty registry is
+                           compiled immediately (a caller dispatching
+                           only once cannot accumulate calls).
+                           Set to 0 or 1 to compile immediately
+                           on first miss (default: 8).
     LIBXS_GEMM_PRINT=N    Print dispatch info every N-th call
                            to stderr (requires compile-time gate).
     LIBXS_SYRK_PRINT=N    Print DSYRK/DSYR2K BLAS fallback calls
