@@ -622,25 +622,24 @@ int main(int argc, char* argv[])
         exit(EXIT_FAILURE);
       }
     }
-    { /* Test 5: value that requires rounding (pi) — check relative error < 2^-7 */ const double pi = 3.14159265358979323846;
-      const libxs_bf16_t bp = libxs_round_bf16(pi);
+    { /* Test 5: value that requires rounding (M_PI) — check relative error < 2^-7 */
+      const libxs_bf16_t bp = libxs_round_bf16(M_PI);
       const double back = libxs_bf16_to_f64(bp);
-      const double relerr = (back - pi) / pi;
+      const double relerr = (back - M_PI) / M_PI;
       if (relerr < 0 ? -relerr > 0.01 : relerr > 0.01) {
-        FPRINTF(stderr, "ERROR line #%i: BF16 pi relerr=%g\n", __LINE__, relerr);
+        FPRINTF(stderr, "ERROR line #%i: BF16 M_PI relerr=%g\n", __LINE__, relerr);
         exit(EXIT_FAILURE);
       }
     }
-    /* Test 6: libxs_dekker_bf16 — sum of digits reconstructs original. */
-    { const double val = 3.14159265358979323846;
+    { /* Test 6: libxs_dekker_bf16 — sum of digits reconstructs original. */
       libxs_bf16_t digits[7];
       double recon = 0.0;
       int ns;
-      libxs_dekker_bf16(val, 7, digits);
+      libxs_dekker_bf16(M_PI, 7, digits);
       for (ns = 0; ns < 7; ++ns) {
         recon += libxs_bf16_to_f64(digits[ns]);
       }
-      { const double err = val - recon;
+      { const double err = M_PI - recon;
         if (err < 0 ? -err > 1e-15 : err > 1e-15) {
           FPRINTF(stderr, "ERROR line #%i: dekker_bf16 residual=%g\n",
             __LINE__, err);

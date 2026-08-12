@@ -4562,7 +4562,7 @@ LIBXS_API void libxs_predict_prob(libxs_lock_t* lock,
             ? sqrt(cl->out_var[j]) : 0;
           const double h = (rms > 0) ? rms : ((sd > 0) ? sd : 1.0);
           const double d = (cand - vals[j]) / h;
-          const double norm = h * sqrt(2.0 * 3.14159265358979323846);
+          const double norm = h * sqrt(2.0 * M_PI);
           kj = LIBXS_PREDICT_PDENSITY;
           zj = d;
           pj = exp(-0.5 * d * d) / norm;

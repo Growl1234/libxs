@@ -1179,6 +1179,12 @@ LIBRT := $(call ldclib,$(LD),$(SLDFLAGS),rt)
 LIBDL := $(call ldclib,$(LD),$(SLDFLAGS),dl)
 ifneq (0,$(INTEL))
   LIBM := $(call ldclib,$(LD),$(SLDFLAGS),imf)
+  # Intel C objects reference the Intel runtime, which the Intel
+  # driver adds implicitly but a GNU Fortran linker does not
+  ifneq (,$(strip $(GFC)))
+    FLDFLAGS += $(call ldflib,$(FC),$(SLDFLAGS),intlc) \
+                $(call ldflib,$(FC),$(SLDFLAGS),svml)
+  endif
 else
   LIBM := $(call ldclib,$(LD),$(SLDFLAGS),m)
 endif
@@ -1361,16 +1367,29 @@ ifneq (0,$(INTEL))
       FCFLAGS += -check
     endif
   endif
+  # -x<CODE> restricts execution to Intel processors ("This executable is
+  # built with target processor feature specified"), whereas -m/-march does
+  # not; the LLVM-based Intel Compiler accepts the latter.
+  ifeq (0,$(ICX))
+    xtarget = -x$(1)
+  else
+    xtarget = $(strip $(if $(filter Host,$(1)),-march=native, \
+      $(if $(filter COMMON-AVX512,$(1)),-mavx512f -mavx512cd, \
+      $(if $(filter MIC-AVX512,$(1)),-march=knl, \
+      $(if $(filter CORE-AVX512,$(1)),-march=skylake-avx512, \
+      $(if $(filter CORE-AVX2,$(1)),-march=core-avx2, \
+      $(if $(filter AVX,$(1)),-mavx,-m$(subst SSE,sse,$(1)))))))))
+  endif
   ifneq (0,$(shell echo "$$((3>$(DBG)))"))
     ifeq (0,$(COMPATIBLE))
     ifneq (,$(filter environment% override command%,$(origin COMPATIBLE))$(filter-out 1,$(INTEL)))
       ifneq (,$(filter 3,$(AVX))$(filter-out 0,$(VNNI) $(BF16)))
         ifeq (,$(MIC))
-          CTARGET := -xCOMMON-AVX512
+          CTARGET := $(call xtarget,COMMON-AVX512)
         else ifneq (0,$(MIC))
-          CTARGET := -xMIC-AVX512
+          CTARGET := $(call xtarget,MIC-AVX512)
         else
-          CTARGET := -xCORE-AVX512
+          CTARGET := $(call xtarget,CORE-AVX512)
           ifneq (0,$(VMAX))
             CTARGET += -qopt-zmm-usage=high
           endif
@@ -1382,25 +1401,25 @@ ifneq (0,$(INTEL))
           CTARGET += $(call ctest,$(CC),-mavx512bf16)
         endif
       else ifeq (2,$(AVX))
-        CTARGET := -xCORE-AVX2
+        CTARGET := $(call xtarget,CORE-AVX2)
       else ifeq (1,$(AVX))
-        CTARGET := -xAVX
+        CTARGET := $(call xtarget,AVX)
       else ifneq (0,$(SSE))
         ifeq (1,$(SSE)) # default
-          CTARGET := -xSSE4.2
+          CTARGET := $(call xtarget,SSE4.2)
         else ifeq (3,$(SSE))
           ifneq (Darwin,$(UNAME))
-            CTARGET := -xSSE3
+            CTARGET := $(call xtarget,SSE3)
           else # no systems with less than SSE4.2
-            CTARGET := -xSSE4.2
+            CTARGET := $(call xtarget,SSE4.2)
           endif
         else ifeq (4,$(SSE))
-          CTARGET := -xSSE4.2
+          CTARGET := $(call xtarget,SSE4.2)
         else
-          CTARGET := -xSSE$(SSE)
+          CTARGET := $(call xtarget,SSE$(SSE))
         endif
       else ifeq (0,$(SSE))
-        CTARGET := -xHost
+        CTARGET := $(call xtarget,Host)
         ifneq (0,$(VMAX))
         ifeq (1,$(words $(filter avx512vl,$(CPUFLAGS_X86))))
           CTARGET += -qopt-zmm-usage=high
@@ -1411,11 +1430,11 @@ ifneq (0,$(INTEL))
     endif
     ifneq (,$(filter 3,$(AVX))$(filter-out 0,$(VNNI) $(BF16)))
       ifeq (,$(MIC))
-        CTARGET := -xCOMMON-AVX512
+        CTARGET := $(call xtarget,COMMON-AVX512)
       else ifneq (0,$(MIC))
-        CTARGET := -xMIC-AVX512
+        CTARGET := $(call xtarget,MIC-AVX512)
       else
-        CTARGET := -xCORE-AVX512
+        CTARGET := $(call xtarget,CORE-AVX512)
       endif
       ifeq (0,$(lastword $(sort 0 $(MIC))))
         CTARGET += $(call ctest,$(CC),-mavx512vnni)

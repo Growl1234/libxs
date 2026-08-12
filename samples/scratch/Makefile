@@ -58,11 +58,11 @@ all: $(XFILES)
 .PHONY: compile
 compile: $(OBJECTS) $(FTNOBJS)
 
-ifneq (0,$(shell echo "$$((0!=$(INTEL) && 190001<=$(CC_VERSION_NUM)))"))
-  QKMALLOC ?= 1
-else
-  QKMALLOC ?= 0
-endif
+# Intel's fast malloc as an alternative baseline (QKMALLOC=1 requires an
+# Intel Compiler). Opt-in since oneAPI 2026.1 crashes inside
+# qk_internal_reduce_huge_volume_cache when several threads hold multi-MB
+# allocations, which is exactly this benchmark.
+QKMALLOC ?= 0
 
 ifneq (1,$(HEADERONLY))
 ifneq (,$(strip $(FC)))

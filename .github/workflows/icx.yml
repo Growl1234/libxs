@@ -1,0 +1,82 @@
+name: Intel
+
+permissions:
+  contents: read
+  pull-requests: write
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  Test:
+    runs-on: ubuntu-latest
+
+    # Single "reasonable configuration": release build (-ansi-alias and the
+    # vectorizer are only exercised here), strict warnings, and MKL such that
+    # the JIT-based GEMM backend is covered (no other workflow provides MKL).
+    env:
+      CC: icx
+      CXX: icpx
+      FC: ifx
+      FLAGS: DBG=0 PEDANTIC=2 MKL=1
+
+    steps:
+    - uses: actions/checkout@v5
+
+    # Drop intel-oneapi-compiler-fortran to save time and disk space (GNU
+    # Fortran is then combined with the Intel C/C++ compiler).
+    - name: Install Intel oneAPI
+      run: |
+        wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+          | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg >/dev/null
+        echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+          | sudo tee /etc/apt/sources.list.d/oneAPI.list
+        sudo apt update -y
+        sudo apt install -y intel-oneapi-compiler-dpcpp-cpp \
+          intel-oneapi-compiler-fortran intel-oneapi-mkl-devel
+
+    - name: Setup Intel oneAPI environment
+      run: |
+        source /opt/intel/oneapi/setvars.sh >/dev/null
+        printenv | grep -E \
+          '^(PATH|CPATH|LIBRARY_PATH|LD_LIBRARY_PATH|PKG_CONFIG_PATH|ONEAPI_ROOT|CMPLR_ROOT|MKLROOT|TBBROOT)=' \
+          >> "${GITHUB_ENV}"
+
+    - name: Install OpenCL
+      run: sudo apt install -y opencl-c-headers ocl-icd-libopencl1 ocl-icd-opencl-dev
+
+    - name: Build LIBXS
+      run: make -j $(nproc) ${FLAGS}
+
+    - name: Setup LIBXSTREAM
+      run: |
+        git clone --depth 1 https://github.com/hfp/libxstream.git ${{ github.workspace }}/../libxstream
+        echo "LIBXSTREAMROOT=${{ github.workspace }}/../libxstream" >> ${GITHUB_ENV}
+
+    - name: Build LIBXSTREAM
+      run: cd ${LIBXSTREAMROOT} && make -j $(nproc) ${FLAGS}
+
+    # samples/ozaki is not built for an Intel Compiler (tests/Makefile), which
+    # otherwise spends hours optimizing the INT8 kernels; ozaki.sh then skips.
+    - name: Test
+      run: make -j $(nproc) ${FLAGS} test
+
+    - name: Install (PREFIX)
+      run: make -j $(nproc) ${FLAGS} install PREFIX=$HOME/libxs-install
+
+    - name: Verify install (PREFIX)
+      run: |
+        test -f $HOME/libxs-install/include/libxs/libxs.h
+        test -f $HOME/libxs-install/include/libxs/libxs_source.h
+        test -d $HOME/libxs-install/include/libxs/src
+        ls $HOME/libxs-install/lib/libxs.* >/dev/null
+        test -f $HOME/libxs-install/lib/cmake/libxs/libxsConfig.cmake
+
+    - name: Out-of-tree build and test
+      run: |
+        mkdir $HOME/libxs-oot && cd $HOME/libxs-oot
+        make -j $(nproc) -f ${{ github.workspace }}/Makefile ${FLAGS} test

@@ -90,8 +90,8 @@
         ALLOCATE(c(stride_c * batchsize))
         ALLOCATE(ia(batchsize), ib(batchsize), ic(batchsize))
 
-        !$OMP PARALLEL DO DEFAULT(NONE) PRIVATE(i)                      &
-        !$OMP   SHARED(batchsize, stride_a, stride_b, stride_c, a, b, c)
+!$OMP PARALLEL DO DEFAULT(NONE) PRIVATE(i)                              &
+!$OMP&  SHARED(batchsize, stride_a, stride_b, stride_c, a, b, c)
         DO i = 1, batchsize
           a((i-1)*stride_a+1 : i*stride_a) = 1D0 / REAL(batchsize, T)
           b((i-1)*stride_b+1 : i*stride_b) = 1D0 / REAL(batchsize, T)
@@ -122,16 +122,16 @@
 
         t0 = libxs_timer_tick()
         DO r = 1, nrepeat
-!$        !$OMP PARALLEL DEFAULT(NONE)                                  &
-!$        !$OMP   SHARED(a, ia, b, ib, c, ic,                           &
-!$        !$OMP          batchsize, config)
+!$OMP PARALLEL DEFAULT(NONE)                                            &
+!$OMP&  SHARED(a, ia, b, ib, c, ic,                                     &
+!$OMP&  batchsize, config)
 !$        CALL libxs_gemm_index_task(                                   &
 !$   &      C_LOC(a), C_LOC(ia), C_LOC(b), C_LOC(ib),                   &
 !$   &      C_LOC(c), C_LOC(ic),                                        &
 !$   &      INT(C_SIZEOF(ia(1))), 1,                                    &
 !$   &      batchsize, config,                                          &
 !$   &      omp_get_thread_num(), omp_get_num_threads())
-!$        !$OMP END PARALLEL
+!$OMP END PARALLEL
 !$        IF (.FALSE.) THEN
           CALL libxs_gemm_index(                                        &
      &      C_LOC(a), C_LOC(ia), C_LOC(b), C_LOC(ib),                   &

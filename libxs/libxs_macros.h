@@ -1211,6 +1211,9 @@ LIBXS_EXTERN double erf(double) LIBXS_NOTHROW;
 #if !defined(M_PI)
 # define M_PI 3.14159265358979323846
 #endif
+#if !defined(M_LN2) /* not declared in strict ANSI mode */
+# define M_LN2 0.69314718055994530942
+#endif
 
 /**
  * Embed a binary file into the read-only data section at compile time.

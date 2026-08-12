@@ -1,17 +1,13 @@
 #include <libxs/libxs_math.h>
 #include <libxs/libxs_timer.h>
 
-#include <math.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 #define FPRINT_PATH_MAX 1024
 #define FPRINT_MAX_TERMS 8
 #define FPRINT_MAX_DEGREE 8
 #define FPRINT_ORDER 4
 #define FPRINT_NREF 1024
-#define FPRINT_PI 3.14159265358979323846
 
 typedef enum sample_kind_t {
   SAMPLE_SIN = 0,
@@ -120,7 +116,7 @@ static double sample_value(sample_kind_t kind, double position)
 {
   double result = 0.0;
   if (SAMPLE_SIN == kind) {
-    result = sin(2.0 * FPRINT_PI * position);
+    result = sin(2.0 * M_PI * position);
   }
   else if (SAMPLE_ARCH == kind) {
     result = 4.0 * position * (1.0 - position);
@@ -130,8 +126,8 @@ static double sample_value(sample_kind_t kind, double position)
       + (0.45 * LIBXS_MAX(0.0, position - 0.5));
   }
   else if (SAMPLE_OSC == kind) {
-    result = sin(2.0 * FPRINT_PI * position)
-      + 0.08 * sin(30.0 * FPRINT_PI * position);
+    result = sin(2.0 * M_PI * position)
+      + 0.08 * sin(30.0 * M_PI * position);
   }
   return result;
 }
@@ -272,7 +268,7 @@ static int run_sensitivity(void)
         const double position = (double)index / (double)(count - 1);
         double perturb = 0.0;
         if (0 == variant) perturb = position - 0.5;
-        else if (1 == variant) perturb = sin(24.0 * FPRINT_PI * position);
+        else if (1 == variant) perturb = sin(24.0 * M_PI * position);
         else if (2 == variant) perturb = LIBXS_MAX(0.0, position - 0.5);
         else if (position > 0.46 && position < 0.54) perturb = 1.0;
         norm += perturb * perturb;
@@ -517,7 +513,7 @@ static double field_value(const char name[], size_t row, size_t col,
 {
   const double xpos = (double)col / (double)(ncols - 1);
   const double ypos = (double)row / (double)(nrows - 1);
-  double result = sin(FPRINT_PI * xpos) * cos(FPRINT_PI * ypos);
+  double result = sin(M_PI * xpos) * cos(M_PI * ypos);
   if (0 == strcmp(name, "x_crease")) {
     result += 0.4 * LIBXS_MAX(0.0, xpos - 0.5);
   }
@@ -685,8 +681,8 @@ static int run_collision(void)
       for (index = 0; index < count; ++index) {
         const double pos = (double)index / (double)(count - 1);
         if (0 == pair) {
-          data_a[index] = sin(2.0 * FPRINT_PI * pos);
-          data_b[index] = -sin(2.0 * FPRINT_PI * pos);
+          data_a[index] = sin(2.0 * M_PI * pos);
+          data_b[index] = -sin(2.0 * M_PI * pos);
         }
         else if (1 == pair) {
           data_a[index] = 4.0 * pos * (1.0 - pos);
@@ -697,8 +693,8 @@ static int run_collision(void)
           data_b[index] = 1.0 - pos;
         }
         else {
-          data_a[index] = sin(2.0 * FPRINT_PI * pos);
-          data_b[index] = cos(2.0 * FPRINT_PI * pos);
+          data_a[index] = sin(2.0 * M_PI * pos);
+          data_b[index] = cos(2.0 * M_PI * pos);
         }
         rms += (data_a[index] - data_b[index])
           * (data_a[index] - data_b[index]);

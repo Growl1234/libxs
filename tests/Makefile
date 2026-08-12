@@ -85,13 +85,19 @@ REALTYPE := $(word $(if $(REALTYPE_INDEX),$(REALTYPE_INDEX),1),double float)
 
 SAMPLES := $(dir $(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
   $(DEPDIR)/samples/*/Makefile 2>/dev/null))
-ifeq (Darwin,$(UNAME))
+# the Intel Compiler needs excessive time to optimize the INT8 kernels
+ifneq (,$(filter Darwin,$(UNAME))$(filter-out 0,$(ICX)))
+  OZAKI ?= 0
+else
+  OZAKI ?= 1
+endif
+ifeq (0,$(OZAKI))
   SAMPLES := $(filter-out %/ozaki/,$(SAMPLES))
 endif
 
 .PHONY: all
 all: $(XFILES)
-ifneq (Darwin,$(UNAME))
+ifneq (0,$(OZAKI))
 	@$(FLOCK) $(DEPDIR)/samples/ozaki "$(MAKE) --no-print-directory BLAS_STATIC=0"
 	@$(FLOCK) $(DEPDIR)/samples/ozaki "$(MAKE) --no-print-directory"
 endif
