@@ -353,6 +353,21 @@ static void answer_fact_section_set(const char* section, int section_len);
 static void answer_fact_section_set(const char* section, int section_len);
 static size_t answer_relation_rules_load_file(const char* path);
 static void answer_relation_rules_report(FILE* stream);
+static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
+  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules);
+static void token_emb_pair_probe(const libxs_registry_t* corpus,
+  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules);
+static double token_emb_succ_prob(const unsigned int ctx[], int nctx,
+  unsigned int cand, unsigned int vocab, double temp);
+static int token_emb_succ_rank(const unsigned int ctx[], int nctx,
+  unsigned int cand, unsigned int vocab);
+static int token_emb_directed(void);
+static const double* token_emb_get(unsigned int id);
+static int token_emb_isnull(unsigned int id);
+static int token_emb_ready(void);
+static const double* token_semb_get(unsigned int id);
+static int answer_relation_rule_has_term(int kind, const char* term,
+  int term_len);
 static int answer_relation_rule_has_term(int kind, const char* text,
   int text_len);
 static int answer_relation_rule_alias_pos(const char* relation,
@@ -1072,6 +1087,10 @@ int main(int argc, char* argv[])
   }
   else fprintf(stderr, "warm start: reusing %s\n", converse_path_corpus);
   free(basenames);
+  /* Before the facts, because a widened person class is what makes new facts
+     extractable at all: run it after and the learned terms would sit unused. */
+  answer_relation_rules_learn(corpus, lexicon, rules, nrules);
+  token_emb_pair_probe(corpus, lexicon, rules, nrules);
   answer_relation_facts_build(corpus);
   answer_relation_facts_report(stderr);
   converse_stage_end("f_relation");
@@ -1783,6 +1802,303 @@ static void answer_relation_rules_report(FILE* stream)
     fprintf(stream, "relation rules: %lu loaded\n",
       (unsigned long)answer_relation_rules_size);
   }
+}
+
+
+/**
+ * Score named successions with the directed embedding: CONVERSE_EMB_PAIRS="a>b,c>d".
+ *
+ * Aimed at the one failure the paper calls unsolvable with counts. `be made fat`
+ * (true) and `be made in` (false) each occur EXACTLY ONCE, so relative
+ * attestation has nothing to compare and the seam gate cannot separate them.
+ * Sparse PMI was already retired here for a related reason: with zero observed
+ * co-occurrence both sides collapse onto the smoothing floor. A LOW-RANK
+ * COMPLETION is a different instrument -- it interpolates from the whole matrix,
+ * so it assigns a graded score to a pair it never saw, which is the only way a
+ * continuous signal can exist where the counts are flat. Whether that score
+ * ORDERS good before bad is the question; this prints it rather than assuming it.
+ */
+static void token_emb_pair_probe(const libxs_registry_t* corpus,
+  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules)
+{
+  const char* spec = getenv("CONVERSE_EMB_PAIRS");
+  if (NULL != spec && '\0' != *spec && NULL != lexicon) {
+    const unsigned int vocab = libxs_lexicon_size(lexicon);
+    const char* at = spec;
+    if (0 == token_emb_ready()) {
+      token_emb_build(corpus, lexicon, rules, nrules, 0);
+    }
+    fprintf(stderr, "successor pairs (directed=%d temp=%.2f):\n",
+      token_emb_directed(), ngram_emb_temp());
+    while ('\0' != *at) {
+      char lhs[64], rhs[64];
+      int ln = 0, rn = 0;
+      while ('\0' != *at && '>' != *at && ',' != *at) {
+        if (ln + 1 < (int)sizeof(lhs)) lhs[ln++] = *at;
+        ++at;
+      }
+      if ('>' == *at) ++at;
+      while ('\0' != *at && ',' != *at) {
+        if (rn + 1 < (int)sizeof(rhs)) rhs[rn++] = *at;
+        ++at;
+      }
+      if (',' == *at) ++at;
+      lhs[ln] = '\0';
+      rhs[rn] = '\0';
+      if (0 < ln && 0 < rn) {
+        const unsigned int a = libxs_lexicon_id(lexicon, lhs, ln, 0, 0);
+        const unsigned int b = libxs_lexicon_id(lexicon, rhs, rn, 0, 0);
+        if (0 != a && 0 != b) {
+          const double p = token_emb_succ_prob(&a, 1, b, vocab,
+            ngram_emb_temp());
+          const int rank = token_emb_succ_rank(&a, 1, b, vocab);
+          fprintf(stderr, "  %-10s > %-12s p=%.3e rank=%d of %u\n",
+            lhs, rhs, p, rank, vocab);
+        }
+        else {
+          fprintf(stderr, "  %-10s > %-12s (not in vocabulary)\n", lhs, rhs);
+        }
+      }
+    }
+  }
+}
+
+
+static int answer_rules_learn_count(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_RULES_LEARN");
+    cached = (NULL != env && '\0' != *env) ? atoi(env) : 0;
+    if (cached < 0) cached = 0;
+  }
+  return cached;
+}
+
+
+static double answer_rules_learn_env(const char* name, double fallback)
+{
+  const char* env = getenv(name);
+  double result = fallback;
+  if (NULL != env && '\0' != *env) result = atof(env);
+  return result;
+}
+
+
+/**
+ * Propose person-class terms from the corpus instead of requiring every one to
+ * be configured by hand.
+ *
+ * WHY THIS IS THE PIECE THAT WAS MISSING. The fact layer is the one path in this
+ * system that produces unseen, grammatical, attributed sentences without
+ * diverging, because what it renders is a PROPOSITION rather than a token path --
+ * there is nowhere for it to divert to. But its reach is set by `person|...`
+ * rules written by hand, so the capability was a demonstration and not learning.
+ * Every consumer already goes through answer_relation_rule_has_term, so widening
+ * the class here widens facts, replies and citations at once.
+ *
+ * The geometry is the directed successor embedding: two words sit together when
+ * they are FOLLOWED by similar things, and a class like "person" is exactly a set
+ * of words that take the same continuations ("the girl said", "the boy said").
+ * That is also why this is not circular with the seed list -- the similarity is
+ * computed from corpus succession, never from the rule file.
+ *
+ * SIDE-SIGNALS decide acceptance, not similarity alone:
+ *  - nsrc, the number of distinct sections the word occurs in. This separates a
+ *    CLASS member from a CHARACTER: "girl" recurs across tales, "Rapunzel" lives
+ *    in one. A term with a single source is a name wearing a class's clothes.
+ *  - freq, so a hapax cannot enter the class on one lucky neighbourhood.
+ *  - two thresholds. At or above accept the term becomes a rule; between
+ *    speculate and accept it is REPORTED AND NOT USED, so a reply never rests on
+ *    a guess without that having been a decision. Unlocking those is a separate
+ *    act, which is what makes "speculation" a mode rather than an accident.
+ */
+static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
+  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules)
+{
+  enum { LEARN_SECT_MAX = 64 };
+  size_t result = 0;
+  const int want = answer_rules_learn_count();
+  const unsigned int vocab = (NULL != lexicon) ? libxs_lexicon_size(lexicon) : 0;
+  if (0 < want && 0 < vocab && NULL != corpus) {
+    const double accept = answer_rules_learn_env("CONVERSE_RULES_ACCEPT", 0.55);
+    const double specul = answer_rules_learn_env("CONVERSE_RULES_SPECULATE",
+      0.40);
+    const int minsrc = (int)answer_rules_learn_env("CONVERSE_RULES_MINSRC", 3.0);
+    const int minfreq = (int)answer_rules_learn_env("CONVERSE_RULES_MINFREQ",
+      5.0);
+    double* centroid = (double*)calloc(TOKEN_EMB_DIM, sizeof(double));
+    double* scentroid = (double*)calloc(TOKEN_EMB_DIM, sizeof(double));
+    long* freq = (long*)calloc((size_t)vocab + 1, sizeof(long));
+    unsigned char* seen = (unsigned char*)calloc(((size_t)vocab + 1)
+      * LEARN_SECT_MAX, sizeof(unsigned char));
+    char (*sect)[ENTRY_SECTION_MAX] = (char (*)[ENTRY_SECTION_MAX])calloc(
+      LEARN_SECT_MAX, ENTRY_SECTION_MAX);
+    if (NULL != centroid && NULL != scentroid && NULL != freq && NULL != seen
+      && NULL != sect)
+    {
+      int nsect = 0, nseed = 0, d, shown = 0;
+      const void* key = NULL;
+      size_t cursor = 0;
+      unsigned int id;
+      void* value;
+      /* The learner needs the embedding, so it says so rather than depending on
+         a prediction kind having been asked for. */
+      if (0 == token_emb_ready()) {
+        token_emb_build(corpus, lexicon, rules, nrules, 0);
+      }
+      value = libxs_registry_begin(corpus, &key, &cursor);
+      while (NULL != value) {
+        const corpus_entry_t* entry = (const corpus_entry_t*)value;
+        libxs_lexeme_stream_t stream;
+        libxs_lexeme_stream_init(&stream);
+        /* Sentence scale only: the corpus holds each text at sentence AND
+           paragraph scale, so counting both would double every frequency and
+           make one source look like two. */
+        if (SCALE_SENTENCE == entry->scale && entry->text_len > 0
+          && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &stream,
+            (const unsigned char*)entry->text, (size_t)entry->text_len,
+            rules, nrules, answer_lexnorms, answer_lexnorms_size, 0))
+        {
+          int at = -1, s;
+          size_t pos;
+          for (s = 0; s < nsect && at < 0; ++s) {
+            if (0 == strncmp(sect[s], entry->section, ENTRY_SECTION_MAX - 1)) {
+              at = s;
+            }
+          }
+          if (at < 0 && nsect < LEARN_SECT_MAX && 0 < entry->section_len) {
+            int copy = entry->section_len;
+            if (copy > ENTRY_SECTION_MAX - 1) copy = ENTRY_SECTION_MAX - 1;
+            memcpy(sect[nsect], entry->section, (size_t)copy);
+            sect[nsect][copy] = '\0';
+            at = nsect++;
+          }
+          for (pos = 0; pos < stream.size; ++pos) {
+            const libxs_lexeme_t* lex = stream.data + pos;
+            if (0 != (lex->flags & LIBXS_LEXEME_WORD) && 0 != lex->id
+              && lex->id <= vocab)
+            {
+              ++freq[lex->id];
+              if (0 <= at) seen[(size_t)lex->id * LEARN_SECT_MAX + at] = 1;
+            }
+          }
+        }
+        libxs_lexeme_stream_release(&stream);
+        value = libxs_registry_next(corpus, &key, &cursor);
+      }
+      { size_t rule_pos;
+        for (rule_pos = 0; rule_pos < answer_relation_rules_size; ++rule_pos) {
+          const answer_relation_rule_t* rule = answer_relation_rules + rule_pos;
+          if (RELATION_RULE_PERSON == rule->kind) {
+            const unsigned int sid = libxs_lexicon_id(lexicon, rule->term,
+              (int)strlen(rule->term), 0, 0);
+            if (0 != sid && sid <= vocab && 0 == token_emb_isnull(sid)) {
+              const double* e = token_emb_get(sid);
+              const double* v = token_semb_get(sid);
+              for (d = 0; d < TOKEN_EMB_DIM; ++d) {
+                centroid[d] += e[d];
+                scentroid[d] += v[d];
+              }
+              ++nseed;
+            }
+          }
+        }
+      }
+      if (0 < nseed) {
+        double norm = 0.0, snorm = 0.0;
+        for (d = 0; d < TOKEN_EMB_DIM; ++d) {
+          norm += centroid[d] * centroid[d];
+          snorm += scentroid[d] * scentroid[d];
+        }
+        norm = (norm > 0.0) ? (1.0 / sqrt(norm)) : 0.0;
+        snorm = (snorm > 0.0) ? (1.0 / sqrt(snorm)) : 0.0;
+        for (d = 0; d < TOKEN_EMB_DIM; ++d) {
+          centroid[d] *= norm;
+          scentroid[d] *= snorm;
+        }
+        fprintf(stderr, "rule learning: %d seeds, %d sections,"
+          " accept>=%.2f speculate>=%.2f minsrc=%d minfreq=%d\n",
+          nseed, nsect, accept, specul, minsrc, minfreq);
+        while (shown < want) {
+          unsigned int best = 0;
+          double bestcos = 0.0;
+          int bestsrc = 0;
+          for (id = 1; id <= vocab; ++id) {
+            if (freq[id] >= minfreq && 0 == token_emb_isnull(id)) {
+              int textlen = 0;
+              const char* text = libxs_lexicon_text(lexicon, id, &textlen, NULL);
+              if (NULL != text && 0 < textlen
+                && 0 == answer_relation_rule_has_term(RELATION_RULE_PERSON,
+                  text, textlen))
+              {
+                double cf = 0.0, cp = 0.0, cos;
+                double vnorm = 0.0;
+                int nsrc = 0, s;
+                for (d = 0; d < TOKEN_EMB_DIM; ++d) {
+                  const double vd = token_semb_get(id)[d];
+                  cf += centroid[d] * token_emb_get(id)[d];
+                  cp += scentroid[d] * vd;
+                  vnorm += vd * vd;
+                }
+                /* token_semb is unnormalized (it is raw V), so the successor side
+                   needs its own normalization to be a cosine at all. */
+                vnorm = (vnorm > 0.0) ? (1.0 / sqrt(vnorm)) : 0.0;
+                cp *= vnorm;
+                /**
+                 * A class member must look like one in BOTH directions: followed
+                 * by what persons are followed by, AND preceded by what persons
+                 * are preceded by. Scoring the weaker side is what excludes a
+                 * function word -- "there" takes person-like continuations but
+                 * nothing puts a determiner in front of it, and nsrc cannot see
+                 * that because a function word occurs in EVERY source (it had the
+                 * highest nsrc of any candidate, 58).
+                 */
+                cos = (cf < cp) ? cf : cp;
+                for (s = 0; s < nsect; ++s) {
+                  nsrc += seen[(size_t)id * LEARN_SECT_MAX + s];
+                }
+                if (nsrc >= minsrc && (0 == best || cos > bestcos)) {
+                  best = id;
+                  bestcos = cos;
+                  bestsrc = nsrc;
+                }
+              }
+            }
+          }
+          if (0 == best || bestcos < specul) shown = want;
+          else {
+            int textlen = 0;
+            const char* text = libxs_lexicon_text(lexicon, best, &textlen, NULL);
+            const int ok = (bestcos >= accept) ? 1 : 0;
+            fprintf(stderr, "  %-14s min-cos=%.3f freq=%ld nsrc=%d -> %s\n",
+              (NULL != text) ? text : "?", bestcos, freq[best], bestsrc,
+              (0 != ok) ? "ACCEPTED" : "speculative (not used)");
+            if (0 != ok && NULL != text
+              && EXIT_SUCCESS == answer_relation_rule_append(
+                RELATION_RULE_PERSON, NULL, text))
+            {
+              ++result;
+            }
+            else if (0 == ok) {
+              /* Keep it out of the class so no reply can rest on it, but stop it
+                 being re-proposed every round. */
+              freq[best] = 0;
+            }
+            ++shown;
+          }
+        }
+        fprintf(stderr, "rule learning: %lu term%s accepted into person class\n",
+          (unsigned long)result, (1 == result) ? "" : "s");
+      }
+    }
+    free(centroid);
+    free(scentroid);
+    free(freq);
+    free(seen);
+    free(sect);
+  }
+  return result;
 }
 
 
@@ -8521,6 +8837,23 @@ static int token_emb_distonly(void)
     cached = (NULL != env && '\0' != *env && 0 != atoi(env)) ? 1 : 0;
   }
   return cached;
+}
+
+
+static int token_emb_ready(void)
+{
+  return (NULL != token_emb && 0 != token_emb_size) ? 1 : 0;
+}
+
+
+/** Successor-side row of V: the geometry of what PRECEDES this token. */
+static const double* token_semb_get(unsigned int id)
+{
+  static const double zero[TOKEN_EMB_DIM] = { 0 };
+  if (NULL != token_semb && 0 != id && id <= token_emb_size) {
+    return token_semb + (size_t)id * TOKEN_EMB_DIM;
+  }
+  return zero;
 }
 
 

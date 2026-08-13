@@ -270,12 +270,63 @@ static int recomb_words(libxs_lexicon_t* lexicon, const char* text,
  * then everything of B after pivot word b. Returns the composed length, or 0 if
  * it does not fit or either side would be degenerate.
  */
+/**
+ * Whether the grafted tail may begin anywhere, or only at a clause boundary.
+ *
+ * Six seam signals have now been refuted, the last of them by 50x in the WRONG
+ * direction, and they share a form: each measures PREDICTABILITY. At a seam
+ * predictability and correctness are anti-correlated, because the fluent generic
+ * continuation is the likely-wrong one -- which is why the byte model rates
+ * splices as better than real corpus text. So stop scoring the seam and constrain
+ * it: if the donor's tail starts at a clause boundary, the graft joins two
+ * complete constituents and grammaticality holds BY CONSTRUCTION rather than by a
+ * judgement that has never worked.
+ *
+ * Punctuation only, deliberately. A conjunction list would catch more joins and
+ * would be English, and the language-neutrality claim is worth more than the
+ * extra candidates; if conjunctions are wanted they belong in the relation rule
+ * file as DATA, the way every other language-specific vocabulary here does.
+ */
+static int recomb_clause_only(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    /* ON by default: the samples improve visibly (ungrammatical seams 4 -> 1 of
+       12, coherent 2 -> 5) and it costs 8 points of yield, 400 joins from 475
+       tries instead of 435. CONVERSE_RECOMB_CLAUSE=0 restores the unconstrained
+       splice, which every recomb figure published before 2026-08-13 used. */
+    const char* env = getenv("CONVERSE_RECOMB_CLAUSE");
+    cached = (NULL != env && '0' == *env) ? 0 : 1;
+  }
+  return cached;
+}
+
+
+static int recomb_clause_start(const char* text, int len, int at)
+{
+  int result = 0;
+  int pos = at;
+  while (pos < len && 0 != isspace((unsigned char)text[pos])) ++pos;
+  if (pos < len) {
+    const unsigned char ch = (unsigned char)text[pos];
+    if (',' == ch || ';' == ch || ':' == ch || '.' == ch || '!' == ch
+      || '?' == ch || '-' == ch)
+    {
+      result = 1;
+    }
+  }
+  return result;
+}
+
+
 static int recomb_splice(const char* a, int a_len, int a_end,
   const char* b, int b_len, int b_after, char* out, size_t out_size)
 {
   int result = 0;
   if (0 < a_end && a_end <= a_len && 0 <= b_after && b_after <= b_len
-    && (size_t)(a_end + b_len - b_after) + 1 < out_size)
+    && (size_t)(a_end + b_len - b_after) + 1 < out_size
+    && (0 == recomb_clause_only()
+      || 0 != recomb_clause_start(b, b_len, b_after)))
   {
     memcpy(out, a, (size_t)a_end);
     memcpy(out + a_end, b + b_after, (size_t)(b_len - b_after));
