@@ -61,7 +61,8 @@
 #define NGRAM_BANK_SKIP (NGRAM_ORDER_MAX + 1)
 #define NGRAM_BANK_PRIOR (NGRAM_ORDER_MAX + 2)
 #define NGRAM_BANK_PREDICT (NGRAM_ORDER_MAX + 3)
-#define NGRAM_BANK_LAST NGRAM_BANK_PREDICT
+#define NGRAM_BANK_EMB (NGRAM_ORDER_MAX + 4)
+#define NGRAM_BANK_LAST NGRAM_BANK_EMB
 #define NGRAM_BANK_MAX (NGRAM_BANK_LAST + 1)
 /** Ratio substituted for an expert that gave the target no mass at all. */
 #define NGRAM_BANK_RELMIN 1e-4
@@ -561,6 +562,13 @@ static double ngram_bank_pool(const double weight[],
   const ngram_expert_t expert[]);
 static int ngram_bank_geometric(void);
 static int ngram_bank_frozen(void);
+static int ngram_gen_embrank(void);
+static int ngram_gen_embcand(void);
+static double ngram_emb_temp(void);
+static int ngram_emb_ctx(void);
+static double ngram_emb_decay(void);
+static double token_emb_succ_prob(const unsigned int ctx[], int nctx,
+  unsigned int cand, unsigned int vocab, double temp);
 static int ngram_bank_warmup(libxs_predict_t* store, int vocabulary);
 static void ngram_syllable_probe(void);
 static void ngram_hist_push(unsigned int hist[], int* hlen, int cap,
@@ -759,6 +767,26 @@ int main(int argc, char* argv[])
       "  CONVERSE_SHUFFLE=1       shuffle words in each sentence (control).\n"
       "  CONVERSE_EVAL_STRIDE=N   evaluate 1-in-N test items (default 40).\n"
       "  CONVERSE_GEN_EVAL=1      -E reports generation reproduction.\n"
+      "  CONVERSE_GEN_NCAND=N     successors offered per step 1..%d (default 1).\n"
+      "  CONVERSE_GEN_FULL=1      gen-eval scores every lookahead position\n"
+      "                           (teacher-forced) instead of stopping at the\n"
+      "                           first miss; adds per-position top1/mrr.\n"
+      "  CONVERSE_GEN_EMBRANK=1   rank the truth by the successor-side embedding\n"
+      "                           over the whole vocabulary (needs -K embed).\n"
+      "  CONVERSE_EMB_DIRECTED=N  factorize PPMI(next|cur) at forward distance\n"
+      "                           1..N instead of the symmetric window (0=off).\n"
+      "  CONVERSE_NGRAM_BANK_EMB=1 carry the successor-side embedding as a bank\n"
+      "                           slot: total, and scores unattested successors.\n"
+      "  CONVERSE_EMB_TEMP=F      temperature of that slot (default 1 = plain\n"
+      "                           exp(PMI) rescaling of the unigram prior).\n"
+      "  CONVERSE_EMB_CTX=N       history tokens the slot conditions on 1..%d\n"
+      "                           (default 1); summing them combines per-token\n"
+      "                           PMI evidence multiplicatively.\n"
+      "  CONVERSE_EMB_DECAY=F     weight decay per extra history token (0<F<=1).\n"
+      "  CONVERSE_GEN_EMBCAND=N   let the embedding PROPOSE N successors per step\n"
+      "                           (default 0). Off by default because a proposed\n"
+      "                           successor was never attested here, so the path\n"
+      "                           synthesizes instead of selecting.\n"
       "  CONVERSE_NGRAM_STATS=1   print per-order n-gram footprint.\n"
       "  CONVERSE_KNNLM_LAMBDA=F  fixed kNN-LM interpolation weight.\n"
       "  CONVERSE_KNNLM_DYN=1     dynamic (test-time) kNN-LM datastore.\n"
@@ -805,7 +833,8 @@ int main(int argc, char* argv[])
       "  CONVERSE_RECOMB_COMPOSE=1 -c may synthesize when replay fails.\n"
       "  CONVERSE_PREDICT=1       train the answer ranker (off by default:\n"
       "                           40%% of wall, no measured BPC or QA change).\n",
-      argv[0], RESPONSE_BUDGET, NGRAM_ORDER_MAX, NGRAM_ORDER_MAX);
+      argv[0], RESPONSE_BUDGET, NGRAM_ORDER_MAX, NGRAM_ORDER_MAX,
+      GEN_CAND_MAX, TOKEN_CTX_MAX);
     answer_predict_profile_list(stderr);
     return EXIT_FAILURE;
   }
@@ -1133,9 +1162,21 @@ int main(int argc, char* argv[])
       ngram_model = ngram_build(corpus, lexicon, rules, nrules, ngram_holdout);
       ngram_backoff_build(ngram_model, lexicon);
       converse_stage_end("ngram_build");
-      if (0 != use_embed || 0 != use_knnlm) {
+      /* The embedding-rank probe reads the embedding without being a prediction
+         KIND, so it declares the dependency itself rather than forcing -K embed,
+         which the dispatch below would route away from gen-eval. Split out of
+         the kind chain so the probe does not also build a predict store: that
+         store is what gen-eval scores as the bank's kind-different slot, and
+         handing it one it would not otherwise have would change the run being
+         measured. */
+      if (0 != use_embed || 0 != use_knnlm || 0 != ngram_gen_embrank()
+        || 0 != ngram_gen_embcand()
+        || 0 != (ngram_bank_slots() & (1u << NGRAM_BANK_EMB)))
+      {
         token_emb_build(corpus, lexicon, rules, nrules, ngram_holdout);
         converse_stage_end("emb_build");
+      }
+      if (0 != use_embed || 0 != use_knnlm) {
         token_model = token_predict_build(corpus, lexicon, rules, nrules,
           predict_profile, 1, ngram_holdout,
           (0 != use_knnlm) ? knnlm_ctxlen() : 2);
@@ -7712,6 +7753,11 @@ static unsigned int ngram_bank_slots(void)
       result |= 1u << NGRAM_BANK_PREDICT;
     }
   }
+  { const char* emb = getenv("CONVERSE_NGRAM_BANK_EMB");
+    if (NULL != emb && '0' != emb[0] && '\0' != emb[0]) {
+      result |= 1u << NGRAM_BANK_EMB;
+    }
+  }
   return result;
 }
 
@@ -7729,6 +7775,7 @@ static const char* ngram_bank_slotname(int slot)
   if (NGRAM_BANK_SKIP == slot) result = "skip";
   else if (NGRAM_BANK_PRIOR == slot) result = "uni";
   else if (NGRAM_BANK_PREDICT == slot) result = "prd";
+  else if (NGRAM_BANK_EMB == slot) result = "emb";
   else sprintf(name, "o%d", slot);
   return result;
 }
@@ -7855,6 +7902,24 @@ static void ngram_bank_experts(const unsigned int hist[], int hlen,
         expert[NGRAM_BANK_PREDICT].active = 1;
         ++predict_nscored;
       }
+    }
+  }
+  if (0 != (slots & (1u << NGRAM_BANK_EMB)) && hlen >= 1 && vocabulary > 0) {
+    /**
+     * TOTAL by construction and for a different reason than the predict slot:
+     * that one is total because its escape mass covers an unattested remainder,
+     * this one because a low-rank completion of PPMI assigns a score to pairs
+     * that were never observed at all. It reads ONE token of history, so it is
+     * the weakest possible context -- carried anyway because the measured wall is
+     * that 78% of novel-context positions have no attested successor to rank, and
+     * coverage there is worth more than context depth here.
+     */
+    const int nctx = (ngram_emb_ctx() < hlen) ? ngram_emb_ctx() : hlen;
+    const double p = token_emb_succ_prob(hist + (hlen - nctx), nctx, cur,
+      (unsigned int)vocabulary, ngram_emb_temp());
+    if (p > 0.0 && p <= 1.0) {
+      expert[NGRAM_BANK_EMB].probability = p;
+      expert[NGRAM_BANK_EMB].active = 1;
     }
   }
 }
@@ -8373,14 +8438,89 @@ static double ngram_pair_relfreq(libxs_registry_t* model, unsigned int ctx_a,
 
 
 static double* token_emb = NULL;
+static double* token_semb = NULL;
+static double* token_emb_prior = NULL;
+static double* token_emb_work = NULL;
 static unsigned int token_emb_size = 0;
+/**
+ * Memo for the successor normalizer. Z depends on the CONTEXT only, so scoring k
+ * candidates at one position recomputed the same vocabulary pass k times -- which
+ * is invisible in the BPC path (one candidate per position) and made generation,
+ * where the bank ranks up to GEN_CAND_MAX candidates, cost k vocabulary scans per
+ * token. A pure memo: identical values, not an approximation.
+ */
+static unsigned int token_emb_zids[TOKEN_CTX_MAX];
+static int token_emb_znctx = 0;
+static unsigned int token_emb_zvocab = 0;
+static double token_emb_ztemp = 0.0;
+static double token_emb_zmax = 0.0;
+static double token_emb_zsum = 0.0;
+static int token_emb_zvalid = 0;
 
 
 static void token_emb_free(void)
 {
   free(token_emb);
+  free(token_semb);
+  free(token_emb_prior);
+  free(token_emb_work);
   token_emb = NULL;
+  token_semb = NULL;
+  token_emb_prior = NULL;
+  token_emb_work = NULL;
   token_emb_size = 0;
+  token_emb_zvalid = 0;
+}
+
+
+/**
+ * Maximum FORWARD distance at which a co-occurrence is counted, or 0 for the
+ * historical symmetric window.
+ *
+ * The nine flat axes all varied how the SYMMETRIC PPMI factorization is built or
+ * searched -- radius, rank, iterations, hashing, weighting, temperature, heads,
+ * projections -- and never which matrix is factorized. So the objective itself
+ * was never a variable: the representation is fitted to "what appears near
+ * what" and then asked "what comes next here". At 1 the matrix becomes
+ * PPMI(next=j | cur=i), whose row space places two tokens together when they are
+ * FOLLOWED by similar things, which is the predictive geometry rather than the
+ * topical one. It discards distances 2..radius, which the flat radius axis
+ * (1..5 all 48.7% top-1) measured at zero.
+ */
+static int token_emb_directed(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_EMB_DIRECTED");
+    cached = (NULL != env && '\0' != *env) ? atoi(env) : 0;
+    if (cached < 0) cached = 0;
+    if (cached > TOKEN_EMB_WINDOW) cached = TOKEN_EMB_WINDOW;
+  }
+  return cached;
+}
+
+
+/**
+ * Count ONLY forward distance exactly CONVERSE_EMB_DIRECTED, instead of pooling
+ * 1..N.
+ *
+ * This exists to answer one question before a much larger build. Extending the
+ * slot's context by summing vectors is refuted: the optimal weight on a token
+ * further back is zero, because token_emb[p] answers "what follows p" and asking
+ * that of a token k positions back is a question about the wrong relation. The
+ * principled repair is a SEPARATE factorization per distance, so distance k's
+ * evidence is about position k. That costs k SVDs and k vocabulary-sized tables,
+ * so it should only be built if a distance-k-only model carries real information
+ * about the successor at all -- which is what this measures.
+ */
+static int token_emb_distonly(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_EMB_DISTONLY");
+    cached = (NULL != env && '\0' != *env && 0 != atoi(env)) ? 1 : 0;
+  }
+  return cached;
 }
 
 
@@ -8406,6 +8546,232 @@ static int token_emb_isnull(unsigned int id)
   int d, result = 1;
   for (d = 0; d < TOKEN_EMB_DIM && 0 != result; ++d) {
     if (0.0 != emb[d]) result = 0;
+  }
+  return result;
+}
+
+
+static double ngram_emb_temp(void)
+{
+  static int done = 0;
+  static double cached = 1.0;
+  if (0 == done) {
+    const char* env = getenv("CONVERSE_EMB_TEMP");
+    const double v = (NULL != env && '\0' != *env) ? atof(env) : 1.0;
+    cached = (v > 0.0) ? v : 1.0;
+    done = 1;
+  }
+  return cached;
+}
+
+
+/**
+ * How many tokens of history the successor distribution conditions on (1 = the
+ * immediate predecessor only, which is where this expert started).
+ *
+ * Summing the context vectors is not the retired "decayed bag": under this link
+ * it is the naive-Bayes combination of independent evidence. Because
+ * <sum_i u_i, v_c> = sum_i PMI(p_i, c), adding context in embedding space
+ * multiplies the per-position likelihood ratios, so each history token
+ * contributes its own testimony about the successor. What the flat position-
+ * weighting axis retired was averaging TOPICAL vectors to form a retrieval query;
+ * these vectors are successor-predictive and the sum has a defined meaning.
+ *
+ * The magnitude grows with the number of terms, which is correct for evidence
+ * accumulation (more testimony, sharper posterior) but does interact with the
+ * temperature, so the two want sweeping together rather than in isolation.
+ */
+static int ngram_emb_ctx(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_EMB_CTX");
+    cached = (NULL != env && '\0' != *env) ? atoi(env) : 1;
+    if (cached < 1) cached = 1;
+    if (cached > TOKEN_CTX_MAX) cached = TOKEN_CTX_MAX;
+  }
+  return cached;
+}
+
+
+/** Per-position weight decay, oldest token weighted decay^(distance-1). */
+static double ngram_emb_decay(void)
+{
+  static int done = 0;
+  static double cached = 1.0;
+  if (0 == done) {
+    const char* env = getenv("CONVERSE_EMB_DECAY");
+    const double v = (NULL != env && '\0' != *env) ? atof(env) : 1.0;
+    cached = (v > 0.0 && v <= 1.0) ? v : 1.0;
+    done = 1;
+  }
+  return cached;
+}
+
+
+/**
+ * P(cand | ctx) from the successor score, as a proper distribution over the
+ * whole vocabulary.
+ *
+ * The link is not an arbitrary softmax. PMI is a log ratio,
+ * PMI(p,c) = log[P(c|p)/P(c)], so exponentiating it RESCALES THE UNIGRAM PRIOR:
+ * P(c|p) = P(c) * exp(PMI(p,c)) / Z. Two things follow that a bare softmax over
+ * the scores would not give. Where the reconstruction says nothing the expert
+ * degrades exactly to the unigram prior rather than to uniform, which is what
+ * lets it be TOTAL without being absurd on common words; and the temperature has
+ * a defined neutral value of 1 instead of needing to be fitted before the
+ * mechanism can be judged at all.
+ *
+ * Cost is one vocabulary pass with an exp per entry, per position. That is the
+ * price of a total scorer and the reason this is behind a slot knob.
+ */
+static int token_emb_succ_prepare(const unsigned int ctx[], int nctx,
+  unsigned int vocab, double temp)
+{
+  int result = 0;
+  if (NULL != token_emb && NULL != token_semb && NULL != token_emb_prior
+    && NULL != token_emb_work && vocab <= token_emb_size && 0 < nctx
+    && nctx <= TOKEN_CTX_MAX)
+  {
+    int same = (0 != token_emb_zvalid && vocab == token_emb_zvocab
+      && temp == token_emb_ztemp && nctx == token_emb_znctx) ? 1 : 0;
+    int i;
+    for (i = 0; i < nctx && 0 != same; ++i) {
+      if (ctx[i] != token_emb_zids[i]) same = 0;
+    }
+    if (0 == same) {
+      const double scale = (temp > 0.0) ? (1.0 / temp) : 1.0;
+      const double decay = ngram_emb_decay();
+      double u[TOKEN_EMB_DIM];
+      double max = 0.0, sum = 0.0, w = 1.0;
+      unsigned int id, nvalid = 0;
+      int d;
+      for (d = 0; d < TOKEN_EMB_DIM; ++d) u[d] = 0.0;
+      /* Walk from the immediate predecessor backwards so weight 1 is the nearest
+         token and the decay applies to older testimony. */
+      for (i = nctx - 1; i >= 0; --i) {
+        const double* e = token_emb_get(ctx[i]);
+        for (d = 0; d < TOKEN_EMB_DIM; ++d) u[d] += w * e[d];
+        w *= decay;
+      }
+      for (id = 1; id <= vocab; ++id) {
+        if (token_emb_prior[id] > 0.0) {
+          const double* v = token_semb + (size_t)id * TOKEN_EMB_DIM;
+          double x = 0.0;
+          for (d = 0; d < TOKEN_EMB_DIM; ++d) x += u[d] * v[d];
+          token_emb_work[id] = x * scale + log(token_emb_prior[id]);
+          if (0 == nvalid || token_emb_work[id] > max) max = token_emb_work[id];
+          ++nvalid;
+        }
+      }
+      for (id = 1; id <= vocab; ++id) {
+        if (token_emb_prior[id] > 0.0) sum += exp(token_emb_work[id] - max);
+      }
+      for (i = 0; i < nctx; ++i) token_emb_zids[i] = ctx[i];
+      token_emb_znctx = nctx;
+      token_emb_zvocab = vocab;
+      token_emb_ztemp = temp;
+      token_emb_zmax = max;
+      token_emb_zsum = sum;
+      token_emb_zvalid = 1;
+    }
+    result = (token_emb_zsum > 0.0) ? 1 : 0;
+  }
+  return result;
+}
+
+
+static double token_emb_succ_prob(const unsigned int ctx[], int nctx,
+  unsigned int cand, unsigned int vocab, double temp)
+{
+  double result = 0.0;
+  if (0 != cand && cand <= vocab
+    && 0 != token_emb_succ_prepare(ctx, nctx, vocab, temp)
+    && token_emb_prior[cand] > 0.0)
+  {
+    result = exp(token_emb_work[cand] - token_emb_zmax) / token_emb_zsum;
+  }
+  return result;
+}
+
+
+/**
+ * Append up to want embedding-proposed successors to the candidate list, best
+ * first, skipping ids already offered by the counts.
+ *
+ * This is what makes the successor embedding reach generation at all. The bank
+ * can only REORDER what it is given, so with an attested-only candidate list its
+ * measured ceiling is the inlist share (22.23% on novel context) no matter how
+ * good the expert is. Proposing is a different act from ranking, and only this
+ * one can put a successor in front of the caller that the counts never saw here.
+ *
+ * The selection reads token_emb_work, which the memo has already filled with the
+ * whole log-distribution for this context, so no dot product is repeated: it is
+ * want passes of a comparison over the vocabulary.
+ */
+static int token_emb_succ_append(const unsigned int ctx[], int nctx,
+  unsigned int vocab, double temp, unsigned int ids[], int n, int max, int want)
+{
+  int result = 0;
+  if (0 != token_emb_succ_prepare(ctx, nctx, vocab, temp)) {
+    int more = 1;
+    while (0 != more && result < want && (n + result) < max) {
+      unsigned int best = 0;
+      double bestval = 0.0;
+      unsigned int id;
+      for (id = 1; id <= vocab; ++id) {
+        if (token_emb_prior[id] > 0.0
+          && (0 == best || token_emb_work[id] > bestval))
+        {
+          int taken = 0, k;
+          for (k = 0; k < n + result && 0 == taken; ++k) {
+            if (ids[k] == id) taken = 1;
+          }
+          if (0 == taken) {
+            best = id;
+            bestval = token_emb_work[id];
+          }
+        }
+      }
+      if (0 != best) {
+        ids[n + result] = best;
+        ++result;
+      }
+      else more = 0;
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Rank of cand among all vocabulary ids by the successor score, 0 = best. No
+ * sort: the rank is the number of ids that strictly outscore it, which is one
+ * pass and needs no candidate list at all -- the point being that this scorer is
+ * TOTAL where the count model is partial.
+ */
+static int token_emb_succ_rank(const unsigned int ctx[], int nctx,
+  unsigned int cand, unsigned int vocab)
+{
+  int result = -1;
+  /* Shares the prepared distribution so the probe scores exactly what the slot
+     scores: a probe that built its own context vector could report a mechanism
+     nobody is running. */
+  if (0 != cand && cand <= vocab
+    && 0 != token_emb_succ_prepare(ctx, nctx, vocab, ngram_emb_temp())
+    && token_emb_prior[cand] > 0.0)
+  {
+    const double best = token_emb_work[cand];
+    unsigned int id;
+    int rank = 0;
+    for (id = 1; id <= vocab; ++id) {
+      if (id != cand && token_emb_prior[id] > 0.0
+        && token_emb_work[id] > best)
+      {
+        ++rank;
+      }
+    }
+    result = rank;
   }
   return result;
 }
@@ -8453,10 +8819,22 @@ static void token_emb_cooc_text(libxs_registry_t* pairs, double* rowcnt,
         && 0 != (lex->flags & (LIBXS_LEXEME_WORD | LIBXS_LEXEME_NUMBER))
         && 0 != lex->id)
       {
+        const int dir = token_emb_directed();
+        const int distonly = token_emb_distonly();
         int i;
         for (i = 0; i < fill; ++i) {
-          token_emb_pair_observe(pairs, lex->id, window[i]);
-          token_emb_pair_observe(pairs, window[i], lex->id);
+          if (0 == dir) {
+            token_emb_pair_observe(pairs, lex->id, window[i]);
+            token_emb_pair_observe(pairs, window[i], lex->id);
+          }
+          else if ((0 == distonly && (fill - i) <= dir)
+            || (0 != distonly && (fill - i) == dir))
+          {
+            /* Row = predecessor, column = successor, so the row of the matrix
+               is the successor profile of that token and nothing symmetrizes
+               it. window[fill-1] is the immediate predecessor. */
+            token_emb_pair_observe(pairs, window[i], lex->id);
+          }
         }
         if (fill < TOKEN_EMB_WINDOW) {
           window[fill] = lex->id;
@@ -8567,6 +8945,26 @@ static int token_emb_reduce(const size_t* rowptr, const unsigned int* colidx,
       for (d = 0; d < TOKEN_EMB_DIM; ++d) norm += row[d] * row[d];
       norm = (norm > 0.0) ? (1.0 / sqrt(norm)) : 0.0;
       for (d = 0; d < TOKEN_EMB_DIM; ++d) emb[d] = row[d] * norm;
+    }
+    /**
+     * basis still holds V after the final projection, so the successor side is
+     * free: it was already computed and then thrown away with the scratch. With
+     * the directed matrix <token_emb[p], token_semb[c]> is the rank-DIM
+     * reconstruction of PPMI(c follows p), and a low-rank completion is nonzero
+     * on pairs NEVER OBSERVED -- the one property a count model cannot have.
+     *
+     * Kept UNNORMALIZED while token_emb rows are unit-normalized, so the product
+     * is not calibrated as a probability: within one context the row scale is a
+     * positive constant and drops out of any ranking, but the magnitude that was
+     * normalized away was confidence, and a fixed temperature does not recover
+     * it.
+     */
+    if (NULL != token_semb) {
+      for (id = 1; id <= vocab; ++id) {
+        const double* row = basis + (size_t)id * TOKEN_EMB_DIM;
+        double* semb = token_semb + (size_t)id * TOKEN_EMB_DIM;
+        for (d = 0; d < TOKEN_EMB_DIM; ++d) semb[d] = row[d];
+      }
     }
     result = EXIT_SUCCESS;
   }
@@ -8733,8 +9131,13 @@ static void token_emb_build(const libxs_registry_t* corpus,
     size_t* rowptr = (size_t*)calloc((size_t)vocab + 2, sizeof(size_t));
     token_emb = (double*)calloc((size_t)(vocab + 1) * TOKEN_EMB_DIM,
       sizeof(double));
+    token_semb = (double*)calloc((size_t)(vocab + 1) * TOKEN_EMB_DIM,
+      sizeof(double));
+    token_emb_prior = (double*)calloc((size_t)vocab + 1, sizeof(double));
+    token_emb_work = (double*)calloc((size_t)vocab + 1, sizeof(double));
     if (NULL != pairs && NULL != rowcnt && NULL != rowsum && NULL != colsum
-      && NULL != rowptr && NULL != token_emb)
+      && NULL != rowptr && NULL != token_emb && NULL != token_semb
+      && NULL != token_emb_prior && NULL != token_emb_work)
     {
       double total = 0.0;
       const void* key = NULL;
@@ -8751,6 +9154,16 @@ static void token_emb_build(const libxs_registry_t* corpus,
         }
         ++index;
         value = libxs_registry_next(corpus, &key, &cursor);
+      }
+      /* rowcnt was already accumulated for the backfill, so the unigram prior
+         the successor distribution rescales costs one normalization. */
+      { double ntok = 0.0;
+        for (id = 1; id <= vocab; ++id) ntok += rowcnt[id];
+        if (ntok > 0.0) {
+          for (id = 1; id <= vocab; ++id) {
+            token_emb_prior[id] = rowcnt[id] / ntok;
+          }
+        }
       }
       key = NULL;
       cursor = 0;
@@ -8793,9 +9206,10 @@ static void token_emb_build(const libxs_registry_t* corpus,
             value = libxs_registry_next(pairs, &key, &cursor);
           }
           fprintf(stderr, "embedding: vocab=%u nnz=%lu density=%.4f%%"
-            " dim=%d window=%d\n", vocab, (unsigned long)nnz,
+            " dim=%d window=%d directed=%d%s\n", vocab, (unsigned long)nnz,
             100.0 * (double)nnz / ((double)vocab * (double)vocab),
-            TOKEN_EMB_DIM, TOKEN_EMB_WINDOW);
+            TOKEN_EMB_DIM, TOKEN_EMB_WINDOW, token_emb_directed(),
+            (0 != token_emb_distonly()) ? " (exact distance)" : "");
           if (EXIT_SUCCESS == token_emb_reduce(rowptr, colidx, val, vocab)) {
             env = getenv("CONVERSE_EMB_BACKFILL");
             if (NULL == env || '0' != *env) {
@@ -9112,6 +9526,86 @@ static int ngram_gen_ncand(void)
     const char* env = getenv("CONVERSE_GEN_NCAND");
     cached = (NULL != env && '\0' != *env) ? atoi(env) : 1;
     if (cached < 1) cached = 1;
+    if (cached > GEN_CAND_MAX) cached = GEN_CAND_MAX;
+  }
+  return cached;
+}
+
+
+/**
+ * Whether gen-eval keeps scoring after the first wrong token instead of ending
+ * the sentence there.
+ *
+ * Off is the historical definition and stays bit-exact: mean-reproduced is the
+ * length of the verbatim prefix, so the scan stops at the first miss. That
+ * definition has almost no dynamic range on novel seeds -- divergence is at the
+ * very first position, so the bucket reads the same 0.06 for every configuration
+ * measured so far, which is a property of the metric and not of the mechanism.
+ * With this on, every lookahead position is visited with the TRUTH token fed
+ * back as history, and the per-position accuracy and rank statistics are
+ * computed over all of them. The prefix metrics keep their old definition
+ * either way, so one run reports both readings -- exactly so while the bank is
+ * off. With the bank on, the extra positions also feed ngram_bank_update, so
+ * the weights differ from a prefix-mode run and the prefix metrics are then
+ * comparable in meaning but not to the digit.
+ */
+static int ngram_gen_full(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_GEN_FULL");
+    cached = (NULL != env && '\0' != *env && 0 != atoi(env)) ? 1 : 0;
+  }
+  return cached;
+}
+
+
+/**
+ * Whether gen-eval also ranks the truth by the successor-side embedding, over the
+ * WHOLE vocabulary and independently of what the count model proposed.
+ *
+ * This is the probe that decides the directed representation BEFORE any of it is
+ * wired into a predictor. The count model carries the truth in its proposal on
+ * only 22% of novel-context positions, so the question that matters is not
+ * whether the embedding reranks better -- it is whether a TOTAL scorer can rank
+ * the truth at all where the partial one had nothing to offer. Costs one
+ * vocabulary scan per position, which is why it is a knob and not always on.
+ */
+static int ngram_gen_embrank(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_GEN_EMBRANK");
+    cached = (NULL != env && '\0' != *env && 0 != atoi(env)) ? 1 : 0;
+  }
+  return cached;
+}
+
+
+/**
+ * How many embedding-proposed successors join the candidate set per step, 0 =
+ * off.
+ *
+ * OFF BY DEFAULT BECAUSE IT CHANGES THE PROMISE, not because it is unfinished.
+ * Every other generation tier emits a successor the n-gram ATTESTED in this
+ * context, which is what makes the output traceable to corpus text; the one
+ * existing exception, recombination's composer, is opt-in for exactly this
+ * reason. A candidate proposed by the low-rank completion was never observed
+ * after this context, so with this on the path SYNTHESIZES rather than SELECTS
+ * and the caller has to have asked for that.
+ *
+ * Secondary consequence to keep in mind when reading the numbers: a position the
+ * grounding floor would have suppressed becomes scoreable once proposals exist,
+ * so the count candidates below that floor are admitted alongside them and the
+ * prefix metrics are not comparable across this knob.
+ */
+static int ngram_gen_embcand(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_GEN_EMBCAND");
+    cached = (NULL != env && '\0' != *env) ? atoi(env) : 0;
+    if (cached < 0) cached = 0;
     if (cached > GEN_CAND_MAX) cached = GEN_CAND_MAX;
   }
   return cached;
@@ -9566,6 +10060,38 @@ static int ngram_gen_bank_rank(libxs_registry_t* model,
 }
 
 
+/**
+ * One bucket of the per-position generation report.
+ *
+ * inlist is the share of scored positions where the truth appears ANYWHERE in
+ * the offered candidates. It separates the two ways a generator can be wrong:
+ * top1 - inlist is what better ranking could still win, and 100 - inlist is what
+ * no reranking can reach because the truth was never proposed. The count model
+ * offers only attested successors, so on novel context the second term is the
+ * one that binds, and a mechanism aimed at the first would be misdirected.
+ */
+static void gen_bucket_report(const char* label, long n, long top1,
+  long inlist, long abst, double rr)
+{
+  fprintf(stderr, "%s n=%ld top1=%.2f%% mrr=%.4f inlist=%.2f%%"
+    " abstain=%.2f%%\n", label, n,
+    (n > 0) ? 100.0 * (double)top1 / (double)n : 0.0,
+    (n > 0) ? rr / (double)n : 0.0,
+    (n > 0) ? 100.0 * (double)inlist / (double)n : 0.0,
+    (0 < n + abst) ? 100.0 * (double)abst / (double)(n + abst) : 0.0);
+}
+
+
+static void gen_embrank_report(const char* label, long n, long top1,
+  long top10, double rr)
+{
+  fprintf(stderr, "%s n=%ld top1=%.2f%% top10=%.2f%% mrr=%.4f\n", label, n,
+    (n > 0) ? 100.0 * (double)top1 / (double)n : 0.0,
+    (n > 0) ? 100.0 * (double)top10 / (double)n : 0.0,
+    (n > 0) ? rr / (double)n : 0.0);
+}
+
+
 static int ngram_gen_eval(libxs_registry_t* model,
   const libxs_registry_t* corpus, libxs_lexicon_t* lexicon,
   const libxs_lexrule_t* rules, int nrules, int holdout, const char* kind,
@@ -9577,6 +10103,38 @@ static int ngram_gen_eval(libxs_registry_t* model,
   long nsent_att = 0, sum_repro_att = 0, nsent_nov = 0, sum_repro_nov = 0;
   int maxorder = ngram_maxorder();
   int minorder = ngram_gen_minorder();
+  const int gen_full = ngram_gen_full();
+  const int gen_ncand = ngram_gen_ncand();
+  long pos_n = 0, pos_top1 = 0, pos_abst = 0, pos_order = 0, pos_inl = 0;
+  long pos_n_att = 0, pos_top1_att = 0, pos_abst_att = 0, pos_inl_att = 0;
+  long pos_n_nov = 0, pos_top1_nov = 0, pos_abst_nov = 0, pos_inl_nov = 0;
+  double pos_rr = 0.0, pos_rr_att = 0.0, pos_rr_nov = 0.0;
+  long ctx_n_att = 0, ctx_top1_att = 0, ctx_abst_att = 0, ctx_inl_att = 0;
+  long ctx_n_nov = 0, ctx_top1_nov = 0, ctx_abst_nov = 0, ctx_inl_nov = 0;
+  double ctx_rr_att = 0.0, ctx_rr_nov = 0.0;
+  const int gen_embrank = ngram_gen_embrank();
+  const int gen_embcand = ngram_gen_embcand();
+  const int gen_embctx = ngram_emb_ctx();
+  /**
+   * Candidate budget is FIXED at GEN_CAND_MAX, so proposals take slots from the
+   * counts rather than enlarging the list. Two reasons. Without it the counts can
+   * fill the list at exactly the positions proposals are for -- a match at order
+   * 1 still returns a full set while failing the grounding floor, so there was no
+   * room left and 53249 positions kept abstaining. And a longer list would raise
+   * inlist for free, which would make the comparison against the attested-only
+   * baseline meaningless: at matched width, a change in inlist is a real
+   * substitution.
+   */
+  const int gen_ncand_cnt = (0 < gen_embcand)
+    ? ((GEN_CAND_MAX - gen_embcand) > 1 ? (GEN_CAND_MAX - gen_embcand) : 1)
+    : 0;
+  long pos_embadd = 0, pos_embpick = 0, pos_embpick_nov = 0, pos_resc = 0;
+  long emb_n_att = 0, emb_top1_att = 0, emb_top10_att = 0;
+  long emb_n_nov = 0, emb_top1_nov = 0, emb_top10_nov = 0;
+  long emb_n_dec = 0, emb_top1_dec = 0, emb_top10_dec = 0;
+  long emb_n_spk = 0, emb_top1_spk = 0, emb_top10_spk = 0;
+  double emb_rr_att = 0.0, emb_rr_nov = 0.0;
+  double emb_rr_dec = 0.0, emb_rr_spk = 0.0;
   long gen_ranked = 0, gen_reordered = 0;
   const int gen_bank = ngram_bank_probe();
   const unsigned int bank_slots = ngram_bank_slots();
@@ -9645,12 +10203,29 @@ static int ngram_gen_eval(libxs_registry_t* model,
         unsigned int hist[NGRAM_ORDER_MAX];
         const int seedcap = (GEN_SEED < maxorder) ? GEN_SEED : maxorder;
         int hlen = 0, t, repro = 0, diverged = 0, seed_attested = -1;
+        int stop = 0, spoke = 0, hit = 0, abst = 0, ordsum = 0, inl = 0;
+        double rrsum = 0.0;
         for (t = 0; t < GEN_SEED; ++t) hist[hlen++] = truth[t];
-        for (t = GEN_SEED; t < ntruth && 0 == diverged; ++t) {
+        for (t = GEN_SEED; t < ntruth && 0 == stop; ++t) {
           unsigned int ids[GEN_CAND_MAX];
+          unsigned int embids[GEN_CAND_MAX];
           int got_order = 0;
+          int ctxatt = 0, nemb = 0, cdecl;
           int n = ngramk_predict_order(model, hist, hlen, maxorder, ids,
-            ngram_gen_ncand(), &got_order);
+            (0 < gen_embcand && gen_ncand > gen_ncand_cnt)
+              ? gen_ncand_cnt : gen_ncand, &got_order);
+          /* Proposals join BEFORE the bank so the pool arbitrates the union
+             rather than being handed a decision already made. */
+          if (0 < gen_embcand) {
+            const int nctx = (gen_embctx < hlen) ? gen_embctx : hlen;
+            int k;
+            nemb = token_emb_succ_append(hist + (hlen - nctx), nctx,
+              (unsigned int)gen_vocab, ngram_emb_temp(), ids, n, GEN_CAND_MAX,
+              gen_embcand);
+            for (k = 0; k < nemb; ++k) embids[k] = ids[n + k];
+            n += nemb;
+            pos_embadd += nemb;
+          }
           if (1 < n && NULL != answer_hier_model) {
             char context[COMPOSE_MAXTEXT];
             const int context_len = ngram_gen_join(lexicon, truth, t,
@@ -9692,27 +10267,176 @@ static int ngram_gen_eval(libxs_registry_t* model,
           if (seed_attested < 0) {
             seed_attested = (n > 0 && got_order >= seedcap) ? 1 : 0;
           }
-          if (n <= 0 || got_order < minorder) break;
-          ++gen_tokens;
-          order_sum += got_order;
-          if (ids[0] == truth[t]) ++repro;
-          else diverged = 1;
-          if (hlen < NGRAM_ORDER_MAX) hist[hlen++] = truth[t];
+          /**
+           * Abstention is a position the model declined, not a wrong answer, so
+           * it is counted apart from accuracy rather than folded in as a miss.
+           * Under the prefix definition it also ends the sentence, which is why
+           * the old scan could report a short run without saying why it stopped.
+           */
+          /**
+           * Second split, per POSITION rather than per seed: did the FULL-ORDER
+           * context of THIS position recur in training. That is the definition
+           * ngram_eval's attested/novel BPC split already uses, so the two
+           * instruments become readable together; the seed split classifies a
+           * whole sentence by its first three words and stops discriminating
+           * once true history is fed back.
+           */
+          ctxatt = (got_order >= maxorder) ? 1 : 0;
+          /**
+           * Whether the COUNTS declined, judged on the count-supplied part of the
+           * list only. With no proposals nemb is zero and this is exactly the
+           * historical condition, which is what keeps the knob-off path
+           * bit-exact; with proposals it separates "counts had nothing" from
+           * "nobody had anything".
+           */
+          cdecl = ((n - nemb) <= 0 || got_order < minorder) ? 1 : 0;
+          /**
+           * Scored at EVERY visited position, including the ones the count model
+           * declined: a total scorer must be judged where the partial one was
+           * silent, or the comparison quietly excludes the positions the whole
+           * mechanism is for.
+           */
+          if (0 != gen_embrank) {
+            const int nctx = (gen_embctx < hlen) ? gen_embctx : hlen;
+            const int erank = token_emb_succ_rank(hist + (hlen - nctx), nctx,
+              truth[t], (unsigned int)gen_vocab);
+            /**
+             * The control that decides whether a total scorer is worth anything:
+             * its accuracy ON THE POSITIONS THE COUNT MODEL DECLINED. Averaged
+             * over all positions it could earn its score entirely where counts
+             * already speak, which would make it a redundant expert rather than a
+             * reach into the bucket that has no evidence at all.
+             */
+            if (0 <= erank) {
+              if (0 != cdecl) {
+                ++emb_n_dec;
+                if (0 == erank) ++emb_top1_dec;
+                if (10 > erank) ++emb_top10_dec;
+                emb_rr_dec += 1.0 / (double)(erank + 1);
+              }
+              else {
+                ++emb_n_spk;
+                if (0 == erank) ++emb_top1_spk;
+                if (10 > erank) ++emb_top10_spk;
+                emb_rr_spk += 1.0 / (double)(erank + 1);
+              }
+              if (0 != ctxatt) {
+                ++emb_n_att;
+                if (0 == erank) ++emb_top1_att;
+                if (10 > erank) ++emb_top10_att;
+                emb_rr_att += 1.0 / (double)(erank + 1);
+              }
+              else {
+                ++emb_n_nov;
+                if (0 == erank) ++emb_top1_nov;
+                if (10 > erank) ++emb_top10_nov;
+                emb_rr_nov += 1.0 / (double)(erank + 1);
+              }
+            }
+          }
+          if (0 != cdecl && 0 == nemb) {
+            ++abst;
+            if (0 != ctxatt) ++ctx_abst_att;
+            else ++ctx_abst_nov;
+            /**
+             * The prefix definition ends the run here, so the prefix metrics
+             * must stop accumulating even when the scan continues -- otherwise
+             * positions past an abstention extend mean-reproduced and the two
+             * readings stop being comparable (measured: 7.48 -> 7.68 on grimm).
+             */
+            diverged = 1;
+            if (0 == gen_full) stop = 1;
+          }
           else {
-            int s;
-            for (s = 1; s < NGRAM_ORDER_MAX; ++s) hist[s - 1] = hist[s];
-            hist[NGRAM_ORDER_MAX - 1] = truth[t];
+            /**
+             * Rank of the truth within the offered candidates, AFTER every
+             * reranking, so it scores the ranking the model actually produces.
+             * It is -1 when the truth was not offered at all: the count model
+             * proposes only attested successors, so on novel contexts that is
+             * the common case and it must not contribute to the reciprocal rank.
+             */
+            int rank = -1, c;
+            for (c = 0; c < n && rank < 0; ++c) {
+              if (ids[c] == truth[t]) rank = c;
+            }
+            if (0 != cdecl) ++pos_resc;
+            /* Whether what generation actually EMITTED is a successor no count
+               context attested here -- the share of output that is synthesized
+               rather than selected, which is the cost side of this mode. */
+            { int fromemb = 0, k;
+              for (k = 0; k < nemb && 0 == fromemb; ++k) {
+                if (embids[k] == ids[0]) fromemb = 1;
+              }
+              if (0 != fromemb) {
+                ++pos_embpick;
+                if (0 == ctxatt) ++pos_embpick_nov;
+              }
+            }
+            if (0 == diverged) {
+              ++gen_tokens;
+              order_sum += got_order;
+              if (0 == rank) ++repro;
+              else diverged = 1;
+            }
+            ++spoke;
+            ordsum += got_order;
+            if (0 == rank) ++hit;
+            if (0 <= rank) {
+              ++inl;
+              rrsum += 1.0 / (double)(rank + 1);
+            }
+            if (0 != ctxatt) {
+              ++ctx_n_att;
+              if (0 == rank) ++ctx_top1_att;
+              if (0 <= rank) {
+                ++ctx_inl_att;
+                ctx_rr_att += 1.0 / (double)(rank + 1);
+              }
+            }
+            else {
+              ++ctx_n_nov;
+              if (0 == rank) ++ctx_top1_nov;
+              if (0 <= rank) {
+                ++ctx_inl_nov;
+                ctx_rr_nov += 1.0 / (double)(rank + 1);
+              }
+            }
+            if (0 == gen_full) stop = diverged;
+          }
+          if (0 == stop) {
+            if (hlen < NGRAM_ORDER_MAX) hist[hlen++] = truth[t];
+            else {
+              int s;
+              for (s = 1; s < NGRAM_ORDER_MAX; ++s) hist[s - 1] = hist[s];
+              hist[NGRAM_ORDER_MAX - 1] = truth[t];
+            }
           }
         }
         sum_repro += repro;
         ++nsent;
+        pos_n += spoke;
+        pos_top1 += hit;
+        pos_abst += abst;
+        pos_order += ordsum;
+        pos_inl += inl;
+        pos_rr += rrsum;
         if (1 == seed_attested) {
           sum_repro_att += repro;
           ++nsent_att;
+          pos_n_att += spoke;
+          pos_top1_att += hit;
+          pos_abst_att += abst;
+          pos_inl_att += inl;
+          pos_rr_att += rrsum;
         }
         else {
           sum_repro_nov += repro;
           ++nsent_nov;
+          pos_n_nov += spoke;
+          pos_top1_nov += hit;
+          pos_abst_nov += abst;
+          pos_inl_nov += inl;
+          pos_rr_nov += rrsum;
         }
       }
     }
@@ -9741,6 +10465,47 @@ static int ngram_gen_eval(libxs_registry_t* model,
       (nsent_att > 0) ? (double)sum_repro_att / (double)nsent_att : 0.0,
       100.0 * (double)nsent_nov / (double)nsent,
       (nsent_nov > 0) ? (double)sum_repro_nov / (double)nsent_nov : 0.0);
+    /**
+     * mrr is the mean reciprocal rank of the truth over the offered candidates,
+     * so at ncand=1 (the default) it equals top1 and carries no extra
+     * information: widen CONVERSE_GEN_NCAND to give it range. ncand is printed
+     * because it decides how to read the column.
+     */
+    fprintf(stderr, "  per-position[%s]: order=%.2f ncand=%d\n",
+      (0 != gen_full) ? "full" : "prefix",
+      (pos_n > 0) ? (double)pos_order / (double)pos_n : 0.0, gen_ncand);
+    gen_bucket_report("    all:            ", pos_n, pos_top1, pos_inl,
+      pos_abst, pos_rr);
+    gen_bucket_report("    seed attested:  ", pos_n_att, pos_top1_att,
+      pos_inl_att, pos_abst_att, pos_rr_att);
+    gen_bucket_report("    seed novel:     ", pos_n_nov, pos_top1_nov,
+      pos_inl_nov, pos_abst_nov, pos_rr_nov);
+    gen_bucket_report("    ctx attested:   ", ctx_n_att, ctx_top1_att,
+      ctx_inl_att, ctx_abst_att, ctx_rr_att);
+    gen_bucket_report("    ctx novel:      ", ctx_n_nov, ctx_top1_nov,
+      ctx_inl_nov, ctx_abst_nov, ctx_rr_nov);
+    if (0 < gen_embcand) {
+      fprintf(stderr, "  emb proposals[ncand=%d]: added=%ld rescued=%ld"
+        " of %ld scored | EMITTED an unattested successor %.2f%% of scored"
+        " (ctx-novel %.2f%%)\n", gen_embcand, pos_embadd, pos_resc, pos_n,
+        (pos_n > 0) ? 100.0 * (double)pos_embpick / (double)pos_n : 0.0,
+        (ctx_n_nov > 0)
+          ? 100.0 * (double)pos_embpick_nov / (double)ctx_n_nov : 0.0);
+    }
+    if (0 != gen_embrank && 0 < emb_n_att + emb_n_nov) {
+      fprintf(stderr, "  embedding rank of truth over vocab=%d"
+        " (directed=%d, chance top1=%.4f%%):\n", gen_vocab,
+        token_emb_directed(),
+        (gen_vocab > 0) ? 100.0 / (double)gen_vocab : 0.0);
+      gen_embrank_report("    ctx attested:   ", emb_n_att, emb_top1_att,
+        emb_top10_att, emb_rr_att);
+      gen_embrank_report("    ctx novel:      ", emb_n_nov, emb_top1_nov,
+        emb_top10_nov, emb_rr_nov);
+      gen_embrank_report("    counts spoke:   ", emb_n_spk, emb_top1_spk,
+        emb_top10_spk, emb_rr_spk);
+      gen_embrank_report("    counts DECLINED:", emb_n_dec, emb_top1_dec,
+        emb_top10_dec, emb_rr_dec);
+    }
     result = EXIT_SUCCESS;
   }
   return result;
