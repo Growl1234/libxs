@@ -4,7 +4,6 @@
 #include <libxs/libxs_mem.h>
 
 #include "converse.h"
-#include "converse_hier.h"
 #include "converse_recomb.h"
 
 #include <math.h>
@@ -19,8 +18,14 @@
  * the measurement: adding a context argument to each would obscure that the
  * capacity count, the dedup and the gate order are what the numbers depend on.
  */
-static const converse_hier_t* recomb_judge = NULL;
 static const converse_recomb_host_t* recomb_host = NULL;
+
+
+/** Whether the caller supplied a seam-bits diagnostic. */
+static int recomb_have_judge(void)
+{
+  return (NULL != recomb_host && NULL != recomb_host->seam_bits) ? 1 : 0;
+}
 
 
 /**
@@ -117,19 +122,30 @@ static int recomb_balance_on(void)
  * tolerance, which asks "did the join make this less like the corpus" rather than
  * "is this exact sequence present".
  */
+/**
+ * Zero when the host supplies no word probability, which makes the seam penalty
+ * zero and so leaves the grammar gate permissive rather than crashing on a NULL
+ * callback. That is the intended behaviour for a build without the n-gram: the
+ * penalty is a DIAGNOSTIC, since a seam score has never been able to tell a true
+ * join from a fluent false one, and grammaticality is now enforced by the clause
+ * constraint instead.
+ */
 static double recomb_span_bits(libxs_lexicon_t* lexicon,
   const unsigned int ids[], int n)
 {
   double result = 0.0;
-  const int maxorder = recomb_host->maxorder;
-  int at;
   LIBXS_UNUSED(lexicon);
-  for (at = 1; at < n; ++at) {
-    const int hlen = (at < maxorder) ? at : maxorder;
-    const double p = recomb_host->word_prob(ids + at - hlen, hlen, ids[at]);
-    result += -log((p > 1e-300) ? p : 1e-300) / log(2.0);
+  if (NULL != recomb_host && NULL != recomb_host->word_prob && 1 < n) {
+    const int maxorder = recomb_host->maxorder;
+    int at;
+    for (at = 1; at < n; ++at) {
+      const int hlen = (at < maxorder) ? at : maxorder;
+      const double p = recomb_host->word_prob(ids + at - hlen, hlen, ids[at]);
+      result += -log((p > 1e-300) ? p : 1e-300) / log(2.0);
+    }
+    result /= (double)(n - 1);
   }
-  return (1 < n) ? result / (double)(n - 1) : 0.0;
+  return result;
 }
 
 
@@ -1217,7 +1233,7 @@ static int recomb_signals(recomb_signal_t* sig, libxs_lexicon_t* lexicon,
   double bits = 0.0;
   if (NULL == sig) return EXIT_FAILURE;
   LIBXS_MEMZERO(sig);
-  if (EXIT_SUCCESS == converse_hier_seam_bits(recomb_judge, text, seam,
+  if (EXIT_SUCCESS == recomb_host->seam_bits(text, seam,
     text + seam, len - seam, window, &bits))
   {
     const int nprefix = ai + 1;
@@ -1663,7 +1679,7 @@ static int recomb_compose(const libxs_registry_t* corpus,
  */
 void converse_recomb_probe_run(const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
-  int limit, const converse_hier_t* judge,
+  int limit,
   const converse_recomb_host_t* host)
 {
   const void* key = NULL;
@@ -1674,6 +1690,7 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
   const int window = recomb_seam_window();
   const int verbose = (NULL != getenv("CONVERSE_RECOMB_SHOW")) ? 1 : 0;
   double sum_overlap = 0.0, sum_penalty = 0.0;
+  long nbits = 0;
   long nsection = 0, noverlap0 = 0, nsource = 0;
   long cap_hosts = 0, cap_total = 0, cap_pivots = 0, cap_capped = 0;
   long cap_distinct = 0, cap_hop2 = 0, cap_hop2_distinct = 0;
@@ -1692,7 +1709,6 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
   libxs_registry_t* cap_seen = NULL;
   libxs_registry_t* cap_seen2 = NULL;
   void* value;
-  recomb_judge = judge;
   recomb_host = host;
   if (EXIT_SUCCESS != recomb_index_build(corpus, lexicon)) {
     fprintf(stderr, "recomb: pivot index could not be built\n");
@@ -1750,14 +1766,22 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
         out, sizeof(out), &pivot_id, &donor, &penalty);
       if (0 < len) {
         double bits = 0.0;
-        int seam = 0;
+        int seam = 0, have_bits = 0;
         int wi;
         for (wi = 1; wi < nawords; ++wi) {
           if ((int)awords[wi].id == pivot_id) seam = awords[wi].end;
         }
+        /**
+         * With a judge present this is exactly the historical condition, so the
+         * figures stay bit-identical. Without one the candidate still COUNTS --
+         * folding the accounting into the diagnostic's success is how a run
+         * reports made=0 and reads as "no result" when it means "no instrument".
+         */
+        have_bits = (0 < seam && seam < len && recomb_have_judge()
+          && EXIT_SUCCESS == recomb_host->seam_bits(out,
+            seam, out + seam, len - seam, window, &bits)) ? 1 : 0;
         if (0 < seam && seam < len
-          && EXIT_SUCCESS == converse_hier_seam_bits(recomb_judge, out,
-            seam, out + seam, len - seam, window, &bits))
+          && (0 != have_bits || 0 == recomb_have_judge()))
         {
           const double overlap = (NULL != donor)
             ? recomb_overlap(a, donor, (unsigned int)pivot_id) : 0.0;
@@ -1776,15 +1800,18 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
             && 0 == memcmp(a->section, donor->section,
               (size_t)a->section_len)) ? 1 : 0;
           ++nmade;
-          sum_pivot += bits;
+          if (0 != have_bits) {
+            ++nbits;
+            sum_pivot += bits;
+          }
           sum_overlap += overlap;
           sum_penalty += penalty;
           if (0 != same) ++nsection;
           if (0 != same_src) ++nsource;
           if (overlap <= 0.0) ++noverlap0;
           if (0 != verbose) {
-            fprintf(stderr, "  recomb[%.3f bpc ovl=%.2f gram%+.2f %s%s] %.*s\n",
-              bits, overlap, penalty,
+            fprintf(stderr, "  recomb[%s%.3f bpc ovl=%.2f gram%+.2f %s%s] %.*s\n",
+              (0 != have_bits) ? "" : "no-judge ", bits, overlap, penalty,
               (0 != same) ? "same-section" : "CROSS-SECTION",
               (NULL != donor && 0 != a->source)
                 ? ((0 != same_src) ? " same-source" : " CROSS-SOURCE") : "",
@@ -1792,15 +1819,15 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
           }
         }
         /* Ceiling: the same offset inside a real corpus sentence. */
-        if (0 < seam && seam < a->text_len
-          && EXIT_SUCCESS == converse_hier_seam_bits(recomb_judge,
+        if (0 < seam && seam < a->text_len && recomb_have_judge()
+          && EXIT_SUCCESS == recomb_host->seam_bits(
             a->text, seam, a->text + seam, a->text_len - seam, window, &bits))
         {
           ++nceiling;
           sum_ceiling += bits;
         }
         /* Floor: same prefix, but a suffix taken with no shared pivot. */
-        if (0 < seam && nawords > 2) {
+        if (0 < seam && nawords > 2 && recomb_have_judge()) {
           const corpus_entry_t* b = NULL;
           const void* fkey = NULL;
           size_t fcursor = 0;
@@ -1812,8 +1839,8 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
               && cand->text_len > seam + 8) b = cand;
             fval = libxs_registry_next(corpus, &fkey, &fcursor);
           }
-          if (NULL != b && EXIT_SUCCESS == converse_hier_seam_bits(
-            recomb_judge, out, seam, b->text + seam / 2,
+          if (NULL != b && EXIT_SUCCESS == recomb_host->seam_bits(
+            out, seam, b->text + seam / 2,
             b->text_len - seam / 2, window, &bits))
           {
             ++nfloor;
@@ -1828,7 +1855,7 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
   fprintf(stdout, "recomb[window=%d]: made=%ld of %ld tried"
     " | seam bpc: pivot=%.3f ceiling=%.3f floor=%.3f\n",
     window, nmade, ntried,
-    (0 < nmade) ? sum_pivot / (double)nmade : 0.0,
+    (0 < nbits) ? sum_pivot / (double)nbits : 0.0,
     (0 < nceiling) ? sum_ceiling / (double)nceiling : 0.0,
     (0 < nfloor) ? sum_floor / (double)nfloor : 0.0);
   /**
@@ -1940,11 +1967,10 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
 
 
 int converse_recomb_open(const libxs_registry_t* corpus,
-  libxs_lexicon_t* lexicon, const converse_hier_t* judge,
+  libxs_lexicon_t* lexicon,
   const converse_recomb_host_t* host)
 {
   int result;
-  recomb_judge = judge;
   recomb_host = host;
   result = recomb_index_build(corpus, lexicon);
   if (EXIT_SUCCESS == result && 0 != recomb_nopredicate_on()) {
@@ -1959,7 +1985,6 @@ void converse_recomb_close(void)
   recomb_index_free();
   recomb_predicate_free();
   recomb_referent_free();
-  recomb_judge = NULL;
   recomb_host = NULL;
 }
 

@@ -23,6 +23,27 @@ Or from the `libxs` root:
 make PEDANTIC=2 samples/converse
 ```
 
+## Which binary
+
+The build produces three, and each links only what it serves:
+
+| binary | modes | contains |
+| :--- | :--- | :--- |
+| `converse-qa.x` | interactive, `-e`, `-c`, `-L` | grounded answering and recombination |
+| `converse-lm.x` | `-E`, `-c -K KIND`, `-L` | next-token models and the byte model |
+| `converse.x` | all of the above | both halves |
+
+`-L` only writes the shared corpus, lexicon and predictor, so either half can do
+it. A mode the binary does not serve is rejected before any corpus work, naming
+the binary that does serve it. `converse.x` accepts every documented command and
+is what the reproduction script uses.
+
+The byte model (`converse_hier.c`) reaches the grounded half only as an installed
+judge, so `converse-qa.x` does not contain it: `CONVERSE_HIER_RESCORE=1` there
+answers without rescoring and the recombination probe prints `no seam judge` with
+its bpc columns at zero, which every other column reproduces regardless. Use
+`converse.x` when those columns are wanted.
+
 ## Summarize and compose
 
 Summarize a file by repeatedly fusing adjacent sentences (`-n` sets the target

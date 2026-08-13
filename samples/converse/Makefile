@@ -34,7 +34,17 @@ CSOURCS := $(wildcard $(SRCDIR)/*.c)
 COBJCTS := $(patsubst %,$(BLDDIR)/%,$(notdir $(CSOURCS:.c=-c.o)))
 SOURCES := $(CSOURCS)
 OBJECTS := $(COBJCTS)
-XFILES := $(OUTDIR)/summarize.x $(OUTDIR)/converse.x
+XFILES := $(OUTDIR)/summarize.x $(OUTDIR)/converse.x \
+          $(OUTDIR)/converse-qa.x $(OUTDIR)/converse-lm.x
+
+# The corpus, the tokenizer, the word n-gram and the successor embedding: what
+# both halves are built from, and what -L persists.
+CONVERSE_CORE := $(BLDDIR)/converse-c.o
+# The grounded half. converse_recomb.c belongs to it and names no model.
+CONVERSE_QA := $(BLDDIR)/converse_qa-c.o $(BLDDIR)/converse_recomb-c.o
+# The prediction half. It is the only half that may name the byte model, which
+# reaches the other one as an installed judge or not at all.
+CONVERSE_LM := $(BLDDIR)/converse_lm-c.o $(BLDDIR)/converse_hier-c.o
 
 .PHONY: all
 all: $(XFILES)
@@ -45,10 +55,19 @@ compile: $(OBJECTS)
 $(OUTDIR)/summarize.x: $(OUTDIR)/.make $(BLDDIR)/summarize-c.o $(XLIB)
 	$(LD) -o $@ $(BLDDIR)/summarize-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
-$(OUTDIR)/converse.x: $(OUTDIR)/.make $(BLDDIR)/converse-c.o \
-  $(BLDDIR)/converse_hier-c.o $(BLDDIR)/converse_recomb-c.o $(XLIB)
-	$(LD) -o $@ $(BLDDIR)/converse-c.o $(BLDDIR)/converse_hier-c.o \
-	  $(BLDDIR)/converse_recomb-c.o \
+$(OUTDIR)/converse.x: $(OUTDIR)/.make $(BLDDIR)/main_all-c.o \
+  $(CONVERSE_CORE) $(CONVERSE_QA) $(CONVERSE_LM) $(XLIB)
+	$(LD) -o $@ $(BLDDIR)/main_all-c.o $(CONVERSE_CORE) $(CONVERSE_QA) \
+	  $(CONVERSE_LM) $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+
+$(OUTDIR)/converse-qa.x: $(OUTDIR)/.make $(BLDDIR)/main_qa-c.o \
+  $(CONVERSE_CORE) $(CONVERSE_QA) $(XLIB)
+	$(LD) -o $@ $(BLDDIR)/main_qa-c.o $(CONVERSE_CORE) $(CONVERSE_QA) \
+	  $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+
+$(OUTDIR)/converse-lm.x: $(OUTDIR)/.make $(BLDDIR)/main_lm-c.o \
+  $(CONVERSE_CORE) $(CONVERSE_LM) $(XLIB)
+	$(LD) -o $@ $(BLDDIR)/main_lm-c.o $(CONVERSE_CORE) $(CONVERSE_LM) \
 	  $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
 $(BLDDIR)/%-c.o: $(SRCDIR)/%.c .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc

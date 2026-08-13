@@ -5,7 +5,6 @@
 #include <libxs/libxs_token.h>
 
 #include "converse.h"
-#include "converse_hier.h"
 
 
 /**
@@ -17,6 +16,19 @@
  */
 typedef double (*converse_recomb_prob_t)(const unsigned int hist[], int hlen,
   unsigned int next);
+
+
+/**
+ * Bits the seam costs under the caller's byte model, as a callback for the same
+ * reason word_prob is one: it is a DIAGNOSTIC. Six seam scores have been refuted,
+ * the last ranking a false continuation 50x above the true one, so grammaticality
+ * is enforced by the clause constraint and this only fills the reported bpc
+ * columns. Passing it as a function rather than naming the model's type is what
+ * lets recombination compile without the byte model at all -- NULL simply drops
+ * those columns.
+ */
+typedef int (*converse_recomb_seam_t)(const char* prefix, int prefix_length,
+  const char* suffix, int suffix_length, int score_length, double* bits);
 
 
 /**
@@ -37,6 +49,7 @@ typedef struct converse_recomb_host_t {
     unsigned char scale, libxs_lexicon_t* lexicon,
     const libxs_lexrule_t* rules, int nrules);
   converse_recomb_prob_t word_prob;
+  converse_recomb_seam_t seam_bits;
   int maxorder;
 } converse_recomb_host_t;
 
@@ -50,7 +63,7 @@ typedef struct converse_recomb_host_t {
  */
 void converse_recomb_probe_run(const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
-  int limit, const converse_hier_t* judge,
+  int limit,
   const converse_recomb_host_t* host);
 
 
@@ -62,7 +75,7 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
  * registry must outlive this and must not be modified.
  */
 int converse_recomb_open(const libxs_registry_t* corpus,
-  libxs_lexicon_t* lexicon, const converse_hier_t* judge,
+  libxs_lexicon_t* lexicon,
   const converse_recomb_host_t* host);
 
 /** Release what converse_recomb_open built. Safe when open was never called. */

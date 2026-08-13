@@ -1,8 +1,12 @@
 #ifndef CONVERSE_H
 #define CONVERSE_H
 
+#include <libxs/libxs_predict.h>
+#include <libxs/libxs_ngram.h>
+#include <libxs/libxs_token.h>
 #include <libxs/libxs_math.h>
 #include <libxs/libxs_perm.h>
+#include <libxs/libxs_reg.h>
 
 #include <string.h>
 
@@ -27,6 +31,32 @@
  * BPC denominator) has to exclude these.
  */
 #define ENTRY_LEX_FRAGMENT 0x0040u
+
+/**
+ * Which half of the system a binary exposes.
+ *
+ * The two halves answer different questions and are being separated into
+ * different papers and different translation units: QA is grounded answering,
+ * attribution and grounded recombination, LM is next-token prediction and its
+ * quantification. The role gates the MODES an entry point accepts, so each
+ * binary has a coherent command surface and nothing links a mode it cannot serve.
+ * CONVERSE_ROLE_ALL keeps the historical single-binary behaviour so every
+ * documented reproduction command still runs.
+ */
+enum {
+  CONVERSE_ROLE_ALL = 0,
+  CONVERSE_ROLE_QA = 1,
+  CONVERSE_ROLE_LM = 2
+};
+
+#define GEN_CAND_MAX 8
+#define EVAL_LINE_MAX 2048
+#define NGRAM_ORDER_MAX LIBXS_NGRAM_ORDER_MAX
+#if !defined(TOKEN_EMB_DIM)
+# define TOKEN_EMB_DIM 16
+#endif
+#define TOKEN_CTX_MAX 8
+#define ANSWER_PREDICT_INPUTS 10
 
 enum { CONN_SPACE = 0, CONN_COMMA = 1, CONN_PERIOD = 2, CONN_NEWLINE = 3 };
 enum { SCALE_PHRASE = 0, SCALE_SENTENCE = 1, SCALE_PARAGRAPH = 2 };
@@ -154,5 +184,144 @@ LIBXS_INLINE void corpus_key_from_fprint(const corpus_fprint_t* fp,
   memcpy(key, &hcode, 8);
   *key_size = 8;
 }
+
+
+enum { QUERY_GENERIC = 0, QUERY_WHO, QUERY_WHAT, QUERY_WHERE,
+  QUERY_WHEN, QUERY_WHY, QUERY_HOW, QUERY_YESNO };
+
+typedef struct answer_predict_profile_t {
+  const char* name;
+  int mode;
+  int decompose;
+  int clusters;
+  int order;
+  double quality;
+  double smooth;
+  int nseries;
+  int window;
+  int target;
+  int diff_order;
+} answer_predict_profile_t;
+
+enum { RELATION_RULE_ALIAS = 1, RELATION_RULE_PERSON, RELATION_RULE_SKIP,
+  RELATION_RULE_NEGATE, RELATION_RULE_NORM };
+
+typedef struct answer_relation_rule_t {
+  int kind;
+  char relation[64];
+  char term[64];
+} answer_relation_rule_t;
+
+typedef struct answer_relation_match_t {
+  char answer[128];
+  char relation[64];
+  char actor[64];
+  int answer_len;
+  int relation_len;
+  int actor_len;
+  int plural;
+  int made;
+  double score;
+} answer_relation_match_t;
+
+
+/**
+ * What one invocation has to work with once the shared state is loaded: the
+ * corpus, the lexicon and the rules every model is built from, plus the modes
+ * parsed from the command line. Passed to whichever half serves the invocation,
+ * so the setup that both halves need exists once and neither half parses
+ * arguments.
+ */
+typedef struct converse_run_t {
+  libxs_registry_t* corpus;
+  libxs_lexicon_t* lexicon;
+  libxs_predict_t* answer_model;
+  libxs_lexrule_t* rules;
+  const answer_predict_profile_t* profile;
+  const char* ngram_kind;
+  const char* test_prefix;
+  long nsentences;
+  int nrules;
+  int budget;
+  int ngram_order;
+  int ngram_holdout;
+  int eval_mode;
+  int predict_eval_mode;
+  int complete_mode;
+  int learn_mode;
+  int role;
+  /** A half must run: 0 after -L, which is complete once setup returns. */
+  int pending;
+} converse_run_t;
+
+
+/**
+ * The byte model as an INSTRUMENT the entry point installs, not a dependency the
+ * halves name.
+ *
+ * Every judge in this system is a callback for the same reason converse_recomb's
+ * word_prob and seam_bits are: a seam or candidate score has never separated a
+ * true continuation from a fluent false one, so all of them are diagnostics.
+ * Making them a hook is what lets the grounded half compile and link without the
+ * byte model, while the binary that measures with it installs one. Every entry
+ * point below degrades to "no instrument" rather than failing: rescore and choose
+ * leave the caller's order untouched, seam_bits reports no bits.
+ */
+typedef struct converse_judge_t {
+  void* (*open)(const libxs_registry_t* corpus, int maxorder);
+  void (*close)(void* model);
+  int (*rescore)(const void* model, const char* query, int query_length,
+    const char* const candidates[], const int candidate_lengths[],
+    int ncandidates, double bits[]);
+  int (*choose)(const void* model, const char* context, int context_length,
+    const char* const candidates[], const int candidate_lengths[],
+    int ncandidates);
+  int (*seam_bits)(const void* model, const char* prefix, int prefix_length,
+    const char* suffix, int suffix_length, int score_length, double* bits);
+} converse_judge_t;
+
+void converse_judge_install(const converse_judge_t* judge);
+/** Open the installed judge when CONVERSE_HIER_RESCORE asks for one. */
+void converse_judge_open(const libxs_registry_t* corpus);
+void converse_judge_close(void);
+int converse_judge_active(void);
+/** CONVERSE_HIER_RESCORE, so a caller can report what the judge changed. */
+int converse_judge_verbose(void);
+int converse_judge_rescore(const char* query, int query_length,
+  const char* const candidates[], const int candidate_lengths[],
+  int ncandidates, double bits[]);
+int converse_judge_choose(const char* context, int context_length,
+  const char* const candidates[], const int candidate_lengths[],
+  int ncandidates);
+/** Matches converse_recomb_seam_t, so it binds straight into the recomb host. */
+int converse_judge_seam_bits(const char* prefix, int prefix_length,
+  const char* suffix, int suffix_length, int score_length, double* bits);
+
+
+/**
+ * Parse the command line, reject a mode this role does not serve, then load or
+ * ingest the corpus, the lexicon, the rules and the answer ranker: everything
+ * both halves read and everything -L writes. Fills `run` on success.
+ */
+int converse_setup(int argc, char* argv[], int role, converse_run_t* run);
+
+/** Release what converse_setup acquired, including the core model caches. */
+void converse_release(converse_run_t* run);
+
+/**
+ * Which half an invocation needs, from its flags alone. The role gate and the
+ * ALL binary's dispatch read this same answer, so "which binary serves this
+ * command" is decided in one place.
+ */
+int converse_role_of(int argc, char* argv[]);
+
+const libxs_lexnorm_t* converse_lexnorms(void);
+int converse_lexnorms_size(void);
+const answer_relation_rule_t* converse_rules(void);
+size_t converse_rules_size(void);
+libxs_ngram_t* converse_ngram_handle(void);
+const char* converse_bridge_path(void);
+const char* converse_eval_path(void);
+const char* converse_predict_eval_path(void);
 
 #endif /*CONVERSE_H*/
