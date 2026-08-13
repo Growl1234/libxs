@@ -335,6 +335,102 @@ static int recomb_clause_start(const char* text, int len, int at)
 }
 
 
+/**
+ * Words of the grafted tail that may not repeat what the host prefix already
+ * said. 0 disables the check.
+ *
+ * The clause constraint cannot see this defect: a loop's seam IS at a clause
+ * boundary, so the join is grammatical and still says the same thing twice.
+ * Worse, the coherence gate PREFERS it -- content overlap is what MINOVL rewards
+ * and a duplicated half is overlap at its maximum, which is why the two loops in
+ * the grimm sample scored ovl=0.89 and ovl=0.74, near the top of the run. So
+ * repetition is not a fluency question to be scored; it is decidable, and it is
+ * rejected by construction like the rest.
+ */
+static int recomb_repeat_words(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_RECOMB_REPEAT");
+    cached = (NULL != env && '\0' != *env) ? atoi(env) : 4;
+    if (cached < 0) cached = 0;
+  }
+  return cached;
+}
+
+
+/**
+ * Case-insensitive search for `span` within the first `limit` bytes of `text`.
+ *
+ * libxs_stristrn would do this but bounds the NEEDLE, not the haystack, and both
+ * of its arguments must be terminated; here the haystack is a prefix of a buffer
+ * whose remainder is the very text being looked for, so it cannot be terminated
+ * without either copying it or overwriting the span.
+ */
+static int recomb_span_before(const char* text, int limit, const char* span,
+  int span_len)
+{
+  int result = 0;
+  int at;
+  for (at = 0; at + span_len <= limit && 0 == result; ++at) {
+    int k = 0;
+    while (k < span_len
+      && tolower((unsigned char)text[at + k])
+        == tolower((unsigned char)span[k])) ++k;
+    if (k == span_len) result = 1;
+  }
+  return result;
+}
+
+
+/**
+ * Does the grafted tail say something the host prefix already said?
+ *
+ * Every window of `want` consecutive tail words is looked for in the prefix, not
+ * just the one at the graft: the second grimm loop repeats in the MIDDLE of the
+ * tail ("...like my comrades." ... "but if the old woman had got me into the pan,
+ * ... like my comrades."), so checking the junction alone would pass it. Only
+ * prefix-versus-tail is compared, so a source sentence that repeats itself is
+ * left alone -- that is attested text, and rejecting it would cost candidates
+ * without removing a defect the splice introduced.
+ */
+static int recomb_repeats(const char* text, int seam, int len)
+{
+  const int want = recomb_repeat_words();
+  int result = 0;
+  if (0 < want && 0 < seam && seam < len) {
+    int begin[COMPOSE_MAXTEXT / 2];
+    int end[COMPOSE_MAXTEXT / 2];
+    const int max = (int)(sizeof(begin) / sizeof(*begin));
+    int nwords = 0;
+    int pos = seam;
+    while (pos < len && nwords < max) {
+      int span = 1;
+      if (0 != recomb_host->is_wordchar((const unsigned char*)text + pos,
+        (size_t)(len - pos), &span))
+      {
+        int at = pos;
+        while (at < len && 0 != recomb_host->is_wordchar(
+          (const unsigned char*)text + at, (size_t)(len - at), &span))
+        {
+          at += span;
+        }
+        begin[nwords] = pos;
+        end[nwords] = at;
+        ++nwords;
+        pos = at;
+      }
+      else ++pos;
+    }
+    for (pos = 0; pos + want <= nwords && 0 == result; ++pos) {
+      result = recomb_span_before(text, seam, text + begin[pos],
+        end[pos + want - 1] - begin[pos]);
+    }
+  }
+  return result;
+}
+
+
 static int recomb_splice(const char* a, int a_len, int a_end,
   const char* b, int b_len, int b_after, char* out, size_t out_size)
 {
@@ -348,6 +444,10 @@ static int recomb_splice(const char* a, int a_len, int a_end,
     memcpy(out + a_end, b + b_after, (size_t)(b_len - b_after));
     result = a_end + (b_len - b_after);
     out[result] = '\0';
+    if (0 != recomb_repeats(out, a_end, result)) {
+      out[0] = '\0';
+      result = 0;
+    }
   }
   return result;
 }

@@ -85,9 +85,23 @@ static size_t answer_bridge_loaded_size = 0;
  */
 static char answer_fact_section[ENTRY_SECTION_MAX];
 static int answer_fact_section_len = 0;
-static libxs_lexicon_t* answer_negate_lexicon = NULL;
-static const libxs_lexrule_t* answer_negate_rules = NULL;
-static int answer_negate_nrules = 0;
+static libxs_lexicon_t* answer_query_lexicon = NULL;
+static const libxs_lexrule_t* answer_query_rules = NULL;
+static int answer_query_nrules = 0;
+/**
+ * Per-token case census: occurrences that carried an initial upper-case letter,
+ * and occurrences in total.
+ *
+ * LIBXS_LEXEME_ENTITY is exactly that per OCCURRENCE (the default rule set marks
+ * WORD_INITIAL_UPPER), and the lexicon interns the LOWER-CASED form, so both
+ * surface forms of a word share one id. Aggregating the flag by id is therefore
+ * what separates a name from a common word: "Gretel" is never lower-case in the
+ * corpus, "wolf" is -- and the test needs no threshold, because one lower-case
+ * occurrence is enough to settle it.
+ */
+static unsigned int* answer_case_upper = NULL;
+static unsigned int* answer_case_total = NULL;
+static unsigned int answer_case_size = 0;
 static answer_relation_fact_t* answer_relation_facts = NULL;
 static size_t answer_relation_facts_size = 0;
 static answer_identity_fact_t* answer_identity_facts = NULL;
@@ -133,7 +147,11 @@ static int answer_query_section(const char* query_text, size_t query_len,
 static int corpus_entry_section_match(const corpus_entry_t* entry,
   size_t entry_size, const char* title, int title_len);
 static int answer_query_be_word(const char* query_text, size_t query_len,
-  char* word, int word_size, int* upper_initial);
+  char* word, int word_size);
+static void answer_case_build(const libxs_registry_t* corpus,
+  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules);
+static void answer_case_free(void);
+static int answer_word_is_name(const char* word, int word_len);
 static int answer_query_relation_actor(const char* query_text,
   size_t query_len, char* actor, int actor_size);
 static int answer_relation_copy_name(char* output, int output_size,
@@ -831,8 +849,112 @@ static int corpus_entry_section_match(const corpus_entry_t* entry,
 }
 
 
+/**
+ * Count, per token id, how many occurrences carried an initial upper-case letter
+ * and how many there were. One corpus pass, and the only pass that has to see
+ * the SURFACE form rather than the interned one.
+ */
+static void answer_case_build(const libxs_registry_t* corpus,
+  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules)
+{
+  const void* key = NULL;
+  size_t cursor = 0;
+  void* value;
+  answer_case_free();
+  if (NULL == corpus || NULL == lexicon) return;
+  answer_case_size = libxs_lexicon_size(lexicon) + 1;
+  answer_case_upper = (unsigned int*)calloc(answer_case_size,
+    sizeof(*answer_case_upper));
+  answer_case_total = (unsigned int*)calloc(answer_case_size,
+    sizeof(*answer_case_total));
+  if (NULL == answer_case_upper || NULL == answer_case_total) {
+    answer_case_free();
+    return;
+  }
+  value = libxs_registry_begin(corpus, &key, &cursor);
+  while (NULL != value) {
+    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    libxs_lexeme_stream_t stream;
+    libxs_lexeme_stream_init(&stream);
+    if (SCALE_SENTENCE == entry->scale && 0 < entry->text_len
+      && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &stream,
+        (const unsigned char*)entry->text, (size_t)entry->text_len,
+        rules, nrules, converse_lexnorms(), converse_lexnorms_size(), 0))
+    {
+      size_t pos;
+      for (pos = 0; pos < stream.size; ++pos) {
+        const libxs_lexeme_t* lexeme = stream.data + pos;
+        if (0 != (lexeme->flags & LIBXS_LEXEME_WORD) && 0 != lexeme->id
+          && lexeme->id < answer_case_size)
+        {
+          ++answer_case_total[lexeme->id];
+          if (0 != (lexeme->flags & LIBXS_LEXEME_ENTITY)) {
+            ++answer_case_upper[lexeme->id];
+          }
+        }
+      }
+    }
+    libxs_lexeme_stream_release(&stream);
+    value = libxs_registry_next(corpus, &key, &cursor);
+  }
+}
+
+
+static void answer_case_free(void)
+{
+  free(answer_case_upper);
+  free(answer_case_total);
+  answer_case_upper = NULL;
+  answer_case_total = NULL;
+  answer_case_size = 0;
+}
+
+
+/**
+ * Does the corpus use this word as a NAME? True when every occurrence carried an
+ * initial upper-case letter, which is a construction rule rather than a
+ * threshold: a single lower-case occurrence makes the word a common one.
+ *
+ * The word arrives as the questioner typed it, so it is lower-cased before the
+ * lookup -- libxs_lexicon_id matches the stored bytes, and the lexicon stores the
+ * normalized (lower-case) form, so passing "Gretel" would simply miss.
+ */
+static int answer_word_is_name(const char* word, int word_len)
+{
+  int result = 0;
+  if (NULL != word && 0 < word_len && word_len <= LIBXS_LEXEME_MAXBYTES
+    && NULL != answer_case_total && NULL != answer_query_lexicon)
+  {
+    char lower[LIBXS_LEXEME_MAXBYTES + 1];
+    unsigned int id;
+    int pos;
+    for (pos = 0; pos < word_len; ++pos) {
+      lower[pos] = (char)tolower((unsigned char)word[pos]);
+    }
+    lower[word_len] = '\0';
+    id = libxs_lexicon_id(answer_query_lexicon, lower, word_len, 0, 0);
+    if (0 != id && id < answer_case_size && 0 != answer_case_total[id]) {
+      result = (answer_case_upper[id] == answer_case_total[id]) ? 1 : 0;
+    }
+  }
+  return result;
+}
+
+
+/**
+ * The word a "who/what is X" question asks about, skipping any leading skip|
+ * term. Capitalization is NOT reported: it used to be, and the three resolvers
+ * routed on it -- identity required an upper-case initial, the relation paths
+ * required a lower-case one. That made the user's typing decide which layer
+ * answered, and it was wrong in both directions: "who is gretel?" refused a
+ * question "Who is Gretel?" answers, while "Who is the Wolf?" escaped the
+ * relation layer and fell through to raw evidence, returning "said the wolf."
+ * under a misattributed citation. Whether a word NAMES something is a property
+ * of the corpus, which the fact index already established when it built its
+ * names, so the resolvers consult that instead.
+ */
 static int answer_query_be_word(const char* query_text, size_t query_len,
-  char* word, int word_size, int* upper_initial)
+  char* word, int word_size)
 {
   static const char* const markers[] = {
     " is ", " are ", " was ", " were "
@@ -845,7 +967,6 @@ static int answer_query_be_word(const char* query_text, size_t query_len,
   size_t end;
   if (NULL == query_text || NULL == word || word_size <= 0) return 0;
   word[0] = '\0';
-  if (NULL != upper_initial) *upper_initial = 0;
   for (marker_index = 0; marker_index < 4 && marker_pos < 0;
     ++marker_index)
   {
@@ -874,9 +995,6 @@ static int answer_query_be_word(const char* query_text, size_t query_len,
     if (result > 0) {
       memcpy(word, query_text + begin, (size_t)result);
       word[result] = '\0';
-      if (NULL != upper_initial) {
-        *upper_initial = isupper((unsigned char)query_text[begin]) ? 1 : 0;
-      }
     }
   }
   return result;
@@ -1082,17 +1200,18 @@ static int answer_relation_match_query(const char* query_text,
   int result = 0;
   char relation[64];
   char actor[64];
-  int relation_upper = 0;
   int relation_len;
   int actor_len;
   if (NULL == query_text || NULL == entry || NULL == match
     || QUERY_WHO != query_type) return 0;
   memset(match, 0, sizeof(*match));
   relation_len = answer_query_be_word(query_text, query_len, relation,
-    (int)sizeof(relation), &relation_upper);
+    (int)sizeof(relation));
   actor_len = answer_query_relation_actor(query_text, query_len, actor,
     (int)sizeof(actor));
-  if (relation_len <= 0 || 0 != relation_upper) return 0;
+  if (relation_len <= 0 || 0 != answer_word_is_name(relation, relation_len)) {
+    return 0;
+  }
   memcpy(match->relation, relation, (size_t)relation_len + 1);
   match->relation_len = relation_len;
   if (actor_len > 0) {
@@ -1786,15 +1905,16 @@ static int answer_identity_fact_reply(const char* query_text,
   char name[64];
   char query_section[ENTRY_SECTION_MAX];
   int name_len;
-  int name_upper = 0;
   int query_section_len;
   const answer_identity_fact_t* best = NULL;
   size_t fact_pos;
   if (NULL == query_text || NULL == output || 0 == output_size
     || 0 == answer_identity_facts_size) return EXIT_FAILURE;
   name_len = answer_query_be_word(query_text, query_len, name,
-    (int)sizeof(name), &name_upper);
-  if (name_len <= 0 || 0 == name_upper) return EXIT_FAILURE;
+    (int)sizeof(name));
+  if (name_len <= 0 || 0 == answer_word_is_name(name, name_len)) {
+    return EXIT_FAILURE;
+  }
   query_section_len = answer_query_section(query_text, query_len,
     query_section, (int)sizeof(query_section));
   for (fact_pos = 0; fact_pos < answer_identity_facts_size; ++fact_pos) {
@@ -1997,7 +2117,7 @@ static int answer_describe_fact_reply(const char* query_text,
   if (NULL == query_text || NULL == output || 0 == output_size
     || 0 == answer_describe_facts_size) return EXIT_FAILURE;
   role_len = answer_query_be_word(query_text, query_len, role,
-    (int)sizeof(role), NULL);
+    (int)sizeof(role));
   if (role_len <= 0 || 0 == answer_relation_rule_has_term(
     RELATION_RULE_PERSON, role, role_len)) return EXIT_FAILURE;
   query_section_len = answer_query_section(query_text, query_len,
@@ -2438,7 +2558,6 @@ static int answer_relation_fact_reply(const char* query_text,
   int answer_lens[RELATION_FACT_MAX];
   int answer_made[RELATION_FACT_MAX];
   double answer_scores[RELATION_FACT_MAX];
-  int relation_upper = 0;
   int relation_len;
   int actor_len;
   int query_section_len;
@@ -2448,12 +2567,12 @@ static int answer_relation_fact_reply(const char* query_text,
   if (NULL == query_text || NULL == output || 0 == output_size
     || 0 == answer_relation_facts_size) return EXIT_FAILURE;
   relation_len = answer_query_be_word(query_text, query_len, relation,
-    (int)sizeof(relation), &relation_upper);
+    (int)sizeof(relation));
   actor_len = answer_query_relation_actor(query_text, query_len, actor,
     (int)sizeof(actor));
   query_section_len = answer_query_section(query_text, query_len,
     query_section, (int)sizeof(query_section));
-  if (relation_len <= 0 || 0 != relation_upper) {
+  if (relation_len <= 0 || 0 != answer_word_is_name(relation, relation_len)) {
     return EXIT_FAILURE;
   }
   for (slot = 0; slot < RELATION_FACT_MAX; ++slot) {
@@ -2568,18 +2687,18 @@ static int answer_relation_aggregate_reply(const libxs_registry_t* corpus,
   int count = 0;
   char relation[64];
   char actor[64];
-  int relation_upper = 0;
   int relation_len;
   int actor_len;
   if (NULL == corpus || NULL == query_text || NULL == output
     || 0 == output_size) return EXIT_FAILURE;
   relation_len = answer_query_be_word(query_text, query_len, relation,
-    (int)sizeof(relation), &relation_upper);
+    (int)sizeof(relation));
   actor_len = answer_query_relation_actor(query_text, query_len, actor,
     (int)sizeof(actor));
   query_section_len = answer_query_section(query_text, query_len,
     query_section, (int)sizeof(query_section));
-  if (query_section_len > 0 && relation_len > 0 && 0 == relation_upper
+  if (query_section_len > 0 && relation_len > 0
+    && 0 == answer_word_is_name(relation, relation_len)
     && actor_len > 0)
   {
     int slot;
@@ -2686,14 +2805,14 @@ static double answer_identity_score(const char* query_text, size_t query_len,
 {
   double result = 0.0;
   char word[64];
-  int upper_initial = 0;
   int word_len;
   answer_relation_match_t relation_match;
   if (QUERY_WHO != query_type || NULL == entry) return 0.0;
   word_len = answer_query_be_word(query_text, query_len, word,
-    (int)sizeof(word), &upper_initial);
+    (int)sizeof(word));
   if (word_len <= 0) return 0.0;
-  if (0 == upper_initial && 0 != answer_relation_match_query(query_text,
+  if (0 == answer_word_is_name(word, word_len)
+    && 0 != answer_relation_match_query(query_text,
     query_len, query_type, entry, &relation_match))
   {
     result = relation_match.score;
@@ -2701,7 +2820,7 @@ static double answer_identity_score(const char* query_text, size_t query_len,
   if (0 == text_contains_word_ci(entry->text, entry->text_len, word)) {
     return result;
   }
-  if (0 != upper_initial) {
+  if (0 != answer_word_is_name(word, word_len)) {
     result = 0.55;
     if (0 != text_contains_ci(entry->text, entry->text_len, "called")) {
       result += 0.55;
@@ -3120,7 +3239,6 @@ static int answer_select(const libxs_registry_t* corpus,
   const char* rank_query_text = query_text;
   size_t rank_query_len = query_len;
   char query_be_word[64];
-  int query_be_upper = 0;
   int query_be_len = 0;
   if (query_section_len > 0) {
     size_t body_pos = 0;
@@ -3149,7 +3267,7 @@ static int answer_select(const libxs_registry_t* corpus,
   {
     query_type = query_type_of(&query, lexicon);
     query_be_len = answer_query_be_word(rank_query_text, rank_query_len,
-      query_be_word, (int)sizeof(query_be_word), &query_be_upper);
+      query_be_word, (int)sizeof(query_be_word));
     if (NULL == predictor) {
       query_predictor = answer_predict_build(corpus, &query, lexicon,
         rules, nrules, query_type, profile);
@@ -3182,7 +3300,7 @@ static int answer_select(const libxs_registry_t* corpus,
         continue;
       }
       if (QUERY_WHO == query_type && query_be_len > 0
-        && 0 == query_be_upper
+        && 0 == answer_word_is_name(query_be_word, query_be_len)
         && 0 == answer_relation_match_query(rank_query_text, rank_query_len,
           query_type, entry, &relation_match))
       {
@@ -3579,7 +3697,6 @@ static int answer_reply(const char* query_text, size_t query_len,
   const char* text;
   int text_len;
   char be_word[64];
-  int be_upper = 0;
   int be_len = 0;
   answer_relation_match_t relation_match;
   libxs_lexeme_stream_init(&query);
@@ -3603,13 +3720,14 @@ static int answer_reply(const char* query_text, size_t query_len,
     query_type = query_type_of(&query, lexicon);
     bridge = answer_bridge_match(&query, lexicon, entry);
     be_len = answer_query_be_word(query_text, query_len, be_word,
-      (int)sizeof(be_word), &be_upper);
+      (int)sizeof(be_word));
   }
   if (NULL != bridge && NULL != bridge->reply) {
     result = answer_bridge_expand_reply(bridge, text, text_len, lexicon,
       rules, nrules, output, output_size);
   }
-  else if (QUERY_WHO == query_type && be_len > 0 && 0 == be_upper
+  else if (QUERY_WHO == query_type && be_len > 0
+    && 0 == answer_word_is_name(be_word, be_len)
     && 0 != answer_relation_match_query(query_text, query_len, query_type,
       entry, &relation_match))
   {
@@ -3728,11 +3846,11 @@ static int answer_query_is_negated(const char* query_text, size_t query_len)
    * stating: a `norm|` rule must not map a negator onto its affirmative form,
    * or it would erase the polarity this check depends on.
    */
-  if (NULL != answer_negate_lexicon && answer_negate_nrules > 0
+  if (NULL != answer_query_lexicon && answer_query_nrules > 0
     && NULL != query_text && query_len > 0
-    && EXIT_SUCCESS == libxs_lexeme_stream_encode(answer_negate_lexicon,
+    && EXIT_SUCCESS == libxs_lexeme_stream_encode(answer_query_lexicon,
       &query, (const unsigned char*)query_text, query_len,
-      answer_negate_rules, answer_negate_nrules,
+      answer_query_rules, answer_query_nrules,
       converse_lexnorms(), converse_lexnorms_size(), 0))
   {
     for (rule_pos = 0; rule_pos < converse_rules_size() && 0 == result;
@@ -3740,7 +3858,7 @@ static int answer_query_is_negated(const char* query_text, size_t query_len)
     {
       const answer_relation_rule_t* rule = converse_rules() + rule_pos;
       if (RELATION_RULE_NEGATE == rule->kind
-        && 0 != lexeme_stream_has_text(&query, answer_negate_lexicon,
+        && 0 != lexeme_stream_has_text(&query, answer_query_lexicon,
           rule->term))
       {
         result = 1;
@@ -4788,11 +4906,15 @@ static int converse_qa_answer(converse_run_t* run)
 int converse_qa_run(converse_run_t* run)
 {
   int result = EXIT_SUCCESS;
-  answer_negate_lexicon = run->lexicon;
-  answer_negate_rules = run->rules;
-  answer_negate_nrules = run->nrules;
+  answer_query_lexicon = run->lexicon;
+  answer_query_rules = run->rules;
+  answer_query_nrules = run->nrules;
   answer_bridge_load_file(converse_bridge_path());
   answer_bridge_report(stderr);
+  /* Before the facts and before any query: the resolvers ask it which words the
+     corpus uses as names, which is what decides who answers. */
+  answer_case_build(run->corpus, run->lexicon, run->rules, run->nrules);
+  converse_stage_end("f_case");
   answer_relation_facts_build(run->corpus);
   answer_relation_facts_report(stderr);
   converse_stage_end("f_relation");
@@ -4829,6 +4951,7 @@ int converse_qa_run(converse_run_t* run)
   }
   else result = converse_qa_answer(run);
   converse_judge_close();
+  answer_case_free();
   answer_bridge_free_loaded();
   answer_relation_facts_free();
   answer_identity_facts_free();
