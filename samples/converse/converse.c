@@ -1712,20 +1712,10 @@ static libxs_predict_t* converse_predict_train(const libxs_registry_t* corpus,
 int text_find_ci(const char* text, int text_len, const char* term)
 {
   int result = -1;
-  int term_len, text_pos;
-  if (NULL == text || NULL == term || text_len <= 0) return -1;
-  term_len = (int)strlen(term);
-  if (term_len <= 0 || term_len > text_len) return -1;
-  for (text_pos = 0; text_pos <= text_len - term_len && result < 0;
-    ++text_pos)
-  {
-    int term_pos, match = 1;
-    for (term_pos = 0; term_pos < term_len && 0 != match; ++term_pos) {
-      unsigned char a = (unsigned char)text[text_pos + term_pos];
-      unsigned char b = (unsigned char)term[term_pos];
-      if (tolower(a) != tolower(b)) match = 0;
-    }
-    if (0 != match) result = text_pos;
+  if (NULL != text && NULL != term && 0 < text_len) {
+    const char* hit = libxs_strimem(text, (size_t)text_len, term,
+      strlen(term));
+    if (NULL != hit) result = (int)(hit - text);
   }
   return result;
 }

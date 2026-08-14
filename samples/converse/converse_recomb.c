@@ -2,6 +2,7 @@
 #include <libxs/libxs_token.h>
 #include <libxs/libxs_hash.h>
 #include <libxs/libxs_mem.h>
+#include <libxs/libxs_str.h>
 
 #include "converse.h"
 #include "converse_recomb.h"
@@ -360,30 +361,6 @@ static int recomb_repeat_words(void)
 
 
 /**
- * Case-insensitive search for `span` within the first `limit` bytes of `text`.
- *
- * libxs_stristrn would do this but bounds the NEEDLE, not the haystack, and both
- * of its arguments must be terminated; here the haystack is a prefix of a buffer
- * whose remainder is the very text being looked for, so it cannot be terminated
- * without either copying it or overwriting the span.
- */
-static int recomb_span_before(const char* text, int limit, const char* span,
-  int span_len)
-{
-  int result = 0;
-  int at;
-  for (at = 0; at + span_len <= limit && 0 == result; ++at) {
-    int k = 0;
-    while (k < span_len
-      && tolower((unsigned char)text[at + k])
-        == tolower((unsigned char)span[k])) ++k;
-    if (k == span_len) result = 1;
-  }
-  return result;
-}
-
-
-/**
  * Does the grafted tail say something the host prefix already said?
  *
  * Every window of `want` consecutive tail words is looked for in the prefix, not
@@ -423,8 +400,10 @@ static int recomb_repeats(const char* text, int seam, int len)
       else ++pos;
     }
     for (pos = 0; pos + want <= nwords && 0 == result; ++pos) {
-      result = recomb_span_before(text, seam, text + begin[pos],
-        end[pos + want - 1] - begin[pos]);
+      /* The haystack is the PREFIX of a buffer whose remainder holds the span
+         being looked for, which is why this needs the size-explicit form. */
+      result = (NULL != libxs_strimem(text, (size_t)seam, text + begin[pos],
+        (size_t)(end[pos + want - 1] - begin[pos]))) ? 1 : 0;
     }
   }
   return result;
