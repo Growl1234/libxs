@@ -26,6 +26,13 @@ int corpus_entry_build(corpus_entry_t* entry, const unsigned char* text,
 int count_words(const unsigned char* text, int length);
 int entry_sketch_has_id(const corpus_entry_t* entry, unsigned int id);
 
+/**
+ * Bytes of the heading this span opens with, 0 if it does not open with one.
+ * One definition, so the ingest that captures a section and the reply path that
+ * strips a captured heading back off cannot disagree about what a heading is.
+ */
+int corpus_title_len(const char* text, int len);
+
 int text_ends_sentence(const char* text, int text_len);
 size_t text_closer_size(const unsigned char* text, size_t size, size_t pos);
 int text_find_ci(const char* text, int text_len, const char* term);
@@ -35,6 +42,8 @@ int lexeme_text_is(const libxs_lexicon_t* lexicon,
   const libxs_lexeme_t* lexeme, const char* text);
 
 int answer_relation_rule_has_term(int kind, const char* text, int text_len);
+/** ASSERTED, LEARNED or PROPOSED, for a term a reply is about to rest on. */
+int answer_relation_rule_provenance(int kind, const char* text, int text_len);
 int answer_relation_reply(const answer_relation_match_t* match,
   char* output, size_t output_size);
 

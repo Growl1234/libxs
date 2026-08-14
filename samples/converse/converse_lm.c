@@ -1704,7 +1704,7 @@ static int ngram_gen_eval(libxs_registry_t* model,
              * The prefix definition ends the run here, so the prefix metrics
              * must stop accumulating even when the scan continues -- otherwise
              * positions past an abstention extend mean-reproduced and the two
-             * readings stop being comparable (measured: 7.48 -> 7.68 on grimm).
+             * readings stop being comparable (measured: 7.48 -> 7.68 bpc).
              */
             diverged = 1;
             if (0 == gen_full) stop = 1;

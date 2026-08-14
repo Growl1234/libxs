@@ -78,13 +78,28 @@ static answer_bridge_t* answer_bridge_loaded = NULL;
 static size_t answer_bridge_loaded_size = 0;
 
 /**
- * Section of the most recent fact reply, so a citation can be printed without
+ * Sections of the most recent fact reply, so a citation can be printed without
  * threading an out-parameter through five resolver signatures. Cleared by
  * answer_fact_reply before dispatch and set by whichever resolver answered;
  * empty means the fact carried no section and no citation is printed.
+ *
+ * Several, because a reply can rest on several facts, and the two paths that
+ * aggregate over facts cited NOTHING. For a claim about attribution an
+ * unattributed answer is worse than a misattributed one, since nothing signals
+ * it. Each contributing source is named; the usual case contributes one and
+ * reads exactly as a single citation always did.
  */
-static char answer_fact_section[ENTRY_SECTION_MAX];
+static char answer_fact_section[4 * ENTRY_SECTION_MAX];
 static int answer_fact_section_len = 0;
+/**
+ * Class term the most recent fact reply rested on, and where that term came
+ * from, when it was not asserted in the rule file. Carried the same way the
+ * citation is, and for the same reason: five resolvers would otherwise each grow
+ * an out-parameter. Empty means the reply rests on asserted rules only.
+ */
+static char answer_fact_learned[64];
+static int answer_fact_learned_len = 0;
+static int answer_fact_learned_from = RELATION_RULE_ASSERTED;
 static libxs_lexicon_t* answer_query_lexicon = NULL;
 static const libxs_lexrule_t* answer_query_rules = NULL;
 static int answer_query_nrules = 0;
@@ -95,9 +110,9 @@ static int answer_query_nrules = 0;
  * LIBXS_LEXEME_ENTITY is exactly that per OCCURRENCE (the default rule set marks
  * WORD_INITIAL_UPPER), and the lexicon interns the LOWER-CASED form, so both
  * surface forms of a word share one id. Aggregating the flag by id is therefore
- * what separates a name from a common word: "Gretel" is never lower-case in the
- * corpus, "wolf" is -- and the test needs no threshold, because one lower-case
- * occurrence is enough to settle it.
+ * what separates a name from a common word: a name is never written lower-case
+ * and a common noun is -- and the test needs no threshold, because one
+ * lower-case occurrence is enough to settle it.
  */
 static unsigned int* answer_case_upper = NULL;
 static unsigned int* answer_case_total = NULL;
@@ -144,6 +159,8 @@ static int corpus_spatial_build(libxs_spatial_t* sp,
   const libxs_registry_t* corpus);
 static int answer_query_section(const char* query_text, size_t query_len,
   char* title, int title_size);
+static int corpus_entry_section_copy(const corpus_entry_t* entry,
+  size_t entry_size, char* title, int title_size);
 static int corpus_entry_section_match(const corpus_entry_t* entry,
   size_t entry_size, const char* title, int title_len);
 static int answer_query_be_word(const char* query_text, size_t query_len,
@@ -164,6 +181,8 @@ static int answer_relation_copy_antecedent(char* output, int output_size,
   const char* text, int text_len, int cue_pos);
 static int answer_relation_find_person_before(const char* text, int text_len,
   int limit, int* term_pos, int* term_len);
+/** Only a person answers a "who" question: a name, or a person-class term. */
+static int answer_relation_answer_is_person(const char* text, int text_len);
 static int answer_relation_copy_person_before(char* output, int output_size,
   const char* text, int text_len, int limit);
 static int answer_relation_match_query(const char* query_text,
@@ -285,11 +304,22 @@ static int answer_evidence_sentence(const char* query_text, size_t query_len,
 static int answer_query_is_negated(const char* query_text, size_t query_len);
 static int answer_fact_reply(const libxs_registry_t* corpus,
   const char* query_text, size_t query_len, char* output, size_t output_size);
+static int answer_citation_len(const char* section, int section_len);
 static void answer_print_citation(const char* section, int section_len);
 static void answer_fact_section_set(const char* section, int section_len);
+/** Name one more source, for a reply that rests on several facts. */
+static void answer_fact_section_add(const char* section, int section_len);
+static void answer_fact_learned_set(const char* term, int term_len,
+  int provenance);
+static void answer_print_learned(void);
 static int answer_hier_reorder(const char* query_text, size_t query_len,
   const corpus_entry_t* entries[ANSWER_MAX], double scores[ANSWER_MAX],
   int answer_count);
+/** What a reader is shown for an answer list, printed unless print is 0. */
+static int answer_render(const char* query_text, size_t query_len,
+  const corpus_entry_t* entries[], int answer_count,
+  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
+  int print, char* output, size_t output_size);
 static int answer_query(const libxs_registry_t* corpus,
   const char* query_text, size_t query_len, int budget,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
@@ -298,7 +328,7 @@ static int answer_query(const libxs_registry_t* corpus,
   char* out_reply, size_t out_size);
 static int text_contains_ci(const char* text, int text_len, const char* term);
 static int text_find_word_ci(const char* text, int text_len, const char* term);
-static int eval_parse_line(char* line, char* fields[4]);
+static int eval_parse_line(char* line, char* fields[5]);
 static int eval_terms_empty(const char* spec);
 static int eval_terms_match_text(const char* text, int text_len,
   const char* spec);
@@ -796,6 +826,30 @@ static int answer_query_section(const char* query_text, size_t query_len,
 }
 
 
+/**
+ * The entry's section, for a caller that must remember it rather than test it.
+ * An entry is stored at its actual text length, so entry_size is what says the
+ * fixed-offset fields are present at all.
+ */
+static int corpus_entry_section_copy(const corpus_entry_t* entry,
+  size_t entry_size, char* title, int title_size)
+{
+  int result = 0;
+  if (NULL != title && 0 < title_size) {
+    title[0] = '\0';
+    if (NULL != entry && entry_size >= CORPUS_ENTRY_META_SIZE) {
+      result = entry->section_len;
+      if (result >= title_size) result = title_size - 1;
+      if (0 < result) {
+        memcpy(title, entry->section, (size_t)result);
+        title[result] = '\0';
+      }
+    }
+  }
+  return result;
+}
+
+
 static int corpus_entry_section_match(const corpus_entry_t* entry,
   size_t entry_size, const char* title, int title_len)
 {
@@ -917,7 +971,8 @@ static void answer_case_free(void)
  *
  * The word arrives as the questioner typed it, so it is lower-cased before the
  * lookup -- libxs_lexicon_id matches the stored bytes, and the lexicon stores the
- * normalized (lower-case) form, so passing "Gretel" would simply miss.
+ * normalized (lower-case) form, so passing a capitalized word would simply
+ * miss.
  */
 static int answer_word_is_name(const char* word, int word_len)
 {
@@ -946,12 +1001,12 @@ static int answer_word_is_name(const char* word, int word_len)
  * term. Capitalization is NOT reported: it used to be, and the three resolvers
  * routed on it -- identity required an upper-case initial, the relation paths
  * required a lower-case one. That made the user's typing decide which layer
- * answered, and it was wrong in both directions: "who is gretel?" refused a
- * question "Who is Gretel?" answers, while "Who is the Wolf?" escaped the
- * relation layer and fell through to raw evidence, returning "said the wolf."
- * under a misattributed citation. Whether a word NAMES something is a property
- * of the corpus, which the fact index already established when it built its
- * names, so the resolvers consult that instead.
+ * answered, and it was wrong in both directions: a name typed lower-case was
+ * refused an answer its capitalized spelling gets, while a capitalized role word
+ * escaped the relation layer and fell through to raw evidence under a
+ * misattributed citation. Whether a word NAMES something is a property of the
+ * corpus, which the fact index already established when it built its names, so
+ * the resolvers consult that instead.
  */
 static int answer_query_be_word(const char* query_text, size_t query_len,
   char* word, int word_size)
@@ -1059,6 +1114,12 @@ static int answer_relation_copy_name(char* output, int output_size,
 }
 
 
+/**
+ * Is this token one of the WORDS of the actor phrase? Word-bounded, because a
+ * substring test let a short actor match inside a longer, unrelated word: the
+ * sentence was scanned for the letters rather than for the word, so the reply
+ * asserted a relation to an actor that is not in it, and cited the source.
+ */
 static int answer_relation_actor_has_token(const char* actor, int actor_len,
   const char* token, int token_len)
 {
@@ -1069,7 +1130,7 @@ static int answer_relation_actor_has_token(const char* actor, int actor_len,
   {
     memcpy(token_buf, token, (size_t)token_len);
     token_buf[token_len] = '\0';
-    result = text_contains_ci(actor, actor_len, token_buf);
+    result = text_contains_word_ci(actor, actor_len, token_buf);
   }
   return result;
 }
@@ -1176,6 +1237,27 @@ static int answer_relation_find_person_before(const char* text, int text_len,
 }
 
 
+/**
+ * Can this text answer a "who" question at all? Either it is written as a proper
+ * noun HERE, or a rule puts it in the person class. Nothing else is a person,
+ * and the relation layer serves QUERY_WHO only.
+ *
+ * Capitalization decides because this is CORPUS text, where a capital mid-
+ * sentence is the author saying "name" -- the same signal the entity lexrule
+ * reads. That is the opposite of the query-side defect fixed earlier, where
+ * capitalization of the QUERY routed an answer: a reader's shift key is not
+ * evidence about the world, and an author's is. The object always follows a
+ * verb, so it is never capitalized merely by standing first in its sentence.
+ */
+static int answer_relation_answer_is_person(const char* text, int text_len)
+{
+  return (NULL != text && 0 < text_len
+    && (0 != isupper((unsigned char)text[0])
+      || 0 != answer_relation_rule_has_term(RELATION_RULE_PERSON, text,
+        text_len))) ? 1 : 0;
+}
+
+
 static int answer_relation_copy_person_before(char* output, int output_size,
   const char* text, int text_len, int limit)
 {
@@ -1225,16 +1307,22 @@ static int answer_relation_match_query(const char* query_text,
     int alt_len = 0;
     int verb_pos;
     int verb_len;
-    int actor_seen = text_contains_ci(entry->text, entry->text_len, actor);
+    int actor_seen = text_contains_word_ci(entry->text, entry->text_len,
+      actor);
     if (rel_pos < 0) alt_pos = answer_relation_rule_alias_pos(relation,
       entry->text, entry->text_len, &alt_len);
     verb_pos = (rel_pos >= 0) ? rel_pos : alt_pos;
     verb_len = (rel_pos >= 0) ? relation_len : alt_len;
-    if (0 == actor_seen && verb_pos > 0
-      && 0 != text_contains_word_ci(entry->text, verb_pos, "he"))
-    {
-      actor_seen = 1;
-    }
+    /**
+     * The actor must be ATTESTED IN THIS SENTENCE. There used to be an escape
+     * hatch here: if the actor was absent but the word "he" stood before the
+     * verb, the actor counted as seen -- treating a pronoun as an anaphor for
+     * whatever the reader happened to ask about. It left the actor
+     * unconstrained, so the reply asserted a relation to an actor the corpus
+     * never mentions AND attached a citation to it. Resolving the pronoun would
+     * need anaphora; refusing to claim an actor the sentence never names needs
+     * nothing, and is the truth about the sentence.
+     */
     if (verb_pos >= 0 && 0 != actor_seen) {
       int obj_begin = verb_pos + ((verb_len > 0) ? verb_len : 1);
       int obj_end;
@@ -1273,17 +1361,19 @@ static int answer_relation_match_query(const char* query_text,
           && ('-' == entry->text[obj_end]
             || 0 != isalnum((unsigned char)entry->text[obj_end]))) ++obj_end;
       }
+      /**
+       * Only a PERSON can answer a "who" question, so the direct object has to
+       * be one. This used to be a blacklist of five pronouns, which is the
+       * judge-it-afterwards pattern that has never held: a first-person pronoun
+       * object and an adjective left behind after the real object was skipped
+       * both became answers, and both were then aggregated into an otherwise
+       * correct sentence. A pronoun object still falls through to the search
+       * before the verb below; an object that is neither a person nor a pronoun
+       * now yields no fact at all, which is the truth about it.
+       */
       if (obj_end > obj_begin
-        && 0 == text_contains_ci(entry->text + obj_begin,
-          obj_end - obj_begin, "he")
-        && 0 == text_contains_ci(entry->text + obj_begin,
-          obj_end - obj_begin, "she")
-        && 0 == text_contains_ci(entry->text + obj_begin,
-          obj_end - obj_begin, "her")
-        && 0 == text_contains_ci(entry->text + obj_begin,
-          obj_end - obj_begin, "him")
-        && 0 == text_contains_ci(entry->text + obj_begin,
-          obj_end - obj_begin, "them"))
+        && 0 != answer_relation_answer_is_person(entry->text + obj_begin,
+          obj_end - obj_begin))
       {
         if (0 == answer_relation_actor_has_token(actor, actor_len,
           entry->text + obj_begin, obj_end - obj_begin))
@@ -1931,6 +2021,9 @@ static int answer_identity_fact_reply(const char* query_text,
   }
   if (NULL != best) {
     answer_fact_section_set(best->section, best->section_len);
+    answer_fact_learned_set(best->role, best->role_len,
+      answer_relation_rule_provenance(RELATION_RULE_PERSON, best->role,
+        best->role_len));
     result = answer_reply_role(output, output_size, best->name,
       best->name_len, best->role);
   }
@@ -2068,12 +2161,32 @@ static size_t answer_describe_facts_build(const libxs_registry_t* corpus)
               {
                 end = rel + rel_len;
                 while (end < text_end && ',' != *end && '.' != *end
-                  && ';' != *end && '!' != *end && '?' != *end) ++end;
-                score = 2.0;
+                  && ';' != *end && '!' != *end && '?' != *end
+                  && '\n' != *end && '\r' != *end) ++end;
+                /**
+                 * CUT OFF by a line break rather than closed by punctuation or by
+                 * the end of the entry: the clause is incomplete ("A young fox,
+                 * who said:" -- the speech was on the next line) and describes
+                 * nothing, so it is not a description. Rejected the same way a
+                 * clause-less role is, by never becoming a fact.
+                 */
+                if (end < text_end && ('\n' == *end || '\r' == *end)) {
+                  end = clause;
+                }
+                else score = 2.0;
               }
             }
-            if (EXIT_SUCCESS == answer_describe_fact_append(token, token_len,
-              article, (int)(end - article), entry, score))
+            /**
+             * A described role needs a DESCRIPTION. Without the relative clause
+             * `end` still points at the role itself, so the fact would be the
+             * article plus the queried word and the reply would restate the
+             * question: "Who is the wife?" -> "A wife." Such a fact cannot inform
+             * any answer, so it is never stored, and the query abstains -- which
+             * is the truth, since the corpus describes no wife.
+             */
+            if (end > clause
+              && EXIT_SUCCESS == answer_describe_fact_append(token, token_len,
+                article, (int)(end - article), entry, score))
             {
               ++result;
             }
@@ -2136,6 +2249,9 @@ static int answer_describe_fact_reply(const char* query_text,
   }
   if (NULL != best && (size_t)best->text_len + 2 <= output_size) {
     answer_fact_section_set(best->section, best->section_len);
+    answer_fact_learned_set(best->role, best->role_len,
+      answer_relation_rule_provenance(RELATION_RULE_PERSON, best->role,
+        best->role_len));
     memcpy(output, best->text, (size_t)best->text_len);
     output[0] = (char)toupper((unsigned char)output[0]);
     output[best->text_len] = '.';
@@ -2476,14 +2592,24 @@ static int conv_rewrite(const char* query_text, size_t query_len,
 }
 
 
+/**
+ * Does the question ask about the relation this fact states? The relation is one
+ * word on both sides, so this is EQUALITY, directly or through an alias rule.
+ *
+ * It used to be a substring test, which is the same defect the actor matching
+ * carried: a longer word containing the relation borrowed the fact, so a
+ * question about a different verb -- including one built by negating this verb
+ * with a prefix -- was answered by it, asserted, and cited. A relation that
+ * merely CONTAINS another relation is a different relation.
+ */
 static int answer_relation_fact_relation_match(const char* query_relation,
   const answer_relation_fact_t* fact)
 {
   int result = 0;
   size_t rule_pos;
   if (NULL == query_relation || NULL == fact) return 0;
-  if (0 != text_contains_ci(query_relation, (int)strlen(query_relation),
-    fact->relation))
+  if (0 != libxs_striequal(query_relation, strlen(query_relation),
+    fact->relation, (size_t)fact->relation_len))
   {
     result = 1;
   }
@@ -2492,10 +2618,10 @@ static int answer_relation_fact_relation_match(const char* query_relation,
   {
     const answer_relation_rule_t* rule = converse_rules() + rule_pos;
     if (RELATION_RULE_ALIAS == rule->kind
-      && 0 != text_contains_ci(rule->relation, (int)strlen(rule->relation),
-        fact->relation)
-      && 0 != text_contains_ci(query_relation, (int)strlen(query_relation),
-        rule->term))
+      && 0 != libxs_striequal(rule->relation, strlen(rule->relation),
+        fact->relation, (size_t)fact->relation_len)
+      && 0 != libxs_striequal(query_relation, strlen(query_relation),
+        rule->term, strlen(rule->term)))
     {
       result = 1;
     }
@@ -2555,6 +2681,7 @@ static int answer_relation_fact_reply(const char* query_text,
   char actor[64];
   char query_section[ENTRY_SECTION_MAX];
   char answers[RELATION_FACT_MAX][64];
+  const answer_relation_fact_t* answer_facts[RELATION_FACT_MAX];
   int answer_lens[RELATION_FACT_MAX];
   int answer_made[RELATION_FACT_MAX];
   double answer_scores[RELATION_FACT_MAX];
@@ -2577,6 +2704,7 @@ static int answer_relation_fact_reply(const char* query_text,
   }
   for (slot = 0; slot < RELATION_FACT_MAX; ++slot) {
     answers[slot][0] = '\0';
+    answer_facts[slot] = NULL;
     answer_lens[slot] = 0;
     answer_made[slot] = 0;
     answer_scores[slot] = 0.0;
@@ -2597,6 +2725,7 @@ static int answer_relation_fact_reply(const char* query_text,
           if (fact->score > answer_scores[slot]) {
             memcpy(answers[slot], fact->answer,
               (size_t)fact->answer_len + 1);
+            answer_facts[slot] = fact;
             answer_lens[slot] = fact->answer_len;
             answer_made[slot] = fact->made;
             answer_scores[slot] = fact->score;
@@ -2608,6 +2737,7 @@ static int answer_relation_fact_reply(const char* query_text,
         while (insert > 0 && fact->score > answer_scores[insert - 1]) {
           memcpy(answers[insert], answers[insert - 1],
             (size_t)answer_lens[insert - 1] + 1);
+          answer_facts[insert] = answer_facts[insert - 1];
           answer_lens[insert] = answer_lens[insert - 1];
           answer_made[insert] = answer_made[insert - 1];
           answer_scores[insert] = answer_scores[insert - 1];
@@ -2615,6 +2745,7 @@ static int answer_relation_fact_reply(const char* query_text,
         }
         memcpy(answers[insert], fact->answer,
           (size_t)fact->answer_len + 1);
+        answer_facts[insert] = fact;
         answer_lens[insert] = fact->answer_len;
         answer_made[insert] = fact->made;
         answer_scores[insert] = fact->score;
@@ -2626,6 +2757,13 @@ static int answer_relation_fact_reply(const char* query_text,
     size_t pos = 0;
     int item;
     output[0] = '\0';
+    /* The emitted answers ARE the class terms this reply rests on, so the rule
+       layer is asked about them rather than a flag being cached per fact. */
+    for (item = 0; item < count && 0 == answer_fact_learned_len; ++item) {
+      answer_fact_learned_set(answers[item], answer_lens[item],
+        answer_relation_rule_provenance(RELATION_RULE_PERSON, answers[item],
+          answer_lens[item]));
+    }
     for (item = 0; item < count && pos + 1 < output_size; ++item) {
       if (item > 0) {
         const char* joiner = (item + 1 == count) ? " and " : ", ";
@@ -2663,6 +2801,16 @@ static int answer_relation_fact_reply(const char* query_text,
       }
       output[pos++] = '.';
       output[pos] = '\0';
+      /* Named once the reply exists, so a resolver that assembles nothing
+         leaves no citation behind. Every fact that reached the reply names its
+         source, and a reply resting on two tales is credited to both rather
+         than to neither. */
+      for (item = 0; item < count; ++item) {
+        if (NULL != answer_facts[item]) {
+          answer_fact_section_add(answer_facts[item]->section,
+            answer_facts[item]->section_len);
+        }
+      }
       result = EXIT_SUCCESS;
     }
   }
@@ -2682,6 +2830,8 @@ static int answer_relation_aggregate_reply(const libxs_registry_t* corpus,
   char query_section[ENTRY_SECTION_MAX];
   int query_section_len;
   char answers[RELATION_AGG_MAX][64];
+  char answer_sections[RELATION_AGG_MAX][ENTRY_SECTION_MAX];
+  int answer_section_lens[RELATION_AGG_MAX];
   int answer_lens[RELATION_AGG_MAX];
   double answer_scores[RELATION_AGG_MAX];
   int count = 0;
@@ -2704,6 +2854,8 @@ static int answer_relation_aggregate_reply(const libxs_registry_t* corpus,
     int slot;
     for (slot = 0; slot < RELATION_AGG_MAX; ++slot) {
       answers[slot][0] = '\0';
+      answer_sections[slot][0] = '\0';
+      answer_section_lens[slot] = 0;
       answer_lens[slot] = 0;
       answer_scores[slot] = 0.0;
     }
@@ -2741,6 +2893,8 @@ static int answer_relation_aggregate_reply(const libxs_registry_t* corpus,
             duplicate = 1;
             if (candidate_score > answer_scores[slot]) {
               memcpy(answers[slot], candidate, (size_t)candidate_len + 1);
+              answer_section_lens[slot] = corpus_entry_section_copy(entry,
+                entry_size, answer_sections[slot], ENTRY_SECTION_MAX);
               answer_lens[slot] = candidate_len;
               answer_scores[slot] = candidate_score;
             }
@@ -2751,11 +2905,16 @@ static int answer_relation_aggregate_reply(const libxs_registry_t* corpus,
           while (insert > 0 && candidate_score > answer_scores[insert - 1]) {
             memcpy(answers[insert], answers[insert - 1],
               (size_t)answer_lens[insert - 1] + 1);
+            memcpy(answer_sections[insert], answer_sections[insert - 1],
+              (size_t)answer_section_lens[insert - 1] + 1);
+            answer_section_lens[insert] = answer_section_lens[insert - 1];
             answer_lens[insert] = answer_lens[insert - 1];
             answer_scores[insert] = answer_scores[insert - 1];
             --insert;
           }
           memcpy(answers[insert], candidate, (size_t)candidate_len + 1);
+          answer_section_lens[insert] = corpus_entry_section_copy(entry,
+            entry_size, answer_sections[insert], ENTRY_SECTION_MAX);
           answer_lens[insert] = candidate_len;
           answer_scores[insert] = candidate_score;
           ++count;
@@ -2792,6 +2951,13 @@ static int answer_relation_aggregate_reply(const libxs_registry_t* corpus,
         pos += (size_t)actor_len;
         output[pos++] = '.';
         output[pos] = '\0';
+        /* The query named a section and every contributor had to match it, so
+           these agree in the ordinary case; naming them all is still what makes
+           the aggregate say where it came from. */
+        for (item = 0; item < count; ++item) {
+          answer_fact_section_add(answer_sections[item],
+            answer_section_lens[item]);
+        }
         result = EXIT_SUCCESS;
       }
     }
@@ -3208,6 +3374,64 @@ static double lexical_score(const libxs_lexeme_stream_t* query,
 }
 
 
+/**
+ * Which slot already holds this text, or -1.
+ *
+ * Ingest keys an entry on its text AND its section, and stores the same span at
+ * more than one scale, so one sentence can exist as several entries: a stock
+ * phrase recurs across sources, and every sentence short enough to be a
+ * paragraph of its own is stored twice. The answer list is what the reader sees,
+ * so the same sentence must not occupy two of its slots -- which is what returned
+ * one reply twice at `-n 2`. Rejected here rather than at print time, so the
+ * reply path, the evaluation and the recomb host all see one answer list.
+ */
+/**
+ * Has this exact text already been printed in this reply? Records it if not.
+ *
+ * An answer list free of repeated entries is still not a reply free of repeated
+ * sentences: evidence extraction pulls the matching sentence out of a paragraph
+ * as readily as out of the sentence stored beside it, so two different entries
+ * render one sentence. The reader sees printed text, so printed text is what is
+ * compared.
+ */
+static int answer_shown_repeat(char shown[][COMPOSE_MAXTEXT], int* nshown,
+  const char* text, int text_len)
+{
+  int result = 0;
+  int pos;
+  for (pos = 0; pos < *nshown && 0 == result; ++pos) {
+    if ((int)strlen(shown[pos]) == text_len
+      && 0 == libxs_memcmp(shown[pos], text, (size_t)text_len))
+    {
+      result = 1;
+    }
+  }
+  if (0 == result && *nshown < ANSWER_MAX && text_len < COMPOSE_MAXTEXT) {
+    memcpy(shown[*nshown], text, (size_t)text_len);
+    shown[*nshown][text_len] = '\0';
+    ++(*nshown);
+  }
+  return result;
+}
+
+
+static int answer_slot_with_text(const corpus_entry_t* const entries[],
+  int limit, const corpus_entry_t* entry)
+{
+  int result = -1;
+  int slot;
+  for (slot = 0; slot < limit && 0 > result; ++slot) {
+    if (NULL != entries[slot] && entries[slot]->text_len == entry->text_len
+      && 0 == libxs_memcmp(entries[slot]->text, entry->text,
+        (size_t)entry->text_len))
+    {
+      result = slot;
+    }
+  }
+  return result;
+}
+
+
 static int answer_select(const libxs_registry_t* corpus,
   const char* query_text, size_t query_len, int budget,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
@@ -3220,7 +3444,7 @@ static int answer_select(const libxs_registry_t* corpus,
   size_t cursor = 0, key_size = 0;
   void* value;
   int answer_count = 0;
-  int slot;
+  int slot, held;
   int query_type = QUERY_GENERIC;
   int result = 0;
   int limit = budget;
@@ -3328,7 +3552,26 @@ static int answer_select(const libxs_registry_t* corpus,
         if (0 != query_type_prefers_sentence(query_type)) {
           score += (SCALE_SENTENCE == entry->scale) ? 0.12 : -0.18;
         }
-        for (slot = 0; slot < limit; ++slot) {
+        held = answer_slot_with_text(entries, limit, entry);
+        if (0 <= held) {
+          /* Keep the better-scoring occurrence: the score carries the scale
+             preference, so this is what picks a sentence over the fragment cut
+             out of it. */
+          if (score > scores[held]) {
+            entries[held] = entry;
+            scores[held] = score;
+            while (0 < held && scores[held] > scores[held - 1]) {
+              const corpus_entry_t* swap_entry = entries[held - 1];
+              const double swap_score = scores[held - 1];
+              entries[held - 1] = entries[held];
+              scores[held - 1] = scores[held];
+              entries[held] = swap_entry;
+              scores[held] = swap_score;
+              --held;
+            }
+          }
+        }
+        else for (slot = 0; slot < limit; ++slot) {
           if (NULL == entries[slot] || score > scores[slot]) {
             int move_slot;
             for (move_slot = limit - 1; move_slot > slot; --move_slot) {
@@ -3379,62 +3622,31 @@ static int answer_reply_role(char* output, size_t output_size,
 }
 
 
+/**
+ * Drop the heading a stored entry opens with: ingest stores the first sentence of
+ * a section from its heading onward, so the heading is part of that entry's text
+ * and would otherwise open the reply.
+ *
+ * corpus_title_len decides what a heading is. The scan that used to stand here
+ * had its own answer and got it wrong in both directions: a one-word title was
+ * kept, while the initial capital of the sentence beneath it counted as the
+ * title's second word and was eaten, so the reply began mid-word.
+ */
 static void answer_strip_heading_prefix(const char** text, int* text_len)
 {
-  int pos;
-  int prefix_words = 0;
-  int in_word = 0;
-  if (NULL == text || NULL == *text || NULL == text_len || *text_len <= 0) {
-    return;
-  }
-  for (pos = 0; pos < *text_len; ++pos) {
-    unsigned char ch = (unsigned char)(*text)[pos];
-    if (0 != islower(ch) || '.' == ch || ',' == ch || ';' == ch
-      || ':' == ch || '!' == ch || '?' == ch)
-    {
-      break;
-    }
-    if (0 != isupper(ch)) {
-      if (0 == in_word) {
-        ++prefix_words;
-        in_word = 1;
+  if (NULL != text && NULL != *text && NULL != text_len && 0 < *text_len) {
+    const int title_len = corpus_title_len(*text, *text_len);
+    if (0 < title_len) {
+      const char* next = *text + title_len;
+      int remaining = *text_len - title_len;
+      while (0 < remaining && 0 != isspace((unsigned char)*next)) {
+        ++next;
+        --remaining;
       }
-    }
-    else if (0 != isspace(ch)) {
-      in_word = 0;
-    }
-  }
-  if (prefix_words >= 2 && pos < *text_len && pos > 0) {
-    const char* next = *text + pos;
-    int remaining = *text_len - pos;
-    int prev_end = pos;
-    int prev_start;
-    while (prev_end > 0
-      && 0 != isspace((unsigned char)(*text)[prev_end - 1]))
-    {
-      --prev_end;
-    }
-    prev_start = prev_end;
-    while (prev_start > 0
-      && 0 == isspace((unsigned char)(*text)[prev_start - 1]))
-    {
-      --prev_start;
-    }
-    if ((1 == prev_end - prev_start
-        && 'A' == (*text)[prev_start])
-      || (2 == prev_end - prev_start
-        && 'A' == (*text)[prev_start] && 'N' == (*text)[prev_start + 1]))
-    {
-      next = *text + prev_start;
-      remaining = *text_len - prev_start;
-    }
-    while (remaining > 0 && 0 != isspace((unsigned char)*next)) {
-      ++next;
-      --remaining;
-    }
-    if (remaining > 0) {
-      *text = next;
-      *text_len = remaining;
+      if (0 < remaining) {
+        *text = next;
+        *text_len = remaining;
+      }
     }
   }
 }
@@ -3828,7 +4040,7 @@ static int answer_evidence_sentence(const char* query_text, size_t query_len,
  * Non-zero if the query carries a negator, per the caller-owned `negate|`
  * rules. The extractors answer affirmative questions only: they find what the
  * corpus asserts, never what it denies, and a complement ("who is NOT the
- * witch") is not groundable from evidence that states only positives. The
+ * <role>") is not groundable from evidence that states only positives. The
  * vocabulary stays in the rule file -- no negation words in the source -- and
  * with no rules loaded the check is inert, exactly like the other rule kinds.
  */
@@ -3879,6 +4091,7 @@ static int answer_fact_reply(const libxs_registry_t* corpus,
 {
   int result = EXIT_FAILURE;
   answer_fact_section_set(NULL, 0);
+  answer_fact_learned_set(NULL, 0, RELATION_RULE_ASSERTED);
   if (0 == answer_query_is_negated(query_text, query_len)
     && (EXIT_SUCCESS == answer_relation_fact_reply(query_text, query_len,
       output, output_size)
@@ -3902,10 +4115,67 @@ static int answer_fact_reply(const libxs_registry_t* corpus,
  * citation is only emitted when the corpus actually carries that structure --
  * never invented, and silently omitted for flat text.
  */
+/**
+ * Say when a reply rests on a class term that was not asserted. This is the
+ * whole point of admitting the learned bands: the reply is offered, and the
+ * reader is told which word it hangs on, so one that should not be in the class
+ * reads as a guess rather than as an assertion.
+ */
+static void answer_print_learned(void)
+{
+  if (0 < answer_fact_learned_len) {
+    printf("%s: rests on the %s class term \"%s\"\n",
+      (RELATION_RULE_PROPOSED == answer_fact_learned_from)
+        ? "speculative" : "learned",
+      (RELATION_RULE_PROPOSED == answer_fact_learned_from)
+        ? "proposed" : "learned", answer_fact_learned);
+  }
+}
+
+
+/**
+ * Bytes of a section that form the citation: ONE line.
+ *
+ * A section captured before the heading map was built could carry the lines
+ * that followed the heading, and printing it whole named two sources at once.
+ * Stopping at the first line break recovers the intended title. The map makes
+ * that unreachable for a freshly ingested corpus, but a persisted one predating
+ * it still has such sections stored.
+ *
+ * Shared with the evaluation so a checked citation is the SAME text the reader is
+ * shown, rather than the raw section a fixture would then have to describe.
+ */
+static int answer_citation_len(const char* section, int section_len)
+{
+  int result = 0;
+  if (NULL != section) {
+    while (result < section_len && '\n' != section[result]
+      && '\r' != section[result] && '\0' != section[result]) ++result;
+  }
+  return result;
+}
+
+
 static void answer_print_citation(const char* section, int section_len)
 {
-  if (NULL != section && section_len > 0 && '\0' != section[0]) {
-    printf("citation: %.*s\n", section_len, section);
+  const int len = answer_citation_len(section, section_len);
+  if (0 < len) printf("citation: %.*s\n", len, section);
+}
+
+
+static void answer_fact_learned_set(const char* term, int term_len,
+  int provenance)
+{
+  answer_fact_learned_len = 0;
+  answer_fact_learned[0] = '\0';
+  answer_fact_learned_from = RELATION_RULE_ASSERTED;
+  if (NULL != term && term_len > 0 && RELATION_RULE_ASSERTED != provenance
+    && term_len < (int)sizeof(answer_fact_learned))
+  {
+    memcpy(answer_fact_learned, term, (size_t)term_len);
+    answer_fact_learned[term_len] = '\0';
+    answer_fact_learned_len = term_len;
+    answer_fact_learned_from = provenance;
   }
 }
 
@@ -3920,6 +4190,34 @@ static void answer_fact_section_set(const char* section, int section_len)
     memcpy(answer_fact_section, section, (size_t)section_len);
     answer_fact_section[section_len] = '\0';
     answer_fact_section_len = section_len;
+  }
+}
+
+
+/**
+ * Name one more source this reply rests on. Already-named and oversized sources
+ * are dropped rather than truncated: half a title is a citation to nothing.
+ */
+static void answer_fact_section_add(const char* section, int section_len)
+{
+  static const char joiner[] = "; ";
+  if (NULL != section && 0 < section_len
+    && NULL == libxs_strimem(answer_fact_section,
+      (size_t)answer_fact_section_len, section, (size_t)section_len))
+  {
+    const int join_len = (0 < answer_fact_section_len)
+      ? (int)(sizeof(joiner) - 1) : 0;
+    if (answer_fact_section_len + join_len + section_len
+      < (int)sizeof(answer_fact_section))
+    {
+      memcpy(answer_fact_section + answer_fact_section_len, joiner,
+        (size_t)join_len);
+      answer_fact_section_len += join_len;
+      memcpy(answer_fact_section + answer_fact_section_len, section,
+        (size_t)section_len);
+      answer_fact_section_len += section_len;
+      answer_fact_section[answer_fact_section_len] = '\0';
+    }
   }
 }
 
@@ -3997,6 +4295,105 @@ static int answer_hier_reorder(const char* query_text, size_t query_len,
 }
 
 
+static size_t answer_visible_append(char* output, size_t output_size,
+  size_t output_pos, const char* text, int text_len)
+{
+  size_t result = output_pos;
+  if (NULL != output && 0 < text_len
+    && output_pos + (size_t)text_len + 2 < output_size)
+  {
+    if (0 < output_pos) output[result++] = '\n';
+    memcpy(output + result, text, (size_t)text_len);
+    result += (size_t)text_len;
+    output[result] = '\0';
+  }
+  return result;
+}
+
+
+/**
+ * Render an answer list the way a reader sees it; print it unless asked not to.
+ *
+ * ONE renderer, because the evaluation used to check `answer_reply` -- which
+ * FAILS for most retrieved answers, those being shown as evidence instead -- so
+ * everything the reply path does after that was ungated, and a reply that began
+ * mid-word passed. What the reader is shown and what the fixture scores are now
+ * the same bytes by construction.
+ *
+ * Returns 2 when a composed reply answered, 1 when evidence was shown, 0 when
+ * nothing could be rendered; the caller's out-parameter carries only a composed
+ * reply, which is what it has always carried.
+ */
+static int answer_render(const char* query_text, size_t query_len,
+  const corpus_entry_t* entries[], int answer_count,
+  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
+  int print, char* output, size_t output_size)
+{
+  int result = 0;
+  int slot;
+  size_t pos = 0;
+  char reply[COMPOSE_MAXTEXT];
+  char shown[ANSWER_MAX][COMPOSE_MAXTEXT];
+  int nshown = 0;
+  if (NULL != output && 0 < output_size) output[0] = '\0';
+  if (0 < answer_count && NULL != entries[0]
+    && EXIT_SUCCESS == answer_reply(query_text, query_len, entries[0],
+      lexicon, rules, nrules, reply, sizeof(reply)))
+  {
+    pos = answer_visible_append(output, output_size, pos, reply,
+      (int)strlen(reply));
+    if (0 != print) {
+      printf("%s\n", reply);
+      answer_print_citation(entries[0]->section, entries[0]->section_len);
+    }
+    result = 2;
+  }
+  for (slot = 0; 0 == result && slot < answer_count
+    && NULL != entries[slot]; ++slot)
+  {
+    const char* text = entries[slot]->text;
+    int text_len = entries[slot]->text_len;
+    if (EXIT_SUCCESS == answer_evidence_sentence(query_text, query_len,
+      entries[slot], lexicon, rules, nrules, reply, sizeof(reply)))
+    {
+      if (0 == answer_shown_repeat(shown, &nshown, reply,
+        (int)strlen(reply)))
+      {
+        pos = answer_visible_append(output, output_size, pos, reply,
+          (int)strlen(reply));
+        if (0 != print) {
+          if (nshown > 1) printf("\n");
+          printf("%s\n", reply);
+          answer_print_citation(entries[slot]->section,
+            entries[slot]->section_len);
+        }
+      }
+      continue;
+    }
+    while (text_len > 0 && 0 != isspace((unsigned char)*text)) {
+      ++text;
+      --text_len;
+    }
+    while (text_len > 0
+      && 0 != isspace((unsigned char)text[text_len - 1])) --text_len;
+    answer_strip_heading_prefix(&text, &text_len);
+    if (text_len > 0 && (SCALE_SENTENCE != entries[slot]->scale
+        || (0 != text_starts_sentence(text, text_len)
+          && 0 != text_ends_sentence(text, text_len)))
+      && 0 == answer_shown_repeat(shown, &nshown, text, text_len))
+    {
+      pos = answer_visible_append(output, output_size, pos, text, text_len);
+      if (0 != print) {
+        if (nshown > 1) printf("\n");
+        printf("%.*s\n", text_len, text);
+      }
+    }
+  }
+  if (0 == result && 0 < nshown) result = 1;
+  return result;
+}
+
+
 static int answer_query(const libxs_registry_t* corpus,
   const char* query_text, size_t query_len, int budget,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
@@ -4007,14 +4404,16 @@ static int answer_query(const libxs_registry_t* corpus,
   const corpus_entry_t* entries[ANSWER_MAX];
   double scores[ANSWER_MAX];
   int answer_count;
-  int slot;
+  int rendered;
   char reply[COMPOSE_MAXTEXT];
+  char visible[4 * COMPOSE_MAXTEXT];
   if (NULL != out_reply && out_size > 0) out_reply[0] = '\0';
   if (EXIT_SUCCESS == answer_fact_reply(corpus, query_text, query_len,
     reply, sizeof(reply)))
   {
     printf("%s\n", reply);
     answer_print_citation(answer_fact_section, answer_fact_section_len);
+    answer_print_learned();
     if (NULL != out_reply && out_size > 0) {
       size_t rn = strlen(reply);
       if (rn >= out_size) rn = out_size - 1;
@@ -4027,47 +4426,13 @@ static int answer_query(const libxs_registry_t* corpus,
     lexicon, rules, nrules, answer_model, profile, entries, scores);
   answer_count = answer_hier_reorder(query_text, query_len, entries, scores,
     answer_count);
-  if (answer_count > 0 && NULL != entries[0]
-    && EXIT_SUCCESS == answer_reply(query_text, query_len, entries[0],
-      lexicon, rules, nrules, reply, sizeof(reply)))
-  {
-    printf("%s\n", reply);
-    answer_print_citation(entries[0]->section, entries[0]->section_len);
-    if (NULL != out_reply && out_size > 0) {
-      size_t rn = strlen(reply);
-      if (rn >= out_size) rn = out_size - 1;
-      memcpy(out_reply, reply, rn);
-      out_reply[rn] = '\0';
-    }
-    LIBXS_UNUSED(scores);
-    return 1;
-  }
-  for (slot = 0; slot < answer_count && NULL != entries[slot]; ++slot) {
-    const char* text = entries[slot]->text;
-    int text_len = entries[slot]->text_len;
-    if (EXIT_SUCCESS == answer_evidence_sentence(query_text, query_len,
-      entries[slot], lexicon, rules, nrules, reply, sizeof(reply)))
-    {
-      if (slot > 0) printf("\n");
-      printf("%s\n", reply);
-      answer_print_citation(entries[slot]->section,
-        entries[slot]->section_len);
-      continue;
-    }
-    while (text_len > 0 && 0 != isspace((unsigned char)*text)) {
-      ++text;
-      --text_len;
-    }
-    while (text_len > 0
-      && 0 != isspace((unsigned char)text[text_len - 1])) --text_len;
-    answer_strip_heading_prefix(&text, &text_len);
-    if (text_len > 0 && (SCALE_SENTENCE != entries[slot]->scale
-        || (0 != text_starts_sentence(text, text_len)
-          && 0 != text_ends_sentence(text, text_len))))
-    {
-      if (slot > 0) printf("\n");
-      printf("%.*s\n", text_len, text);
-    }
+  rendered = answer_render(query_text, query_len, entries, answer_count,
+    lexicon, rules, nrules, 1, visible, sizeof(visible));
+  if (2 == rendered && NULL != out_reply && out_size > 0) {
+    size_t rn = strlen(visible);
+    if (rn >= out_size) rn = out_size - 1;
+    memcpy(out_reply, visible, rn);
+    out_reply[rn] = '\0';
   }
   LIBXS_UNUSED(scores);
   return (answer_count > 0) ? 1 : 0;
@@ -4104,27 +4469,41 @@ static int text_find_word_ci(const char* text, int text_len, const char* term)
 }
 
 
-static int eval_parse_line(char* line, char* fields[4])
+/**
+ * question|evidence-terms|reply-terms|fact-terms|citation-terms
+ *
+ * The last two are optional, so a three- or four-field line behaves exactly as
+ * before. The citation field is what makes ATTRIBUTION testable: the fixture
+ * states which source the answer must be credited to, and a reply that is right
+ * about the world but wrong about where it came from now fails.
+ */
+static int eval_parse_line(char* line, char* fields[5])
 {
   int result = EXIT_FAILURE;
   char* cursor;
   int field_pos;
   if (NULL != fields) {
-    for (field_pos = 0; field_pos < 4; ++field_pos) fields[field_pos] = NULL;
+    for (field_pos = 0; field_pos < 5; ++field_pos) fields[field_pos] = NULL;
   }
   if (NULL != line && NULL != fields) {
     cursor = eval_trim(line);
     if ('\0' != *cursor && '#' != *cursor) {
-      for (field_pos = 0; field_pos < 3 && NULL != cursor; ++field_pos) {
+      /* The trailing segment belongs to the field it reached, so a line with
+         three, four or five fields fills exactly those and leaves the rest
+         unset. */
+      for (field_pos = 0; field_pos < 4 && NULL != cursor; ++field_pos) {
         char* sep = strchr(cursor, '|');
         if (NULL != sep) {
           *sep = '\0';
           fields[field_pos] = eval_trim(cursor);
           cursor = sep + 1;
         }
-        else cursor = NULL;
+        else {
+          fields[field_pos] = eval_trim(cursor);
+          cursor = NULL;
+        }
       }
-      if (NULL != cursor) fields[3] = eval_trim(cursor);
+      if (NULL != cursor) fields[4] = eval_trim(cursor);
       if (NULL != fields[0] && '\0' != fields[0][0]
         && NULL != fields[1] && NULL != fields[2])
       {
@@ -4222,7 +4601,7 @@ static int eval_converse(const libxs_registry_t* corpus,
   const answer_predict_profile_t* profile)
 {
   int result = EXIT_FAILURE;
-  int npass = 0, ntop = 0, nany = 0, nreply = 0, nfact = 0;
+  int npass = 0, ntop = 0, nany = 0, nreply = 0, nfact = 0, ncite = 0;
   int ncases = 0;
   int have_facts = (0 != answer_relation_facts_size
     || 0 != answer_docdef_facts_size) ? 1 : 0;
@@ -4235,7 +4614,7 @@ static int eval_converse(const libxs_registry_t* corpus,
   }
   while (NULL != file) {
     char line[EVAL_LINE_MAX];
-    char* fields[4];
+    char* fields[5];
     const corpus_entry_t* entries[ANSWER_MAX];
     double scores[ANSWER_MAX];
     int nanswers;
@@ -4244,8 +4623,13 @@ static int eval_converse(const libxs_registry_t* corpus,
     int reply_pass;
     int fact_pass;
     int fact_checked;
+    int have_fact;
+    int cite_pass;
+    int cite_len;
+    const char* cite = NULL;
     int pass;
     char reply[COMPOSE_MAXTEXT];
+    char visible[4 * COMPOSE_MAXTEXT];
     char rewritten[COMPOSE_MAXTEXT];
     const char* qtext;
     size_t qlen;
@@ -4270,12 +4654,21 @@ static int eval_converse(const libxs_registry_t* corpus,
     fact_checked = (have_facts && NULL != fields[3]
       && 0 == eval_terms_empty(fields[3])
       && 0 != strcmp(fields[3], EVAL_RULE_GOVERNED)) ? 1 : 0;
+    cite_len = 0;
+    /* Unconditionally, because an interactive query tries the fact resolvers
+       FIRST: what the reader is shown is this reply whenever it succeeds, and
+       whether the fixture states fact-terms has nothing to do with it. */
+    have_fact = (EXIT_SUCCESS == answer_fact_reply(corpus, qtext, qlen,
+      reply, sizeof(reply))) ? 1 : 0;
     if (0 != fact_checked) {
-      if (EXIT_SUCCESS == answer_fact_reply(corpus, qtext, qlen,
-        reply, sizeof(reply)))
-      {
+      if (0 != have_fact) {
         fact_pass = eval_terms_match_text(reply, (int)strlen(reply),
           fields[3]);
+        /* Whichever resolver answered published its section, so the citation
+           under test is the one the reader would have been shown. */
+        cite_len = answer_citation_len(answer_fact_section,
+          answer_fact_section_len);
+        cite = answer_fact_section;
       }
       else fact_pass = 0;
     }
@@ -4288,9 +4681,29 @@ static int eval_converse(const libxs_registry_t* corpus,
     any_pass = eval_terms_match_answers(entries, nanswers, fields[1], 0);
     reply_pass = 1;
     LIBXS_UNUSED(scores);
+    /* Before the fact-only and abstention branches, both of which return early:
+       a fact reply is exactly the kind of answer whose attribution matters. */
+    if (0 == cite_len && 0 < nanswers && NULL != entries[0]) {
+      cite = entries[0]->section;
+      cite_len = answer_citation_len(entries[0]->section,
+        entries[0]->section_len);
+    }
+    cite_pass = 1;
+    if (NULL != fields[4] && 0 == eval_terms_empty(fields[4])) {
+      cite_pass = (0 < cite_len)
+        ? eval_terms_match_text(cite, cite_len, fields[4]) : 0;
+      fprintf(stdout, "%s cite %s\n", (0 != cite_pass) ? "PASS" : "FAIL",
+        fields[0]);
+      if (0 != cite_pass) ++ncite;
+      else if (0 < cite_len) {
+        fprintf(stdout, "     cited \"%.*s\", expected \"%s\"\n", cite_len,
+          cite, fields[4]);
+      }
+      else fprintf(stdout, "     cited nothing, expected \"%s\"\n", fields[4]);
+    }
     if (0 != eval_terms_empty(fields[1])) {
       if (0 != fact_checked) {
-        pass = fact_pass;
+        pass = (0 != fact_pass && 0 != cite_pass) ? 1 : 0;
         fprintf(stdout, "%s fact %s\n", (0 != fact_pass) ? "PASS" : "FAIL",
           fields[0]);
         if (0 != fact_pass) ++nfact;
@@ -4340,26 +4753,41 @@ static int eval_converse(const libxs_registry_t* corpus,
       if (0 != pass) ++npass;
       continue;
     }
-    if (0 == eval_terms_empty(fields[2])) {
-      if (nanswers <= 0 || EXIT_SUCCESS != answer_reply(qtext,
-        qlen, entries[0], lexicon, rules, nrules, reply,
-        sizeof(reply)))
-      {
-        reply_pass = 0;
-        reply[0] = '\0';
-      }
-      else {
-        reply_pass = eval_terms_match_text(reply, (int)strlen(reply),
-          fields[2]);
-      }
+    /**
+     * The reply expectation is scored against THE TEXT THE READER IS SHOWN, not
+     * against answer_reply -- which fails for most retrieved answers, those
+     * being shown as evidence instead, so the old check could only ever be
+     * written for the few queries that compose a reply. answer_render is the
+     * same renderer the interactive path prints with, called with printing off.
+     */
+    if (0 != have_fact) {
+      size_t rn = strlen(reply);
+      if (rn >= sizeof(visible)) rn = sizeof(visible) - 1;
+      memcpy(visible, reply, rn);
+      visible[rn] = '\0';
     }
-    pass = (0 != any_pass && 0 != reply_pass && 0 != fact_pass) ? 1 : 0;
+    else {
+      answer_render(qtext, qlen, entries, nanswers, lexicon, rules, nrules, 0,
+        visible, sizeof(visible));
+    }
+    if (0 == eval_terms_empty(fields[2])) {
+      reply_pass = eval_terms_match_text(visible, (int)strlen(visible),
+        fields[2]);
+    }
+    pass = (0 != any_pass && 0 != reply_pass && 0 != fact_pass
+      && 0 != cite_pass) ? 1 : 0;
     fprintf(stdout, "%s top %s\n", (0 != top_pass) ? "PASS" : "FAIL",
       fields[0]);
     fprintf(stdout, "%s any %s\n", (0 != any_pass) ? "PASS" : "FAIL",
       fields[0]);
     fprintf(stdout, "%s reply %s\n", (0 != reply_pass) ? "PASS" : "FAIL",
       fields[0]);
+    /* Say what was replied, the way the citation check says what was cited: a
+       reply expectation is otherwise unwritable without rebuilding to look. */
+    if (0 == reply_pass && 0 == eval_terms_empty(fields[2])) {
+      fprintf(stdout, "     replied \"%s\", expected \"%s\"\n", visible,
+        fields[2]);
+    }
     if (0 != fact_checked) {
       fprintf(stdout, "%s fact %s\n", (0 != fact_pass) ? "PASS" : "FAIL",
         fields[0]);
@@ -4371,8 +4799,8 @@ static int eval_converse(const libxs_registry_t* corpus,
     if (0 != pass) ++npass;
   }
   fprintf(stdout,
-    "eval[%s]: %d/%d passed (top=%d, any=%d, reply=%d, fact=%d)\n",
-    profile->name, npass, ncases, ntop, nany, nreply, nfact);
+    "eval[%s]: %d/%d passed (top=%d, any=%d, reply=%d, fact=%d, cite=%d)\n",
+    profile->name, npass, ncases, ntop, nany, nreply, nfact, ncite);
   if (0 != converse_judge_active()) {
     fprintf(stderr, "  hier rescore: %ld rankings, top-1 changed on %ld\n",
       answer_hier_nreorder, answer_hier_nchanged);

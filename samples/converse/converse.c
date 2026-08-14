@@ -98,6 +98,19 @@ typedef struct bpe_word_t {
   int syms[BPE_WORD_MAX];
 } bpe_word_t;
 
+/**
+ * A heading and the byte at which the text it names begins. `depth` is how many
+ * blank lines precede the heading, which is the document's OWN statement of its
+ * hierarchy, and is what lets a subsection heading be skipped so an answer is
+ * credited to the source it belongs to rather than to a part of one.
+ */
+typedef struct corpus_section_t {
+  size_t begin;
+  int depth;
+  int len;
+  char text[ENTRY_SECTION_MAX];
+} corpus_section_t;
+
 
 static const answer_predict_profile_t answer_predict_profiles[] = {
   { "raw", LIBXS_PREDICT_AUTO, LIBXS_PREDICT_RAW, 0, 1, 0.0, 0.0, 0, 0, 0, 0 },
@@ -153,6 +166,18 @@ static int answer_lexnorms_size = 0;
  * join from a cross-page one, and only the latter combines two sources.
  */
 static unsigned short corpus_source_id = 0;
+/**
+ * Where each section of the file being ingested begins. Built once from the
+ * LINE structure of the document, because a section is a property of the
+ * document and not of whichever pass happens to be scanning it: the sentence
+ * pass and the paragraph pass used to track a "current section" each and
+ * disagreed wherever a subsection heading stood between them. Since the section
+ * is part of the entry key, disagreement stored the same sentence TWICE under
+ * two headings, and one reply came back twice with two different citations.
+ */
+static corpus_section_t* corpus_sections = NULL;
+static int corpus_sections_size = 0;
+static int corpus_sections_cap = 0;
 
 static long predict_ntotal = 0;
 
@@ -214,7 +239,7 @@ static void answer_relation_rules_free(void);
 static char* answer_relation_rule_trim(char* text);
 static int answer_relation_rule_kind(const char* text);
 static int answer_relation_rule_append(int kind, const char* relation,
-  const char* term);
+  const char* term, int provenance);
 static int answer_relation_rule_parse_line(char* line);
 static size_t answer_relation_rules_load_file(const char* path);
 static void answer_relation_rules_report(FILE* stream);
@@ -238,8 +263,8 @@ static int corpus_shuffle_words(unsigned char* text, int len);
 static int corpus_shuffle_mode(void);
 static void corpus_entry_set_section(corpus_entry_t* entry,
   const char* section, int section_len);
-static int corpus_title_prefix(const unsigned char* text, int len,
-  char* title, int title_size);
+static void corpus_sections_build(const unsigned char* text, size_t size);
+static int corpus_section_at(size_t offset, const char** text);
 static int corpus_entry_same_section(const corpus_entry_t* lhs,
   size_t lhs_size, const corpus_entry_t* rhs);
 static unsigned int corpus_chain_max(void);
@@ -412,7 +437,7 @@ static int answer_relation_rule_kind(const char* text)
 
 
 static int answer_relation_rule_append(int kind, const char* relation,
-  const char* term)
+  const char* term, int provenance)
 {
   int result = EXIT_FAILURE;
   answer_relation_rule_t* rules;
@@ -428,6 +453,8 @@ static int answer_relation_rule_append(int kind, const char* relation,
       answer_relation_rules = rules;
       LIBXS_MEMZERO(answer_relation_rules + answer_relation_rules_size);
       answer_relation_rules[answer_relation_rules_size].kind = kind;
+      answer_relation_rules[answer_relation_rules_size].provenance =
+        provenance;
       if (NULL != relation) {
         strcpy(answer_relation_rules[answer_relation_rules_size].relation,
           relation);
@@ -467,10 +494,12 @@ static int answer_relation_rule_parse_line(char* line)
     if ((RELATION_RULE_ALIAS == kind || RELATION_RULE_NORM == kind)
       && NULL != fields[2])
     {
-      result = answer_relation_rule_append(kind, fields[1], fields[2]);
+      result = answer_relation_rule_append(kind, fields[1], fields[2],
+        RELATION_RULE_ASSERTED);
     }
     else if (RELATION_RULE_ALIAS != kind && RELATION_RULE_NORM != kind) {
-      result = answer_relation_rule_append(kind, NULL, fields[1]);
+      result = answer_relation_rule_append(kind, NULL, fields[1],
+        RELATION_RULE_ASSERTED);
     }
   }
   return result;
@@ -613,8 +642,9 @@ static double answer_rules_learn_env(const char* name, double fallback)
  *
  * SIDE-SIGNALS decide acceptance, not similarity alone:
  *  - nsrc, the number of distinct sections the word occurs in. This separates a
- *    CLASS member from a CHARACTER: "girl" recurs across tales, "Rapunzel" lives
- *    in one. A term with a single source is a name wearing a class's clothes.
+ *    CLASS member from a CHARACTER: a class word recurs across sources, whereas
+ *    a character lives in one. A term with a single source is a name wearing a
+ *    class's clothes.
  *  - freq, so a hapax cannot enter the class on one lucky neighbourhood.
  *  - two thresholds. At or above accept the term becomes a rule; between
  *    speculate and accept it is REPORTED AND NOT USED, so a reply never rests on
@@ -626,6 +656,7 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
 {
   enum { LEARN_SECT_MAX = 64 };
   size_t result = 0;
+  size_t nspecul = 0;
   const int want = answer_rules_learn_count();
   const unsigned int vocab = (NULL != lexicon) ? libxs_lexicon_size(lexicon) : 0;
   if (0 < want && 0 < vocab && NULL != corpus) {
@@ -781,23 +812,32 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
             const int ok = (bestcos >= accept) ? 1 : 0;
             fprintf(stderr, "  %-14s min-cos=%.3f freq=%ld nsrc=%d -> %s\n",
               (NULL != text) ? text : "?", bestcos, freq[best], bestsrc,
-              (0 != ok) ? "ACCEPTED" : "speculative (not used)");
-            if (0 != ok && NULL != text
-              && EXIT_SUCCESS == answer_relation_rule_append(
-                RELATION_RULE_PERSON, NULL, text))
+              (0 != ok) ? "ACCEPTED" : "PROPOSED");
+            /**
+             * The margin is ADMITTED, not discarded. Its terms cannot be
+             * promoted by moving the threshold -- wrong terms score
+             * between right ones -- so the choice is to waste
+             * the band or to carry the uncertainty forward. Carrying it forward
+             * is only honest if it reaches the reader, which is what the
+             * speculative flag is for: every reply resting on one says so.
+             */
+            if (NULL != text && EXIT_SUCCESS == answer_relation_rule_append(
+              RELATION_RULE_PERSON, NULL, text,
+              (0 != ok) ? RELATION_RULE_LEARNED : RELATION_RULE_PROPOSED))
             {
-              ++result;
+              if (0 != ok) ++result;
+              else ++nspecul;
             }
-            else if (0 == ok) {
-              /* Keep it out of the class so no reply can rest on it, but stop it
-                 being re-proposed every round. */
-              freq[best] = 0;
-            }
+            /* Either way it is now in the class, so stop re-proposing it. */
+            freq[best] = 0;
             ++shown;
           }
         }
-        fprintf(stderr, "rule learning: %lu term%s accepted into person class\n",
-          (unsigned long)result, (1 == result) ? "" : "s");
+        /* Both counts are labelled in replies: see the provenance comment in
+           converse.h for why the accepted band is not trusted either. */
+        fprintf(stderr, "rule learning: %lu accepted, %lu proposed"
+          " (both labelled in replies)\n", (unsigned long)result,
+          (unsigned long)nspecul);
       }
     }
     free(centroid);
@@ -858,6 +898,37 @@ int answer_relation_rule_has_term(int kind, const char* text,
     }
   }
   return result;
+}
+
+
+/**
+ * Where the class term matching this text came from: ASSERTED, LEARNED or
+ * PROPOSED. Text matching no term of that kind is reported as ASSERTED, since a
+ * caller asks this only about a term it already matched.
+ *
+ * Separate from answer_relation_rule_has_term rather than folded into it: every
+ * consumer needs membership, only the ones that can end up in a reply need the
+ * provenance, and returning both from one call would burden all of them. The
+ * STRONGEST provenance wins -- an asserted term that matches would have admitted
+ * the text on its own, so a learned one alongside it changes nothing.
+ */
+int answer_relation_rule_provenance(int kind, const char* text, int text_len)
+{
+  int result = RELATION_RULE_PROPOSED + 1;
+  size_t rule_pos;
+  if (NULL != text && text_len > 0) {
+    for (rule_pos = 0; rule_pos < answer_relation_rules_size
+      && RELATION_RULE_ASSERTED != result; ++rule_pos)
+    {
+      const answer_relation_rule_t* rule = answer_relation_rules + rule_pos;
+      if (rule->kind == kind && rule->provenance < result
+        && 0 != text_contains_word_ci(text, text_len, rule->term))
+      {
+        result = rule->provenance;
+      }
+    }
+  }
+  return (RELATION_RULE_PROPOSED < result) ? RELATION_RULE_ASSERTED : result;
 }
 
 /**
@@ -1302,67 +1373,149 @@ static void corpus_entry_set_section(corpus_entry_t* entry,
 }
 
 
-static int corpus_title_prefix(const unsigned char* text, int len,
-  char* title, int title_size)
+/**
+ * Bytes of the heading this span opens with, 0 if it does not open with one.
+ *
+ * A heading is a LINE holding no lower-case letter, not a leading run of
+ * capitals. Scanning the run instead cost every one-word title (a lone run has
+ * one word, and one word had to be rejected because the capital that opens an
+ * ordinary sentence looks identical), truncated any title containing internal
+ * punctuation at the first mark, and ran a title into a second heading below it.
+ * Prose cannot be a line without a lower-case letter, so the line boundary
+ * decides what the word count was standing in for -- and a title that stands
+ * alone as a paragraph, which the run scan could only recognise when the title
+ * happened to contain punctuation, is recognised by the same rule.
+ *
+ * Ingest asks here to capture a section and the reply path asks here to strip a
+ * captured heading back off. Two definitions of "heading" is what let a reply
+ * open mid-word: the stripper counted the sentence's own first capital as the
+ * title's second word and ate it.
+ */
+int corpus_title_len(const char* text, int len)
 {
   int result = 0;
-  int pos, prefix_words = 0, in_word = 0;
-  int title_begin = 0, title_end;
-  if (NULL == text || NULL == title || title_size <= 0 || len <= 0) return 0;
-  title[0] = '\0';
   /**
-   * A heading starts with a letter. Requiring that rejects all-caps text that
+   * A heading starts with a letter. Requiring that rejects all-caps text which
    * merely opens with punctuation -- a quoted letter signature in dialogue, for
-   * instance -- which otherwise looks exactly like a title to this prober.
+   * instance -- that otherwise looks exactly like a title here.
    */
-  if (0 == isalpha(text[0])) return 0;
-  for (pos = 0; pos < len; ++pos) {
-    unsigned char ch = text[pos];
-    if (0 != islower(ch) || '.' == ch || ',' == ch || ';' == ch
-      || ':' == ch || '!' == ch || '?' == ch)
-    {
-      break;
-    }
-    if (0 != isupper(ch) && pos + 1 < len && 0 != islower(text[pos + 1])) {
-      break;
-    }
-    if (0 != isupper(ch)) {
-      if (0 == in_word) {
-        ++prefix_words;
-        in_word = 1;
+  if (NULL != text && 0 < len && 0 != isalpha((unsigned char)text[0])) {
+    int end = 0, nupper = 0, lower = 0;
+    while (end < len && '\n' != text[end] && '\r' != text[end]) {
+      const unsigned char ch = (unsigned char)text[end];
+      if (0 != isalpha(ch)) {
+        if (0 != isupper(ch)) ++nupper;
+        else lower = 1;
       }
+      ++end;
     }
-    else if (0 != isspace(ch)) {
-      in_word = 0;
+    if (0 == lower && 3 <= nupper) {
+      while (0 < end && 0 != isspace((unsigned char)text[end - 1])) --end;
+      result = end;
     }
   }
-  title_end = pos;
-  if (prefix_words >= 2 && pos < len && pos > 0) {
-    int prev_end = pos;
-    int prev_start;
-    while (prev_end > 0 && 0 != isspace(text[prev_end - 1])) --prev_end;
-    prev_start = prev_end;
-    while (prev_start > 0 && 0 == isspace(text[prev_start - 1])) {
-      --prev_start;
+  return result;
+}
+
+
+static int corpus_sections_append(const char* text, int len, size_t begin,
+  int depth)
+{
+  int result = EXIT_SUCCESS;
+  if (corpus_sections_size == corpus_sections_cap) {
+    const int cap = (0 < corpus_sections_cap) ? (2 * corpus_sections_cap) : 64;
+    corpus_section_t* grown = (corpus_section_t*)realloc(corpus_sections,
+      (size_t)cap * sizeof(*grown));
+    if (NULL != grown) {
+      corpus_sections = grown;
+      corpus_sections_cap = cap;
     }
-    if ((1 == prev_end - prev_start && 'A' == text[prev_start])
-      || (2 == prev_end - prev_start && 'A' == text[prev_start]
-        && 'N' == text[prev_start + 1]))
-    {
-      title_end = prev_start;
+    else result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS == result) {
+    corpus_section_t* section = corpus_sections + corpus_sections_size;
+    int copy_len = len;
+    if (copy_len >= ENTRY_SECTION_MAX) copy_len = ENTRY_SECTION_MAX - 1;
+    memcpy(section->text, text, (size_t)copy_len);
+    section->text[copy_len] = '\0';
+    section->len = copy_len;
+    section->begin = begin;
+    section->depth = depth;
+    ++corpus_sections_size;
+  }
+  return result;
+}
+
+
+/**
+ * Map the headings of one file, deepest separation first.
+ *
+ * Two rules, both structural rather than scored. A heading is a whole LINE, so a
+ * numbered one is not a heading at all -- the older per-pass scan took such a
+ * line for one, because sentence splitting handed it the text after the number
+ * and the remainder looked like a title. And a heading below the file's widest
+ * separation is a SUBSECTION, which names a part of a section rather than a
+ * source, so it does not open one: crediting an answer to a part number says
+ * nothing about where it came from.
+ */
+static void corpus_sections_build(const unsigned char* text, size_t size)
+{
+  size_t pos = 0, line_start = 0;
+  int blanks = 0, maxdepth = 0, pass;
+  corpus_sections_size = 0;
+  for (pass = 0; pass < 2 && NULL != text; ++pass) {
+    line_start = 0;
+    blanks = 0;
+    for (pos = 0; pos <= size; ++pos) {
+      if (pos == size || '\n' == text[pos]) {
+        int len = (int)(pos - line_start);
+        while (0 < len && 0 != isspace(text[line_start + len - 1])) --len;
+        if (0 == len) ++blanks;
+        else {
+          const int title_len = corpus_title_len((const char*)text + line_start,
+            len);
+          if (title_len == len) {
+            /* The first heading of a file has no separation above it and is
+               still the outermost one there is. */
+            const int depth = (0 == line_start) ? maxdepth : blanks;
+            if (0 == pass) {
+              if (depth > maxdepth) maxdepth = depth;
+            }
+            else if (depth >= maxdepth) {
+              /* The section begins AT its heading, not after it: ingest stores
+                 the first sentence of a section from the heading onward, so a
+                 section that began below its own heading would credit the first
+                 sentence of every section to the previous one. */
+              corpus_sections_append((const char*)text + line_start, title_len,
+                line_start, depth);
+            }
+          }
+          blanks = 0;
+        }
+        line_start = pos + 1;
+      }
     }
-    while (title_begin < title_end && 0 != isspace(text[title_begin])) {
-      ++title_begin;
+  }
+}
+
+
+/** The section covering this byte: the last heading at or before it. */
+static int corpus_section_at(size_t offset, const char** text)
+{
+  int result = 0;
+  int lo = 0, hi = corpus_sections_size - 1, found = -1;
+  *text = NULL;
+  while (lo <= hi) {
+    const int mid = lo + (hi - lo) / 2;
+    if (corpus_sections[mid].begin <= offset) {
+      found = mid;
+      lo = mid + 1;
     }
-    while (title_end > title_begin && 0 != isspace(text[title_end - 1])) {
-      --title_end;
-    }
-    result = title_end - title_begin;
-    if (result >= title_size) result = title_size - 1;
-    if (result > 0) {
-      memcpy(title, text + title_begin, (size_t)result);
-      title[result] = '\0';
-    }
+    else hi = mid - 1;
+  }
+  if (0 <= found) {
+    *text = corpus_sections[found].text;
+    result = corpus_sections[found].len;
   }
   return result;
 }
@@ -4159,10 +4312,10 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
   else if (EXIT_SUCCESS == result && NULL != text && text_size > 0) {
     size_t sent_start = 0;
     int nsentences = 0, nparagraphs = 0;
-    char current_section[ENTRY_SECTION_MAX];
+    const char* current_section = NULL;
     int current_section_len = 0;
     size_t i;
-    current_section[0] = '\0';
+    corpus_sections_build(text, text_size);
     for (i = 0; i <= text_size; ++i) {
       int is_sent_end = (i == text_size)
         ? 1 : is_sentence_end_text(text, text_size, i);
@@ -4176,15 +4329,8 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
           }
           len = (int)(sent_end - sent_start);
           while (len > 0 && 0 != isspace(text[sent_start + len - 1])) --len;
-          if (len > 8) {
-            char title[ENTRY_SECTION_MAX];
-            int title_len = corpus_title_prefix(text + sent_start, len,
-              title, (int)sizeof(title));
-            if (title_len > 0) {
-              memcpy(current_section, title, (size_t)title_len + 1);
-              current_section_len = title_len;
-            }
-          }
+          current_section_len = corpus_section_at(sent_start,
+            &current_section);
           if (len >= COMPOSE_MAXTEXT) {
             size_t frag_start = sent_start;
             while (frag_start < sent_end) {
@@ -4256,23 +4402,14 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
       }
     }
     { size_t para_start = 0, p;
-      char para_section[ENTRY_SECTION_MAX];
+      const char* para_section = NULL;
       int para_section_len = 0;
-      para_section[0] = '\0';
       for (p = 0; p < text_size; ++p) {
         if ('\n' == text[p] && p + 1 < text_size && '\n' == text[p + 1]) {
           int plen = (int)(p - para_start);
           while (plen > 0 && 0 != isspace(text[para_start + plen - 1]))
             --plen;
-          if (plen > 8) {
-            char title[ENTRY_SECTION_MAX];
-            int title_len = corpus_title_prefix(text + para_start, plen,
-              title, (int)sizeof(title));
-            if (title_len > 0) {
-              memcpy(para_section, title, (size_t)title_len + 1);
-              para_section_len = title_len;
-            }
-          }
+          para_section_len = corpus_section_at(para_start, &para_section);
           if (plen >= COMPOSE_MAXTEXT) {
             size_t frag_start = para_start;
             size_t para_end = para_start + (size_t)plen;
@@ -4342,8 +4479,10 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
         }
       }
     }
-    fprintf(stderr, "  ingested %s: %d sentences, %d paragraphs\n",
-      path, nsentences, nparagraphs);
+    /* Sections are reported because attribution rests on them and a heading the
+       scan misses is invisible in every other figure. */
+    fprintf(stderr, "  ingested %s: %d sentences, %d paragraphs, %d sections\n",
+      path, nsentences, nparagraphs, corpus_sections_size);
   }
   free(text);
   return result;
@@ -5011,6 +5150,10 @@ void converse_release(converse_run_t* run)
     libxs_lexicon_destroy(run->lexicon);
     libxs_registry_destroy(run->corpus);
     answer_relation_rules_free();
+    free(corpus_sections);
+    corpus_sections = NULL;
+    corpus_sections_size = 0;
+    corpus_sections_cap = 0;
     memset(run, 0, sizeof(*run));
   }
 }

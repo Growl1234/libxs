@@ -206,8 +206,23 @@ typedef struct answer_predict_profile_t {
 enum { RELATION_RULE_ALIAS = 1, RELATION_RULE_PERSON, RELATION_RULE_SKIP,
   RELATION_RULE_NEGATE, RELATION_RULE_NORM };
 
+/**
+ * Where a rule came from. ASSERTED means someone wrote it in the rule file.
+ * The other two come from rule learning, above and below its acceptance bar.
+ *
+ * Both learned levels are labelled in replies, not just the margin. The margin
+ * cannot be promoted by moving the threshold -- wrong terms score between right
+ * ones -- and the ACCEPTED band is not trustworthy either: at the default bar
+ * adjectives and interjections enter the person class, and one adjective is
+ * enough to turn a correct reply into a confident false assertion. Labelling
+ * only the margin would say the accepted band is safe, which it is not.
+ */
+enum { RELATION_RULE_ASSERTED = 0, RELATION_RULE_LEARNED,
+  RELATION_RULE_PROPOSED };
+
 typedef struct answer_relation_rule_t {
   int kind;
+  int provenance;
   char relation[64];
   char term[64];
 } answer_relation_rule_t;

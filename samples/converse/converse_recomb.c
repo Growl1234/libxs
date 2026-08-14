@@ -61,8 +61,8 @@ typedef struct recomb_word_t {
 /**
  * Bytes scored after the seam. Small on purpose: the byte context reaches back
  * only HIER_PPM_ORDER_MAX, so a wide window is dominated by the suffix's own
- * predictability and stops measuring the junction at all. Measured on grimm, the
- * gap between a real corpus junction and an arbitrary splice is 0.709 bits at 4
+ * predictability and stops measuring the junction at all. On the reference
+ * corpus the gap between a real junction and an arbitrary splice is 0.709 bits at 4
  * bytes, 0.252 at 8, 0.008 at 24, and inverts at 48 -- so a wide window does not
  * merely dilute the signal, it destroys it.
  */
@@ -107,8 +107,8 @@ static int recomb_balance_on(void)
  *
  * The byte-level seam judge cannot see grammar: "the guards would not to go
  * away" costs little per byte because every byte pair is common. The fault is at
- * WORD scale, and the corpus already knows it -- "would not to" occurs zero times
- * in grimm while "would not have/let/go/give" all occur. So the gate asks the
+ * WORD scale, and the corpus already knows it -- the ungrammatical continuation
+ * occurs zero times while its grammatical alternatives all occur. So the gate asks the
  * n-gram, not a rule file: no English syntax is declared anywhere, and the same
  * test works unchanged on another language.
  *
@@ -344,7 +344,7 @@ static int recomb_clause_start(const char* text, int len, int at)
  * boundary, so the join is grammatical and still says the same thing twice.
  * Worse, the coherence gate PREFERS it -- content overlap is what MINOVL rewards
  * and a duplicated half is overlap at its maximum, which is why the two loops in
- * the grimm sample scored ovl=0.89 and ovl=0.74, near the top of the run. So
+ * the reference sample scored ovl=0.89 and ovl=0.74, near the top of the run. So
  * repetition is not a fluency question to be scored; it is decidable, and it is
  * rejected by construction like the rest.
  */
@@ -364,9 +364,9 @@ static int recomb_repeat_words(void)
  * Does the grafted tail say something the host prefix already said?
  *
  * Every window of `want` consecutive tail words is looked for in the prefix, not
- * just the one at the graft: the second grimm loop repeats in the MIDDLE of the
- * tail ("...like my comrades." ... "but if the old woman had got me into the pan,
- * ... like my comrades."), so checking the junction alone would pass it. Only
+ * just the one at the graft: the second loop in that sample repeats in the
+ * MIDDLE of the tail rather than at the junction, so checking the junction alone
+ * would pass it. Only
  * prefix-versus-tail is compared, so a source sentence that repeats itself is
  * left alone -- that is attested text, and rejecting it would cost candidates
  * without removing a defect the splice introduced.
@@ -579,8 +579,9 @@ static long recomb_index_ntruncated = 0;
  *
  * The proxy is derived from counts, not from a word list, so no language vocabulary
  * enters the sample: a lexeme is predicate-like when it frequently FOLLOWS one of
- * the function words the rules already declare skippable. Measured on grimm: made
- * 33, built 4, against children/witch/kingdom at 0. It costs 58% of pivot tokens,
+ * the function words the rules already declare skippable. Measured on the
+ * reference corpus: predicate-like pivots dominate, while concrete nouns score 0.
+ * It costs 58% of pivot tokens,
  * which is the honest price of removing a failure class by construction.
  *
  * This is a probe. It is off by default because it trades reachable set for
