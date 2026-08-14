@@ -262,7 +262,9 @@ libxs_stratify_morton
 libxs_stratify_morton_bits
 libxs_stridiff
 libxs_stridist
+libxs_striequal
 libxs_strimatch
+libxs_strimem
 libxs_strisimilar
 libxs_stristr
 libxs_stristrn

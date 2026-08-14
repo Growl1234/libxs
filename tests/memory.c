@@ -59,6 +59,68 @@ int main(int argc, char* argv[])
     result = EXIT_FAILURE;
   }
 
+  /* check libxs_strimem: sizes are explicit, so neither side needs a terminator */
+  { const char haystack[] = "The quick brown FOX jumps";
+    const size_t hsize = sizeof(haystack) - 1;
+    if (EXIT_SUCCESS == result
+      && haystack + 16 != libxs_strimem(haystack, hsize, "fox", 3))
+    {
+      FPRINTF(stderr, "ERROR line #%i: strimem fox\n", __LINE__);
+      result = EXIT_FAILURE;
+    }
+    /* the haystack is BOUNDED: the match lies past the given size */
+    if (EXIT_SUCCESS == result
+      && NULL != libxs_strimem(haystack, 16, "fox", 3))
+    {
+      FPRINTF(stderr, "ERROR line #%i: strimem haystack bound\n", __LINE__);
+      result = EXIT_FAILURE;
+    }
+    /* an unterminated needle taken from the haystack itself */
+    if (EXIT_SUCCESS == result
+      && haystack + 4 != libxs_strimem(haystack, hsize, haystack + 4, 5))
+    {
+      FPRINTF(stderr, "ERROR line #%i: strimem self\n", __LINE__);
+      result = EXIT_FAILURE;
+    }
+    if (EXIT_SUCCESS == result
+      && (NULL != libxs_strimem(haystack, hsize, "fox", 0)
+        || NULL != libxs_strimem(haystack, 2, "fox", 3)
+        || NULL != libxs_strimem(NULL, hsize, "fox", 3)
+        || NULL != libxs_strimem(haystack, hsize, NULL, 3)))
+    {
+      FPRINTF(stderr, "ERROR line #%i: strimem edge cases\n", __LINE__);
+      result = EXIT_FAILURE;
+    }
+    /* libxs_stristrn must stay the needle-bounded view of the same search */
+    if (EXIT_SUCCESS == result
+      && libxs_stristrn(init, "LAZY dog", 4)
+        != libxs_strimem(init, strlen(init), "lazy", 4))
+    {
+      FPRINTF(stderr, "ERROR line #%i: stristrn/strimem agreement\n", __LINE__);
+      result = EXIT_FAILURE;
+    }
+  }
+  /* check libxs_striequal */
+  if (EXIT_SUCCESS == result
+    && (0 == libxs_striequal("FOX", 3, "fox", 3)
+      || 0 == libxs_striequal("", 0, "", 0)
+      || 0 != libxs_striequal("fox", 3, "fox", 2)
+      || 0 != libxs_striequal("fox", 3, "box", 3)
+      || 0 != libxs_striequal(NULL, 0, NULL, 0)))
+  {
+    FPRINTF(stderr, "ERROR line #%i: striequal\n", __LINE__);
+    result = EXIT_FAILURE;
+  }
+  /* bytes above 0x7F reach tolower as a negative char where char is signed,
+     which is undefined; folding must be defined and must not equate them */
+  if (EXIT_SUCCESS == result
+    && (NULL == libxs_strimem("caf\xc3\xa9 au lait", 13, "CAF\xc3\xa9", 5)
+      || 0 != libxs_striequal("\xc3\xa9", 2, "\xc3\x89", 2)))
+  {
+    FPRINTF(stderr, "ERROR line #%i: strimem non-ASCII\n", __LINE__);
+    result = EXIT_FAILURE;
+  }
+
   /* check libxs_strimatch */
   if (EXIT_SUCCESS == result && (2 != libxs_strimatch("Co Product A", "Corp Prod B",
       delims, &count) || 3 != count)) result = EXIT_FAILURE;

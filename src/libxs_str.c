@@ -11,28 +11,61 @@
 #include <libxs/libxs_utils.h>
 
 
+/**
+ * Byte-wise ASCII case folding. The cast is not cosmetic: tolower accepts EOF or
+ * a value representable as unsigned char, so passing a negative char is
+ * undefined, which is what any byte above 0x7F is on a platform with signed
+ * char -- and text carrying UTF-8 punctuation or accents is full of them.
+ */
+LIBXS_API_INLINE int internal_libxs_strilower(char c)
+{
+  return tolower((unsigned char)c);
+}
+
+
+LIBXS_API int libxs_striequal(const char a[], size_t asize,
+  const char b[], size_t bsize)
+{
+  int result = 0;
+  if (NULL != a && NULL != b && asize == bsize) {
+    size_t at = 0;
+    while (at < asize
+      && internal_libxs_strilower(a[at]) == internal_libxs_strilower(b[at]))
+    {
+      ++at;
+    }
+    result = (at == asize) ? 1 : 0;
+  }
+  return result;
+}
+
+
+LIBXS_API const char* libxs_strimem(const char a[], size_t asize,
+  const char b[], size_t bsize)
+{
+  const char* result = NULL;
+  if (NULL != a && NULL != b && 0 != bsize && bsize <= asize) {
+    const size_t last = asize - bsize;
+    size_t at = 0;
+    while (at <= last && NULL == result) {
+      size_t i = 0;
+      while (i < bsize && internal_libxs_strilower(a[at + i])
+        == internal_libxs_strilower(b[i])) ++i;
+      if (i == bsize) result = a + at;
+      ++at;
+    }
+  }
+  return result;
+}
+
+
 LIBXS_API const char* libxs_stristrn(const char a[], const char b[], size_t maxlen)
 {
   const char* result = NULL;
-  if (NULL != a && NULL != b && '\0' != *a && '\0' != *b && 0 != maxlen) {
-    do {
-      if (tolower(*a) != tolower(*b)) ++a;
-      else {
-        const char* const start = a;
-        const char* c = b;
-        size_t i = 0;
-        result = a;
-        while ('\0' != c[++i] && i != maxlen && '\0' != *++a) {
-          if (tolower(*a) != tolower(c[i])) {
-            result = NULL;
-            break;
-          }
-        }
-        if ('\0' == c[i] || i == maxlen) break; /* full match */
-        result = NULL;
-        a = start + 1; /* backtrack past match start */
-      }
-    } while ('\0' != *a);
+  if (NULL != a && NULL != b && 0 != maxlen) {
+    size_t bsize = 0;
+    while (bsize < maxlen && '\0' != b[bsize]) ++bsize;
+    result = libxs_strimem(a, strlen(a), b, bsize);
   }
   return result;
 }
@@ -121,10 +154,10 @@ int internal_libxs_levenshtein(const char* a, int na, const char* b, int nb)
   LIBXS_ASSERT(nb <= 64);
   for (j = 0; j < nb; ++j) row[j] = j + 1;
   for (i = 0; i < na; ++i) {
-    const int ca = tolower(a[i]);
+    const int ca = internal_libxs_strilower(a[i]);
     int prev = i;
     for (j = 0; j < nb; ++j) {
-      const int cost = (ca != tolower(b[j]));
+      const int cost = (ca != internal_libxs_strilower(b[j]));
       int val = prev + cost; /* substitution */
       if (row[j] + 1 < val) val = row[j] + 1; /* deletion */
       if ((j > 0 ? row[j - 1] : i + 1) + 1 < val) val = (j > 0 ? row[j - 1] : i + 1) + 1; /* insertion */

@@ -25,10 +25,7 @@ LIBXS_API_INLINE int internal_libxs_predict_resolve_col(
       size_t flen;
       while ('\0' != *p && NULL == strchr(delims, *p)) ++p;
       flen = (size_t)(p - field);
-      if (flen == strlen(name)) {
-        const char* hit = libxs_stristrn(field, name, flen);
-        if (hit == field) result = col;
-      }
+      if (0 != libxs_striequal(field, flen, name, strlen(name))) result = col;
       if ('\0' != *p) ++p;
       ++col;
     }

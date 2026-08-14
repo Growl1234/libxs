@@ -15,7 +15,30 @@
 /** Case-insensitive character-level edit distance (Levenshtein) between two strings. */
 LIBXS_API int libxs_stridist(const char a[], const char b[]);
 
-/** Return the pointer to the 1st match of "b" in "a", or NULL (no match). */
+/**
+ * Non-zero when two byte spans are equal, case-insensitively (ASCII folding).
+ * Neither argument needs to be terminated, so a slice of a larger buffer can be
+ * compared without copying it out. NULL equals nothing, including NULL.
+ */
+LIBXS_API int libxs_striequal(const char a[], size_t asize,
+  const char b[], size_t bsize);
+
+/**
+ * Pointer to the 1st case-insensitive occurrence of the bsize bytes of "b"
+ * within the asize bytes of "a", or NULL. Neither argument needs to be
+ * terminated: a tokenizer or corpus layer holds slices, not strings, and the
+ * haystack is frequently a PREFIX of a buffer whose remainder must not be
+ * searched. An empty needle finds nothing.
+ */
+LIBXS_API const char* libxs_strimem(const char a[], size_t asize,
+  const char b[], size_t bsize);
+
+/**
+ * Return the pointer to the 1st match of "b" in "a", or NULL (no match).
+ * maxlen bounds the NEEDLE, not the haystack: at most maxlen leading bytes of
+ * "b" have to match, and all of "a" is searched. Both must be terminated. Use
+ * libxs_strimem to bound the haystack or to search without a terminator.
+ */
 LIBXS_API const char* libxs_stristrn(const char a[], const char b[], size_t maxlen);
 LIBXS_API const char* libxs_stristr(const char a[], const char b[]);
 
