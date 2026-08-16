@@ -292,9 +292,13 @@ LIBXS_API size_t libxs_gcd(size_t a, size_t b);
 LIBXS_API size_t libxs_lcm(size_t a, size_t b);
 
 /**
- * This function finds prime-factors of an unsigned integer in ascending order, and
- * returns the number of factors found (zero if the given number is prime and unequal to two).
- * The output array must have at least num_factors_max elements.
+ * Finds the prime factorization of an unsigned integer. Factors are written to
+ * num_factors_n32 in ascending order and repeated according to multiplicity,
+ * e.g. 12 (= 2^2 * 3) yields [2, 2, 3]. The return value is the total number of
+ * factors found (including multiplicity), which may exceed num_factors_max; only
+ * the first num_factors_max factors are written to the output array
+ * (num_factors_max=0 queries the count without writing any factors).
+ * Returns zero if the given number is prime and unequal to two.
  */
 LIBXS_API int libxs_primes_u32(unsigned int num, unsigned int num_factors_n32[], int num_factors_max);
 

@@ -243,15 +243,12 @@ LIBXS_API int libxs_primes_u32(unsigned int num, unsigned int num_factors_n32[],
       c = j; j /= 2;
     }
   }
-  for (i = 3; i <= c; i += 2) {
+  for (i = 3; (i * i) <= c; i += 2) {
     unsigned int j = c / i;
     while (c == (i * j)) {
       if (n < num_factors_max) num_factors_n32[n] = i;
       ++n;
       c = j; j /= i;
-    }
-    if ((i * i) > num) {
-      break;
     }
   }
   if (1 < c && 0 != n) {

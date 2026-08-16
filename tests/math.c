@@ -315,11 +315,22 @@ int main(int argc, char* argv[])
 
   { /* check prime factorization */
     const unsigned int test[] = { 0, 1, 2, 3, 5, 7, 12, 13, 24, 32, 2057, 120, 14, 997, 65519u * 65521u };
+    /* expected factor count including multiplicity; 0 for primes other than two (per API contract) */
+    const int expected[] = { 0, 0, 1, 0, 0, 0, 3, 0, 4, 5, 3, 5, 2, 0, 2 };
     const int n = sizeof(test) / sizeof(*test);
     unsigned int fact[32];
     for (i = 0; i < n; ++i) {
       const int np = libxs_primes_u32(test[i], fact, sizeof(fact) / sizeof(*fact));
-      for (j = 1; j < np; ++j) fact[0] *= fact[j];
+      if (np != expected[i]) {
+        FPRINTF(stderr, "ERROR line #%i: primes_u32(%u)=%i expected=%i\n", __LINE__, test[i], np, expected[i]);
+        exit(EXIT_FAILURE);
+      }
+      for (j = 1; j < np; ++j) {
+        if (fact[j - 1] > fact[j]) { /* factors must be non-decreasing (multiplicity groups) */
+          exit(EXIT_FAILURE);
+        }
+        fact[0] *= fact[j];
+      }
       if (0 < np && fact[0] != test[i]) {
         exit(EXIT_FAILURE);
       }
