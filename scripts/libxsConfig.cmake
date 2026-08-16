@@ -28,6 +28,23 @@ if(LIBXS_LIBRARY AND LIBXS_INCLUDE_DIR)
       set_property(TARGET libxs::libxs APPEND PROPERTY
         INTERFACE_LINK_LIBRARIES Threads::Threads)
     endif()
+    # same link interface as the CMake-exported target, i.e. consumers of a
+    # GNU Make build resolve sqrt/pow, dlopen, and clock_gettime alike
+    include(CheckLibraryExists)
+    set(_libxs_libs ${CMAKE_DL_LIBS})
+    check_library_exists(m sqrt "" LIBXS_HAS_LIBM)
+    if(LIBXS_HAS_LIBM)
+      list(APPEND _libxs_libs m)
+    endif()
+    check_library_exists(rt clock_gettime "" LIBXS_HAS_LIBRT)
+    if(LIBXS_HAS_LIBRT)
+      list(APPEND _libxs_libs rt)
+    endif()
+    if(_libxs_libs)
+      set_property(TARGET libxs::libxs APPEND PROPERTY
+        INTERFACE_LINK_LIBRARIES ${_libxs_libs})
+    endif()
+    unset(_libxs_libs)
     unset(_incdirs)
   else()
     set_property(TARGET libxs::libxs PROPERTY

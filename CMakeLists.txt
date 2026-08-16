@@ -36,12 +36,12 @@ if(LIBXS_FORTRAN)
   enable_language(Fortran)
 endif()
 
-# Set default build type
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE "RelWithDebInfo")
+# Set default build type (multi-config generators select at build time)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Build type" FORCE)
   # Set the possible values of build type for cmake-gui
   set_property(CACHE CMAKE_BUILD_TYPE
-               PROPERTY STRINGS "Debug" "Release" "RelWithDebInfo")
+               PROPERTY STRINGS "Debug" "Release" "RelWithDebInfo" "MinSizeRel")
 endif()
 
 message(STATUS "******** Build Summary ********")
@@ -80,6 +80,13 @@ execute_process(
 
 if(NOT LIBXS_VERSION_RC EQUAL 0)
   message(FATAL_ERROR "tool_version.sh failed with code ${LIBXS_VERSION_RC}")
+endif()
+
+# libxs_macros.h includes "libxs_version.h", i.e. a header left in the source
+# tree by a GNU Make build takes precedence over the generated header.
+if(EXISTS "${LIBXS_INCLUDE_DIR}/libxs_version.h")
+  message(WARNING "${LIBXS_INCLUDE_DIR}/libxs_version.h shadows the generated "
+    "header (run \"make realclean\" to build a consistent version).")
 endif()
 
 # Re-run on reconfigure whenever version metadata changes.
@@ -237,10 +244,22 @@ if(LIBXS_FORTRAN)
     FILES_MATCHING PATTERN "*.mod")
 endif()
 
-# Install pkg-config files
+# Install pkg-config files. The GNU Make build installs a flavor-specific
+# file with libxs.pc as an alias, i.e. consumers such as LIBXSTREAM refer to
+# libxs-static; install both names to stay interchangeable.
+if(BUILD_SHARED_LIBS)
+  set(LIBXS_PC_FLAVOR "libxs-shared.pc")
+else()
+  set(LIBXS_PC_FLAVOR "libxs-static.pc")
+endif()
 install(FILES
   "${CMAKE_CURRENT_BINARY_DIR}/libxs.pc"
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig"
+)
+install(FILES
+  "${CMAKE_CURRENT_BINARY_DIR}/libxs.pc"
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig"
+  RENAME "${LIBXS_PC_FLAVOR}"
 )
 
 # CMake package config export

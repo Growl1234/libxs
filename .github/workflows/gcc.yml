@@ -182,16 +182,15 @@ jobs:
         cmake -B build -G Ninja \
           -DCMAKE_BUILD_TYPE=RelWithDebInfo \
           -DCMAKE_INSTALL_PREFIX=$HOME/libxs-install \
-          -DCMAKE_VERBOSE_MAKEFILE=ON \
           -DLIBXS_INSTALL_HEADER_ONLY=ON \
           -DBUILD_TESTING=ON \
           -DBUILD_SHARED_LIBS=${{ matrix.shared == 'shared' && 'ON' || 'OFF' }}
 
     - name: Build
-      run: cmake --build build -j $(nproc)
+      run: cmake --build build -v -j $(nproc)
 
     - name: Test
-      run: ctest --test-dir build -j $(nproc)
+      run: ctest --test-dir build --output-on-failure -j $(nproc)
 
     - name: Install
       run: cmake --install build
