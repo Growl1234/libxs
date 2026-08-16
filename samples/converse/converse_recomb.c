@@ -512,16 +512,16 @@ static int recomb_is_verbatim(const libxs_registry_t* corpus,
   int result = 0;
   const void* key = NULL;
   size_t cursor = 0;
-  void* value = libxs_registry_begin(corpus, &key, &cursor);
+  void* value = corpus_iterx_begin(corpus, &key, &cursor);
   while (NULL != value && 0 == result) {
-    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    const corpus_entry_t* entry = corpus_entry_view(value);
     if (entry->text_len >= text_len) {
       int at, span = entry->text_len - text_len;
       for (at = 0; at <= span && 0 == result; ++at) {
         if (0 == memcmp(entry->text + at, text, (size_t)text_len)) result = 1;
       }
     }
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iterx_next(corpus, &key, &cursor);
   }
   return result;
 }
@@ -536,14 +536,13 @@ static int recomb_is_verbatim(const libxs_registry_t* corpus,
  * disappears and the tokenization is paid once per entry at build time rather than
  * once per (host, entry) pair.
  *
- * Postings are capped: a frequent pivot has thousands of donors and the gates only
- * ever accept one, so an unbounded list costs memory to hold candidates that are
- * never reached. The cap is what makes the index affordable rather than merely
- * faster, and it is reported so a truncated pivot cannot be mistaken for a rare
- * one.
+ * Postings used to be CAPPED, because the registry copies a value and the value
+ * was the whole list: a fixed array per key, paid in full for every key however
+ * few donors it had. The cap bought that back and cost a silent truncation of the
+ * frequent pivots -- exactly the ones a scan would have reached. Now the value is
+ * a HEADER and the list hangs off it, so memory is proportional to the postings
+ * that exist and no pivot is cut short.
  */
-#define RECOMB_POSTINGS_MAX 2048
-
 
 /**
  * The ordinal is carried beside the pointer because donor selection is defined to
@@ -552,17 +551,21 @@ static int recomb_is_verbatim(const libxs_registry_t* corpus,
  * while replacing the scan would silently change which donor wins and move every
  * reported number.
  */
+typedef struct recomb_posting_t {
+  long ordinal;
+  const corpus_entry_t* entry;
+} recomb_posting_t;
+
 typedef struct recomb_postings_t {
   int n;
-  int truncated;
-  long ordinal[RECOMB_POSTINGS_MAX];
-  const corpus_entry_t* entry[RECOMB_POSTINGS_MAX];
+  int cap;
+  recomb_posting_t* at;
 } recomb_postings_t;
 
 
 static libxs_registry_t* recomb_index = NULL;
 static long recomb_index_nkeys = 0;
-static long recomb_index_ntruncated = 0;
+static long recomb_index_nposts = 0;
 
 
 /**
@@ -628,9 +631,9 @@ static int recomb_predicate_build(const libxs_registry_t* corpus,
   if (EXIT_SUCCESS == result) {
     const void* key = NULL;
     size_t cursor = 0;
-    void* value = libxs_registry_begin(corpus, &key, &cursor);
+    void* value = corpus_iterx_begin(corpus, &key, &cursor);
     while (NULL != value) {
-      const corpus_entry_t* entry = (const corpus_entry_t*)value;
+      const corpus_entry_t* entry = corpus_entry_view(value);
       if (SCALE_SENTENCE == entry->scale && 0 < entry->text_len) {
         recomb_word_t words[COMPOSE_MAXTEXT / 2];
         const int nwords = recomb_words(lexicon, entry->text, entry->text_len,
@@ -652,7 +655,7 @@ static int recomb_predicate_build(const libxs_registry_t* corpus,
           }
         }
       }
-      value = libxs_registry_next(corpus, &key, &cursor);
+      value = corpus_iterx_next(corpus, &key, &cursor);
     }
   }
   return result;
@@ -673,11 +676,18 @@ static int recomb_is_predicate(unsigned int id)
 static void recomb_index_free(void)
 {
   if (NULL != recomb_index) {
+    const void* key = NULL;
+    size_t cursor = 0;
+    void* value = libxs_registry_begin(recomb_index, &key, &cursor);
+    while (NULL != value) {
+      free(((recomb_postings_t*)value)->at);
+      value = libxs_registry_next(recomb_index, &key, &cursor);
+    }
     libxs_registry_destroy(recomb_index);
     recomb_index = NULL;
   }
   recomb_index_nkeys = 0;
-  recomb_index_ntruncated = 0;
+  recomb_index_nposts = 0;
 }
 
 
@@ -697,9 +707,9 @@ static int recomb_index_build(const libxs_registry_t* corpus,
     const void* key = NULL;
     size_t cursor = 0;
     long ordinal = 0;
-    void* value = libxs_registry_begin(corpus, &key, &cursor);
+    void* value = corpus_iterx_begin(corpus, &key, &cursor);
     while (NULL != value) {
-      const corpus_entry_t* entry = (const corpus_entry_t*)value;
+      const corpus_entry_t* entry = corpus_entry_view(value);
       if (SCALE_SENTENCE == entry->scale && 0 < entry->text_len) {
         recomb_word_t words[COMPOSE_MAXTEXT / 2];
         const int nwords = recomb_words(lexicon, entry->text, entry->text_len,
@@ -713,28 +723,38 @@ static int recomb_index_build(const libxs_registry_t* corpus,
             &id, sizeof(id), NULL);
           if (NULL == postings) {
             recomb_postings_t fresh;
-            LIBXS_MEMZERO(&fresh);
-            fresh.n = 1;
-            fresh.ordinal[0] = ordinal;
-            fresh.entry[0] = entry;
+            memset(&fresh, 0, sizeof(fresh));
             if (NULL != libxs_registry_set(recomb_index, &id, sizeof(id),
-              &fresh, sizeof(fresh), NULL)) ++recomb_index_nkeys;
-          }
-          else if (postings->entry[postings->n - 1] != entry) {
-            if (postings->n < RECOMB_POSTINGS_MAX) {
-              postings->ordinal[postings->n] = ordinal;
-              postings->entry[postings->n] = entry;
-              ++postings->n;
+              &fresh, sizeof(fresh), NULL))
+            {
+              ++recomb_index_nkeys;
+              postings = (recomb_postings_t*)libxs_registry_get(recomb_index,
+                &id, sizeof(id), NULL);
             }
-            else if (0 == postings->truncated) {
-              postings->truncated = 1;
-              ++recomb_index_ntruncated;
+          }
+          if (NULL != postings
+            && (0 == postings->n || postings->at[postings->n - 1].entry != entry))
+          {
+            if (postings->n == postings->cap) {
+              const int cap = (0 < postings->cap) ? (2 * postings->cap) : 8;
+              recomb_posting_t* grown = (recomb_posting_t*)realloc(postings->at,
+                (size_t)cap * sizeof(*grown));
+              if (NULL != grown) {
+                postings->at = grown;
+                postings->cap = cap;
+              }
+            }
+            if (postings->n < postings->cap) {
+              postings->at[postings->n].ordinal = ordinal;
+              postings->at[postings->n].entry = entry;
+              ++postings->n;
+              ++recomb_index_nposts;
             }
           }
         }
       }
       ++ordinal;
-      value = libxs_registry_next(corpus, &key, &cursor);
+      value = corpus_iterx_next(corpus, &key, &cursor);
     }
   }
   return result;
@@ -1056,9 +1076,9 @@ static int recomb_referent_build(const libxs_registry_t* corpus,
   if (EXIT_SUCCESS == result) {
     const void* key = NULL;
     size_t cursor = 0;
-    void* value = libxs_registry_begin(corpus, &key, &cursor);
+    void* value = corpus_iterx_begin(corpus, &key, &cursor);
     while (NULL != value) {
-      const corpus_entry_t* entry = (const corpus_entry_t*)value;
+      const corpus_entry_t* entry = corpus_entry_view(value);
       if (SCALE_SENTENCE == entry->scale && 0 < entry->text_len) {
         recomb_word_t words[COMPOSE_MAXTEXT / 2];
         const int nwords = recomb_words(lexicon, entry->text, entry->text_len,
@@ -1083,7 +1103,7 @@ static int recomb_referent_build(const libxs_registry_t* corpus,
             sizeof(id), NULL);
           if (NULL == ref) {
             recomb_referent_t fresh;
-            LIBXS_MEMZERO(&fresh);
+            memset(&fresh, 0, sizeof(fresh));
             fresh.nsources = 1;
             fresh.source[0] = entry->source;
             fresh.count = 1;
@@ -1115,7 +1135,7 @@ static int recomb_referent_build(const libxs_registry_t* corpus,
         }
         ++recomb_nsentences;
       }
-      value = libxs_registry_next(corpus, &key, &cursor);
+      value = corpus_iterx_next(corpus, &key, &cursor);
     }
   }
   return result;
@@ -1312,7 +1332,7 @@ static int recomb_signals(recomb_signal_t* sig, libxs_lexicon_t* lexicon,
   int result = EXIT_FAILURE;
   double bits = 0.0;
   if (NULL == sig) return EXIT_FAILURE;
-  LIBXS_MEMZERO(sig);
+  memset(sig, 0, sizeof(*sig));
   if (EXIT_SUCCESS == recomb_host->seam_bits(text, seam,
     text + seam, len - seam, window, &bits))
   {
@@ -1425,9 +1445,9 @@ static int recomb_floor_join(const libxs_registry_t* corpus,
   const void* key = NULL;
   size_t cursor = 0;
   long index = 0;
-  void* value = libxs_registry_begin(corpus, &key, &cursor);
+  void* value = corpus_iterx_begin(corpus, &key, &cursor);
   while (NULL != value && 0 == result) {
-    const corpus_entry_t* b = (const corpus_entry_t*)value;
+    const corpus_entry_t* b = corpus_entry_view(value);
     if (index++ >= skip && b != a && SCALE_SENTENCE == b->scale
       && b->text_len > 16)
     {
@@ -1448,7 +1468,7 @@ static int recomb_floor_join(const libxs_registry_t* corpus,
         if (0 != result && NULL != out_donor) *out_donor = b;
       }
     }
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iterx_next(corpus, &key, &cursor);
   }
   return result;
 }
@@ -1532,7 +1552,7 @@ static long recomb_capacity(const libxs_registry_t* corpus,
           &pivot, sizeof(pivot), NULL) : NULL;
     if (NULL == postings) continue;
     for (pi = 0; pi < postings->n; ++pi) {
-      const corpus_entry_t* b = postings->entry[pi];
+      const corpus_entry_t* b = postings->at[pi].entry;
       recomb_word_t bwords[COMPOSE_MAXTEXT / 2];
       char candidate[COMPOSE_MAXTEXT];
       int nbwords, bi;
@@ -1699,8 +1719,8 @@ static int recomb_compose(const libxs_registry_t* corpus,
           &pivot, sizeof(pivot), NULL) : NULL;
     if (NULL == postings) continue;
     for (pi = 0; pi < postings->n; ++pi) {
-      const corpus_entry_t* b = postings->entry[pi];
-      const long ordinal = postings->ordinal[pi];
+      const corpus_entry_t* b = postings->at[pi].entry;
+      const long ordinal = postings->at[pi].ordinal;
       recomb_word_t bwords[COMPOSE_MAXTEXT / 2];
       char candidate[COMPOSE_MAXTEXT];
       int nbwords, bi;
@@ -1808,9 +1828,9 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
     recomb_index_free();
     return;
   }
-  value = libxs_registry_begin(corpus, &key, &cursor);
+  value = corpus_iterx_begin(corpus, &key, &cursor);
   while (NULL != value && nmade < limit) {
-    const corpus_entry_t* a = (const corpus_entry_t*)value;
+    const corpus_entry_t* a = corpus_entry_view(value);
     if (SCALE_SENTENCE == a->scale && a->text_len > 0) {
       recomb_word_t awords[COMPOSE_MAXTEXT / 2];
       const int nawords = recomb_words(lexicon, a->text, a->text_len, awords,
@@ -1912,12 +1932,12 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
           const void* fkey = NULL;
           size_t fcursor = 0;
           long fi = 0;
-          void* fval = libxs_registry_begin(corpus, &fkey, &fcursor);
+          void* fval = corpus_iterx_begin(corpus, &fkey, &fcursor);
           while (NULL != fval && NULL == b) {
-            const corpus_entry_t* cand = (const corpus_entry_t*)fval;
+            const corpus_entry_t* cand = corpus_entry_view(fval);
             if (fi++ > index + 7 && SCALE_SENTENCE == cand->scale
               && cand->text_len > seam + 8) b = cand;
-            fval = libxs_registry_next(corpus, &fkey, &fcursor);
+            fval = corpus_iterx_next(corpus, &fkey, &fcursor);
           }
           if (NULL != b && EXIT_SUCCESS == recomb_host->seam_bits(
             out, seam, b->text + seam / 2,
@@ -1930,7 +1950,7 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
       }
     }
     ++index;
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iterx_next(corpus, &key, &cursor);
   }
   fprintf(stdout, "recomb[window=%d]: made=%ld of %ld tried"
     " | seam bpc: pivot=%.3f ceiling=%.3f floor=%.3f\n",
@@ -1958,8 +1978,8 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
    * donor list was cut looks exactly like a pivot with few donors, and a bound on
    * coverage that is not printed reads as full coverage.
    */
-  fprintf(stdout, "  pivot index: keys=%ld truncated=%ld (cap=%d)\n",
-    recomb_index_nkeys, recomb_index_ntruncated, RECOMB_POSTINGS_MAX);
+  fprintf(stdout, "  pivot index: keys=%ld postings=%ld\n",
+    recomb_index_nkeys, recomb_index_nposts);
   if (0 != capacity_on) {
     fprintf(stdout, "  capacity: hosts=%ld joins/host=%.1f distinct/host=%.1f"
       " pivots/host=%.2f capped-hosts=%ld (capmax=%d)\n", cap_hosts,
@@ -2171,7 +2191,7 @@ int converse_recomb_compose_best(const libxs_registry_t* corpus,
       &pivot, sizeof(pivot), NULL);
     if (NULL == postings) continue;
     for (pi = 0; pi < postings->n && ncand < RECOMB_KEEP; ++pi) {
-      const corpus_entry_t* b = postings->entry[pi];
+      const corpus_entry_t* b = postings->at[pi].entry;
       recomb_word_t bwords[COMPOSE_MAXTEXT / 2];
       char candidate[COMPOSE_MAXTEXT];
       int nbwords, bi;

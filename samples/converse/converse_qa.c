@@ -4,6 +4,8 @@
 #include <libxs/libxs_math.h>
 #include <libxs/libxs_perm.h>
 #include <libxs/libxs_str.h>
+#include <libxs/libxs_hash.h>
+#include <libxs/libxs_hist.h>
 #include <libxs/libxs_mem.h>
 #include <libxs/libxs_malloc.h>
 
@@ -30,6 +32,49 @@ typedef struct answer_bridge_t {
   double score;
 } answer_bridge_t;
 
+/**
+ * Facts one word reaches. `at` indexes the fact array rather than pointing into
+ * it, and lives on the heap rather than inside the registry value, so the list
+ * grows instead of being capped.
+ */
+typedef struct answer_fact_postings_t {
+  unsigned int n;
+  unsigned int cap;
+  unsigned int* at;
+} answer_fact_postings_t;
+
+/** Word id -> the facts that word reaches. */
+typedef struct answer_fact_index_t {
+  libxs_registry_t* store;
+  unsigned int nkeys;
+} answer_fact_index_t;
+
+#define ANSWER_FACTS_MAGIC 0x54434643u
+#define ANSWER_FACTS_VERSION 7
+#define ANSWER_LOCATION_PHRASE_MAX 96
+/** Propositions one attribute collection may rest on, and cite. */
+#define ANSWER_TOPIC_MAX 4
+#define ANSWER_TYPE_PHRASE_MAX 128
+enum { ANSWER_TYPE_COPULAR = 0, ANSWER_TYPE_APPOSITIVE };
+/** Items one enumerated possession answer may state, and cite. */
+#define ANSWER_OWN_MAX 6
+#define ANSWER_OWN_ITEM_MAX 64
+
+/** Header of the derived-layer cache; see answer_facts_stamp. */
+typedef struct answer_facts_header_t {
+  unsigned int magic;
+  unsigned int version;
+  unsigned int stamp;
+  unsigned int ncase;
+  unsigned int nrelation;
+  unsigned int nidentity;
+  unsigned int ndescribe;
+  unsigned int ndocdef;
+  unsigned int nlocation;
+  unsigned int ntype;
+  unsigned int nown;
+} answer_facts_header_t;
+
 typedef struct answer_relation_fact_t {
   char answer[128];
   char relation[64];
@@ -41,6 +86,7 @@ typedef struct answer_relation_fact_t {
   int section_len;
   int plural;
   int made;
+  int active;
   double score;
 } answer_relation_fact_t;
 
@@ -51,8 +97,80 @@ typedef struct answer_identity_fact_t {
   int name_len;
   int role_len;
   int section_len;
+  /** Where the role's class term came from; ASSERTED outranks any score. */
+  int provenance;
   double score;
 } answer_identity_fact_t;
+
+/**
+ * WHERE something happened, as a proposition rather than as a sentence.
+ *
+ * The phrase is VERBATIM -- the bytes from just after the actor through the place
+ * noun, exactly as the source has them -- so a reply is a name followed by a span
+ * of that name's own sentence. It is therefore grammatical whenever the source was
+ * and cannot state anything the corpus does not, which is the same reason the
+ * relation layer renders a proposition instead of generating one.
+ *
+ * The phrase bound is a REPRESENTATION, not a threshold: a location phrase that
+ * runs the length of a clause is not a location phrase, and one that does not fit
+ * is dropped rather than truncated into a claim the corpus never made.
+ */
+typedef struct answer_location_fact_t {
+  char actor[64];
+  char phrase[ANSWER_LOCATION_PHRASE_MAX];
+  char place[64];
+  char section[ENTRY_SECTION_MAX];
+  int actor_len;
+  int phrase_len;
+  int place_len;
+  int section_len;
+  int provenance;
+  double score;
+} answer_location_fact_t;
+
+/**
+ * What an entity IS, from the two shapes prose states a type in: the copular
+ * ("Aristotle was a Greek philosopher") and the appositive ("Aristotle, a Greek
+ * philosopher, wrote"). These are the definitional shapes, which is why they are
+ * the two E4 starts with -- encyclopaedic prose states nearly every type this way,
+ * and the entity census already supplies the names to hang them on.
+ *
+ * The phrase is VERBATIM apart from one word: an appositive omits the copula, and
+ * the reply takes that word from the rule file (`copula|is`) rather than from a
+ * literal here, so the language declares it. Everything else is the source's own
+ * bytes in the source's own order.
+ */
+typedef struct answer_type_fact_t {
+  char name[64];
+  char phrase[ANSWER_TYPE_PHRASE_MAX];
+  char section[ENTRY_SECTION_MAX];
+  int name_len;
+  int phrase_len;
+  int section_len;
+  int shape;
+  double score;
+} answer_type_fact_t;
+
+/**
+ * WHAT BELONGS TO WHOM, from the one shape English marks possession with
+ * unambiguously: the possessive apostrophe. "Hector's father" states a relation
+ * between Hector and a father in a way "the father of Hector" does not -- "of"
+ * carries partition, origin, material and authorship as well, so it is a different
+ * shape and not this one.
+ *
+ * The item is the possessed noun phrase, verbatim, and the owner is the name run
+ * before the apostrophe. An enumerated answer is then a set of independently
+ * attested items, each with its own citation.
+ */
+typedef struct answer_own_fact_t {
+  char owner[64];
+  char item[ANSWER_OWN_ITEM_MAX];
+  char section[ENTRY_SECTION_MAX];
+  int owner_len;
+  int item_len;
+  int section_len;
+  double score;
+} answer_own_fact_t;
 
 typedef struct answer_describe_fact_t {
   char role[64];
@@ -116,9 +234,34 @@ static int answer_query_nrules = 0;
  */
 static unsigned int* answer_case_upper = NULL;
 static unsigned int* answer_case_total = NULL;
+/** Capitals the author CHOSE: the position did not force them. */
+static unsigned int* answer_case_unforced = NULL;
+/** Occurrences within two words of a quotation boundary (measurement only). */
+static unsigned int* answer_case_attrib = NULL;
 static unsigned int answer_case_size = 0;
 static answer_relation_fact_t* answer_relation_facts = NULL;
 static size_t answer_relation_facts_size = 0;
+/**
+ * The relation a fact states, as a word id, mapped to the facts stating it --
+ * with the ALIAS CLOSURE baked in, so a question naming any alias of a relation
+ * is one lookup rather than a scan crossed with the rule file. Built after the
+ * facts are, because a fact reached through an alias is stored under the
+ * canonical relation and only the finished array knows all of them.
+ */
+static answer_fact_index_t answer_relation_by_relation = { NULL, 0 };
+static answer_location_fact_t* answer_location_facts = NULL;
+static size_t answer_location_facts_size = 0;
+static answer_type_fact_t* answer_type_facts = NULL;
+static size_t answer_type_facts_size = 0;
+static answer_own_fact_t* answer_own_facts = NULL;
+static size_t answer_own_facts_size = 0;
+/**
+ * Words the corpus uses as VERBS, derived rather than declared. Build-time only:
+ * the layer that reads it runs while the facts are being extracted, so a warm run
+ * that reuses the cached facts needs no verb set at all.
+ */
+static libxs_registry_t* answer_verbs = NULL;
+static long answer_verbs_nkeys = 0;
 static answer_identity_fact_t* answer_identity_facts = NULL;
 static size_t answer_identity_facts_size = 0;
 static answer_describe_fact_t* answer_describe_facts = NULL;
@@ -168,6 +311,9 @@ static int answer_query_be_word(const char* query_text, size_t query_len,
 static void answer_case_build(const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules);
 static void answer_case_free(void);
+/** Lexicon id of a word as written; 0 when the corpus never saw it. */
+static unsigned int answer_word_id(const char* word, int word_len);
+static void answer_case_report(FILE* stream);
 static int answer_word_is_name(const char* word, int word_len);
 static int answer_query_relation_actor(const char* query_text,
   size_t query_len, char* actor, int actor_size);
@@ -199,7 +345,12 @@ static int answer_relation_fact_extract_actor(const char* text, int text_len,
   int verb_pos, int* scan_pos, char* actor, int actor_size);
 static int answer_relation_fact_extract_made(const corpus_entry_t* entry,
   int made_pos);
+/** Whether any declared function class holds this word. */
+static int answer_word_is_function(const char* word, int word_len);
+static int answer_relation_fact_extract_active(const corpus_entry_t* entry);
 static size_t answer_relation_facts_build(const libxs_registry_t* corpus);
+/** Index the finished facts by relation, alias closure included. */
+static void answer_relation_facts_index(void);
 static void answer_relation_facts_report(FILE* stream);
 static void answer_identity_facts_free(void);
 static int answer_identity_word_is_name(const char* word, int word_len);
@@ -210,6 +361,43 @@ static size_t answer_identity_facts_build(const libxs_registry_t* corpus);
 static void answer_identity_facts_report(FILE* stream);
 static int answer_identity_fact_reply(const char* query_text,
   size_t query_len, char* output, size_t output_size);
+static void answer_location_facts_free(void);
+static int answer_location_fact_append(const char* actor, int actor_len,
+  const char* phrase, int phrase_len, const char* place, int place_len,
+  const corpus_entry_t* entry, double score);
+static size_t answer_location_facts_build(const libxs_registry_t* corpus);
+static void answer_location_facts_report(FILE* stream);
+static int answer_query_type_text(const char* query_text,
+  size_t query_len);
+static int answer_location_query_actor(const char* query_text,
+  size_t query_len, char* actor, int actor_size);
+static int answer_location_fact_reply(const char* query_text,
+  size_t query_len, char* output, size_t output_size);
+static void answer_type_facts_free(void);
+static int answer_type_fact_append(const char* name, int name_len,
+  const char* phrase, int phrase_len, int shape,
+  const corpus_entry_t* entry, double score);
+static size_t answer_type_facts_build(const libxs_registry_t* corpus);
+static void answer_type_facts_report(FILE* stream);
+static int answer_type_render(const answer_type_fact_t* fact, char* output,
+  size_t output_size);
+static int answer_type_fact_reply(const char* query_text, size_t query_len,
+  char* output, size_t output_size);
+static void answer_verbs_free(void);
+static size_t answer_verbs_build(const libxs_registry_t* corpus);
+static void answer_verbs_report(FILE* stream);
+static int answer_word_is_verb(const char* word, int word_len);
+static void answer_own_facts_free(void);
+static int answer_own_fact_append(const char* owner, int owner_len,
+  const char* item, int item_len, const corpus_entry_t* entry, double score);
+static size_t answer_own_facts_build(const libxs_registry_t* corpus);
+static void answer_own_facts_report(FILE* stream);
+static int answer_own_fact_reply(const char* query_text, size_t query_len,
+  char* output, size_t output_size);
+static int answer_topic_query_name(const char* query_text, size_t query_len,
+  char* name, int name_size);
+static int answer_topic_reply(const char* query_text, size_t query_len,
+  char* output, size_t output_size);
 static void answer_describe_facts_free(void);
 static int answer_describe_fact_append(const char* role, int role_len,
   const char* text, int text_len, const corpus_entry_t* entry, double score);
@@ -223,6 +411,11 @@ static int answer_docdef_header(const char* text, int text_len,
   char* header, int header_size, int* header_len);
 static size_t answer_docdef_facts_build(const libxs_registry_t* corpus);
 static void answer_docdef_facts_report(FILE* stream);
+/** Reuse the derived layer when it was built from exactly this input. */
+static int answer_facts_load(const libxs_registry_t* corpus,
+  const libxs_lexicon_t* lexicon);
+static void answer_facts_save(const libxs_registry_t* corpus,
+  const libxs_lexicon_t* lexicon);
 static int answer_docdef_term(const char* query_text, size_t query_len,
   char* term, int term_size);
 static int answer_docdef_fact_reply(const char* query_text,
@@ -419,7 +612,7 @@ static int answer_bridge_append_loaded(const char* name, const char* query,
   int result = EXIT_FAILURE;
   answer_bridge_t bridge;
   answer_bridge_t* bridges;
-  LIBXS_MEMZERO(&bridge);
+  memset(&bridge, 0, sizeof(bridge));
   bridge.name = answer_bridge_copy_trim(name);
   bridge.query = answer_bridge_copy_trim(query);
   bridge.evidence = answer_bridge_copy_trim(evidence);
@@ -654,6 +847,28 @@ static int lexeme_stream_has_similar_text(const libxs_lexeme_stream_t* stream,
 }
 
 
+/**
+ * The query type of raw text, for the resolvers that see the question but not the
+ * token stream. It re-encodes rather than threading a type through five
+ * signatures, and the query is one sentence, so that costs nothing measurable.
+ */
+static int answer_query_type_text(const char* query_text, size_t query_len)
+{
+  int result = QUERY_GENERIC;
+  libxs_lexeme_stream_t query;
+  libxs_lexeme_stream_init(&query);
+  if (NULL != query_text && 0 < query_len && NULL != answer_query_lexicon
+    && EXIT_SUCCESS == libxs_lexeme_stream_encode(answer_query_lexicon, &query,
+      (const unsigned char*)query_text, query_len, answer_query_rules,
+      answer_query_nrules, converse_lexnorms(), converse_lexnorms_size(), 0))
+  {
+    result = query_type_of(&query, answer_query_lexicon);
+  }
+  libxs_lexeme_stream_release(&query);
+  return result;
+}
+
+
 static int query_type_of(const libxs_lexeme_stream_t* query,
   const libxs_lexicon_t* lexicon)
 {
@@ -731,7 +946,7 @@ static int corpus_spatial_build(libxs_spatial_t* sp,
       const void* key = NULL;
       size_t key_size = 0, cursor = 0;
       int count = 0;
-      void* value = libxs_registry_begin_length(corpus, &key, &key_size,
+      void* value = corpus_iter_begin_length(corpus, &key, &key_size,
         &cursor);
       while (NULL != value && count < (int)info.size) {
         const corpus_entry_t* entry = (const corpus_entry_t*)value;
@@ -743,7 +958,7 @@ static int corpus_spatial_build(libxs_spatial_t* sp,
         codes[count] = code;
         values[count] = value;
         ++count;
-        value = libxs_registry_next_length(corpus, &key, &key_size, &cursor);
+        value = corpus_iter_next_length(corpus, &key, &key_size, &cursor);
       }
       result = libxs_spatial_build_codes(sp, codes, values, count);
     }
@@ -911,9 +1126,11 @@ static int corpus_entry_section_match(const corpus_entry_t* entry,
 static void answer_case_build(const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules)
 {
+  static const char delims[] = " \t\r\n,.;:!?()[]{}\"";
   const void* key = NULL;
   size_t cursor = 0;
   void* value;
+  LIBXS_UNUSED(rules); LIBXS_UNUSED(nrules);
   answer_case_free();
   if (NULL == corpus || NULL == lexicon) return;
   answer_case_size = libxs_lexicon_size(lexicon) + 1;
@@ -921,35 +1138,91 @@ static void answer_case_build(const libxs_registry_t* corpus,
     sizeof(*answer_case_upper));
   answer_case_total = (unsigned int*)calloc(answer_case_size,
     sizeof(*answer_case_total));
-  if (NULL == answer_case_upper || NULL == answer_case_total) {
+  answer_case_unforced = (unsigned int*)calloc(answer_case_size,
+    sizeof(*answer_case_unforced));
+  answer_case_attrib = (unsigned int*)calloc(answer_case_size,
+    sizeof(*answer_case_attrib));
+  if (NULL == answer_case_upper || NULL == answer_case_total
+    || NULL == answer_case_unforced || NULL == answer_case_attrib)
+  {
     answer_case_free();
     return;
   }
-  value = libxs_registry_begin(corpus, &key, &cursor);
+  answer_query_lexicon = lexicon;
+  value = corpus_iter_begin(corpus, &key, &cursor);
   while (NULL != value) {
     const corpus_entry_t* entry = (const corpus_entry_t*)value;
-    libxs_lexeme_stream_t stream;
-    libxs_lexeme_stream_init(&stream);
     if (SCALE_SENTENCE == entry->scale && 0 < entry->text_len
-      && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &stream,
-        (const unsigned char*)entry->text, (size_t)entry->text_len,
-        rules, nrules, converse_lexnorms(), converse_lexnorms_size(), 0))
+      && 0 == (entry->lexical_flags & ENTRY_LEX_FRAGMENT))
     {
-      size_t pos;
-      for (pos = 0; pos < stream.size; ++pos) {
-        const libxs_lexeme_t* lexeme = stream.data + pos;
-        if (0 != (lexeme->flags & LIBXS_LEXEME_WORD) && 0 != lexeme->id
-          && lexeme->id < answer_case_size)
-        {
-          ++answer_case_total[lexeme->id];
-          if (0 != (lexeme->flags & LIBXS_LEXEME_ENTITY)) {
-            ++answer_case_upper[lexeme->id];
+      const int heading_len = corpus_title_len(entry->text, entry->text_len);
+      /* Two words on each side of a quotation boundary: the ring holds the two
+         behind, the countdown the two ahead. */
+      unsigned int prev_id[2];
+      int token_index = 0, after = 0, nprev = 0;
+      const char* token;
+      int token_len = 0;
+      prev_id[0] = 0;
+      prev_id[1] = 0;
+      while (NULL != (token = libxs_strtoken(entry->text, delims,
+        token_index, &token_len)))
+      {
+        const int at = (int)(token - entry->text);
+        const int raw_len = token_len;
+        int trimmed = 0;
+        int opens = 0, closes = 0, scan;
+        while (token_len > trimmed
+          && 0 == isalpha((unsigned char)token[trimmed])) ++trimmed;
+        while (token_len > trimmed
+          && 0 == isalpha((unsigned char)token[token_len - 1])) --token_len;
+        /* The quotation mark is attached to the word, not standing between two
+           of them, so the mark is looked for in the token's own margins. */
+        for (scan = 0; scan < trimmed; ++scan) {
+          const unsigned char c = (unsigned char)token[scan];
+          if (0x98 == c || 0x9c == c || '\'' == c || '"' == c) opens = 1;
+        }
+        for (scan = token_len; scan < raw_len; ++scan) {
+          const unsigned char c = (unsigned char)token[scan];
+          if (0x99 == c || 0x9d == c || '\'' == c || '"' == c) closes = 1;
+        }
+        if (token_len > trimmed) {
+          const unsigned int id = answer_word_id(token + trimmed,
+            token_len - trimmed);
+          if (0 != id && id < answer_case_size) {
+            ++answer_case_total[id];
+            if (0 != isupper((unsigned char)token[trimmed])) {
+              ++answer_case_upper[id];
+              if (0 == corpus_case_forced(entry->text, at + trimmed,
+                heading_len))
+              {
+                ++answer_case_unforced[id];
+              }
+            }
+            if (0 < after) {
+              ++answer_case_attrib[id];
+              --after;
+            }
+            if (0 != opens) {
+              int back;
+              for (back = 0; back < nprev; ++back) {
+                if (0 != prev_id[back]) ++answer_case_attrib[prev_id[back]];
+              }
+            }
+            prev_id[1] = prev_id[0];
+            prev_id[0] = id;
+            if (nprev < 2) ++nprev;
           }
         }
+        if (0 != closes) after = 2;
+        if (0 != opens) {
+          nprev = 0;
+          prev_id[0] = 0;
+          prev_id[1] = 0;
+        }
+        ++token_index;
       }
     }
-    libxs_lexeme_stream_release(&stream);
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iter_next(corpus, &key, &cursor);
   }
 }
 
@@ -958,9 +1231,55 @@ static void answer_case_free(void)
 {
   free(answer_case_upper);
   free(answer_case_total);
+  free(answer_case_unforced);
+  free(answer_case_attrib);
   answer_case_upper = NULL;
   answer_case_total = NULL;
+  answer_case_unforced = NULL;
+  answer_case_attrib = NULL;
   answer_case_size = 0;
+}
+
+
+/**
+ * What the census decided, and how much the UNFORCED rule changed it.
+ *
+ * The attribution column is a MEASUREMENT, not an input: a speaker stands within
+ * two words of a quotation boundary, so if that frame carried nameness the
+ * accepted names would sit in it far more often than the words the rule turned
+ * down. Reported so the question can be answered from counts rather than from
+ * intuition.
+ */
+static void answer_case_report(FILE* stream)
+{
+  unsigned int id, nname = 0, nforced = 0;
+  libxs_hist_t* hist_name = libxs_hist_create(8, 2, NULL);
+  libxs_hist_t* hist_other = libxs_hist_create(8, 2, NULL);
+  if (NULL == stream || NULL == answer_case_total) return;
+  for (id = 1; id < answer_case_size; ++id) {
+    if (0 != answer_case_total[id]
+      && answer_case_upper[id] == answer_case_total[id])
+    {
+      double sample[2];
+      sample[0] = (double)answer_case_attrib[id]
+        / (double)answer_case_total[id];
+      sample[1] = (double)answer_case_total[id];
+      if (0 != answer_case_unforced[id]) {
+        ++nname;
+        libxs_hist_push(NULL, hist_name, sample);
+      }
+      else {
+        ++nforced;
+        libxs_hist_push(NULL, hist_other, sample);
+      }
+    }
+  }
+  fprintf(stream, "names: %u attested, %u rejected as position-forced\n",
+    nname, nforced);
+  libxs_hist_print(stream, hist_name, NULL, "attribution rate of NAMES");
+  libxs_hist_print(stream, hist_other, NULL, "attribution rate of FORCED");
+  libxs_hist_destroy(hist_name);
+  libxs_hist_destroy(hist_other);
 }
 
 
@@ -974,23 +1293,72 @@ static void answer_case_free(void)
  * normalized (lower-case) form, so passing a capitalized word would simply
  * miss.
  */
-static int answer_word_is_name(const char* word, int word_len)
+/**
+ * The lexicon id of a word as written anywhere, 0 if the corpus never saw it.
+ * Never creates: an id minted here would enter the vocabulary every model is
+ * built from, so a question could change a BPC figure.
+ */
+static unsigned int answer_word_id(const char* word, int word_len)
 {
-  int result = 0;
+  unsigned int result = 0;
   if (NULL != word && 0 < word_len && word_len <= LIBXS_LEXEME_MAXBYTES
-    && NULL != answer_case_total && NULL != answer_query_lexicon)
+    && NULL != answer_query_lexicon)
   {
     char lower[LIBXS_LEXEME_MAXBYTES + 1];
-    unsigned int id;
     int pos;
     for (pos = 0; pos < word_len; ++pos) {
       lower[pos] = (char)tolower((unsigned char)word[pos]);
     }
     lower[word_len] = '\0';
-    id = libxs_lexicon_id(answer_query_lexicon, lower, word_len, 0, 0);
-    if (0 != id && id < answer_case_size && 0 != answer_case_total[id]) {
-      result = (answer_case_upper[id] == answer_case_total[id]) ? 1 : 0;
+    result = libxs_lexicon_id(answer_query_lexicon, lower, word_len, 0, 0);
+  }
+  return result;
+}
+
+
+/**
+ * Index key for a word: a hash of its lower-cased bytes, deliberately NOT a
+ * lexicon id.
+ *
+ * An id is 0 for any word the corpus never attested, and a fact's relation is
+ * the CANONICAL name from the rule file, which the corpus need not use even
+ * where its aliases are everywhere -- so keying on ids would drop exactly those
+ * facts out of the index, silently. Every word has a hash. A collision costs a
+ * candidate that the predicates then reject; it cannot cost an answer.
+ */
+static unsigned int answer_word_key(const char* word, int word_len)
+{
+  unsigned int result = 0;
+  char lower[64];
+  if (NULL != word && 0 < word_len && word_len < (int)sizeof(lower)) {
+    int pos;
+    for (pos = 0; pos < word_len; ++pos) {
+      lower[pos] = (char)tolower((unsigned char)word[pos]);
     }
+    result = libxs_hash(lower, (unsigned int)word_len, 0x9e3779b9u);
+    if (0 == result) result = 1;
+  }
+  return result;
+}
+
+
+static int answer_word_is_name(const char* word, int word_len)
+{
+  int result = 0;
+  const unsigned int id = answer_word_id(word, word_len);
+  if (0 != id && NULL != answer_case_total && id < answer_case_size
+    && 0 != answer_case_total[id])
+  {
+    /**
+     * Two conditions, both counts of positions. Never written lower-case, as
+     * before -- and capitalized at least once where the POSITION did not force
+     * it. The second is what the first was standing in for: a word that only
+     * ever opens a sentence, a heading or a quoted utterance is capitalized by
+     * typesetting, and reading that as a name is the same mistake as reading a
+     * questioner's shift key as one.
+     */
+    result = (answer_case_upper[id] == answer_case_total[id]
+      && 0 != answer_case_unforced[id]) ? 1 : 0;
   }
   return result;
 }
@@ -1583,8 +1951,101 @@ static int answer_relation_same_answer(const char* lhs, int lhs_len,
 }
 
 
+static void answer_fact_index_free(answer_fact_index_t* index)
+{
+  if (NULL != index) {
+    if (NULL != index->store) {
+      const void* key = NULL;
+      size_t cursor = 0;
+      void* value = libxs_registry_begin(index->store, &key, &cursor);
+      while (NULL != value) {
+        free(((answer_fact_postings_t*)value)->at);
+        value = libxs_registry_next(index->store, &key, &cursor);
+      }
+      libxs_registry_destroy(index->store);
+    }
+    index->store = NULL;
+    index->nkeys = 0;
+  }
+}
+
+
+/**
+ * Record that the word `id` reaches the fact at `at`.
+ *
+ * The registry copies a VALUE, so the value is a HEADER and the list of facts
+ * hangs off it: registering the list itself would copy the whole thing on every
+ * append, which is what forces a fixed cap and a truncation count elsewhere in
+ * the sample. Here the list simply grows, and the facts are referred to by
+ * position rather than by pointer because the fact array is grown by realloc --
+ * a stored pointer would dangle at the next append.
+ */
+static int answer_fact_index_add(answer_fact_index_t* index, unsigned int id,
+  unsigned int at)
+{
+  int result = EXIT_SUCCESS;
+  answer_fact_postings_t* postings;
+  if (NULL == index || 0 == id) return EXIT_FAILURE;
+  if (NULL == index->store) {
+    index->store = libxs_registry_create();
+    index->nkeys = 0;
+    if (NULL == index->store) result = EXIT_FAILURE;
+  }
+  postings = (EXIT_SUCCESS == result)
+    ? (answer_fact_postings_t*)libxs_registry_get(index->store, &id,
+        sizeof(id), NULL) : NULL;
+  if (EXIT_SUCCESS == result && NULL == postings) {
+    answer_fact_postings_t fresh;
+    memset(&fresh, 0, sizeof(fresh));
+    postings = (NULL != libxs_registry_set(index->store, &id, sizeof(id),
+      &fresh, sizeof(fresh), NULL))
+      ? (answer_fact_postings_t*)libxs_registry_get(index->store, &id,
+          sizeof(id), NULL) : NULL;
+    if (NULL != postings) ++index->nkeys;
+    else result = EXIT_FAILURE;
+  }
+  /* Appended in fact order and never out of it, so a lookup yields the facts in
+     the order a scan of the array would have reached them. */
+  if (EXIT_SUCCESS == result && (0 == postings->n
+    || postings->at[postings->n - 1] != at))
+  {
+    if (postings->n == postings->cap) {
+      const unsigned int cap = (0 < postings->cap) ? (2 * postings->cap) : 8;
+      unsigned int* grown = (unsigned int*)realloc(postings->at,
+        (size_t)cap * sizeof(*grown));
+      if (NULL != grown) {
+        postings->at = grown;
+        postings->cap = cap;
+      }
+      else result = EXIT_FAILURE;
+    }
+    if (EXIT_SUCCESS == result) postings->at[postings->n++] = at;
+  }
+  return result;
+}
+
+
+static const unsigned int* answer_fact_index_get(
+  const answer_fact_index_t* index, unsigned int id, unsigned int* n)
+{
+  const unsigned int* result = NULL;
+  *n = 0;
+  if (NULL != index && NULL != index->store && 0 != id) {
+    const answer_fact_postings_t* postings =
+      (const answer_fact_postings_t*)libxs_registry_get(index->store, &id,
+        sizeof(id), NULL);
+    if (NULL != postings) {
+      result = postings->at;
+      *n = postings->n;
+    }
+  }
+  return result;
+}
+
+
 static void answer_relation_facts_free(void)
 {
+  answer_fact_index_free(&answer_relation_by_relation);
   free(answer_relation_facts);
   answer_relation_facts = NULL;
   answer_relation_facts_size = 0;
@@ -1600,9 +2061,16 @@ static int answer_relation_fact_append(const corpus_entry_t* entry,
   size_t fact_pos;
   if (NULL == entry || NULL == match || match->answer_len <= 0
     || match->relation_len <= 0) return EXIT_FAILURE;
-  LIBXS_MEMZERO(&fact);
+  memset(&fact, 0, sizeof(fact));
   fact.answer_len = 0;
-  if (match->actor_len > 0) {
+  /**
+   * The section title stands in for the answer of a PASSIVE fact, whose patient
+   * names the thing the section is about. An ACTIVE fact's object is a phrase of
+   * its own clause, so substituting the title replaces it with something the clause
+   * never said -- on the wiki fixture that is how a caption read as a heading
+   * ("Thumb|300px|A Farmer In ...") became the object of a fact.
+   */
+  if (match->actor_len > 0 && 0 == match->active) {
     fact.answer_len = answer_relation_section_title(fact.answer,
       (int)sizeof(fact.answer), entry, match);
   }
@@ -1623,6 +2091,7 @@ static int answer_relation_fact_append(const corpus_entry_t* entry,
   }
   fact.plural = match->plural;
   fact.made = match->made;
+  fact.active = match->active;
   fact.score = match->score;
   for (fact_pos = 0; fact_pos < answer_relation_facts_size; ++fact_pos) {
     answer_relation_fact_t* old_fact = answer_relation_facts + fact_pos;
@@ -1701,9 +2170,26 @@ static int answer_relation_fact_extract_made(const corpus_entry_t* entry,
   if (NULL == entry || made_pos < 0 || made_pos + 4 >= entry->text_len) {
     return 0;
   }
+  /**
+   * The relation word must be in the SAME clause as "made". Skipping every
+   * non-alphanumeric byte walked straight across a sentence end: "your fortune
+   * would be made.' 'Very true: but how" yielded the relation "Very", and the
+   * matcher then supplied an answer from the entry, asserting "Hans is to be made
+   * Very." A count of 84 facts showed nothing; the attribute collection printed it.
+   * One bound, no threshold -- the same one the location layer needed.
+   */
   rel_begin = made_pos + 4;
   while (rel_begin < entry->text_len
-    && 0 == isalnum((unsigned char)entry->text[rel_begin])) ++rel_begin;
+    && 0 == isalnum((unsigned char)entry->text[rel_begin]))
+  {
+    const char ch = entry->text[rel_begin];
+    if ('.' == ch || '!' == ch || '?' == ch || ';' == ch || ':' == ch
+      || ',' == ch)
+    {
+      return 0;
+    }
+    ++rel_begin;
+  }
   rel_end = rel_begin;
   while (rel_end < entry->text_len
     && ('-' == entry->text[rel_end]
@@ -1730,17 +2216,393 @@ static int answer_relation_fact_extract_made(const corpus_entry_t* entry,
 }
 
 
+/**
+ * Extract the PASSIVE shape generally: a patient, a copula, a verb, "by", a name.
+ *
+ * The alias rules already read passives whose verb the rule file DECLARES
+ * ("alias|eaten|devoured"), which is what makes them askable. This reads the shape
+ * itself, so any verb the corpus uses gives an entity-to-entity edge -- "Achilles
+ * was visited by Odysseus" -- without a rule per verb. The frame is the evidence:
+ * a copula, one word, and a declared "by" followed by a NAME is a passive in
+ * English, and no morphology or verb class is consulted to see it.
+ *
+ * The agent must be a name, because that is what makes the fact an edge from a node
+ * rather than a sentence about nobody. The patient may be anything, since a true
+ * proposition about a named agent is worth keeping even when what it acted on is a
+ * common noun.
+ *
+ * Facts are appended to the RELATION layer rather than to a new one: that layer is
+ * already indexed by relation with the alias closure, already answers "who was V by
+ * X", and is already collected by the attribute walk. A new layer would have needed
+ * all three again.
+ */
+static int answer_relation_fact_extract_passive(const corpus_entry_t* entry,
+  int by_pos, int by_len)
+{
+  int result = 0;
+  const char* text = entry->text;
+  const char* text_end = entry->text + entry->text_len;
+  const char* verb_end = text + by_pos;
+  const char* verb;
+  const char* copula_end;
+  const char* copula;
+  int verb_len = 0, copula_len = 0;
+  /* Backwards: the verb, then the copula that must govern it. */
+  while (verb_end > text && 0 != isspace((unsigned char)verb_end[-1])) {
+    --verb_end;
+  }
+  verb = verb_end;
+  while (verb > text && 0 != isalpha((unsigned char)verb[-1])) --verb;
+  verb_len = (int)(verb_end - verb);
+  copula_end = verb;
+  while (copula_end > text && 0 != isspace((unsigned char)copula_end[-1])) {
+    --copula_end;
+  }
+  copula = copula_end;
+  while (copula > text && 0 != isalpha((unsigned char)copula[-1])) --copula;
+  copula_len = (int)(copula_end - copula);
+  if (2 < verb_len && verb_len < 64 && 0 < copula_len
+    && 0 != answer_relation_rule_is_term(RELATION_RULE_COPULA, copula,
+      copula_len)
+    && 0 == answer_relation_rule_is_term(RELATION_RULE_SKIP, verb, verb_len)
+    && 0 == answer_relation_rule_is_term(RELATION_RULE_COPULA, verb, verb_len))
+  {
+    const char* agent = text + by_pos + by_len;
+    const char* agent_end;
+    int agent_len = 0;
+    while (agent < text_end && 0 != isspace((unsigned char)*agent)) ++agent;
+    agent_end = agent;
+    while (agent_end < text_end
+      && ('-' == *agent_end || 0 != isalpha((unsigned char)*agent_end)))
+    {
+      ++agent_end;
+    }
+    /* The agent is a maximal NAME RUN, so "World War II" is not just "World". */
+    while (agent_end < text_end && ' ' == agent_end[0]) {
+      const char* more = agent_end + 1;
+      int more_len = 0;
+      while (more + more_len < text_end
+        && ('-' == more[more_len]
+          || 0 != isalpha((unsigned char)more[more_len]))) ++more_len;
+      if (0 == more_len
+        || 0 == answer_identity_word_is_name(more, more_len)) break;
+      agent_end = more + more_len;
+    }
+    agent_len = (int)(agent_end - agent);
+    if (2 < agent_len && agent_len < 64
+      && 0 != answer_identity_word_is_name(agent, agent_len))
+    {
+      /**
+       * The patient is the NOUN PHRASE before the copula, not the clause.
+       *
+       * Taking the clause read the conjunction, the subordinator and the auxiliary
+       * chain into the patient -- "and | used | NASA", "Algeria has | inhabited |
+       * Berbers", "tossed away after | invented | Athena" -- so the edge was right
+       * and the thing it pointed at was a fragment. Walking backwards instead: over
+       * the auxiliaries, which belong to the verb rather than to the patient, then
+       * word by word while the word can belong to a noun phrase, stopping AT an
+       * article since a phrase starts there. An empty result rejects the fact, which
+       * is the right answer whenever the patient is a pronoun or implicit.
+       */
+      const char* patient = NULL;
+      const char* patient_end = copula;
+      const char* patient_last = NULL;
+      int patient_len = 0;
+      int taken = 0;
+      while (patient_end > text && 0 != isspace((unsigned char)patient_end[-1])) {
+        --patient_end;
+      }
+      while (taken < 5) {
+        const char* word_end = patient_end;
+        const char* word_begin = word_end;
+        int stop = 0;
+        while (word_begin > text
+          && 0 != isalpha((unsigned char)word_begin[-1])) --word_begin;
+        if (word_begin == word_end) break;
+        { const int len = (int)(word_end - word_begin);
+          if (0 != answer_relation_rule_is_term(RELATION_RULE_AUX, word_begin,
+            len))
+          {
+            if (NULL != patient) break;
+          }
+          else if (0 != answer_relation_rule_is_term(RELATION_RULE_ARTICLE,
+            word_begin, len))
+          {
+            patient = word_begin;
+            stop = 1;
+          }
+          else if (0 != answer_relation_rule_is_term(RELATION_RULE_SKIP,
+              word_begin, len)
+            || 0 != answer_relation_rule_is_term(RELATION_RULE_PREP, word_begin,
+              len)
+            || 0 != answer_relation_rule_is_term(RELATION_RULE_NEGATE,
+              word_begin, len)
+            || 0 != answer_relation_rule_is_term(RELATION_RULE_COPULA,
+              word_begin, len)) break;
+          else {
+            patient = word_begin;
+            /* The END of the phrase is the LAST content word, which walking
+               backwards meets FIRST: taking it from the copula instead put the
+               stepped-over auxiliary back in ("Algeria has | inhabited"). */
+            if (NULL == patient_last) patient_last = word_end;
+            ++taken;
+          }
+        }
+        if (0 != stop) break;
+        patient_end = word_begin;
+        while (patient_end > text
+          && 0 != isspace((unsigned char)patient_end[-1])) --patient_end;
+        if (patient_end > text && 0 == isalpha((unsigned char)patient_end[-1])) {
+          break;
+        }
+      }
+      if (NULL != patient && NULL != patient_last && patient_last > patient) {
+        patient_len = (int)(patient_last - patient);
+      }
+      if (NULL != patient && 2 < patient_len && patient_len < 128) {
+        answer_relation_match_t match;
+        memset(&match, 0, sizeof(match));
+        memcpy(match.answer, patient, (size_t)patient_len);
+        match.answer_len = patient_len;
+        memcpy(match.relation, verb, (size_t)verb_len);
+        match.relation_len = verb_len;
+        memcpy(match.actor, agent, (size_t)agent_len);
+        match.actor_len = agent_len;
+        match.plural = (0 != libxs_striequal(copula, (size_t)copula_len,
+          "were", 4) || 0 != libxs_striequal(copula, (size_t)copula_len,
+            "are", 3)) ? 1 : 0;
+        match.score = 1.0;
+        if (EXIT_SUCCESS == answer_relation_fact_append(entry, &match)) {
+          result = 1;
+        }
+      }
+    }
+  }
+  return result;
+}
+
+
+static int answer_word_is_function(const char* word, int word_len)
+{
+  int result = 0;
+  if (NULL != word && 0 < word_len) {
+    result = (0 != answer_relation_rule_is_term(RELATION_RULE_SKIP, word,
+        word_len)
+      || 0 != answer_relation_rule_is_term(RELATION_RULE_PREP, word, word_len)
+      || 0 != answer_relation_rule_is_term(RELATION_RULE_ARTICLE, word,
+        word_len)
+      || 0 != answer_relation_rule_is_term(RELATION_RULE_COPULA, word, word_len)
+      || 0 != answer_relation_rule_is_term(RELATION_RULE_AUX, word, word_len)
+      || 0 != answer_relation_rule_is_term(RELATION_RULE_NEGATE, word,
+        word_len)) ? 1 : 0;
+  }
+  return result;
+}
+
+
+/**
+ * Extract the ACTIVE transitive shape: a name, a verb, and what it acted on.
+ *
+ * The frame is a maximal name run, ONE word, and either another name run or an
+ * article-headed noun phrase -- "Etruscans brought the Greek alphabet", "Achilles
+ * defeated Memnon". Only the DERIVED verb class says the middle word is a verb,
+ * which is the point: that class comes from the auxiliary frame
+ * (answer_verbs_build), so no verb is written in the C and no morphology is read.
+ *
+ * THE SAME CLASS IS USED IN BOTH POLARITIES HERE, and both are safe for the same
+ * reason. As a REQUIREMENT on the middle word, what the class lacks -- English
+ * irregular past simple, which no auxiliary governs -- costs a fact never extracted
+ * rather than a fact that is wrong ("took", "gave", "wrote" are lost this way, and
+ * "became" belongs to the type shape anyway). As a REJECTION on the word before the
+ * subject, a name the corpus puts after a verb is that verb's OBJECT and not the
+ * subject of its clause. What made a requirement unsafe in the location layer was
+ * that it discarded a truth already found; here it declines to look.
+ *
+ * The subject must be a name, so the fact hangs off a node; the object may be a
+ * common noun, since a true proposition about a named actor is worth keeping. Same
+ * asymmetry as the passive shape, and the facts land in the same layer.
+ */
+static int answer_relation_fact_extract_active(const corpus_entry_t* entry)
+{
+  static const char delims[] = " \t\r\n,.;:!?()[]{}\"";
+  const int heading_len = corpus_title_len(entry->text, entry->text_len);
+  const char* text_end = entry->text + entry->text_len;
+  const char* name = NULL;
+  const char* name_end = NULL;
+  const char* token;
+  int name_len = 0, name_subject = 0;
+  int token_index = 0, token_len = 0;
+  int result = 0;
+  while (NULL != (token = libxs_strtoken(entry->text, delims, token_index,
+    &token_len)))
+  {
+    const char* raw = token;
+    while (token_len > 0 && 0 == isalpha((unsigned char)*token)) {
+      ++token;
+      --token_len;
+    }
+    while (token_len > 0
+      && 0 == isalpha((unsigned char)token[token_len - 1])) --token_len;
+    if (token_len > 0 && raw >= entry->text + heading_len) {
+      if (0 != answer_identity_word_is_name(token, token_len)) {
+        const int extend = (NULL != name && NULL != name_end
+          && name_end + 1 == token && ' ' == *name_end) ? 1 : 0;
+        if (0 == extend) {
+          const char* before = raw;
+          while (before > entry->text
+            && 0 != isspace((unsigned char)before[-1])) --before;
+          name = token;
+          name_subject = 1;
+          /* A name a COMMA introduces is a list item or an apposition, the same
+             left-edge test the type shape needed. */
+          if (before > entry->text && ',' == before[-1]) name_subject = 0;
+          if (0 != name_subject && before > entry->text) {
+            const char* word_end = before;
+            const char* word = before;
+            while (word > entry->text
+              && 0 != isalpha((unsigned char)word[-1])) --word;
+            if (word < word_end) {
+              const int len = (int)(word_end - word);
+              if (0 != answer_relation_rule_is_term(RELATION_RULE_PREP, word,
+                  len)
+                || 0 != answer_word_is_verb(word, len))
+              {
+                name_subject = 0;
+              }
+            }
+          }
+        }
+        name_len = (int)(token + token_len - name);
+        name_end = token + token_len;
+      }
+      else if (NULL != name && NULL != name_end && 0 != name_subject
+        && name_end + 1 == token && ' ' == *name_end
+        && 2 < token_len && token_len < 64
+        && 0 != islower((unsigned char)*token)
+        /* A token carrying anything but letters is not a word of the clause:
+           "east of the Indus and/or Ganges" read "and/or" as the verb, since the
+           corpus does put that string where the auxiliary frame looks. */
+        && token_len == (int)strspn(token, "abcdefghijklmnopqrstuvwxyz")
+        && 0 == answer_word_is_function(token, token_len)
+        && 0 != answer_word_is_verb(token, token_len))
+      {
+        const char* object = token + token_len;
+        const char* object_end;
+        int object_len = 0;
+        while (object < text_end && ' ' == *object) ++object;
+        object_end = object;
+        while (object_end < text_end
+          && ('-' == *object_end || 0 != isalpha((unsigned char)*object_end)))
+        {
+          ++object_end;
+        }
+        if (object_end > object) {
+          const int head_len = (int)(object_end - object);
+          if (0 != answer_identity_word_is_name(object, head_len)) {
+            while (object_end < text_end && ' ' == *object_end) {
+              const char* more = object_end + 1;
+              int more_len = 0;
+              while (more + more_len < text_end
+                && ('-' == more[more_len]
+                  || 0 != isalpha((unsigned char)more[more_len]))) ++more_len;
+              if (0 == more_len
+                || 0 == answer_identity_word_is_name(more, more_len)) break;
+              object_end = more + more_len;
+            }
+            object_len = (int)(object_end - object);
+          }
+          /**
+           * Otherwise the object must open with an ARTICLE, which is what makes it
+           * a noun phrase: the same bound the type shape needed to stop capturing
+           * every predicate. The phrase then runs to the first declared function
+           * word, so "the son of Philip" ends at the preposition, and a single space
+           * is the only separator admitted, so a comma ends the clause and with it
+           * the phrase.
+           */
+          else if (0 != answer_relation_rule_is_term(RELATION_RULE_ARTICLE,
+            object, head_len))
+          {
+            int taken = 0;
+            while (taken < 3 && object_end < text_end && ' ' == *object_end) {
+              const char* more = object_end + 1;
+              int more_len = 0;
+              while (more + more_len < text_end
+                && ('-' == more[more_len] || '\'' == more[more_len]
+                  || 0 != isalpha((unsigned char)more[more_len]))) ++more_len;
+              if (0 == more_len
+                || 0 != answer_word_is_function(more, more_len)) break;
+              object_end = more + more_len;
+              ++taken;
+            }
+            if (0 < taken) object_len = (int)(object_end - object);
+          }
+        }
+        if (0 < object_len) {
+          /**
+           * A copula or auxiliary AFTER the phrase means the phrase is the subject
+           * of an EMBEDDED CLAUSE rather than what the verb acted on: "Jorindel saw
+           * the nightingale was gone" is not Jorindel seeing a nightingale, and
+           * "Catherine thought the door was open" is not Catherine thinking a door.
+           * Verbs of perception and cognition take a clause, and nothing else about
+           * the frame distinguishes one -- this mark does, and it is declared.
+           */
+          const char* after = object_end;
+          int after_len = 0;
+          while (after < text_end && ' ' == *after) ++after;
+          while (after + after_len < text_end
+            && 0 != isalpha((unsigned char)after[after_len])) ++after_len;
+          if (0 < after_len
+            && (0 != answer_relation_rule_is_term(RELATION_RULE_COPULA, after,
+                after_len)
+              || 0 != answer_relation_rule_is_term(RELATION_RULE_AUX, after,
+                after_len)))
+          {
+            object_len = 0;
+          }
+        }
+        if (2 < object_len && name_len < 64 && object_len < 128) {
+          answer_relation_match_t match;
+          memset(&match, 0, sizeof(match));
+          memcpy(match.answer, object, (size_t)object_len);
+          match.answer_len = object_len;
+          memcpy(match.relation, token, (size_t)token_len);
+          match.relation_len = token_len;
+          memcpy(match.actor, name, (size_t)name_len);
+          match.actor_len = name_len;
+          match.active = 1;
+          match.score = 1.0;
+          if (EXIT_SUCCESS == answer_relation_fact_append(entry, &match)) {
+            ++result;
+          }
+        }
+        name = NULL;
+        name_end = NULL;
+        name_subject = 0;
+      }
+      else {
+        name = NULL;
+        name_end = NULL;
+        name_subject = 0;
+      }
+    }
+    ++token_index;
+  }
+  return result;
+}
+
+
 static size_t answer_relation_facts_build(const libxs_registry_t* corpus)
 {
   const void* key = NULL;
   size_t cursor = 0;
+  corpus_entry_t scratch;
   void* value;
   size_t result = 0;
   answer_relation_facts_free();
   if (NULL == corpus || 0 == converse_rules_size()) return 0;
-  value = libxs_registry_begin(corpus, &key, &cursor);
+  value = corpus_iterx_begin(corpus, &key, &cursor);
   while (NULL != value) {
-    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
     int made_scan = 0;
     size_t rule_pos;
     while (made_scan < entry->text_len) {
@@ -1751,6 +2613,23 @@ static size_t answer_relation_facts_build(const libxs_registry_t* corpus)
       if (0 != answer_relation_fact_extract_made(entry, made_pos)) ++result;
       made_scan = made_pos + 4;
     }
+    { /* The passive shape, wherever the declared agent marker stands. */
+      int by_len = 0;
+      const char* by = answer_relation_rule_first_term(RELATION_RULE_AGENT,
+        &by_len);
+      int by_scan = 0;
+      while (NULL != by && 0 < by_len && by_scan < entry->text_len) {
+        int by_pos = text_find_word_ci(entry->text + by_scan,
+          entry->text_len - by_scan, by);
+        if (by_pos < 0) break;
+        by_pos += by_scan;
+        if (0 != answer_relation_fact_extract_passive(entry, by_pos, by_len)) {
+          ++result;
+        }
+        by_scan = by_pos + by_len;
+      }
+    }
+    result += (size_t)answer_relation_fact_extract_active(entry);
     for (rule_pos = 0; rule_pos < converse_rules_size(); ++rule_pos) {
       const answer_relation_rule_t* rule = converse_rules() + rule_pos;
       int alias_len = 0;
@@ -1776,17 +2655,72 @@ static size_t answer_relation_facts_build(const libxs_registry_t* corpus)
         }
       }
     }
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iterx_next(corpus, &key, &cursor);
   }
+  answer_relation_facts_index();
   return result;
 }
 
 
+/**
+ * Index the finished facts by the relation they state, and by every alias of it.
+ *
+ * Baking the alias closure in here is what makes the query side ONE lookup: a
+ * question naming an aliased verb finds the facts stored under the canonical
+ * one, without the scan having to consult the rule file per fact. The index only
+ * ever proposes CANDIDATES -- answer_relation_fact_relation_match still decides
+ * -- so the reply cannot depend on the index being exactly right, only on its
+ * being complete.
+ */
+static void answer_relation_facts_index(void)
+{
+  size_t fact_pos;
+  answer_fact_index_free(&answer_relation_by_relation);
+  for (fact_pos = 0; fact_pos < answer_relation_facts_size; ++fact_pos) {
+    const answer_relation_fact_t* fact = answer_relation_facts + fact_pos;
+    size_t rule_pos;
+    if (fact->relation_len <= 0) continue;
+    answer_fact_index_add(&answer_relation_by_relation,
+      answer_word_key(fact->relation, fact->relation_len),
+      (unsigned int)fact_pos);
+    for (rule_pos = 0; rule_pos < converse_rules_size(); ++rule_pos) {
+      const answer_relation_rule_t* rule = converse_rules() + rule_pos;
+      if (RELATION_RULE_ALIAS == rule->kind
+        && 0 != libxs_striequal(rule->relation, strlen(rule->relation),
+          fact->relation, (size_t)fact->relation_len))
+      {
+        answer_fact_index_add(&answer_relation_by_relation,
+          answer_word_key(rule->term, (int)strlen(rule->term)),
+          (unsigned int)fact_pos);
+      }
+    }
+  }
+}
+
+
+/**
+ * The count, and with CONVERSE_FACTS_LIST=1 the facts. Same reason the location
+ * layer lists its own: a count cannot show that a fact is false, and this layer
+ * ASSERTS. "Hans is to be made Very." was found this way and not by any metric.
+ */
 static void answer_relation_facts_report(FILE* stream)
 {
   if (NULL != stream) {
-    fprintf(stream, "relation facts: %lu learned\n",
-      (unsigned long)answer_relation_facts_size);
+    const char* list = getenv("CONVERSE_FACTS_LIST");
+    fprintf(stream, "relation facts: %lu learned, %u indexed relations\n",
+      (unsigned long)answer_relation_facts_size,
+      answer_relation_by_relation.nkeys);
+    if (NULL != list && '\0' != *list && '0' != *list) {
+      size_t fact_pos;
+      for (fact_pos = 0; fact_pos < answer_relation_facts_size; ++fact_pos) {
+        const answer_relation_fact_t* fact = answer_relation_facts + fact_pos;
+        const char* shape = "was";
+        if (0 != fact->made) shape = "made";
+        else if (0 != fact->active) shape = "active";
+        fprintf(stream, "  relation[%s] %s | %s | %s\n", shape, fact->answer,
+          fact->relation, (0 < fact->actor_len) ? fact->actor : "-");
+      }
+    }
   }
 }
 
@@ -1799,11 +2733,23 @@ static void answer_identity_facts_free(void)
 }
 
 
+/**
+ * Is this token a name the corpus attests, not merely a capitalized word?
+ *
+ * An initial capital ALONE was the test, which is the same mistake as deciding a
+ * query's meaning from its capitalization: the first word of a sentence and a
+ * heading in capitals both pass it, so the extractor bound them to roles and the
+ * fact table filled with pairs no reader would recognise. The corpus already
+ * answers the question -- a name is a word never attested in lower case, which
+ * the case census counts at ingest -- so the census decides and the capital is
+ * only a cheap pre-filter for it.
+ */
 static int answer_identity_word_is_name(const char* word, int word_len)
 {
   int result = 0;
   if (NULL != word && word_len > 1
     && 0 != isupper((unsigned char)word[0])
+    && 0 != answer_word_is_name(word, word_len)
     && 0 == answer_relation_rule_has_term(RELATION_RULE_PERSON, word, word_len)
     && 0 == answer_relation_rule_has_term(RELATION_RULE_SKIP, word, word_len))
   {
@@ -1831,7 +2777,7 @@ static int answer_identity_fact_append(const char* name, int name_len,
   {
     return EXIT_FAILURE;
   }
-  LIBXS_MEMZERO(&fact);
+  memset(&fact, 0, sizeof(fact));
   memcpy(fact.name, name, (size_t)name_len);
   fact.name[name_len] = '\0';
   fact.name_len = name_len;
@@ -1846,17 +2792,32 @@ static int answer_identity_fact_append(const char* name, int name_len,
     fact.section_len = entry->section_len;
   }
   fact.score = score;
+  fact.provenance = answer_relation_rule_provenance(RELATION_RULE_PERSON,
+    fact.role, fact.role_len);
   for (fact_pos = 0; fact_pos < answer_identity_facts_size; ++fact_pos) {
     answer_identity_fact_t* old_fact = answer_identity_facts + fact_pos;
     if (old_fact->name_len == fact.name_len
       && 0 != text_contains_word_ci(old_fact->name, old_fact->name_len,
         fact.name))
     {
-      if (fact.score > old_fact->score) {
+      /**
+       * PROVENANCE OUTRANKS SCORE. One name binds to one role here, and the
+       * score is a similarity: with rule learning on, a term the learner added
+       * to the person class can outscore an asserted one and silently rebind the
+       * name to it, turning a correct reply into a confident false assertion.
+       * Preferring the asserted role is a total order over three known values --
+       * no statistic, no threshold, and nothing fitted to a corpus. Scores still
+       * decide WITHIN a provenance, which is the comparison they can support.
+       */
+      if (fact.provenance < old_fact->provenance
+        || (fact.provenance == old_fact->provenance
+          && fact.score > old_fact->score))
+      {
         memcpy(old_fact->role, fact.role, (size_t)fact.role_len + 1);
         old_fact->role_len = fact.role_len;
         memcpy(old_fact->section, fact.section, (size_t)fact.section_len + 1);
         old_fact->section_len = fact.section_len;
+        old_fact->provenance = fact.provenance;
         old_fact->score = fact.score;
       }
       result = EXIT_SUCCESS;
@@ -1909,7 +2870,7 @@ static size_t answer_identity_facts_build(const libxs_registry_t* corpus)
   size_t result = 0;
   answer_identity_facts_free();
   if (NULL == corpus || 0 == converse_rules_size()) return 0;
-  value = libxs_registry_begin(corpus, &key, &cursor);
+  value = corpus_iter_begin(corpus, &key, &cursor);
   while (NULL != value) {
     const corpus_entry_t* entry = (const corpus_entry_t*)value;
     char role[64];
@@ -1931,7 +2892,7 @@ static size_t answer_identity_facts_build(const libxs_registry_t* corpus)
     if (SCALE_SENTENCE != entry->scale
       || 0 != (entry->lexical_flags & ENTRY_LEX_FRAGMENT))
     {
-      value = libxs_registry_next(corpus, &key, &cursor);
+      value = corpus_iter_next(corpus, &key, &cursor);
       continue;
     }
     while (NULL != (token = libxs_strtoken(entry->text, delims,
@@ -1943,6 +2904,19 @@ static size_t answer_identity_facts_build(const libxs_registry_t* corpus)
           || ';' == *scan || ':' == *scan) have_role = 0;
       }
       prev_end = token + token_len;
+      /**
+       * A role is a WORD, so the quotation marks around it are not part of it.
+       * The delimiter list is ASCII and the corpus is typeset, so a token can
+       * arrive as a quote character followed by the word -- and the class test
+       * matches on word containment, so it accepted the pair and then stored the
+       * punctuation as the role.
+       */
+      while (token_len > 0 && 0 == isalpha((unsigned char)*token)) {
+        ++token;
+        --token_len;
+      }
+      while (token_len > 0
+        && 0 == isalpha((unsigned char)token[token_len - 1])) --token_len;
       if (token_len > 0) {
         int is_name = answer_identity_word_is_name(token, token_len);
         int is_role = (token_len < (int)sizeof(role)
@@ -1973,7 +2947,7 @@ static size_t answer_identity_facts_build(const libxs_registry_t* corpus)
       }
       ++token_index;
     }
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iter_next(corpus, &key, &cursor);
   }
   return result;
 }
@@ -2031,6 +3005,1455 @@ static int answer_identity_fact_reply(const char* query_text,
 }
 
 
+static void answer_location_facts_free(void)
+{
+  free(answer_location_facts);
+  answer_location_facts = NULL;
+  answer_location_facts_size = 0;
+}
+
+
+static int answer_location_fact_append(const char* actor, int actor_len,
+  const char* phrase, int phrase_len, const char* place, int place_len,
+  const corpus_entry_t* entry, double score)
+{
+  int result = EXIT_FAILURE;
+  answer_location_fact_t fact;
+  answer_location_fact_t* facts;
+  size_t fact_pos;
+  if (NULL == actor || actor_len <= 0 || actor_len >= (int)sizeof(fact.actor)
+    || NULL == phrase || phrase_len <= 0
+    || phrase_len >= (int)sizeof(fact.phrase)
+    || NULL == place || place_len <= 0 || place_len >= (int)sizeof(fact.place))
+  {
+    return EXIT_FAILURE;
+  }
+  memset(&fact, 0, sizeof(fact));
+  memcpy(fact.actor, actor, (size_t)actor_len);
+  fact.actor_len = actor_len;
+  memcpy(fact.phrase, phrase, (size_t)phrase_len);
+  fact.phrase_len = phrase_len;
+  memcpy(fact.place, place, (size_t)place_len);
+  fact.place_len = place_len;
+  if (NULL != entry && entry->section_len > 0
+    && entry->section_len < (int)sizeof(fact.section))
+  {
+    memcpy(fact.section, entry->section, (size_t)entry->section_len);
+    fact.section_len = entry->section_len;
+  }
+  fact.score = score;
+  fact.provenance = answer_relation_rule_provenance(RELATION_RULE_PLACE,
+    fact.place, fact.place_len);
+  /**
+   * An actor may be in several places -- unlike a role, which binds once -- so
+   * only the SAME pair collapses, and then the tighter binding wins. Provenance
+   * outranks the score for the same reason it does for an identity: a place term
+   * the learner proposed must not displace one the rule file asserts.
+   */
+  for (fact_pos = 0; fact_pos < answer_location_facts_size; ++fact_pos) {
+    answer_location_fact_t* old_fact = answer_location_facts + fact_pos;
+    if (old_fact->actor_len == fact.actor_len
+      && 0 != libxs_striequal(old_fact->actor, (size_t)old_fact->actor_len,
+        fact.actor, (size_t)fact.actor_len)
+      && old_fact->place_len == fact.place_len
+      && 0 != libxs_striequal(old_fact->place, (size_t)old_fact->place_len,
+        fact.place, (size_t)fact.place_len))
+    {
+      if (fact.provenance < old_fact->provenance
+        || (fact.provenance == old_fact->provenance
+          && fact.score > old_fact->score))
+      {
+        *old_fact = fact;
+      }
+      result = EXIT_SUCCESS;
+      break;
+    }
+  }
+  if (EXIT_SUCCESS != result) {
+    facts = (answer_location_fact_t*)realloc(answer_location_facts,
+      (answer_location_facts_size + 1) * sizeof(*facts));
+    if (NULL != facts) {
+      answer_location_facts = facts;
+      answer_location_facts[answer_location_facts_size] = fact;
+      ++answer_location_facts_size;
+      result = EXIT_SUCCESS;
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Bind an actor to a place within ONE clause: a name, then a location MARKER
+ * declared by the rule file (`where|in`), then a member of the place class
+ * (`place|forest`). All three come from data -- the name from the case census, the
+ * marker and the class from the rules -- so no English enters this file.
+ *
+ * The clause bound is what keeps it honest, and it must include the COMMA. A
+ * sentence names several actors and several places, and any pair of them is a
+ * plausible-looking fact; only the pair inside one clause, with the actor BEFORE
+ * the marker, is one the sentence states. Measured on the tales: with sentence
+ * punctuation alone as the boundary, 8 of 25 facts were clearly true and 8 clearly
+ * false, and EVERY false one crossed a comma into a coordinated clause with a
+ * different subject -- "Roland went away, and the girl stood ... in the field"
+ * became a claim about Roland. Coordination is exactly where the subject changes,
+ * and the comma is punctuation rather than vocabulary, so the fix costs no English
+ * in this file.
+ *
+ * The heading is skipped for the same reason: ingest stores a section's first
+ * sentence from its heading onward, so the title word would otherwise be the
+ * nearest preceding "name" and every section would state a fact about itself.
+ */
+static size_t answer_location_facts_build(const libxs_registry_t* corpus)
+{
+  static const char delims[] = " \t\r\n,.;:!?()[]{}\"";
+  enum { LOCATION_GAP_MAX = 4 };
+  const void* key = NULL;
+  size_t cursor = 0;
+  void* value;
+  size_t result = 0;
+  answer_location_facts_free();
+  if (NULL == corpus || 0 == converse_rules_size()) return 0;
+  value = corpus_iter_begin(corpus, &key, &cursor);
+  while (NULL != value) {
+    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    /* Only sentences carrying a location marker at all, which the ingest flag
+       already records: the rest cannot state a location and are most of them. */
+    if (SCALE_SENTENCE == entry->scale
+      && 0 == (entry->lexical_flags & ENTRY_LEX_FRAGMENT)
+      && 0 != (entry->lexical_flags & ENTRY_LEX_PLACE))
+    {
+      const int heading_len = corpus_title_len(entry->text, entry->text_len);
+      const char* actor = NULL;
+      const char* actor_end = NULL;
+      const char* prev_end = entry->text + heading_len;
+      const char* token;
+      const char* marker = NULL;
+      int actor_len = 0, gap = 0;
+      int token_index = 0, token_len = 0;
+      while (NULL != (token = libxs_strtoken(entry->text, delims,
+        token_index, &token_len)))
+      {
+        const char* scan;
+        if (token < entry->text + heading_len) { ++token_index; continue; }
+        for (scan = prev_end; scan < token; ++scan) {
+          if ('.' == *scan || '!' == *scan || '?' == *scan
+            || ';' == *scan || ':' == *scan || ',' == *scan)
+          {
+            actor = NULL;
+            actor_len = 0;
+            marker = NULL;
+          }
+        }
+        prev_end = token + token_len;
+        while (token_len > 0 && 0 == isalpha((unsigned char)*token)) {
+          ++token;
+          --token_len;
+        }
+        while (token_len > 0
+          && 0 == isalpha((unsigned char)token[token_len - 1])) --token_len;
+        if (token_len > 0) {
+          if (NULL != marker && 0 != answer_relation_rule_is_term(
+            RELATION_RULE_PLACE, token, token_len))
+          {
+            /* The actor must precede the MARKER, not merely the place: "at Mr
+               Korbes's house" names an owner, and reading it as an actor stated
+               that Mr was at a house the sentence never puts him in. */
+            if (NULL != actor && NULL != actor_end && actor_end < marker) {
+              const char* begin = actor_end;
+              int phrase_len;
+              while (begin < token && 0 != isspace((unsigned char)*begin)) {
+                ++begin;
+              }
+              phrase_len = (int)(token + token_len - begin);
+              if (0 != answer_location_fact_append(actor, actor_len, begin,
+                phrase_len, token, token_len, entry,
+                (double)(ANSWER_LOCATION_PHRASE_MAX - phrase_len)))
+              {
+                ++result;
+              }
+            }
+            marker = NULL;
+          }
+          else if (0 != answer_relation_rule_is_term(RELATION_RULE_WHERE,
+            token, token_len))
+          {
+            marker = token;
+            gap = 0;
+          }
+          else if (NULL != marker && ++gap >= LOCATION_GAP_MAX) {
+            marker = NULL;
+          }
+          if (0 != answer_identity_word_is_name(token, token_len)) {
+            /**
+             * A name the corpus puts AFTER a verb is that verb's OBJECT, not the
+             * subject of the clause: "to carry Snowdrop away into the wide wood"
+             * stated that Snowdrop went there, and "told Sultan to come into the
+             * wood" that Sultan did. The verb class is DERIVED from the corpus
+             * (answer_verbs_build), and it is used here only to reject, because it
+             * is incomplete: a past-simple verb never appears in the frame that
+             * derives it, so what is missing costs a missed rejection rather than a
+             * lost fact.
+             */
+            const char* prev = token;
+            int prev_len = 0;
+            while (prev > entry->text
+              && 0 != isspace((unsigned char)prev[-1])) --prev;
+            while (prev - prev_len > entry->text
+              && 0 != isalpha((unsigned char)prev[-prev_len - 1])) ++prev_len;
+            if (0 == answer_word_is_verb(prev - prev_len, prev_len)) {
+              actor = token;
+              actor_len = token_len;
+              actor_end = token + token_len;
+            }
+          }
+        }
+        ++token_index;
+      }
+    }
+    value = corpus_iter_next(corpus, &key, &cursor);
+  }
+  return result;
+}
+
+
+/**
+ * Report the count, and with CONVERSE_FACTS_LIST=1 the facts themselves. A count
+ * says nothing about whether a fact is true, and this layer ASSERTS rather than
+ * ranks, so the only honest way to judge it is to read what it extracted.
+ */
+static void answer_location_facts_report(FILE* stream)
+{
+  if (NULL != stream && 0 < answer_location_facts_size) {
+    const char* list = getenv("CONVERSE_FACTS_LIST");
+    fprintf(stream, "location facts: %lu learned\n",
+      (unsigned long)answer_location_facts_size);
+    if (NULL != list && '\0' != *list && '0' != *list) {
+      size_t fact_pos;
+      for (fact_pos = 0; fact_pos < answer_location_facts_size; ++fact_pos) {
+        const answer_location_fact_t* fact = answer_location_facts + fact_pos;
+        fprintf(stream, "  location[%s] %s %s\n",
+          (RELATION_RULE_ASSERTED == fact->provenance) ? "asserted"
+            : ((RELATION_RULE_LEARNED == fact->provenance) ? "learned"
+              : "proposed"), fact->actor, fact->phrase);
+      }
+    }
+  }
+}
+
+
+/** The name a location question asks about: the first one it names. */
+static int answer_location_query_actor(const char* query_text,
+  size_t query_len, char* actor, int actor_size)
+{
+  static const char delims[] = " \t\r\n,.;:!?()[]{}\"";
+  int result = 0;
+  int token_index = 0, token_len = 0;
+  const char* token;
+  if (NULL == query_text || 0 == query_len || NULL == actor) return 0;
+  while (0 == result && NULL != (token = libxs_strtoken(query_text, delims,
+    token_index, &token_len)))
+  {
+    while (token_len > 0 && 0 == isalpha((unsigned char)*token)) {
+      ++token;
+      --token_len;
+    }
+    while (token_len > 0
+      && 0 == isalpha((unsigned char)token[token_len - 1])) --token_len;
+    if (token_len > 0 && token_len < actor_size
+      && 0 != answer_word_is_name(token, token_len))
+    {
+      memcpy(actor, token, (size_t)token_len);
+      actor[token_len] = '\0';
+      result = token_len;
+    }
+    ++token_index;
+  }
+  return result;
+}
+
+
+static int answer_location_fact_reply(const char* query_text,
+  size_t query_len, char* output, size_t output_size)
+{
+  int result = EXIT_FAILURE;
+  char actor[64];
+  char query_section[ENTRY_SECTION_MAX];
+  int actor_len, query_section_len;
+  const answer_location_fact_t* best = NULL;
+  size_t fact_pos, pos;
+  if (NULL == query_text || NULL == output || 0 == output_size
+    || 0 == answer_location_facts_size
+    || QUERY_WHERE != answer_query_type_text(query_text, query_len))
+  {
+    return EXIT_FAILURE;
+  }
+  actor_len = answer_location_query_actor(query_text, query_len, actor,
+    (int)sizeof(actor));
+  if (actor_len <= 0) return EXIT_FAILURE;
+  query_section_len = answer_query_section(query_text, query_len,
+    query_section, (int)sizeof(query_section));
+  for (fact_pos = 0; fact_pos < answer_location_facts_size; ++fact_pos) {
+    const answer_location_fact_t* fact = answer_location_facts + fact_pos;
+    if (fact->actor_len == actor_len
+      && 0 != libxs_striequal(fact->actor, (size_t)fact->actor_len,
+        actor, (size_t)actor_len)
+      && (query_section_len <= 0 || fact->section_len <= 0
+        || 0 != text_contains_ci(fact->section, fact->section_len,
+          query_section))
+      && (NULL == best || fact->provenance < best->provenance
+        || (fact->provenance == best->provenance
+          && fact->score > best->score)))
+    {
+      best = fact;
+    }
+  }
+  if (NULL != best
+    && (size_t)(best->actor_len + best->phrase_len + 3) < output_size)
+  {
+    pos = answer_append_clean(output, output_size, 0, best->actor,
+      best->actor_len);
+    if (pos + 1 < output_size) output[pos++] = ' ';
+    pos = answer_append_clean(output, output_size, pos, best->phrase,
+      best->phrase_len);
+    if (pos + 1 < output_size) {
+      output[pos++] = '.';
+      output[pos] = '\0';
+      answer_fact_section_set(best->section, best->section_len);
+      answer_fact_learned_set(best->place, best->place_len, best->provenance);
+      result = EXIT_SUCCESS;
+    }
+  }
+  return result;
+}
+
+
+static void answer_type_facts_free(void)
+{
+  free(answer_type_facts);
+  answer_type_facts = NULL;
+  answer_type_facts_size = 0;
+}
+
+
+static int answer_type_fact_append(const char* name, int name_len,
+  const char* phrase, int phrase_len, int shape,
+  const corpus_entry_t* entry, double score)
+{
+  int result = EXIT_FAILURE;
+  answer_type_fact_t fact;
+  answer_type_fact_t* facts;
+  size_t fact_pos;
+  if (NULL == name || name_len <= 0 || name_len >= (int)sizeof(fact.name)
+    || NULL == phrase || phrase_len <= 0
+    || phrase_len >= (int)sizeof(fact.phrase))
+  {
+    return EXIT_FAILURE;
+  }
+  memset(&fact, 0, sizeof(fact));
+  memcpy(fact.name, name, (size_t)name_len);
+  fact.name_len = name_len;
+  memcpy(fact.phrase, phrase, (size_t)phrase_len);
+  fact.phrase_len = phrase_len;
+  fact.shape = shape;
+  fact.score = score;
+  if (NULL != entry && entry->section_len > 0
+    && entry->section_len < (int)sizeof(fact.section))
+  {
+    memcpy(fact.section, entry->section, (size_t)entry->section_len);
+    fact.section_len = entry->section_len;
+  }
+  /* One type per name, the TIGHTEST binding: a corpus states what something is
+     more than once, and the shortest statement of it is the definition rather
+     than a sentence that happens to contain one. */
+  for (fact_pos = 0; fact_pos < answer_type_facts_size; ++fact_pos) {
+    answer_type_fact_t* old_fact = answer_type_facts + fact_pos;
+    if (old_fact->name_len == fact.name_len
+      && 0 != libxs_striequal(old_fact->name, (size_t)old_fact->name_len,
+        fact.name, (size_t)fact.name_len))
+    {
+      if (fact.score > old_fact->score) *old_fact = fact;
+      result = EXIT_SUCCESS;
+      break;
+    }
+  }
+  if (EXIT_SUCCESS != result) {
+    facts = (answer_type_fact_t*)realloc(answer_type_facts,
+      (answer_type_facts_size + 1) * sizeof(*facts));
+    if (NULL != facts) {
+      answer_type_facts = facts;
+      answer_type_facts[answer_type_facts_size] = fact;
+      ++answer_type_facts_size;
+      result = EXIT_SUCCESS;
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Extract what each named entity IS, from the copular and appositive shapes.
+ *
+ * COPULAR: the name must be IMMEDIATELY before the copula, with only whitespace
+ * between them. That single bound is what keeps the subject right -- "the daughter
+ * of the king was a queen" names a queen, and reading the nearest earlier name as
+ * the subject would have attributed it to the king.
+ * APPOSITIVE: name, comma, gloss, comma -- and the gloss must OPEN WITH AN ARTICLE.
+ * Prose separates a great many things with commas, and requiring the determiner is
+ * what distinguishes a noun phrase in apposition from the next clause. The articles
+ * are their own declared class: using the skip class for this admitted "Hansel, and
+ * thrust into his pockets ...", because skip declares every function word.
+ * Both stop at clause punctuation, and the complement must fit the field: a type
+ * that runs the length of a sentence is not a type.
+ */
+static size_t answer_type_facts_build(const libxs_registry_t* corpus)
+{
+  static const char delims[] = " \t\r\n,.;:!?()[]{}\"";
+  const void* key = NULL;
+  size_t cursor = 0;
+  void* value;
+  size_t result = 0;
+  answer_type_facts_free();
+  if (NULL == corpus || 0 == converse_rules_size()) return 0;
+  value = corpus_iter_begin(corpus, &key, &cursor);
+  while (NULL != value) {
+    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    if (SCALE_SENTENCE == entry->scale
+      && 0 == (entry->lexical_flags & ENTRY_LEX_FRAGMENT))
+    {
+      const int heading_len = corpus_title_len(entry->text, entry->text_len);
+      const char* text_end = entry->text + entry->text_len;
+      const char* name = NULL;
+      const char* name_end = NULL;
+      const char* token;
+      int name_len = 0, token_index = 0, token_len = 0;
+      /* Whether the name last seen is an item of a list or sits inside a
+         prepositional phrase, i.e. is NOT the subject of its clause. Recorded with
+         the name because both shapes ask the same question of it. */
+      int name_in_phrase = 0;
+      while (NULL != (token = libxs_strtoken(entry->text, delims,
+        token_index, &token_len)))
+      {
+        const char* raw = token;
+        if (token < entry->text + heading_len) { ++token_index; continue; }
+        while (token_len > 0 && 0 == isalpha((unsigned char)*token)) {
+          ++token;
+          --token_len;
+        }
+        while (token_len > 0
+          && 0 == isalpha((unsigned char)token[token_len - 1])) --token_len;
+        if (token_len > 0) {
+          if (NULL != name && NULL != name_end
+            && 0 != answer_relation_rule_is_term(RELATION_RULE_COPULA, token,
+              token_len))
+          {
+            const char* gap;
+            int adjacent = 1;
+            for (gap = name_end; gap < raw && 0 != adjacent; ++gap) {
+              if (0 == isspace((unsigned char)*gap)) adjacent = 0;
+            }
+            if (0 != adjacent && 0 == name_in_phrase) {
+              const char* comp = token + token_len;
+              const char* end;
+              int art_len = 0;
+              while (comp < text_end
+                && 0 != isspace((unsigned char)*comp)) ++comp;
+              while (comp + art_len < text_end
+                && 0 != isalpha((unsigned char)comp[art_len])) ++art_len;
+              end = comp + art_len;
+              while (end < text_end && ',' != *end && '.' != *end
+                && ';' != *end && ':' != *end && '!' != *end && '?' != *end)
+              {
+                ++end;
+              }
+              while (end > comp && 0 != isspace((unsigned char)end[-1])) --end;
+              /**
+               * The complement must open with an ARTICLE, which is what makes it a
+               * noun phrase and so a TYPE. Without that test the shape captured
+               * every predicate the copula introduces -- "Snowdrop was dead", "Tom
+               * was calling out" -- true spans, but not statements of what
+               * something IS, and answering "What is X?" with one is wrong.
+               */
+              if (art_len > 0 && end > comp + art_len
+                && 0 != answer_relation_rule_is_term(RELATION_RULE_ARTICLE,
+                  comp, art_len)
+                && EXIT_SUCCESS == answer_type_fact_append(name, name_len,
+                  name, (int)(end - name), ANSWER_TYPE_COPULAR, entry,
+                  (double)(ANSWER_TYPE_PHRASE_MAX - (int)(end - name))))
+              {
+                ++result;
+              }
+            }
+          }
+          if (0 != answer_identity_word_is_name(token, token_len)) {
+            const char* comma = token + token_len;
+            const char* before = raw;
+            /**
+             * A NAME IS A MAXIMAL RUN of name tokens, not its last one. Taking one
+             * token made "Atlas Shrugged" into "Shrugged" and "Thomas Lincoln" into
+             * "Thomas", so the fact was keyed and rendered under half a name -- and
+             * the subject test then examined the wrong left edge, since what
+             * precedes the RUN is what says whether the run is the subject.
+             */
+            const int extend = (NULL != name && name_end + 1 == token
+              && ' ' == *name_end) ? 1 : 0;
+            if (0 == extend) {
+              name = token;
+              name_in_phrase = 0;
+            }
+            name_len = (int)(token + token_len - name);
+            name_end = token + token_len;
+            /**
+             * A name that a COMMA already introduces is an item of a list, not the
+             * subject of an apposition. This is the single largest error class the
+             * shape had on Wikipedia: "Brunei, the Philippines, and Vietnam" and
+             * "China, the United States" read exactly like "Priam, the king of
+             * Troy" unless the left side is checked, and every one of them became a
+             * confident false type.
+             */
+            while (before > entry->text
+              && 0 != isspace((unsigned char)before[-1])) --before;
+            if (0 == extend && before > entry->text && ',' == before[-1]) {
+              name_in_phrase = 1;
+            }
+            /**
+             * And a name inside a PREPOSITIONAL PHRASE is not the clause subject,
+             * which was the other half of the errors: "a bust of Aristotle is a
+             * nearly ubiquitous ornament" made Aristotle the ornament, and "the
+             * railway in Angola is" made Angola the railway. The preposition class
+             * is declared, so this reads the rule file rather than English.
+             */
+            if (0 == extend && 0 == name_in_phrase && before > entry->text) {
+              const char* word_end = before;
+              const char* word = before;
+              while (word > entry->text
+                && 0 != isalpha((unsigned char)word[-1])) --word;
+              if (word < word_end && 0 != answer_relation_rule_is_term(
+                RELATION_RULE_PREP, word, (int)(word_end - word)))
+              {
+                name_in_phrase = 1;
+              }
+            }
+            /* Appositive: the gloss is what stands between the two commas. */
+            while (comma < text_end
+              && 0 != isspace((unsigned char)*comma)) ++comma;
+            if (comma < text_end && ',' == *comma) {
+              const char* gloss = comma + 1;
+              const char* end;
+              const char* after;
+              int article_len = 0;
+              int after_len = 0;
+              while (gloss < text_end
+                && 0 != isspace((unsigned char)*gloss)) ++gloss;
+              while (gloss + article_len < text_end
+                && 0 != isalpha((unsigned char)gloss[article_len]))
+              {
+                ++article_len;
+              }
+              end = gloss + article_len;
+              while (end < text_end && ',' != *end && '.' != *end
+                && ';' != *end && ':' != *end && '!' != *end
+                && '?' != *end) ++end;
+              /**
+               * And what FOLLOWS the closing comma settles the rest: a list
+               * continues with another article-led item, while an apposition
+               * returns to the sentence's predicate. Two lookaheads, no scoring.
+               */
+              after = end + 1;
+              while (after < text_end
+                && 0 != isspace((unsigned char)*after)) ++after;
+              while (after + after_len < text_end
+                && 0 != isalpha((unsigned char)after[after_len])) ++after_len;
+              if (0 == name_in_phrase && article_len > 0 && end < text_end
+                && ',' == *end
+                && 0 != answer_relation_rule_is_term(RELATION_RULE_ARTICLE,
+                  gloss, article_len)
+                && (0 == after_len
+                  || 0 == answer_relation_rule_is_term(RELATION_RULE_ARTICLE,
+                    after, after_len))
+                && count_words((const unsigned char*)gloss,
+                  (int)(end - gloss)) >= 2)
+              {
+                char phrase[ANSWER_TYPE_PHRASE_MAX];
+                int copula_len = 0;
+                const char* copula = answer_relation_rule_first_term(
+                  RELATION_RULE_COPULA, &copula_len);
+                if (NULL != copula && 0 < copula_len
+                  && (size_t)(name_len + copula_len + (end - gloss) + 3)
+                    < sizeof(phrase))
+                {
+                  size_t at = 0;
+                  memcpy(phrase + at, name, (size_t)name_len);
+                  at += (size_t)name_len;
+                  phrase[at++] = ' ';
+                  memcpy(phrase + at, copula, (size_t)copula_len);
+                  at += (size_t)copula_len;
+                  phrase[at++] = ' ';
+                  memcpy(phrase + at, gloss, (size_t)(end - gloss));
+                  at += (size_t)(end - gloss);
+                  phrase[at] = '\0';
+                  if (EXIT_SUCCESS == answer_type_fact_append(name, name_len,
+                    phrase, (int)at, ANSWER_TYPE_APPOSITIVE, entry,
+                    (double)(ANSWER_TYPE_PHRASE_MAX - (int)at)))
+                  {
+                    ++result;
+                  }
+                }
+              }
+            }
+          }
+        }
+        ++token_index;
+      }
+    }
+    value = corpus_iter_next(corpus, &key, &cursor);
+  }
+  return result;
+}
+
+
+static void answer_type_facts_report(FILE* stream)
+{
+  if (NULL != stream && 0 < answer_type_facts_size) {
+    const char* list = getenv("CONVERSE_FACTS_LIST");
+    fprintf(stream, "type facts: %lu learned\n",
+      (unsigned long)answer_type_facts_size);
+    if (NULL != list && '\0' != *list && '0' != *list) {
+      size_t fact_pos;
+      for (fact_pos = 0; fact_pos < answer_type_facts_size; ++fact_pos) {
+        const answer_type_fact_t* fact = answer_type_facts + fact_pos;
+        fprintf(stream, "  type[%s] %s\n",
+          (ANSWER_TYPE_COPULAR == fact->shape) ? "copular" : "appositive",
+          fact->phrase);
+      }
+    }
+  }
+}
+
+
+static int answer_type_render(const answer_type_fact_t* fact, char* output,
+  size_t output_size)
+{
+  int result = EXIT_FAILURE;
+  if (NULL != fact && NULL != output && 0 < output_size
+    && 0 < fact->phrase_len)
+  {
+    size_t at = answer_append_clean(output, output_size, 0, fact->phrase,
+      fact->phrase_len);
+    if (at + 2 < output_size) {
+      output[at++] = '.';
+      output[at] = '\0';
+      result = EXIT_SUCCESS;
+    }
+  }
+  return result;
+}
+
+
+static int answer_type_fact_reply(const char* query_text, size_t query_len,
+  char* output, size_t output_size)
+{
+  int result = EXIT_FAILURE;
+  char name[64];
+  const answer_type_fact_t* best = NULL;
+  int name_len, query_type;
+  size_t fact_pos;
+  if (NULL == query_text || NULL == output || 0 == output_size
+    || 0 == answer_type_facts_size) return EXIT_FAILURE;
+  query_type = answer_query_type_text(query_text, query_len);
+  if (QUERY_WHO != query_type && QUERY_WHAT != query_type) {
+    return EXIT_FAILURE;
+  }
+  name_len = answer_query_be_word(query_text, query_len, name,
+    (int)sizeof(name));
+  if (name_len <= 0 || 0 == answer_word_is_name(name, name_len)) {
+    return EXIT_FAILURE;
+  }
+  for (fact_pos = 0; fact_pos < answer_type_facts_size; ++fact_pos) {
+    const answer_type_fact_t* fact = answer_type_facts + fact_pos;
+    /* Word containment, not equality: the fact holds the full run ("Thomas
+       Lincoln") and a question names one word of it. */
+    if (0 != text_contains_word_ci(fact->name, fact->name_len, name)
+      && (NULL == best || fact->score > best->score))
+    {
+      best = fact;
+    }
+  }
+  if (NULL != best
+    && EXIT_SUCCESS == answer_type_render(best, output, output_size))
+  {
+    answer_fact_section_set(best->section, best->section_len);
+    result = EXIT_SUCCESS;
+  }
+  return result;
+}
+
+
+static void answer_verbs_free(void)
+{
+  if (NULL != answer_verbs) {
+    libxs_registry_destroy(answer_verbs);
+    answer_verbs = NULL;
+  }
+  answer_verbs_nkeys = 0;
+}
+
+
+/**
+ * Derive the words this corpus uses as VERBS from the one frame that says so
+ * without morphology: an AUXILIARY governs a verb.
+ *
+ * The frame is `aux`, then any number of declared function words, then the word
+ * itself -- "would not GO", "had never SEEN", "will soon COME" -- so the adverbs and
+ * negators between the two are stepped over rather than mistaken for the verb. Both
+ * the auxiliaries and the function words are declared, so no English is written
+ * here, and the class is a fact about the CORPUS rather than about English.
+ *
+ * IT IS INCOMPLETE BY CONSTRUCTION, and that decides how it may be used. English
+ * narrative is written in the past simple, which no auxiliary governs: "went",
+ * "stood" and "looked" never appear in this frame and so are never derived. A
+ * requirement built on it would therefore reject true facts wholesale -- measured on
+ * the tales, "Hans went into the stable" would have been the first casualty. It is
+ * used only to REJECT: a name the corpus puts AFTER a verb is that verb's object,
+ * and a missing verb then costs a missed rejection rather than a lost truth.
+ */
+static size_t answer_verbs_build(const libxs_registry_t* corpus)
+{
+  static const char delims[] = " \t\r\n,.;:!?()[]{}\"";
+  const void* key = NULL;
+  size_t cursor = 0;
+  void* value;
+  size_t result = 0;
+  answer_verbs_free();
+  answer_verbs = libxs_registry_create();
+  if (NULL == corpus || NULL == answer_verbs) return 0;
+  value = corpus_iter_begin(corpus, &key, &cursor);
+  while (NULL != value) {
+    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    if (SCALE_SENTENCE == entry->scale
+      && 0 == (entry->lexical_flags & ENTRY_LEX_FRAGMENT))
+    {
+      const char* token;
+      int token_index = 0, token_len = 0, governed = 0;
+      while (NULL != (token = libxs_strtoken(entry->text, delims,
+        token_index, &token_len)))
+      {
+        const char* word = token;
+        int word_len = token_len;
+        while (word_len > 0 && 0 == isalpha((unsigned char)*word)) {
+          ++word;
+          --word_len;
+        }
+        while (word_len > 0
+          && 0 == isalpha((unsigned char)word[word_len - 1])) --word_len;
+        if (word_len > 0) {
+          if (0 != answer_relation_rule_is_term(RELATION_RULE_AUX, word,
+            word_len))
+          {
+            governed = 1;
+          }
+          else if (0 != governed) {
+            if (0 != answer_relation_rule_is_term(RELATION_RULE_ARTICLE, word,
+                word_len)
+              || 0 != answer_relation_rule_is_term(RELATION_RULE_PREP, word,
+                word_len))
+            {
+              /* An ARTICLE or a PREPOSITION means a noun phrase follows, not a
+                 verb: stepping over them made "had a BIRD" derive "bird". The
+                 frame is abandoned rather than continued. */
+              governed = 0;
+            }
+            else if (0 != answer_relation_rule_is_term(RELATION_RULE_SKIP, word,
+                word_len)
+              || 0 != answer_relation_rule_is_term(RELATION_RULE_NEGATE, word,
+                word_len))
+            {
+              /* Stepped over: a negator or a declared filler is not the verb. */
+            }
+            else {
+              if (2 < word_len && word_len < 32) {
+                char lower[32];
+                long* count;
+                int at;
+                for (at = 0; at < word_len; ++at) {
+                  lower[at] = (char)tolower((unsigned char)word[at]);
+                }
+                lower[word_len] = '\0';
+                count = (long*)libxs_registry_get(answer_verbs, lower,
+                  (size_t)word_len + 1, NULL);
+                if (NULL != count) ++*count;
+                else {
+                  const long fresh = 1;
+                  if (NULL != libxs_registry_set(answer_verbs, lower,
+                    (size_t)word_len + 1, &fresh, sizeof(fresh), NULL))
+                  {
+                    ++answer_verbs_nkeys;
+                  }
+                }
+                ++result;
+              }
+              governed = 0;
+            }
+          }
+        }
+        ++token_index;
+      }
+    }
+    value = corpus_iter_next(corpus, &key, &cursor);
+  }
+  return result;
+}
+
+
+static int answer_word_is_verb(const char* word, int word_len)
+{
+  int result = 0;
+  if (NULL != answer_verbs && NULL != word && 2 < word_len && word_len < 32) {
+    char lower[32];
+    int at;
+    for (at = 0; at < word_len; ++at) {
+      lower[at] = (char)tolower((unsigned char)word[at]);
+    }
+    lower[word_len] = '\0';
+    result = (NULL != libxs_registry_get(answer_verbs, lower,
+      (size_t)word_len + 1, NULL)) ? 1 : 0;
+  }
+  return result;
+}
+
+
+static void answer_verbs_report(FILE* stream)
+{
+  if (NULL != stream && 0 < answer_verbs_nkeys) {
+    const char* list = getenv("CONVERSE_FACTS_LIST");
+    fprintf(stream, "verbs derived: %ld from the auxiliary frame\n",
+      answer_verbs_nkeys);
+    if (NULL != list && '\0' != *list && '0' != *list) {
+      const void* key = NULL;
+      size_t cursor = 0;
+      void* value = libxs_registry_begin(answer_verbs, &key, &cursor);
+      int shown = 0;
+      while (NULL != value && shown < 40) {
+        if (2 <= *(const long*)value) {
+          fprintf(stream, "  verb %s (%ld)\n", (const char*)key,
+            *(const long*)value);
+          ++shown;
+        }
+        value = libxs_registry_next(answer_verbs, &key, &cursor);
+      }
+    }
+  }
+}
+
+
+/**
+ * THE PURE NAME inside a token: what remains once a declared possessive mark is
+ * removed, and how many bytes that mark took.
+ *
+ * This matters far beyond the possession layer. A name is a NODE, and every layer
+ * that extracts one keys its facts by it, so "Hansel's" and "Hansel" must resolve
+ * to the same bytes or the two facts never join and a question about one misses the
+ * other. The mark is orthography, declared per language (`poss|apostrophe-s` for
+ * English, `poss|s` for German), so the shapes are tried in the order most specific
+ * first: an apostrophe with an s, then a bare apostrophe, then a bare s.
+ *
+ * The census is the safety net for the bare-s shape, which is otherwise ambiguous:
+ * "Muellers" leaves "Mueller" and is accepted because that is a known name, while
+ * "Hans" leaves "Han" and is not.
+ */
+static int answer_name_strip(const char* word, int word_len, int* mark)
+{
+  int result = word_len;
+  int taken = 0;
+  if (NULL != word && 2 < word_len) {
+    const int last = (int)(unsigned char)word[word_len - 1];
+    const int has_s = ('s' == last || 'S' == last) ? 1 : 0;
+    int at = word_len - (0 != has_s ? 1 : 0);
+    int mark_len = 0;
+    if (2 <= at && '\'' == word[at - 1]) mark_len = 1;
+    else if (4 <= at && (char)0xe2 == word[at - 3]
+      && (char)0x80 == word[at - 2] && (char)0x99 == word[at - 1])
+    {
+      mark_len = 3;
+    }
+    if (0 != mark_len && 0 != has_s
+      && 0 != answer_relation_rule_is_term(RELATION_RULE_POSS,
+        "apostrophe-s", 12))
+    {
+      taken = mark_len + 1;
+    }
+    else if (0 != mark_len && 0 == has_s
+      && 0 != answer_relation_rule_is_term(RELATION_RULE_POSS, "apostrophe",
+        10))
+    {
+      taken = mark_len;
+    }
+    else if (0 == mark_len && 0 != has_s
+      && 0 != answer_relation_rule_is_term(RELATION_RULE_POSS, "s", 1))
+    {
+      taken = 1;
+    }
+    if (0 < taken && word_len - taken > 1) result = word_len - taken;
+    else taken = 0;
+  }
+  if (NULL != mark) *mark = taken;
+  return result;
+}
+
+
+/** Whether a token names somebody, once its possessive mark is off. */
+static int answer_name_token(const char* word, int word_len, int* pure_len)
+{
+  int mark = 0;
+  const int len = answer_name_strip(word, word_len, &mark);
+  const int is_name = (0 < len && 0 != answer_identity_word_is_name(word, len))
+    ? 1 : 0;
+  if (NULL != pure_len) *pure_len = (0 != is_name) ? len : word_len;
+  return is_name;
+}
+
+
+static void answer_own_facts_free(void)
+{
+  free(answer_own_facts);
+  answer_own_facts = NULL;
+  answer_own_facts_size = 0;
+}
+
+
+static int answer_own_fact_append(const char* owner, int owner_len,
+  const char* item, int item_len, const corpus_entry_t* entry, double score)
+{
+  int result = EXIT_FAILURE;
+  answer_own_fact_t fact;
+  answer_own_fact_t* facts;
+  size_t fact_pos;
+  if (NULL == owner || owner_len <= 0 || owner_len >= (int)sizeof(fact.owner)
+    || NULL == item || item_len <= 0 || item_len >= (int)sizeof(fact.item))
+  {
+    return EXIT_FAILURE;
+  }
+  memset(&fact, 0, sizeof(fact));
+  memcpy(fact.owner, owner, (size_t)owner_len);
+  fact.owner_len = owner_len;
+  memcpy(fact.item, item, (size_t)item_len);
+  fact.item_len = item_len;
+  fact.score = score;
+  if (NULL != entry && entry->section_len > 0
+    && entry->section_len < (int)sizeof(fact.section))
+  {
+    memcpy(fact.section, entry->section, (size_t)entry->section_len);
+    fact.section_len = entry->section_len;
+  }
+  /**
+   * An owner may own many things, so only the same item collapses -- and one item
+   * being a PREFIX of another is the same item read to different lengths. Without
+   * that, "Curdken's hat go" stood beside "Curdken's hat" and the enumeration
+   * listed one possession twice, once ungrammatically. The shorter survives, since
+   * the run stops at the first word that cannot belong to the phrase.
+   */
+  for (fact_pos = 0; fact_pos < answer_own_facts_size; ++fact_pos) {
+    answer_own_fact_t* old_fact = answer_own_facts + fact_pos;
+    const int shared = (old_fact->item_len < fact.item_len)
+      ? old_fact->item_len : fact.item_len;
+    if (old_fact->owner_len == fact.owner_len
+      && 0 != libxs_striequal(old_fact->owner, (size_t)old_fact->owner_len,
+        fact.owner, (size_t)fact.owner_len)
+      && 0 != libxs_striequal(old_fact->item, (size_t)shared, fact.item,
+        (size_t)shared))
+    {
+      if (fact.item_len < old_fact->item_len) *old_fact = fact;
+      result = EXIT_SUCCESS;
+      break;
+    }
+  }
+  if (EXIT_SUCCESS != result) {
+    facts = (answer_own_fact_t*)realloc(answer_own_facts,
+      (answer_own_facts_size + 1) * sizeof(*facts));
+    if (NULL != facts) {
+      answer_own_facts = facts;
+      answer_own_facts[answer_own_facts_size] = fact;
+      ++answer_own_facts_size;
+      result = EXIT_SUCCESS;
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Extract possessions from the one shape English marks unambiguously: the
+ * possessive apostrophe.
+ *
+ * THE APOSTROPHE IS INSIDE THE TOKEN. The tokenizer's delimiters are punctuation
+ * that separates words, and an apostrophe joins one -- so "Curdken's" arrives whole,
+ * the name test fails on it, and a first version of this found ZERO possessions in
+ * a corpus holding twenty-nine. The mark is therefore looked for within the token:
+ * an apostrophe, ASCII or the typographic U+2019 the corpus is typeset with, ending
+ * the token before a final s.
+ *
+ * The possessed phrase is the NEXT WORD only. "the wolf's skin and the cake"
+ * possesses a skin, and taking the rest of the clause would have claimed the cake.
+ */
+static size_t answer_own_facts_build(const libxs_registry_t* corpus)
+{
+  static const char delims[] = " \t\r\n,.;:!?()[]{}\"";
+  const void* key = NULL;
+  size_t cursor = 0;
+  void* value;
+  size_t result = 0;
+  answer_own_facts_free();
+  if (NULL == corpus) return 0;
+  value = corpus_iter_begin(corpus, &key, &cursor);
+  while (NULL != value) {
+    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    if (SCALE_SENTENCE == entry->scale
+      && 0 == (entry->lexical_flags & ENTRY_LEX_FRAGMENT))
+    {
+      const int heading_len = corpus_title_len(entry->text, entry->text_len);
+      const char* token;
+      int token_index = 0, token_len = 0;
+      while (NULL != (token = libxs_strtoken(entry->text, delims,
+        token_index, &token_len)))
+      {
+        if (token >= entry->text + heading_len && 2 < token_len) {
+          const char* word = token;
+          int word_len = token_len;
+          int mark = 0;
+          int owner_len;
+          while (word_len > 0 && 0 == isalpha((unsigned char)*word)) {
+            ++word;
+            --word_len;
+          }
+          owner_len = answer_name_strip(word, word_len, &mark);
+          if (0 != mark) {
+            if (0 < owner_len
+              && 0 != answer_identity_word_is_name(word, owner_len))
+            {
+              /**
+               * The item is the whole run of CONTENT words after the apostrophe,
+               * not the first word: "Ashputtel's two little birds" possesses birds
+               * and taking one word claimed a "two", while "Snowdrop's old ..."
+               * claimed an "old". The run ends at the first declared function word
+               * -- article, preposition, copula or skip -- which is where an English
+               * noun phrase ends, and at any punctuation, which the tokenizer's
+               * delimiters already mark.
+               */
+              const char* item = NULL;
+              const char* item_end = NULL;
+              int taken = 0;
+              int next = token_index + 1;
+              int part_len = 0;
+              const char* part;
+              while (taken < 4 && NULL != (part = libxs_strtoken(entry->text,
+                delims, next, &part_len)))
+              {
+                const char* head = part;
+                int head_len = part_len;
+                while (head_len > 0 && 0 == isalpha((unsigned char)*head)) {
+                  ++head;
+                  --head_len;
+                }
+                while (head_len > 0
+                  && 0 == isalpha((unsigned char)head[head_len - 1]))
+                {
+                  --head_len;
+                }
+                /* A token holding an apostrophe is another POSSESSIVE, not a
+                   possessed noun: it opens a new relation rather than continuing
+                   this one, and reading it as an item said "Snowdrop's Snowdrop's
+                   old enemy". The trim does not catch it, since the token still
+                   ends in a letter. */
+                if (head_len <= 0 || head_len != part_len) break;
+                { int mark_pos = 0, has_mark = 0;
+                  for (mark_pos = 0; mark_pos + 1 < head_len; ++mark_pos) {
+                    if ('\'' == head[mark_pos]
+                      || ((char)0xe2 == head[mark_pos]
+                        && (char)0x80 == head[mark_pos + 1])) has_mark = 1;
+                  }
+                  if (0 != has_mark) break;
+                }
+                if (NULL != item_end && item_end + 1 != head) break;
+                if (0 != answer_relation_rule_is_term(RELATION_RULE_SKIP, head,
+                    head_len)
+                  || 0 != answer_relation_rule_is_term(RELATION_RULE_ARTICLE,
+                    head, head_len)
+                  || 0 != answer_relation_rule_is_term(RELATION_RULE_PREP,
+                    head, head_len)
+                  || 0 != answer_relation_rule_is_term(RELATION_RULE_COPULA,
+                    head, head_len)) break;
+                if (NULL == item) item = head;
+                item_end = head + head_len;
+                ++taken;
+                ++next;
+              }
+              if (NULL != item && NULL != item_end
+                && 2 < (int)(item_end - item)
+                && (int)(item_end - item) < ANSWER_OWN_ITEM_MAX
+                && EXIT_SUCCESS == answer_own_fact_append(word, owner_len,
+                  item, (int)(item_end - item), entry,
+                  (double)(ANSWER_OWN_ITEM_MAX - (int)(item_end - item))))
+              {
+                ++result;
+              }
+            }
+          }
+        }
+        ++token_index;
+      }
+    }
+    value = corpus_iter_next(corpus, &key, &cursor);
+  }
+  return result;
+}
+
+
+static void answer_own_facts_report(FILE* stream)
+{
+  if (NULL != stream && 0 < answer_own_facts_size) {
+    const char* list = getenv("CONVERSE_FACTS_LIST");
+    fprintf(stream, "possession facts: %lu learned\n",
+      (unsigned long)answer_own_facts_size);
+    if (NULL != list && '\0' != *list && '0' != *list) {
+      size_t fact_pos;
+      for (fact_pos = 0; fact_pos < answer_own_facts_size; ++fact_pos) {
+        const answer_own_fact_t* fact = answer_own_facts + fact_pos;
+        fprintf(stream, "  own %s <- %s\n", fact->owner, fact->item);
+      }
+    }
+  }
+}
+
+
+/**
+ * Answer a possession question by ENUMERATING what is attested, not by picking one.
+ *
+ * A question asking what belongs to somebody has a SET as its answer, and stating
+ * one member of a set is a different claim from stating the set. Each item is an
+ * independently attested possessive phrase and contributes its own citation, so the
+ * enumeration is grounded item by item rather than as a whole. The verb and its
+ * plural come from the rule file (`own|belongs`, `own|belong`), so the reply is
+ * assembled from declared vocabulary and corpus bytes only.
+ */
+static int answer_own_fact_reply(const char* query_text, size_t query_len,
+  char* output, size_t output_size)
+{
+  int result = EXIT_FAILURE;
+  char owner[64];
+  const answer_own_fact_t* items[ANSWER_OWN_MAX];
+  int owner_len = 0, count = 0, marked = 0, item, token_index = 0;
+  int token_len = 0;
+  size_t fact_pos, pos = 0;
+  const char* token;
+  static const char delims[] = " \t\r\n,.;:!?()[]{}\"";
+  if (NULL == query_text || NULL == output || 0 == output_size
+    || 0 == answer_own_facts_size) return EXIT_FAILURE;
+  /* The question must MARK possession, and the owner is the name after it. */
+  while (0 == owner_len && NULL != (token = libxs_strtoken(query_text, delims,
+    token_index, &token_len)))
+  {
+    while (token_len > 0 && 0 == isalpha((unsigned char)*token)) {
+      ++token;
+      --token_len;
+    }
+    while (token_len > 0
+      && 0 == isalpha((unsigned char)token[token_len - 1])) --token_len;
+    if (token_len > 0) {
+      int pure_len = token_len;
+      const int named = answer_name_token(token, token_len, &pure_len);
+      if (0 != marked && 0 != named && pure_len < (int)sizeof(owner)) {
+        /* The PURE name, so a question written possessively reaches the node the
+           facts are keyed by. */
+        memcpy(owner, token, (size_t)pure_len);
+        owner[pure_len] = '\0';
+        owner_len = pure_len;
+      }
+      else if (0 != answer_relation_rule_is_term(RELATION_RULE_OWN, token,
+        token_len)) marked = 1;
+    }
+    ++token_index;
+  }
+  if (owner_len <= 0) return EXIT_FAILURE;
+  for (fact_pos = 0; fact_pos < answer_own_facts_size
+    && count < ANSWER_OWN_MAX; ++fact_pos)
+  {
+    const answer_own_fact_t* fact = answer_own_facts + fact_pos;
+    if (0 != text_contains_word_ci(fact->owner, fact->owner_len, owner)) {
+      items[count++] = fact;
+    }
+  }
+  if (0 < count) {
+    int verb_len = 0;
+    const char* verb = answer_relation_rule_first_term(RELATION_RULE_OWN,
+      &verb_len);
+    if (1 < count) {
+      /* The plural is the SECOND declared term, so the rule file supplies both. */
+      size_t rule_pos;
+      int seen = 0;
+      for (rule_pos = 0; rule_pos < converse_rules_size(); ++rule_pos) {
+        const answer_relation_rule_t* rule = converse_rules() + rule_pos;
+        if (RELATION_RULE_OWN == rule->kind && 0 != seen++) {
+          verb = rule->term;
+          verb_len = (int)strlen(rule->term);
+          break;
+        }
+      }
+    }
+    for (item = 0; item < count; ++item) {
+      const char* joiner = (0 == item) ? "" : ((item + 1 == count)
+        ? " and " : ", ");
+      const size_t joiner_len = strlen(joiner);
+      if (pos + joiner_len + (size_t)items[item]->item_len + 2 >= output_size) {
+        break;
+      }
+      memcpy(output + pos, joiner, joiner_len);
+      pos += joiner_len;
+      pos = answer_append_clean(output, output_size, pos, items[item]->item,
+        items[item]->item_len);
+      answer_fact_section_add(items[item]->section,
+        items[item]->section_len);
+    }
+    if (NULL != verb && 0 < verb_len && 0 < pos
+      && pos + (size_t)verb_len + (size_t)owner_len + 8 < output_size)
+    {
+      output[pos++] = ' ';
+      memcpy(output + pos, verb, (size_t)verb_len);
+      pos += (size_t)verb_len;
+      memcpy(output + pos, " to ", 4);
+      pos += 4;
+      memcpy(output + pos, owner, (size_t)owner_len);
+      pos += (size_t)owner_len;
+      output[pos++] = '.';
+      output[pos] = '\0';
+      result = EXIT_SUCCESS;
+    }
+  }
+  return result;
+}
+
+
+/**
+ * The name an attribute question is about: the one that FOLLOWS the topic marker.
+ *
+ * Position, not scoring: "what do we know about Gretel" states which token is the
+ * subject by putting it after "about", and a question that names two people asks
+ * about the one it marks. Without the marker there is no attribute question here at
+ * all, so this resolver never competes for a question that is about something else.
+ */
+static int answer_topic_query_name(const char* query_text, size_t query_len,
+  char* name, int name_size)
+{
+  static const char delims[] = " \t\r\n,.;:!?()[]{}\"";
+  int result = 0;
+  int token_index = 0, token_len = 0, marked = 0;
+  const char* token;
+  if (NULL == query_text || 0 == query_len || NULL == name) return 0;
+  while (0 == result && NULL != (token = libxs_strtoken(query_text, delims,
+    token_index, &token_len)))
+  {
+    while (token_len > 0 && 0 == isalpha((unsigned char)*token)) {
+      ++token;
+      --token_len;
+    }
+    while (token_len > 0
+      && 0 == isalpha((unsigned char)token[token_len - 1])) --token_len;
+    if (token_len > 0) {
+      int pure_len = token_len;
+      const int named = answer_name_token(token, token_len, &pure_len);
+      if (0 != marked && 0 != named && pure_len < name_size) {
+        memcpy(name, token, (size_t)pure_len);
+        name[pure_len] = '\0';
+        result = pure_len;
+      }
+      else if (0 != answer_relation_rule_is_term(RELATION_RULE_TOPIC, token,
+        token_len))
+      {
+        marked = 1;
+      }
+    }
+    ++token_index;
+  }
+  return result;
+}
+
+
+/**
+ * Everything the corpus STATES about one name, as several cited propositions.
+ *
+ * This is navigation rather than retrieval: the facts are already extracted and
+ * already grammatical, so collecting them is a walk over what is attested, and the
+ * reply cites every source it rests on. Nothing is inferred and nothing is joined
+ * across facts -- a proposition that needed two facts to be true would be a hop,
+ * and a hop is only sound where every step of it is attested.
+ *
+ * The reply is labelled with the WEAKEST term it rests on, not the strongest: an
+ * attribute collection holding one proposed class member is a collection a reader
+ * must be able to discount, and naming the best of four would hide exactly that.
+ */
+static int answer_topic_reply(const char* query_text, size_t query_len,
+  char* output, size_t output_size)
+{
+  int result = EXIT_FAILURE;
+  char name[64];
+  char items[ANSWER_TOPIC_MAX][COMPOSE_MAXTEXT];
+  const char* sections[ANSWER_TOPIC_MAX];
+  int section_lens[ANSWER_TOPIC_MAX];
+  int worst = RELATION_RULE_ASSERTED;
+  char worst_term[64];
+  int worst_term_len = 0;
+  int name_len, count = 0, item;
+  size_t fact_pos, pos = 0;
+  if (NULL == query_text || NULL == output || 0 == output_size) {
+    return EXIT_FAILURE;
+  }
+  name_len = answer_topic_query_name(query_text, query_len, name,
+    (int)sizeof(name));
+  if (name_len <= 0) return EXIT_FAILURE;
+  worst_term[0] = '\0';
+  /* What it IS, first: a role binds a name to a class and reads as a definition. */
+  for (fact_pos = 0; fact_pos < answer_identity_facts_size
+    && count < ANSWER_TOPIC_MAX; ++fact_pos)
+  {
+    const answer_identity_fact_t* fact = answer_identity_facts + fact_pos;
+    if (fact->name_len == name_len
+      && 0 != libxs_striequal(fact->name, (size_t)fact->name_len, name,
+        (size_t)name_len)
+      && EXIT_SUCCESS == answer_reply_role(items[count], sizeof(items[count]),
+        fact->name, fact->name_len, fact->role))
+    {
+      sections[count] = fact->section;
+      section_lens[count] = fact->section_len;
+      if (fact->provenance > worst) {
+        worst = fact->provenance;
+        memcpy(worst_term, fact->role, (size_t)fact->role_len + 1);
+        worst_term_len = fact->role_len;
+      }
+      ++count;
+    }
+  }
+  /* What happened to or through it: a relation fact reads from either side, since
+     "X was eaten by the wolf" is a fact about X and about the wolf alike. */
+  for (fact_pos = 0; fact_pos < answer_relation_facts_size
+    && count < ANSWER_TOPIC_MAX; ++fact_pos)
+  {
+    const answer_relation_fact_t* fact = answer_relation_facts + fact_pos;
+    const int is_answer = (fact->answer_len > 0
+      && 0 != text_contains_word_ci(fact->answer, fact->answer_len, name))
+      ? 1 : 0;
+    const int is_actor = (fact->actor_len > 0
+      && 0 != text_contains_word_ci(fact->actor, fact->actor_len, name))
+      ? 1 : 0;
+    if ((0 != is_answer || 0 != is_actor) && fact->relation_len > 0
+      && 0 == fact->made)
+    {
+      answer_relation_match_t match;
+      memset(&match, 0, sizeof(match));
+      memcpy(match.answer, fact->answer, (size_t)fact->answer_len + 1);
+      match.answer_len = fact->answer_len;
+      memcpy(match.relation, fact->relation, (size_t)fact->relation_len + 1);
+      match.relation_len = fact->relation_len;
+      memcpy(match.actor, fact->actor, (size_t)fact->actor_len + 1);
+      match.actor_len = fact->actor_len;
+      match.plural = fact->plural;
+      match.made = fact->made;
+      match.active = fact->active;
+      if (EXIT_SUCCESS == answer_relation_reply(&match, items[count],
+        sizeof(items[count])))
+      {
+        sections[count] = fact->section;
+        section_lens[count] = fact->section_len;
+        ++count;
+      }
+    }
+  }
+  /* Where it was: the location layer's propositions, already verbatim. */
+  for (fact_pos = 0; fact_pos < answer_location_facts_size
+    && count < ANSWER_TOPIC_MAX; ++fact_pos)
+  {
+    const answer_location_fact_t* fact = answer_location_facts + fact_pos;
+    if (fact->actor_len == name_len
+      && 0 != libxs_striequal(fact->actor, (size_t)fact->actor_len, name,
+        (size_t)name_len))
+    {
+      size_t at = answer_append_clean(items[count], sizeof(items[count]), 0,
+        fact->actor, fact->actor_len);
+      if (at + 2 < sizeof(items[count])) items[count][at++] = ' ';
+      at = answer_append_clean(items[count], sizeof(items[count]), at,
+        fact->phrase, fact->phrase_len);
+      if (at + 2 < sizeof(items[count])) {
+        items[count][at++] = '.';
+        items[count][at] = '\0';
+        sections[count] = fact->section;
+        section_lens[count] = fact->section_len;
+        if (fact->provenance > worst) {
+          worst = fact->provenance;
+          memcpy(worst_term, fact->place, (size_t)fact->place_len + 1);
+          worst_term_len = fact->place_len;
+        }
+        ++count;
+      }
+    }
+  }
+  /**
+   * SPECULATION LAST, and only when there is nothing else to say.
+   *
+   * The `made` template takes whatever word follows "made" as the predicate, and on
+   * the tales only 2 of its 16 facts are true -- the rest are idioms ("made use
+   * of", "made her way", "made room"). No score separates them (E5 measured that),
+   * so such a fact is labelled rather than trusted. But labelling the COLLECTION by
+   * its weakest member made the whole thing lose to ranked evidence, and a reader
+   * asking about Hansel then got an arbitrary sentence instead of the true, cited
+   * proposition the collection already held. A set of independent propositions is
+   * not as weak as its weakest member: the attested ones are stated plainly, and
+   * speculation speaks only when the corpus attests nothing at all.
+   */
+  for (fact_pos = 0; fact_pos < answer_relation_facts_size && 0 == count;
+    ++fact_pos)
+  {
+    const answer_relation_fact_t* fact = answer_relation_facts + fact_pos;
+    if (0 != fact->made && fact->relation_len > 0 && fact->answer_len > 0
+      && 0 != text_contains_word_ci(fact->answer, fact->answer_len, name))
+    {
+      answer_relation_match_t match;
+      memset(&match, 0, sizeof(match));
+      memcpy(match.answer, fact->answer, (size_t)fact->answer_len + 1);
+      match.answer_len = fact->answer_len;
+      memcpy(match.relation, fact->relation, (size_t)fact->relation_len + 1);
+      match.relation_len = fact->relation_len;
+      match.plural = fact->plural;
+      match.made = fact->made;
+      if (EXIT_SUCCESS == answer_relation_reply(&match, items[count],
+        sizeof(items[count])))
+      {
+        sections[count] = fact->section;
+        section_lens[count] = fact->section_len;
+        worst = RELATION_RULE_PROPOSED;
+        memcpy(worst_term, fact->relation, (size_t)fact->relation_len + 1);
+        worst_term_len = fact->relation_len;
+        ++count;
+      }
+    }
+  }
+  output[0] = '\0';
+  for (item = 0; item < count; ++item) {
+    const size_t len = strlen(items[item]);
+    if (pos + len + 2 >= output_size) break;
+    if (0 < pos) output[pos++] = ' ';
+    memcpy(output + pos, items[item], len);
+    pos += len;
+    output[pos] = '\0';
+    answer_fact_section_add(sections[item], section_lens[item]);
+  }
+  if (0 < pos) {
+    if (RELATION_RULE_ASSERTED < worst) {
+      answer_fact_learned_set(worst_term, worst_term_len, worst);
+    }
+    result = EXIT_SUCCESS;
+  }
+  return result;
+}
+
+
 static void answer_describe_facts_free(void)
 {
   free(answer_describe_facts);
@@ -2048,7 +4471,7 @@ static int answer_describe_fact_append(const char* role, int role_len,
   size_t fact_pos;
   if (NULL == role || role_len <= 0 || role_len >= (int)sizeof(fact.role)
     || NULL == text || text_len <= 0 || NULL == entry) return EXIT_FAILURE;
-  LIBXS_MEMZERO(&fact);
+  memset(&fact, 0, sizeof(fact));
   if (text_len >= (int)sizeof(fact.text)) text_len = (int)sizeof(fact.text) - 1;
   memcpy(fact.role, role, (size_t)role_len);
   fact.role[role_len] = '\0';
@@ -2116,7 +4539,7 @@ static size_t answer_describe_facts_build(const libxs_registry_t* corpus)
   size_t result = 0;
   answer_describe_facts_free();
   if (NULL == corpus || 0 == converse_rules_size()) return 0;
-  value = libxs_registry_begin(corpus, &key, &cursor);
+  value = corpus_iter_begin(corpus, &key, &cursor);
   while (NULL != value) {
     const corpus_entry_t* entry = (const corpus_entry_t*)value;
     /* Fragments re-derive their parent sentence's facts; see the identity
@@ -2202,7 +4625,7 @@ static size_t answer_describe_facts_build(const libxs_registry_t* corpus)
         ++token_index;
       }
     }
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iter_next(corpus, &key, &cursor);
   }
   return result;
 }
@@ -2331,7 +4754,7 @@ static size_t answer_docdef_facts_build(const libxs_registry_t* corpus)
   size_t result = 0;
   answer_docdef_facts_free();
   if (NULL == corpus) return 0;
-  value = libxs_registry_begin(corpus, &key, &cursor);
+  value = corpus_iter_begin(corpus, &key, &cursor);
   while (NULL != value) {
     const corpus_entry_t* entry = (const corpus_entry_t*)value;
     if (SCALE_PARAGRAPH == entry->scale && entry->section_len > 0) {
@@ -2360,7 +4783,7 @@ static size_t answer_docdef_facts_build(const libxs_registry_t* corpus)
           if (NULL != facts) {
             answer_docdef_fact_t* fact = facts + answer_docdef_facts_size;
             answer_docdef_facts = facts;
-            LIBXS_MEMZERO(fact);
+            memset(fact, 0, sizeof(*fact));
             if (text_len >= (int)sizeof(fact->text)) {
               text_len = (int)sizeof(fact->text) - 1;
             }
@@ -2379,7 +4802,7 @@ static size_t answer_docdef_facts_build(const libxs_registry_t* corpus)
         }
       }
     }
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iter_next(corpus, &key, &cursor);
   }
   return result;
 }
@@ -2391,6 +4814,227 @@ static void answer_docdef_facts_report(FILE* stream)
     fprintf(stream, "docdef facts: %lu learned\n",
       (unsigned long)answer_docdef_facts_size);
   }
+}
+
+
+/**
+ * What the derived layer was built FROM, in one word.
+ *
+ * The facts and the name census are a function of the corpus, the rule file
+ * (including anything rule learning appended) and the normalization. Reusing
+ * them across a change in any of those is the warm-start trap this project has
+ * been bitten by repeatedly, and it fails SILENTLY: every reply stays fluent and
+ * becomes wrong. So the cache carries a stamp and is discarded unless it
+ * matches, which makes staleness unrepresentable rather than unlikely.
+ *
+ * What the stamp does not catch is a corpus edited to exactly the same entry
+ * count under exactly the same rules. Catching that needs a scan of the corpus,
+ * which is the work the cache exists to avoid -- so it is stated here rather
+ * than papered over. Deleting the file is always safe.
+ */
+static unsigned int answer_facts_stamp(const libxs_registry_t* corpus,
+  const libxs_lexicon_t* lexicon)
+{
+  unsigned int result = ANSWER_FACTS_VERSION;
+  size_t pos;
+  result = libxs_hash(&result, sizeof(result),
+    (unsigned int)libxs_registry_size(corpus));
+  result = libxs_hash(&result, sizeof(result),
+    (unsigned int)libxs_lexicon_size(lexicon));
+  /* Field by field, never the whole struct: a fixed-size text field carries
+     indeterminate bytes past its terminator, so hashing the struct hashes them
+     and the stamp differs from itself between two runs on identical input. */
+  for (pos = 0; pos < converse_rules_size(); ++pos) {
+    const answer_relation_rule_t* rule = converse_rules() + pos;
+    const unsigned int kinds = (unsigned int)(rule->kind * 8 + rule->provenance);
+    result = libxs_hash(&kinds, sizeof(kinds), result);
+    result = libxs_hash(rule->relation, (unsigned int)strlen(rule->relation),
+      result);
+    result = libxs_hash(rule->term, (unsigned int)strlen(rule->term), result);
+  }
+  for (pos = 0; pos < (size_t)converse_lexnorms_size(); ++pos) {
+    const libxs_lexnorm_t* norm = converse_lexnorms() + pos;
+    result = libxs_hash(norm->from, (unsigned int)strlen(norm->from), result);
+    result = libxs_hash(norm->to, (unsigned int)strlen(norm->to), result);
+  }
+  return result;
+}
+
+
+static int answer_facts_write(FILE* file, const void* data, size_t count,
+  size_t size)
+{
+  return (0 == count
+    || (NULL != data && fwrite(data, size, count, file) == count))
+    ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
+
+static void* answer_facts_read(FILE* file, size_t count, size_t size)
+{
+  void* result = NULL;
+  if (0 < count) {
+    result = malloc(count * size);
+    if (NULL != result && fread(result, size, count, file) != count) {
+      free(result);
+      result = NULL;
+    }
+  }
+  return result;
+}
+
+
+static void answer_facts_save(const libxs_registry_t* corpus,
+  const libxs_lexicon_t* lexicon)
+{
+  FILE* file = fopen(converse_facts_path(), "wb");
+  if (NULL != file) {
+    answer_facts_header_t header;
+    int ok;
+    memset(&header, 0, sizeof(header));
+    header.magic = ANSWER_FACTS_MAGIC;
+    header.version = ANSWER_FACTS_VERSION;
+    header.stamp = answer_facts_stamp(corpus, lexicon);
+    header.ncase = answer_case_size;
+    header.nrelation = (unsigned int)answer_relation_facts_size;
+    header.nidentity = (unsigned int)answer_identity_facts_size;
+    header.ndescribe = (unsigned int)answer_describe_facts_size;
+    header.ndocdef = (unsigned int)answer_docdef_facts_size;
+    header.nlocation = (unsigned int)answer_location_facts_size;
+    header.ntype = (unsigned int)answer_type_facts_size;
+    header.nown = (unsigned int)answer_own_facts_size;
+    ok = (1 == fwrite(&header, sizeof(header), 1, file))
+      ? EXIT_SUCCESS : EXIT_FAILURE;
+    if (EXIT_SUCCESS == ok) ok = answer_facts_write(file, answer_case_upper,
+      header.ncase, sizeof(*answer_case_upper));
+    if (EXIT_SUCCESS == ok) ok = answer_facts_write(file, answer_case_total,
+      header.ncase, sizeof(*answer_case_total));
+    /**
+     * All four census arrays, not the two the Hilbert-era cache wrote. A reply
+     * asks answer_word_is_name whether a word is a name, and that reads the
+     * UNFORCED counts -- so a cache holding only upper and total restored a
+     * census that every query then dereferenced through a NULL pointer. It was a
+     * SEGFAULT on the first question of any run that hit the cache, which is why
+     * a third consecutive warm run appeared to "stop evaluating".
+     */
+    if (EXIT_SUCCESS == ok) ok = answer_facts_write(file,
+      answer_case_unforced, header.ncase, sizeof(*answer_case_unforced));
+    if (EXIT_SUCCESS == ok) ok = answer_facts_write(file, answer_case_attrib,
+      header.ncase, sizeof(*answer_case_attrib));
+    if (EXIT_SUCCESS == ok) ok = answer_facts_write(file,
+      answer_relation_facts, header.nrelation, sizeof(*answer_relation_facts));
+    if (EXIT_SUCCESS == ok) ok = answer_facts_write(file,
+      answer_identity_facts, header.nidentity, sizeof(*answer_identity_facts));
+    if (EXIT_SUCCESS == ok) ok = answer_facts_write(file,
+      answer_describe_facts, header.ndescribe, sizeof(*answer_describe_facts));
+    if (EXIT_SUCCESS == ok) ok = answer_facts_write(file,
+      answer_docdef_facts, header.ndocdef, sizeof(*answer_docdef_facts));
+    if (EXIT_SUCCESS == ok) ok = answer_facts_write(file,
+      answer_location_facts, header.nlocation,
+      sizeof(*answer_location_facts));
+    if (EXIT_SUCCESS == ok) ok = answer_facts_write(file, answer_type_facts,
+      header.ntype, sizeof(*answer_type_facts));
+    if (EXIT_SUCCESS == ok) ok = answer_facts_write(file, answer_own_facts,
+      header.nown, sizeof(*answer_own_facts));
+    fclose(file);
+    /* A half-written cache would be read back as a valid one, so it is removed
+       rather than left for the next run to trust. */
+    if (EXIT_SUCCESS != ok) remove(converse_facts_path());
+  }
+}
+
+
+static int answer_facts_load(const libxs_registry_t* corpus,
+  const libxs_lexicon_t* lexicon)
+{
+  int result = EXIT_FAILURE;
+  FILE* file = fopen(converse_facts_path(), "rb");
+  if (NULL != file) {
+    answer_facts_header_t header;
+    memset(&header, 0, sizeof(header));
+    if (1 == fread(&header, sizeof(header), 1, file)
+      && ANSWER_FACTS_MAGIC == header.magic
+      && ANSWER_FACTS_VERSION == header.version
+      && header.stamp == answer_facts_stamp(corpus, lexicon))
+    {
+      unsigned int* case_upper = (unsigned int*)answer_facts_read(file,
+        header.ncase, sizeof(*answer_case_upper));
+      unsigned int* case_total = (unsigned int*)answer_facts_read(file,
+        header.ncase, sizeof(*answer_case_total));
+      unsigned int* case_unforced = (unsigned int*)answer_facts_read(file,
+        header.ncase, sizeof(*answer_case_unforced));
+      unsigned int* case_attrib = (unsigned int*)answer_facts_read(file,
+        header.ncase, sizeof(*answer_case_attrib));
+      answer_relation_fact_t* relation = (answer_relation_fact_t*)
+        answer_facts_read(file, header.nrelation,
+          sizeof(*answer_relation_facts));
+      answer_identity_fact_t* identity = (answer_identity_fact_t*)
+        answer_facts_read(file, header.nidentity,
+          sizeof(*answer_identity_facts));
+      answer_describe_fact_t* describe = (answer_describe_fact_t*)
+        answer_facts_read(file, header.ndescribe,
+          sizeof(*answer_describe_facts));
+      answer_docdef_fact_t* docdef = (answer_docdef_fact_t*)
+        answer_facts_read(file, header.ndocdef, sizeof(*answer_docdef_facts));
+      answer_location_fact_t* location = (answer_location_fact_t*)
+        answer_facts_read(file, header.nlocation,
+          sizeof(*answer_location_facts));
+      answer_type_fact_t* type = (answer_type_fact_t*)
+        answer_facts_read(file, header.ntype, sizeof(*answer_type_facts));
+      answer_own_fact_t* own = (answer_own_fact_t*)
+        answer_facts_read(file, header.nown, sizeof(*answer_own_facts));
+      /* All or nothing: a partially adopted layer answers from one half of a
+         corpus with the census of another. */
+      if ((0 == header.ncase || (NULL != case_upper && NULL != case_total
+          && NULL != case_unforced && NULL != case_attrib))
+        && (0 == header.nrelation || NULL != relation)
+        && (0 == header.nidentity || NULL != identity)
+        && (0 == header.ndescribe || NULL != describe)
+        && (0 == header.ndocdef || NULL != docdef)
+        && (0 == header.nlocation || NULL != location)
+        && (0 == header.ntype || NULL != type)
+        && (0 == header.nown || NULL != own))
+      {
+        answer_case_free();
+        answer_relation_facts_free();
+        answer_identity_facts_free();
+        answer_describe_facts_free();
+        answer_docdef_facts_free();
+        answer_location_facts_free();
+        answer_type_facts_free();
+        answer_own_facts_free();
+        answer_case_upper = case_upper;
+        answer_case_total = case_total;
+        answer_case_unforced = case_unforced;
+        answer_case_attrib = case_attrib;
+        answer_case_size = header.ncase;
+        answer_relation_facts = relation;
+        answer_relation_facts_size = header.nrelation;
+        answer_identity_facts = identity;
+        answer_identity_facts_size = header.nidentity;
+        answer_describe_facts = describe;
+        answer_describe_facts_size = header.ndescribe;
+        answer_docdef_facts = docdef;
+        answer_docdef_facts_size = header.ndocdef;
+        answer_location_facts = location;
+        answer_location_facts_size = header.nlocation;
+        answer_type_facts = type;
+        answer_type_facts_size = header.ntype;
+        answer_own_facts = own;
+        answer_own_facts_size = header.nown;
+        answer_relation_facts_index();
+        result = EXIT_SUCCESS;
+      }
+      else {
+        free(case_upper); free(case_total); free(case_unforced);
+        free(case_attrib); free(relation);
+        free(identity); free(describe); free(docdef); free(location);
+        free(type); free(own);
+      }
+    }
+    fclose(file);
+  }
+  return result;
 }
 
 /**
@@ -2690,7 +5334,9 @@ static int answer_relation_fact_reply(const char* query_text,
   int query_section_len;
   int count = 0;
   int slot;
-  size_t fact_pos;
+  const unsigned int* candidates;
+  unsigned int ncandidates = 0;
+  unsigned int candidate;
   if (NULL == query_text || NULL == output || 0 == output_size
     || 0 == answer_relation_facts_size) return EXIT_FAILURE;
   relation_len = answer_query_be_word(query_text, query_len, relation,
@@ -2709,8 +5355,18 @@ static int answer_relation_fact_reply(const char* query_text,
     answer_made[slot] = 0;
     answer_scores[slot] = 0.0;
   }
-  for (fact_pos = 0; fact_pos < answer_relation_facts_size; ++fact_pos) {
-    const answer_relation_fact_t* fact = answer_relation_facts + fact_pos;
+  /**
+   * Candidates come from the index, which holds the facts stating this relation
+   * under any of its names, in fact order. The three predicates below still
+   * decide, so the index can only cost a scan, never an answer. A relation with
+   * no postings is one no fact states under any of its names, which is the same
+   * nothing the scan would have found.
+   */
+  candidates = answer_fact_index_get(&answer_relation_by_relation,
+    answer_word_key(relation, relation_len), &ncandidates);
+  for (candidate = 0; candidate < ncandidates; ++candidate) {
+    const answer_relation_fact_t* fact = answer_relation_facts
+      + candidates[candidate];
     if (0 != answer_relation_fact_relation_match(relation, fact)
       && 0 != answer_relation_fact_actor_match(actor, actor_len, fact)
       && 0 != answer_relation_fact_section_match(query_section,
@@ -2859,7 +5515,7 @@ static int answer_relation_aggregate_reply(const libxs_registry_t* corpus,
       answer_lens[slot] = 0;
       answer_scores[slot] = 0.0;
     }
-    value = libxs_registry_begin_length(corpus, &key, &key_size, &cursor);
+    value = corpus_iter_begin_length(corpus, &key, &key_size, &cursor);
     while (NULL != value) {
       const corpus_entry_t* entry = (const corpus_entry_t*)value;
       /* The corpus deliberately holds keys of two sizes, so the size must come
@@ -2920,7 +5576,7 @@ static int answer_relation_aggregate_reply(const libxs_registry_t* corpus,
           ++count;
         }
       }
-      value = libxs_registry_next_length(corpus, &key, &key_size, &cursor);
+      value = corpus_iter_next_length(corpus, &key, &key_size, &cursor);
     }
     if (count > 1) {
       size_t pos = 0;
@@ -3051,7 +5707,7 @@ static libxs_predict_t* answer_predict_build(const libxs_registry_t* corpus,
   if (NULL == corpus || NULL == query || NULL == lexicon) return NULL;
   model = answer_predict_create(profile);
   if (NULL == model) return NULL;
-  value = libxs_registry_begin_length(corpus, &key, &key_size, &cursor);
+  value = corpus_iter_begin_length(corpus, &key, &key_size, &cursor);
   while (NULL != value) {
     const corpus_entry_t* entry = (const corpus_entry_t*)value;
     size_t entry_size = (NULL != key)
@@ -3068,7 +5724,7 @@ static libxs_predict_t* answer_predict_build(const libxs_registry_t* corpus,
         ++ntrain;
       }
     }
-    value = libxs_registry_next_length(corpus, &key, &key_size, &cursor);
+    value = corpus_iter_next_length(corpus, &key, &key_size, &cursor);
   }
   if (ntrain >= 4 && EXIT_SUCCESS == answer_predict_build_model(model,
     profile))
@@ -3497,7 +6153,7 @@ static int answer_select(const libxs_registry_t* corpus,
         rules, nrules, query_type, profile);
       predictor = query_predictor;
     }
-    value = libxs_registry_begin_length(corpus, &key, &key_size, &cursor);
+    value = corpus_iter_begin_length(corpus, &key, &key_size, &cursor);
     while (NULL != value) {
       const corpus_entry_t* entry = (const corpus_entry_t*)value;
       size_t entry_size = (NULL != key)
@@ -3512,7 +6168,7 @@ static int answer_select(const libxs_registry_t* corpus,
         && 0 == corpus_entry_section_match(entry, entry_size,
           query_section, query_section_len))
       {
-        value = libxs_registry_next_length(corpus, &key, &key_size, &cursor);
+        value = corpus_iter_next_length(corpus, &key, &key_size, &cursor);
         continue;
       }
       if (0 != query_type_prefers_sentence(query_type)
@@ -3520,7 +6176,7 @@ static int answer_select(const libxs_registry_t* corpus,
         && (0 == text_starts_sentence(entry->text, entry->text_len)
           || 0 == text_ends_sentence(entry->text, entry->text_len)))
       {
-        value = libxs_registry_next(corpus, &key, &cursor);
+        value = corpus_iter_next(corpus, &key, &cursor);
         continue;
       }
       if (QUERY_WHO == query_type && query_be_len > 0
@@ -3528,7 +6184,7 @@ static int answer_select(const libxs_registry_t* corpus,
         && 0 == answer_relation_match_query(rank_query_text, rank_query_len,
           query_type, entry, &relation_match))
       {
-        value = libxs_registry_next(corpus, &key, &cursor);
+        value = corpus_iter_next(corpus, &key, &cursor);
         continue;
       }
       base_score = lexical_score(&query, lexicon, rules, nrules, entry,
@@ -3584,7 +6240,7 @@ static int answer_select(const libxs_registry_t* corpus,
           }
         }
       }
-      value = libxs_registry_next(corpus, &key, &cursor);
+      value = corpus_iter_next(corpus, &key, &cursor);
     }
   }
   libxs_predict_destroy(query_predictor);
@@ -4086,25 +6742,96 @@ static int answer_query_is_negated(const char* query_text, size_t query_len)
 }
 
 
+/**
+ * Ask each fact resolver in turn and keep the BEST-GROUNDED answer, not the
+ * first one.
+ *
+ * This used to be a short-circuit chain, so dispatch order alone decided which
+ * resolver spoke. That is fine while every resolver rests on asserted knowledge
+ * and wrong as soon as one does not: a resolver holding only a LEARNED binding
+ * pre-empted a later one that could have answered from an ASSERTED term, and no
+ * amount of ordering WITHIN a resolver can reach that -- the competition is
+ * between resolvers. Provenance orders them for the same reason it orders the
+ * facts inside one, and by the same total order over three known values.
+ *
+ * With no rules learned every answer is ASSERTED, so the first success wins and
+ * breaks the loop: the historical behaviour and the historical cost, exactly.
+ */
 static int answer_fact_reply(const libxs_registry_t* corpus,
   const char* query_text, size_t query_len, char* output, size_t output_size)
 {
   int result = EXIT_FAILURE;
-  answer_fact_section_set(NULL, 0);
-  answer_fact_learned_set(NULL, 0, RELATION_RULE_ASSERTED);
-  if (0 == answer_query_is_negated(query_text, query_len)
-    && (EXIT_SUCCESS == answer_relation_fact_reply(query_text, query_len,
-      output, output_size)
-    || EXIT_SUCCESS == answer_relation_aggregate_reply(corpus, query_text,
-      query_len, output, output_size)
-    || EXIT_SUCCESS == answer_identity_fact_reply(query_text, query_len,
-      output, output_size)
-    || EXIT_SUCCESS == answer_describe_fact_reply(query_text, query_len,
-      output, output_size)
-    || EXIT_SUCCESS == answer_docdef_fact_reply(query_text, query_len,
-      output, output_size)))
-  {
+  int best = RELATION_RULE_PROPOSED + 1;
+  char best_output[COMPOSE_MAXTEXT];
+  char best_section[sizeof(answer_fact_section)];
+  char best_learned[sizeof(answer_fact_learned)];
+  int best_section_len = 0;
+  int best_learned_len = 0;
+  int best_learned_from = RELATION_RULE_ASSERTED;
+  int step;
+  best_output[0] = '\0';
+  best_section[0] = '\0';
+  best_learned[0] = '\0';
+  if (0 == answer_query_is_negated(query_text, query_len)) {
+    for (step = 0; step < 9 && RELATION_RULE_ASSERTED < best; ++step) {
+      int ok;
+      answer_fact_section_set(NULL, 0);
+      answer_fact_learned_set(NULL, 0, RELATION_RULE_ASSERTED);
+      output[0] = '\0';
+      switch (step) {
+        case 0: ok = answer_relation_fact_reply(query_text, query_len,
+          output, output_size); break;
+        case 1: ok = answer_relation_aggregate_reply(corpus, query_text,
+          query_len, output, output_size); break;
+        case 2: ok = answer_identity_fact_reply(query_text, query_len,
+          output, output_size); break;
+        case 3: ok = answer_describe_fact_reply(query_text, query_len,
+          output, output_size); break;
+        case 4: ok = answer_location_fact_reply(query_text, query_len,
+          output, output_size); break;
+        case 5: ok = answer_type_fact_reply(query_text, query_len,
+          output, output_size); break;
+        case 6: ok = answer_own_fact_reply(query_text, query_len,
+          output, output_size); break;
+        case 7: ok = answer_topic_reply(query_text, query_len,
+          output, output_size); break;
+        default: ok = answer_docdef_fact_reply(query_text, query_len,
+          output, output_size); break;
+      }
+      if (EXIT_SUCCESS == ok) {
+        /* A reply names the term it rests on only when that term was not
+           asserted, so an empty label IS the asserted case. */
+        const int prov = (0 < answer_fact_learned_len)
+          ? answer_fact_learned_from : RELATION_RULE_ASSERTED;
+        if (prov < best) {
+          size_t len = strlen(output);
+          if (len >= sizeof(best_output)) len = sizeof(best_output) - 1;
+          memcpy(best_output, output, len);
+          best_output[len] = '\0';
+          memcpy(best_section, answer_fact_section,
+            (size_t)answer_fact_section_len + 1);
+          best_section_len = answer_fact_section_len;
+          memcpy(best_learned, answer_fact_learned,
+            (size_t)answer_fact_learned_len + 1);
+          best_learned_len = answer_fact_learned_len;
+          best_learned_from = answer_fact_learned_from;
+          best = prov;
+        }
+      }
+    }
+  }
+  if (RELATION_RULE_PROPOSED >= best) {
+    size_t len = strlen(best_output);
+    if (len >= output_size) len = output_size - 1;
+    memcpy(output, best_output, len);
+    output[len] = '\0';
+    answer_fact_section_set(best_section, best_section_len);
+    answer_fact_learned_set(best_learned, best_learned_len, best_learned_from);
     result = EXIT_SUCCESS;
+  }
+  else {
+    answer_fact_section_set(NULL, 0);
+    answer_fact_learned_set(NULL, 0, RELATION_RULE_ASSERTED);
   }
   return result;
 }
@@ -4405,14 +7132,27 @@ static int answer_query(const libxs_registry_t* corpus,
   double scores[ANSWER_MAX];
   int answer_count;
   int rendered;
+  int fact_ok, fact_prov;
   char reply[COMPOSE_MAXTEXT];
+  char fact_section[sizeof(answer_fact_section)];
+  int fact_section_len;
   char visible[4 * COMPOSE_MAXTEXT];
   if (NULL != out_reply && out_size > 0) out_reply[0] = '\0';
-  if (EXIT_SUCCESS == answer_fact_reply(corpus, query_text, query_len,
-    reply, sizeof(reply)))
-  {
+  fact_ok = (EXIT_SUCCESS == answer_fact_reply(corpus, query_text, query_len,
+    reply, sizeof(reply))) ? 1 : 0;
+  fact_prov = (0 < answer_fact_learned_len)
+    ? answer_fact_learned_from : RELATION_RULE_ASSERTED;
+  memcpy(fact_section, answer_fact_section,
+    (size_t)answer_fact_section_len + 1);
+  fact_section_len = answer_fact_section_len;
+  /**
+   * A fact answer resting on ASSERTED knowledge is final, exactly as it always
+   * was -- so with no rules learned nothing below this line ever runs, and the
+   * cost and the output are unchanged.
+   */
+  if (0 != fact_ok && RELATION_RULE_ASSERTED == fact_prov) {
     printf("%s\n", reply);
-    answer_print_citation(answer_fact_section, answer_fact_section_len);
+    answer_print_citation(fact_section, fact_section_len);
     answer_print_learned();
     if (NULL != out_reply && out_size > 0) {
       size_t rn = strlen(reply);
@@ -4426,6 +7166,30 @@ static int answer_query(const libxs_registry_t* corpus,
     lexicon, rules, nrules, answer_model, profile, entries, scores);
   answer_count = answer_hier_reorder(query_text, query_len, entries, scores,
     answer_count);
+  /**
+   * The FACT layer pre-empted the RANKED layer unconditionally, which is wrong
+   * as soon as the fact rests on a learned term and the ranked answer does not:
+   * the reader was handed a guess while an asserted answer went unasked for.
+   * Rendered quietly first, because deciding needs the text -- the class term a
+   * reply rests on is read out of the reply, the same way its label is.
+   */
+  rendered = answer_render(query_text, query_len, entries, answer_count,
+    lexicon, rules, nrules, 0, visible, sizeof(visible));
+  if (0 != fact_ok && (0 == rendered
+    || answer_relation_rule_provenance(RELATION_RULE_PERSON, visible,
+        (int)strlen(visible)) >= fact_prov))
+  {
+    printf("%s\n", reply);
+    answer_print_citation(fact_section, fact_section_len);
+    answer_print_learned();
+    if (NULL != out_reply && out_size > 0) {
+      size_t rn = strlen(reply);
+      if (rn >= out_size) rn = out_size - 1;
+      memcpy(out_reply, reply, rn);
+      out_reply[rn] = '\0';
+    }
+    return 1;
+  }
   rendered = answer_render(query_text, query_len, entries, answer_count,
     lexicon, rules, nrules, 1, visible, sizeof(visible));
   if (2 == rendered && NULL != out_reply && out_size > 0) {
@@ -4624,6 +7388,9 @@ static int eval_converse(const libxs_registry_t* corpus,
     int fact_pass;
     int fact_checked;
     int have_fact;
+    int fact_prov;
+    char fact_section[sizeof(answer_fact_section)];
+    int fact_section_len;
     int cite_pass;
     int cite_len;
     const char* cite = NULL;
@@ -4660,18 +7427,11 @@ static int eval_converse(const libxs_registry_t* corpus,
        whether the fixture states fact-terms has nothing to do with it. */
     have_fact = (EXIT_SUCCESS == answer_fact_reply(corpus, qtext, qlen,
       reply, sizeof(reply))) ? 1 : 0;
-    if (0 != fact_checked) {
-      if (0 != have_fact) {
-        fact_pass = eval_terms_match_text(reply, (int)strlen(reply),
-          fields[3]);
-        /* Whichever resolver answered published its section, so the citation
-           under test is the one the reader would have been shown. */
-        cite_len = answer_citation_len(answer_fact_section,
-          answer_fact_section_len);
-        cite = answer_fact_section;
-      }
-      else fact_pass = 0;
-    }
+    fact_prov = (0 < answer_fact_learned_len)
+      ? answer_fact_learned_from : RELATION_RULE_ASSERTED;
+    memcpy(fact_section, answer_fact_section,
+      (size_t)answer_fact_section_len + 1);
+    fact_section_len = answer_fact_section_len;
     conv_remember(qtext, qlen);
     nanswers = answer_select(corpus, qtext, qlen,
       ANSWER_MAX, lexicon, rules, nrules,
@@ -4681,6 +7441,31 @@ static int eval_converse(const libxs_registry_t* corpus,
     any_pass = eval_terms_match_answers(entries, nanswers, fields[1], 0);
     reply_pass = 1;
     LIBXS_UNUSED(scores);
+    /**
+     * THE TEXT THE READER IS SHOWN, decided exactly as answer_query decides it:
+     * answer_render is the renderer the interactive path prints with, called
+     * with printing off, and a fact answer resting on a LEARNED term yields to a
+     * better-grounded ranked one. Both the reply-terms and the FACT-terms are
+     * scored against this, because a fixture states what the reader must be
+     * told; which layer says it is an implementation detail.
+     */
+    answer_render(qtext, qlen, entries, nanswers, lexicon, rules, nrules, 0,
+      visible, sizeof(visible));
+    if (0 != have_fact && ('\0' == visible[0]
+      || answer_relation_rule_provenance(RELATION_RULE_PERSON, visible,
+          (int)strlen(visible)) >= fact_prov))
+    {
+      size_t rn = strlen(reply);
+      if (rn >= sizeof(visible)) rn = sizeof(visible) - 1;
+      memcpy(visible, reply, rn);
+      visible[rn] = '\0';
+      cite = fact_section;
+      cite_len = answer_citation_len(fact_section, fact_section_len);
+    }
+    if (0 != fact_checked) {
+      fact_pass = (0 != have_fact) ? eval_terms_match_text(visible,
+        (int)strlen(visible), fields[3]) : 0;
+    }
     /* Before the fact-only and abstention branches, both of which return early:
        a fact reply is exactly the kind of answer whose attribution matters. */
     if (0 == cite_len && 0 < nanswers && NULL != entries[0]) {
@@ -4752,23 +7537,6 @@ static int eval_converse(const libxs_registry_t* corpus,
       }
       if (0 != pass) ++npass;
       continue;
-    }
-    /**
-     * The reply expectation is scored against THE TEXT THE READER IS SHOWN, not
-     * against answer_reply -- which fails for most retrieved answers, those
-     * being shown as evidence instead, so the old check could only ever be
-     * written for the few queries that compose a reply. answer_render is the
-     * same renderer the interactive path prints with, called with printing off.
-     */
-    if (0 != have_fact) {
-      size_t rn = strlen(reply);
-      if (rn >= sizeof(visible)) rn = sizeof(visible) - 1;
-      memcpy(visible, reply, rn);
-      visible[rn] = '\0';
-    }
-    else {
-      answer_render(qtext, qlen, entries, nanswers, lexicon, rules, nrules, 0,
-        visible, sizeof(visible));
     }
     if (0 == eval_terms_empty(fields[2])) {
       reply_pass = eval_terms_match_text(visible, (int)strlen(visible),
@@ -5341,20 +8109,41 @@ int converse_qa_run(converse_run_t* run)
   answer_bridge_report(stderr);
   /* Before the facts and before any query: the resolvers ask it which words the
      corpus uses as names, which is what decides who answers. */
-  answer_case_build(run->corpus, run->lexicon, run->rules, run->nrules);
-  converse_stage_end("f_case");
-  answer_relation_facts_build(run->corpus);
+  /* The derived layer is most of a warm start -- the census and the four fact
+     builds each walk the whole corpus -- so it is cached under a stamp of what
+     it was built from, and rebuilt whenever that differs. */
+  if (EXIT_SUCCESS != answer_facts_load(run->corpus, run->lexicon)) {
+    answer_case_build(run->corpus, run->lexicon, run->rules, run->nrules);
+    answer_case_report(stderr);
+    converse_stage_end("f_case");
+    answer_verbs_build(run->corpus);
+    converse_stage_end("f_verbs");
+    answer_relation_facts_build(run->corpus);
+    converse_stage_end("f_relation");
+    answer_identity_facts_build(run->corpus);
+    converse_stage_end("f_identity");
+    answer_describe_facts_build(run->corpus);
+    converse_stage_end("f_describe");
+    answer_docdef_facts_build(run->corpus);
+    converse_stage_end("f_docdef");
+    answer_location_facts_build(run->corpus);
+    converse_stage_end("f_location");
+    answer_type_facts_build(run->corpus);
+    converse_stage_end("f_type");
+    answer_own_facts_build(run->corpus);
+    converse_stage_end("f_own");
+    answer_facts_save(run->corpus, run->lexicon);
+    converse_stage_end("f_save");
+  }
+  else converse_stage_end("f_load");
   answer_relation_facts_report(stderr);
-  converse_stage_end("f_relation");
-  answer_identity_facts_build(run->corpus);
   answer_identity_facts_report(stderr);
-  converse_stage_end("f_identity");
-  answer_describe_facts_build(run->corpus);
   answer_describe_facts_report(stderr);
-  converse_stage_end("f_describe");
-  answer_docdef_facts_build(run->corpus);
   answer_docdef_facts_report(stderr);
-  converse_stage_end("f_docdef");
+  answer_location_facts_report(stderr);
+  answer_type_facts_report(stderr);
+  answer_own_facts_report(stderr);
+  answer_verbs_report(stderr);
   converse_judge_open(run->corpus);
   if (0 != run->eval_mode) {
     result = eval_converse(run->corpus, run->lexicon, run->rules, run->nrules,
@@ -5378,6 +8167,10 @@ int converse_qa_run(converse_run_t* run)
     else converse_qa_complete(run, ngram_model);
   }
   else result = converse_qa_answer(run);
+  /* Reported for every mode, not only the prediction eval: setup dominates an
+     interactive session and a fixture run, and those were the two the timer
+     could not be read in. */
+  converse_stage_report();
   converse_judge_close();
   answer_case_free();
   answer_bridge_free_loaded();
@@ -5385,5 +8178,9 @@ int converse_qa_run(converse_run_t* run)
   answer_identity_facts_free();
   answer_describe_facts_free();
   answer_docdef_facts_free();
+  answer_location_facts_free();
+  answer_type_facts_free();
+  answer_own_facts_free();
+  answer_verbs_free();
   return result;
 }

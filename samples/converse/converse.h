@@ -9,13 +9,33 @@
 #include <libxs/libxs_reg.h>
 
 #include <string.h>
+#include <stddef.h>
 
 #define FPRINT_ORDER 4
 #define CORPUS_FILE "converse.dat"
 #define COMPOSE_NDIMS 10
 #define COMPOSE_BITS 6
 #define COMPOSE_MAXTEXT 512
-#define ENTRY_TOKEN_MAX 48
+/**
+ * Token slots an entry carries, and the single largest lever on corpus size: the
+ * two arrays are 288 of the 560 FIXED bytes an entry spends, and they ran at ~35%
+ * occupancy at the old value of 48.
+ *
+ * 32 was chosen by measurement, not taste. Entries exceeding it are 1.1% on the
+ * tales and 2.9% on Wikipedia prose, and only 9 and 181 respectively ever reached
+ * 48 at all. Cutting to 32 takes the corpus file down 13% while the QA gates stay
+ * at 19/19 and 14/14 and EVERY recombination figure is byte-identical -- made,
+ * pivot, ceiling, floor, coherence, penalty and the pivot index alike. 24 was also
+ * measured (-19%) and declined: it truncates 10% of entries for six more points.
+ *
+ * Changing this changes the STORED LAYOUT. There is no compatibility burden --
+ * corpus_fixup detects a file written by another layout and discards it so the
+ * next run re-ingests -- but a sweep still costs a full re-ingest each step:
+ * make ECFLAGS="-DENTRY_TOKEN_MAX=48".
+ */
+#ifndef ENTRY_TOKEN_MAX
+# define ENTRY_TOKEN_MAX 32
+#endif
 #define ENTRY_SECTION_MAX 64
 
 #define ENTRY_LEX_ENTITY 0x0001u
@@ -121,11 +141,33 @@ LIBXS_INLINE void corpus_fprint_unpack(libxs_fprint_t* dst,
 }
 
 
+/**
+ * What a stored corpus value IS. The tag is FIRST in every record kind and at the
+ * same offset in all of them, so a reader can classify a value before it knows
+ * how large the value is -- which is the whole point: a span is sixteen bytes and
+ * a full entry is at least 464, and reading `scale` out of the former would be
+ * out of bounds. Zero is deliberately not a valid kind, so a record written by a
+ * layout that predates the tag (where these bytes were fprint.l2[0]) or one left
+ * uninitialized by memset does not pass for a full entry.
+ */
+enum {
+  ENTRY_KIND_FULL = 0x4655u,
+  ENTRY_KIND_SPAN = 0x5350u,
+  ENTRY_KIND_BLOB = 0x424cu
+};
+
+/**
+ * kind, connector, scale and text_len lead so the tag sits at offset zero and the
+ * eight bytes that classify a record cost nothing: they fill the slack the
+ * fingerprint's alignment used to leave behind it, and an entry is the same 464
+ * bytes of metadata it was before the tag existed.
+ */
 typedef struct corpus_entry_t {
-  corpus_fprint_t fprint;
-  int text_len;
+  unsigned short kind;
   unsigned char connector;
   unsigned char scale;
+  int text_len;
+  corpus_fprint_t fprint;
   unsigned short ntokens;
   unsigned short ncontent;
   unsigned short nentities;
@@ -154,6 +196,211 @@ LIBXS_INLINE size_t corpus_entry_size(const corpus_entry_t* entry)
 {
   const size_t used = (0 < entry->text_len) ? (size_t)entry->text_len : 0;
   return sizeof(*entry) - COMPOSE_MAXTEXT + used + 1;
+}
+
+
+/**
+ * The common prefix of every record kind: enough to classify a value and, for the
+ * kinds that carry text, to know how long that text is. Nothing beyond these eight
+ * bytes may be read before the kind has been established.
+ */
+typedef struct corpus_head_t {
+  unsigned short kind;
+  unsigned char connector;
+  unsigned char scale;
+  int text_len;
+} corpus_head_t;
+
+/** The kind of a stored value, or zero if it carries no valid tag. */
+LIBXS_INLINE unsigned int corpus_value_kind(const void* value)
+{
+  return (NULL != value) ? ((const corpus_head_t*)value)->kind : 0u;
+}
+
+
+/** The scale of a stored value; readable for every record kind. */
+LIBXS_INLINE unsigned int corpus_value_scale(const void* value)
+{
+  return (NULL != value) ? ((const corpus_head_t*)value)->scale : 0u;
+}
+
+
+/**
+ * A clause window that is LOCATED rather than stored: which parent text it was cut
+ * from, and where. Sixteen bytes instead of the 464 of metadata plus text an entry
+ * spends, which matters because the windows are the bulk of the corpus -- 11466 of
+ * 16092 entries on the tales -- and every one of them is a byte range of a
+ * paragraph that is already being kept.
+ *
+ * A span is keyed exactly as the entry it replaces was, by the content hash of its
+ * text, so the SET of keys and therefore the corpus iteration ORDER is the same
+ * either way. That is what lets the derived pool reproduce the recombination
+ * figures rather than merely resemble them, and it is also why de-duplication
+ * needs no second thought: the collapse of overlapping windows already happened in
+ * the key space.
+ */
+typedef struct corpus_span_t {
+  unsigned short kind;
+  unsigned char connector;
+  unsigned char scale;
+  int text_len;
+  unsigned int parent;
+  unsigned int offset;
+} corpus_span_t;
+
+/**
+ * The parent text of a set of spans, with the section and source they inherit.
+ * Section and source live here rather than in each span because a window cannot
+ * span two paragraphs, so all windows of one parent agree on both -- and the
+ * section alone is 66 of the bytes a span would otherwise have to carry.
+ */
+typedef struct corpus_blob_t {
+  unsigned short kind;
+  unsigned char connector;
+  unsigned char scale;
+  int text_len;
+  unsigned short source;
+  unsigned short section_len;
+  char section[ENTRY_SECTION_MAX];
+  char text[1];
+} corpus_blob_t;
+
+#define CORPUS_BLOB_META_SIZE offsetof(corpus_blob_t, text)
+
+/**
+ * Blob keys are twelve bytes, distinct from the sixteen and eighteen of a content
+ * key, so the two key spaces cannot meet in the one registry that holds both.
+ */
+LIBXS_INLINE void corpus_blob_key(unsigned int id, unsigned char key[],
+  size_t* key_size)
+{
+  const unsigned int magic = 0x424c4f42u;
+  memcpy(key, &magic, 4);
+  memcpy(key + 4, &id, 4);
+  memset(key + 8, 0, 4);
+  *key_size = 12;
+}
+
+/**
+ * The entry a stored value stands for: itself if it is a full record, the
+ * materialized window if it is a span, and nothing if it is a parent text.
+ *
+ * A span has to become a real entry because its readers compare token ids and
+ * fingerprints, not text -- so "span" means REBUILT ON DEMAND, not referenced in
+ * place. This flavour CACHES the rebuild, because the pivot index keeps entry
+ * pointers for the length of a run; it therefore costs what the stored windows used
+ * to, and only the reader that needs stable pointers should use it.
+ */
+const corpus_entry_t* corpus_entry_view(const void* value);
+
+/**
+ * The same entry, materialized into the caller's scratch and forgotten again.
+ *
+ * This is the flavour that pays for itself: the passes that TRAIN on the windows --
+ * the successor embedding, the byte-pair vocabulary, the byte model -- read each one
+ * once and never look back, so they need no more memory than a single entry. Which
+ * of the two a reader wants is decided by whether it keeps the pointer, and getting
+ * that wrong is not silent: a cached walk grows to the size of the pool.
+ */
+const corpus_entry_t* corpus_entry_scan(const void* value,
+  corpus_entry_t* scratch);
+
+/** Whether a stored value stands for an entry that can be materialized. */
+int corpus_value_viable(const void* value);
+
+/** Bind the lexicon a materialized window must be rebuilt against. */
+void corpus_view_bind(libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules,
+  int nrules);
+
+/** Release every materialized window. */
+void corpus_view_free(void);
+
+
+/**
+ * Enumerate the corpus over FULL entries, skipping every other record kind.
+ *
+ * Every reader that walks the corpus wants entries, and all but one of them wants
+ * only the entries that carry their own metadata. Filtering in the ITERATOR rather
+ * than at the cast is what makes the other kinds safe to introduce: a reader keeps
+ * dereferencing what it is handed, and there is one place -- not forty -- where a
+ * value is classified. The one reader that does want the derived records
+ * (recombination, whose donor pool they are) asks for them explicitly.
+ */
+LIBXS_INLINE void* corpus_iter_begin(const libxs_registry_t* corpus,
+  const void** key, size_t* cursor)
+{
+  void* result = libxs_registry_begin(corpus, key, cursor);
+  while (NULL != result && ENTRY_KIND_FULL != corpus_value_kind(result)) {
+    result = libxs_registry_next(corpus, key, cursor);
+  }
+  return result;
+}
+
+
+LIBXS_INLINE void* corpus_iter_next(const libxs_registry_t* corpus,
+  const void** key, size_t* cursor)
+{
+  void* result = libxs_registry_next(corpus, key, cursor);
+  while (NULL != result && ENTRY_KIND_FULL != corpus_value_kind(result)) {
+    result = libxs_registry_next(corpus, key, cursor);
+  }
+  return result;
+}
+
+
+/**
+ * The same FULL-entry enumeration, yielding each record's key size as well. The
+ * corpus deliberately holds keys of more than one size, so a reader that needs the
+ * stored size of a value has to ask the iterator for the key it belongs to.
+ */
+LIBXS_INLINE void* corpus_iter_begin_length(const libxs_registry_t* corpus,
+  const void** key, size_t* key_size, size_t* cursor)
+{
+  void* result = libxs_registry_begin_length(corpus, key, key_size, cursor);
+  while (NULL != result && ENTRY_KIND_FULL != corpus_value_kind(result)) {
+    result = libxs_registry_next_length(corpus, key, key_size, cursor);
+  }
+  return result;
+}
+
+
+LIBXS_INLINE void* corpus_iter_next_length(const libxs_registry_t* corpus,
+  const void** key, size_t* key_size, size_t* cursor)
+{
+  void* result = libxs_registry_next_length(corpus, key, key_size, cursor);
+  while (NULL != result && ENTRY_KIND_FULL != corpus_value_kind(result)) {
+    result = libxs_registry_next_length(corpus, key, key_size, cursor);
+  }
+  return result;
+}
+
+
+/**
+ * Enumerate the corpus over every record that STANDS FOR an entry, materializing
+ * the spans on the way. Yields the values in the same order and at the same
+ * ordinals the full-entry flavour would have had before the windows were derived,
+ * which is what donor selection ("a donor is an entry later in corpus order")
+ * depends on.
+ */
+LIBXS_INLINE void* corpus_iterx_begin(const libxs_registry_t* corpus,
+  const void** key, size_t* cursor)
+{
+  void* result = libxs_registry_begin(corpus, key, cursor);
+  while (NULL != result && 0 == corpus_value_viable(result)) {
+    result = libxs_registry_next(corpus, key, cursor);
+  }
+  return result;
+}
+
+
+LIBXS_INLINE void* corpus_iterx_next(const libxs_registry_t* corpus,
+  const void** key, size_t* cursor)
+{
+  void* result = libxs_registry_next(corpus, key, cursor);
+  while (NULL != result && 0 == corpus_value_viable(result)) {
+    result = libxs_registry_next(corpus, key, cursor);
+  }
+  return result;
 }
 
 
@@ -204,7 +451,11 @@ typedef struct answer_predict_profile_t {
 } answer_predict_profile_t;
 
 enum { RELATION_RULE_ALIAS = 1, RELATION_RULE_PERSON, RELATION_RULE_SKIP,
-  RELATION_RULE_NEGATE, RELATION_RULE_NORM };
+  RELATION_RULE_NEGATE, RELATION_RULE_NORM, RELATION_RULE_CAPS,
+  RELATION_RULE_WHERE, RELATION_RULE_WHY, RELATION_RULE_HOW,
+  RELATION_RULE_PLACE, RELATION_RULE_TOPIC, RELATION_RULE_COPULA,
+  RELATION_RULE_ARTICLE, RELATION_RULE_PREP, RELATION_RULE_OWN,
+  RELATION_RULE_POSS, RELATION_RULE_AUX, RELATION_RULE_AGENT };
 
 /**
  * Where a rule came from. ASSERTED means someone wrote it in the rule file.
@@ -236,6 +487,8 @@ typedef struct answer_relation_match_t {
   int actor_len;
   int plural;
   int made;
+  /** Render in the voice the corpus used; see answer_relation_reply. */
+  int active;
   double score;
 } answer_relation_match_t;
 
@@ -338,5 +591,7 @@ libxs_ngram_t* converse_ngram_handle(void);
 const char* converse_bridge_path(void);
 const char* converse_eval_path(void);
 const char* converse_predict_eval_path(void);
+/** Where the derived fact layer is cached; see the stamp in converse_qa.c. */
+const char* converse_facts_path(void);
 
 #endif /*CONVERSE_H*/

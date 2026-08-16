@@ -3,9 +3,13 @@ todo*
 *.bridges
 *.eval*
 *.relations
+*.rules
+!converse.rules
 *.bin
 *.dat
+*.par
 *.lex
 *.prd
 *.predict
 *.ngram
+*.facts

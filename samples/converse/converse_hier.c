@@ -2024,6 +2024,7 @@ converse_hier_t* converse_hier_build(const libxs_registry_t* corpus,
     const char* expert_env = getenv("CONVERSE_HIER_EXPERT_ORDER");
     const char* rate_env = getenv("CONVERSE_HIER_EXPERT_RATE");
     const char* share_env = getenv("CONVERSE_HIER_EXPERT_SHARE");
+    corpus_entry_t scratch;
     const void* key = NULL;
     size_t cursor = 0;
     long index = 0;
@@ -2079,14 +2080,14 @@ converse_hier_t* converse_hier_build(const libxs_registry_t* corpus,
       && NULL != model->syllable_payloads
       && NULL != model->word_tokenizer && NULL != model->syllable_tokenizer)
     {
-      value = libxs_registry_begin(corpus, &key, &cursor);
+      value = corpus_iterx_begin(corpus, &key, &cursor);
       while (NULL != value) {
-        const corpus_entry_t* entry = (const corpus_entry_t*)value;
+        const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
         if (0 == hier_is_test(index, holdout, corpus_size)) {
           hier_count_text(model, entry->text, entry->text_len);
         }
         ++index;
-        value = libxs_registry_next(corpus, &key, &cursor);
+        value = corpus_iterx_next(corpus, &key, &cursor);
       }
       model->word_vocab = hier_symbol_assign(model->symbols,
         model->mincount, HIER_SYMBOL_FIRST);
@@ -2118,15 +2119,15 @@ converse_hier_t* converse_hier_build(const libxs_registry_t* corpus,
         key = NULL;
         cursor = 0;
         index = 0;
-        value = libxs_registry_begin(corpus, &key, &cursor);
+        value = corpus_iterx_begin(corpus, &key, &cursor);
         while (NULL != value) {
-          const corpus_entry_t* entry = (const corpus_entry_t*)value;
+          const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
           if (0 == hier_is_test(index, holdout, corpus_size)) {
             hier_train_text(model, entry->text, entry->text_len);
             hier_train_clock_text(model, entry->text, entry->text_len);
           }
           ++index;
-          value = libxs_registry_next(corpus, &key, &cursor);
+          value = corpus_iterx_next(corpus, &key, &cursor);
         }
         libxs_ngram_finalize(&model->word_model, model->word_vocab);
         libxs_ngram_finalize(&model->syllable_model, model->syllable_vocab);
@@ -2200,6 +2201,7 @@ int converse_hier_eval(converse_hier_t* model,
   if (NULL != model && 0 != model->ready && NULL != corpus) {
     hier_eval_t evaluation;
     hier_clock_eval_t clock_evaluation;
+    corpus_entry_t scratch;
     const void* key = NULL;
     size_t cursor = 0;
     long index = 0;
@@ -2215,16 +2217,16 @@ int converse_hier_eval(converse_hier_t* model,
         clock_evaluation.adaptive_expert_weight[expert_order] = uniform;
       }
     }
-    value = libxs_registry_begin(corpus, &key, &cursor);
+    value = corpus_iterx_begin(corpus, &key, &cursor);
     while (NULL != value) {
-      const corpus_entry_t* entry = (const corpus_entry_t*)value;
+      const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
       if (0 == holdout || 0 != hier_is_test(index, holdout, corpus_size)) {
         hier_score_text(model, entry->text, entry->text_len, &evaluation);
         hier_score_clock_text(model, entry->text, entry->text_len, 0.5,
           &clock_evaluation);
       }
       ++index;
-      value = libxs_registry_next(corpus, &key, &cursor);
+      value = corpus_iterx_next(corpus, &key, &cursor);
     }
     if (evaluation.bytes > 0.0 && evaluation.ntokens > 0) {
       fprintf(stdout, "predict-hier[%s%s]: top1=%.1f%% n=%ld bpc=%.3f\n",

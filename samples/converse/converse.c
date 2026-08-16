@@ -7,6 +7,7 @@
 #include <libxs/libxs_str.h>
 #include <libxs/libxs_mem.h>
 #include <libxs/libxs_hash.h>
+#include <libxs/libxs_hist.h>
 #include <libxs/libxs_malloc.h>
 #include <libxs/libxs_timer.h>
 
@@ -16,6 +17,13 @@
 
 #define RESPONSE_BUDGET 1
 #define CONVERSE_STAGE_MAX 12
+/**
+ * The single constant the rule learner's structural tests rest on: how unlikely
+ * a member's counts must be, under what the asserted members manage, before the
+ * learner is willing to call it a non-member. Every rate those tests compare
+ * against is measured from the corpus; this is the only number chosen.
+ */
+#define ANSWER_RULES_ALPHA 1e-3
 
 #define LEXICON_FILE "converse.lex"
 #define PREDICT_FILE "converse.prd"
@@ -38,8 +46,13 @@
 #define NORM_FILE "converse.norms"
 #define RELATION_LINE_MAX 1024
 #define EVAL_FILE "converse.eval"
+/** Expectations that hold with rule learning ON; the answers differ. */
+#define EVAL_LEARN_FILE "converse.learn.eval"
 
 #define NGRAM_FILE "converse.ngram"
+/** Derived from the corpus and the rules: rebuilt whenever the stamp differs. */
+#define FACTS_FILE "converse.facts"
+#define PARENT_FILE "converse.par"
 
 #define NGRAM_NATIVE_WIDTH 4
 
@@ -144,13 +157,24 @@ static const answer_predict_profile_t answer_predict_profiles[] = {
 };
 
 static char converse_path_corpus[CONVERSE_PATH_MAX] = CORPUS_FILE;
+static char converse_path_parent[CONVERSE_PATH_MAX] = PARENT_FILE;
 static char converse_path_lexicon[CONVERSE_PATH_MAX] = LEXICON_FILE;
 static char converse_path_predict[CONVERSE_PATH_MAX] = PREDICT_FILE;
 static char converse_path_bridge[CONVERSE_PATH_MAX] = BRIDGE_FILE;
 static char converse_path_relation[CONVERSE_PATH_MAX] = RELATION_FILE;
 static char converse_path_language[CONVERSE_PATH_MAX] = LANGUAGE_FILE;
+/**
+ * A corpus in another language needs its own function words and its own class
+ * members, NOT the shared ones plus its own: an English `person` rule asserted
+ * over a German text matched a German pronoun spelled the same way, and the
+ * learner then carried a pronoun as an asserted class member. Empty unless the
+ * namespace names one.
+ */
+static char converse_path_language_own[CONVERSE_PATH_MAX] = "";
 static char converse_path_norm[CONVERSE_PATH_MAX] = NORM_FILE;
+static char converse_path_facts[CONVERSE_PATH_MAX] = FACTS_FILE;
 static char converse_path_eval[CONVERSE_PATH_MAX] = EVAL_FILE;
+static char converse_path_eval_learn[CONVERSE_PATH_MAX] = EVAL_LEARN_FILE;
 static char converse_path_predict_eval[CONVERSE_PATH_MAX] = PREDICT_EVAL_FILE;
 
 static answer_relation_rule_t* answer_relation_rules = NULL;
@@ -219,6 +243,67 @@ static double token_emb_zsum = 0.0;
 static int token_emb_zvalid = 0;
 /** Tokenizer rules, held here because converse_run_t only borrows them. */
 static libxs_lexrule_t converse_lexrules[96];
+
+/**
+ * Parent texts live in their OWN registry, and that is not tidiness: the corpus is
+ * an open-addressed table iterated by slot, so records of any kind displace the
+ * probe sequence of colliding keys and PERMUTE the iteration. Donor selection is
+ * defined over corpus order ("a donor is an entry later than the host"), so 393
+ * parents mixed into the entry table were enough to move one join in fifty and with
+ * it every seam average -- while every count stayed identical, which is what made it
+ * look like a materialization bug. One registry, one kind of record.
+ *
+ * Parents are numbered rather than hashed, so a span costs four bytes to point at
+ * one. The counter resumes from the highest id the loaded file holds, recovered
+ * while the load is visiting every record anyway -- otherwise a warm ingest would
+ * hand out ids that are already taken.
+ */
+static libxs_registry_t* corpus_parents = NULL;
+static unsigned int corpus_blob_max = 0;
+static long corpus_span_mismatch = 0;
+static long corpus_span_stored = 0;
+static libxs_registry_t* corpus_views = NULL;
+static libxs_lexicon_t* corpus_view_lexicon = NULL;
+static const libxs_lexrule_t* corpus_view_rules = NULL;
+static int corpus_view_nrules = 0;
+static long corpus_view_count = 0;
+/**
+ * Whether to store clause fragments cut from a long PARAGRAPH. They are 99.7% of
+ * all fragments and 71% of all entries, and unlike the fragments of an over-long
+ * SENTENCE their bytes are already covered by the paragraph entry -- so the
+ * question of whether they earn their metadata is answerable by measurement.
+ */
+/**
+ * Verify at ingest that a window REBUILDS to the entry it replaces, byte for byte.
+ *
+ * The claim a derived pool rests on is that materialization is a pure function of
+ * the parent bytes, so this compares the two at the one moment both exist. Off by
+ * default because it doubles the tokenizer work of ingest; it is the instrument that
+ * settles whether a moved figure is a materialization bug or something else.
+ */
+static int corpus_span_check(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_SPAN_CHECK");
+    cached = (NULL != env && '\0' != *env) ? atoi(env) : 0;
+    if (cached < 0) cached = 0;
+  }
+  return cached;
+}
+
+
+static int corpus_fragments_para(void)
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char* env = getenv("CONVERSE_FRAGMENTS");
+    cached = (NULL != env && '\0' != *env) ? atoi(env) : 1;
+  }
+  return cached;
+}
+
+
 /**
  * The installed judge and the model it opened. Held here rather than in either
  * half because both may consult it and neither may name its type: the QA half
@@ -247,6 +332,20 @@ static void token_emb_pair_probe(const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules);
 static int answer_rules_learn_count(void);
 static double answer_rules_learn_env(const char* name, double fallback);
+static void answer_rules_centroid(double* dst, const double* sum);
+static double answer_rules_cosine(const double* lhs, const double* rhs);
+static double answer_rules_score(const double* cfwd, const double* cbwd,
+  unsigned int id);
+static void answer_rules_member(double* csum, double* ssum, unsigned int id);
+static double answer_rules_tail(long k, long n, double p);
+static int answer_rules_implausible(long k, long n, double pmin);
+static double answer_rules_ceiling(long k, long n);
+static int answer_rules_excluded(int test, unsigned int id, const long* freq,
+  const long* nhead, const long* nmod, const long* nintro,
+  const double* pmin);
+static void answer_rules_count_intro(const libxs_registry_t* corpus,
+  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
+  const unsigned char* isintro, long* nintro, unsigned int vocab);
 static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules);
 static void answer_lexnorms_build(void);
@@ -264,12 +363,25 @@ static int corpus_shuffle_mode(void);
 static void corpus_entry_set_section(corpus_entry_t* entry,
   const char* section, int section_len);
 static void corpus_sections_build(const unsigned char* text, size_t size);
+static int corpus_fragments_para(void);
+static int corpus_store_clauses(libxs_registry_t* corpus,
+  const unsigned char* text, size_t begin, size_t end, const char* section,
+  int section_len, libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules,
+  int nrules, int derive);
+static int corpus_word_byte(const char* text, int at, int len);
+static int corpus_word_upper(const char* text, int at, int len);
+static unsigned int corpus_word_id(libxs_lexicon_t* lexicon, const char* word,
+  int word_len);
 static int corpus_section_at(size_t offset, const char** text);
-static int corpus_entry_same_section(const corpus_entry_t* lhs,
-  size_t lhs_size, const corpus_entry_t* rhs);
 static unsigned int corpus_chain_max(void);
 static void corpus_key_from_text(const corpus_entry_t* entry,
   unsigned char key[], size_t* key_size);
+static int corpus_record_text(const void* value, size_t value_size,
+  const char** text, int* len, const char** section, int* section_len);
+static unsigned int corpus_store_blob(const unsigned char* text, int len,
+  const char* section, int section_len);
+static int corpus_store_record(libxs_registry_t* corpus,
+  const corpus_entry_t* entry, const corpus_span_t* span);
 static int corpus_store_entry(libxs_registry_t* corpus,
   const corpus_entry_t* entry);
 static double answer_weak_label(const corpus_entry_t* entry, int query_type);
@@ -347,12 +459,63 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules);
 
 
+/**
+ * Load-time layout check, and the reason the fixup exists at all beyond forcing
+ * the registry to COPY its values.
+ *
+ * A stored record occupies exactly what its KIND says it does, so that identity is
+ * a stamp on the layout that wrote it. Any change to a fixed field -- the token
+ * arrays are 288 of those bytes and now tunable -- moves the metadata size, and a
+ * corpus written by the other layout would be read as garbage: `text_len` still
+ * parses whatever bytes land under it, which is exactly what makes the misreading
+ * silent. The kind tag catches what the size alone cannot, namely a layout that
+ * merely PERMUTED its fields and so kept every record the same length. Counting
+ * mismatches lets the caller discard the file and re-ingest instead.
+ */
 static void corpus_fixup(void* value, const void* key,
   size_t key_size, size_t value_size, void* udata)
 {
-  LIBXS_UNUSED(value); LIBXS_UNUSED(key);
-  LIBXS_UNUSED(key_size); LIBXS_UNUSED(value_size);
-  LIBXS_UNUSED(udata);
+  const corpus_entry_t* entry = (const corpus_entry_t*)value;
+  if (NULL != entry && NULL != udata) {
+    size_t want = 0;
+    switch (corpus_value_kind(value)) {
+      case ENTRY_KIND_FULL: {
+        want = CORPUS_ENTRY_META_SIZE
+          + ((0 < entry->text_len) ? (size_t)entry->text_len : 0) + 1;
+      } break;
+      case ENTRY_KIND_SPAN: {
+        want = sizeof(corpus_span_t);
+        ++corpus_span_stored;
+      } break;
+      default: want = 0;
+    }
+    if (value_size != want) ++(*(size_t*)udata);
+  }
+}
+
+
+/**
+ * The same check for the parent file, which also recovers the id counter. A parent
+ * whose id is unknown would be handed out twice and two spans would then disagree
+ * about what their text is.
+ */
+static void corpus_parent_fixup(void* value, const void* key,
+  size_t key_size, size_t value_size, void* udata)
+{
+  const corpus_blob_t* blob = (const corpus_blob_t*)value;
+  if (NULL != blob && NULL != udata) {
+    size_t want = 0;
+    if (ENTRY_KIND_BLOB == corpus_value_kind(value)) {
+      want = CORPUS_BLOB_META_SIZE
+        + ((0 < blob->text_len) ? (size_t)blob->text_len : 0) + 1;
+      if (value_size == want && 12 == key_size && NULL != key) {
+        unsigned int id = 0;
+        memcpy(&id, (const char*)key + 4, 4);
+        if (corpus_blob_max < id) corpus_blob_max = id;
+      }
+    }
+    if (value_size != want) ++(*(size_t*)udata);
+  }
 }
 
 
@@ -431,6 +594,99 @@ static int answer_relation_rule_kind(const char* text)
     else if (0 == strcmp(text, "skip")) result = RELATION_RULE_SKIP;
     else if (0 == strcmp(text, "negate")) result = RELATION_RULE_NEGATE;
     else if (0 == strcmp(text, "norm")) result = RELATION_RULE_NORM;
+    /**
+     * `caps|nouns` ASSERTS that this language capitalizes every noun, which is a
+     * fact about the orthography and so cannot be derived from the corpus: a
+     * corpus cannot tell you whether it is written in such a language, only what
+     * its capitals do. With it, the same case census that identifies NAMES in
+     * English identifies NOUNS instead -- the signal is unchanged, the question
+     * the orthography answers is not.
+     */
+    else if (0 == strcmp(text, "caps")) result = RELATION_RULE_CAPS;
+    /**
+     * `where|in`, `why|because`, `how|by` are the MARKERS that make a sentence
+     * answer that question, and they were English string literals in this file --
+     * the one thing the rule layer exists to prevent. They are function words, so
+     * they are language facts and not corpus facts, which is why they belong in the
+     * shared language file rather than in a per-corpus one. A corpus whose rules
+     * REPLACE that file (a corpus in another language) must state its own, and
+     * until it does its entries carry no such flag: absent rather than English.
+     *
+     * `place|forest` is different in kind -- a place NOUN, i.e. a class seed of
+     * exactly the shape `person|term` has, which the class learner then grows.
+     */
+    else if (0 == strcmp(text, "where")) result = RELATION_RULE_WHERE;
+    else if (0 == strcmp(text, "why")) result = RELATION_RULE_WHY;
+    else if (0 == strcmp(text, "how")) result = RELATION_RULE_HOW;
+    else if (0 == strcmp(text, "place")) result = RELATION_RULE_PLACE;
+    /**
+     * `topic|about` declares what introduces the SUBJECT of a question rather
+     * than a fact about it: "what do we know about X" asks for everything the
+     * corpus states of X, and the marker is what says which token X is.
+     */
+    else if (0 == strcmp(text, "topic")) result = RELATION_RULE_TOPIC;
+    /**
+     * `copula|is` declares the verb that states what something IS, which is the
+     * one relation shape encyclopaedic prose uses for nearly every definition
+     * ("X is a Y", "X, a Y, ..."). It is also the word an appositive omits, so a
+     * reply rendering one takes it from here rather than from a literal in the C:
+     * the FIRST declared copula is the one used, so the language file picks it.
+     */
+    else if (0 == strcmp(text, "copula")) result = RELATION_RULE_COPULA;
+    /**
+     * `article|a` is a closed class of its own and not a subset of `skip`. The
+     * type extractor first used the skip class to recognize "X is A Y", and skip
+     * declares every function word -- "and", "would", "he" -- so it admitted
+     * "Hansel, and thrust into his pockets ..." as an apposition. An article is
+     * what makes the phrase after a copula or a comma a NOUN phrase, which is
+     * exactly the distinction being drawn.
+     */
+    else if (0 == strcmp(text, "article")) result = RELATION_RULE_ARTICLE;
+    /**
+     * `prep|of` is the syntactic class, distinct from the `where`/`why`/`how`
+     * markers, which say what a sentence ANSWERS rather than how it is built. A
+     * name inside a prepositional phrase is not the subject of the clause, and
+     * that single fact is what separates "Aristotle is a Greek philosopher" from
+     * "a bust OF Aristotle is a nearly ubiquitous ornament".
+     */
+    else if (0 == strcmp(text, "prep")) result = RELATION_RULE_PREP;
+    /**
+     * `own|belongs` is both the marker that recognizes a possession question and
+     * the verb a reply to one is rendered with, so an enumerated answer states
+     * "A, B and C belong to X" in the language's own words rather than in a
+     * literal here. The FIRST declared term is the singular and the second the
+     * plural, which is the only ordering this needs.
+     */
+    else if (0 == strcmp(text, "own")) result = RELATION_RULE_OWN;
+    /**
+     * `poss|apostrophe-s` names the ORTHOGRAPHY of possession, which differs by
+     * language and cannot be derived from a corpus -- the same kind of assertion
+     * `caps|nouns` is, and stated the same way: the term names a shape rather than
+     * a word, so no vocabulary enters the C. English marks it with an apostrophe
+     * and an s ("Hansel's finger") and with a bare apostrophe after an s-final
+     * name ("Jones' car"); German marks it with a BARE s and no apostrophe at all
+     * ("Muellers Muehle"), taking the apostrophe alone when the name already ends
+     * in an s sound ("Ines' Tasche"). Declaring the wrong shape costs nothing but
+     * silence, because the name census still has to recognize what remains once
+     * the mark is removed.
+     */
+    else if (0 == strcmp(text, "poss")) result = RELATION_RULE_POSS;
+    /**
+     * `aux|had` declares the AUXILIARIES, and they are declared for one reason: the
+     * word an auxiliary governs is a VERB. That frame is the cheapest verb detector
+     * a corpus offers and it needs no morphology, so the class of verbs can be
+     * DERIVED from the corpus instead of listed here. It is deliberately used only
+     * to REJECT -- see answer_verbs_build -- because the frame is incomplete by
+     * construction.
+     */
+    else if (0 == strcmp(text, "aux")) result = RELATION_RULE_AUX;
+    /**
+     * `agent|by` is the word a PASSIVE names its agent with, and it is one word per
+     * language rather than a class: English "by", German "von". Declaring it apart
+     * from the prepositions is what lets the passive shape be recognized at all --
+     * "was visited by Odysseus" is an edge, "was visited in Athens" is not.
+     */
+    else if (0 == strcmp(text, "agent")) result = RELATION_RULE_AGENT;
   }
   return result;
 }
@@ -451,7 +707,8 @@ static int answer_relation_rule_append(int kind, const char* relation,
       (answer_relation_rules_size + 1) * sizeof(*rules));
     if (NULL != rules) {
       answer_relation_rules = rules;
-      LIBXS_MEMZERO(answer_relation_rules + answer_relation_rules_size);
+      memset(answer_relation_rules + answer_relation_rules_size, 0,
+        sizeof(*answer_relation_rules));
       answer_relation_rules[answer_relation_rules_size].kind = kind;
       answer_relation_rules[answer_relation_rules_size].provenance =
         provenance;
@@ -622,6 +879,206 @@ static double answer_rules_learn_env(const char* name, double fallback)
   return result;
 }
 
+
+static void answer_rules_centroid(double* dst, const double* sum)
+{
+  double norm = 0.0;
+  int d;
+  for (d = 0; d < TOKEN_EMB_DIM; ++d) norm += sum[d] * sum[d];
+  norm = (norm > 0.0) ? (1.0 / sqrt(norm)) : 0.0;
+  for (d = 0; d < TOKEN_EMB_DIM; ++d) dst[d] = sum[d] * norm;
+}
+
+
+static double answer_rules_cosine(const double* lhs, const double* rhs)
+{
+  double result = 0.0;
+  int d;
+  for (d = 0; d < TOKEN_EMB_DIM; ++d) result += lhs[d] * rhs[d];
+  return result;
+}
+
+
+/**
+ * How much a word looks like the class described by the two centroids. A member
+ * must look like one in BOTH directions: followed by what persons are followed
+ * by, AND preceded by what persons are preceded by. Scoring the weaker side is
+ * what excludes a function word -- one can take person-like continuations while
+ * nothing puts a determiner in front of it, and nsrc cannot see that because a
+ * function word occurs in EVERY source (it held the highest nsrc of any
+ * candidate, 58).
+ */
+static double answer_rules_score(const double* cfwd, const double* cbwd,
+  unsigned int id)
+{
+  const double* e = token_emb_get(id);
+  const double* v = token_semb_get(id);
+  double cf = 0.0, cp = 0.0, vnorm = 0.0;
+  int d;
+  for (d = 0; d < TOKEN_EMB_DIM; ++d) {
+    cf += cfwd[d] * e[d];
+    cp += cbwd[d] * v[d];
+    vnorm += v[d] * v[d];
+  }
+  vnorm = (vnorm > 0.0) ? (1.0 / sqrt(vnorm)) : 0.0;
+  cp *= vnorm;
+  return (cf < cp) ? cf : cp;
+}
+
+
+/**
+ * Add one member to the two class accumulators. The forward rows are already
+ * unit-length (they are the row-normalized projection), but token_semb is raw V,
+ * so without normalizing here the member with the largest magnitude would set the
+ * successor direction on its own -- and magnitude in V is not membership.
+ */
+static void answer_rules_member(double* csum, double* ssum, unsigned int id)
+{
+  const double* e = token_emb_get(id);
+  const double* v = token_semb_get(id);
+  double norm = 0.0;
+  int d;
+  for (d = 0; d < TOKEN_EMB_DIM; ++d) norm += v[d] * v[d];
+  norm = (norm > 0.0) ? (1.0 / sqrt(norm)) : 0.0;
+  for (d = 0; d < TOKEN_EMB_DIM; ++d) {
+    csum[d] += e[d];
+    ssum[d] += v[d] * norm;
+  }
+}
+
+
+/**
+ * Probability of at most k successes in n draws at rate p, by the term ratio so
+ * that no factorial is ever formed.
+ */
+static double answer_rules_tail(long k, long n, double p)
+{
+  double result = 0.0;
+  if (0 < n && 0.0 < p && p < 1.0 && 0 <= k) {
+    const double odds = p / (1.0 - p);
+    double term = pow(1.0 - p, (double)n);
+    long i;
+    result = term;
+    for (i = 1; i <= k && i <= n; ++i) {
+      term *= odds * (double)(n - i + 1) / (double)i;
+      result += term;
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Non-zero if a candidate shows a behaviour IMPLAUSIBLY far below the weakest
+ * rate any ASSERTED member shows -- k of n where the seeds manage pmin.
+ *
+ * This is not a cut on the rate. A rate ignores how much evidence stands behind
+ * it, so a hapax with an unlucky context looks exactly like a word that truly
+ * never behaves this way; the tail keeps them apart, and it keeps SILENT where
+ * there is too little evidence to speak. Everything it compares against is
+ * derived from what is asserted, so the only constant here is the one below.
+ */
+static int answer_rules_implausible(long k, long n, double pmin)
+{
+  return (0.0 < pmin && pmin < 1.0 && 0 < n
+    && answer_rules_tail(k, n, pmin) < ANSWER_RULES_ALPHA) ? 1 : 0;
+}
+
+
+/**
+ * The highest rate at which this member's counts would still NOT look
+ * implausible -- the point where the very test the candidates face would begin
+ * to flag the member itself.
+ *
+ * This is what an asserted member is ENTITLED TO CLAIM about the class, and it
+ * is the third reading of the same tail. A member seen ten times is consistent
+ * with a far higher rate than it happens to show, so it cannot pull the bar down
+ * to what is really sampling noise; a member seen two hundred times pins the bar
+ * close to what it actually shows. Taking the minimum of the OBSERVED rates
+ * instead lets whichever member has the least evidence speak loudest, which is
+ * the same mistake as taking the widest separation for a section boundary.
+ */
+static double answer_rules_ceiling(long k, long n)
+{
+  double lo = 0.0, hi = 1.0;
+  int i;
+  for (i = 0; i < 40 && 0 < n; ++i) {
+    const double mid = 0.5 * (lo + hi);
+    if (answer_rules_tail(k, n, mid) < ANSWER_RULES_ALPHA) hi = mid;
+    else lo = mid;
+  }
+  return lo;
+}
+
+
+/**
+ * The three structural tests, all the same shape and all read against what the
+ * ASSERTED members manage. `pmin` holds their weakest rate for each, in the
+ * order the test index uses.
+ *
+ *  0 HEADS   -- a word that MODIFIES where a member HEADS is an attribute of one,
+ *               not one of them.
+ *  1 INTRODUCED -- one of the words that actually INTRODUCE a member introduces
+ *               it. A verb passes the wider "some function word precedes it"
+ *               reading easily, because a pronoun is a function word too.
+ */
+static int answer_rules_excluded(int test, unsigned int id, const long* freq,
+  const long* nhead, const long* nmod, const long* nintro,
+  const double* pmin)
+{
+  int result;
+  if (0 == test) {
+    result = answer_rules_implausible(nhead[id], nhead[id] + nmod[id], pmin[0]);
+  }
+  else {
+    result = answer_rules_implausible(nintro[id], freq[id], pmin[1]);
+  }
+  return result;
+}
+
+
+/**
+ * Count, for every word, how often one of the LEARNED INTRODUCERS precedes it.
+ *
+ * The set cannot be known before the corpus has been read once -- it is the
+ * function words that actually stand in front of an asserted member -- so this
+ * is a second pass rather than another counter in the first one.
+ */
+static void answer_rules_count_intro(const libxs_registry_t* corpus,
+  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
+  const unsigned char* isintro, long* nintro, unsigned int vocab)
+{
+  const void* key = NULL;
+  size_t cursor = 0;
+  void* value = corpus_iter_begin(corpus, &key, &cursor);
+  while (NULL != value) {
+    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    libxs_lexeme_stream_t stream;
+    libxs_lexeme_stream_init(&stream);
+    if (SCALE_SENTENCE == entry->scale && entry->text_len > 0
+      && 0 == (entry->lexical_flags & ENTRY_LEX_FRAGMENT)
+      && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &stream,
+        (const unsigned char*)entry->text, (size_t)entry->text_len,
+        rules, nrules, answer_lexnorms, answer_lexnorms_size, 0))
+    {
+      size_t pos;
+      for (pos = 1; pos < stream.size; ++pos) {
+        const libxs_lexeme_t* lex = stream.data + pos;
+        const libxs_lexeme_t* prev = stream.data + pos - 1;
+        if (0 != (lex->flags & LIBXS_LEXEME_WORD) && 0 != lex->id
+          && lex->id <= vocab && 0 != prev->id && prev->id <= vocab
+          && 0 != isintro[prev->id])
+        {
+          ++nintro[lex->id];
+        }
+      }
+    }
+    libxs_lexeme_stream_release(&stream);
+    value = corpus_iter_next(corpus, &key, &cursor);
+  }
+}
+
+
 /**
  * Propose person-class terms from the corpus instead of requiring every one to
  * be configured by hand.
@@ -650,11 +1107,21 @@ static double answer_rules_learn_env(const char* name, double fallback)
  *    speculate and accept it is REPORTED AND NOT USED, so a reply never rests on
  *    a guess without that having been a decision. Unlocking those is a separate
  *    act, which is what makes "speculation" a mode rather than an accident.
+ *
+ * REFINEMENT (CONVERSE_RULES_REFINE) folds each ACCEPTED term back into the
+ * centroid, so the class is described by its members and not by its seeds alone.
+ * Only the accepted band feeds back: a speculative term is reported and never
+ * becomes part of what the next round compares against, which is what turns that
+ * band from a label into a guard. Mode 1 scores against the grown centroid alone
+ * and mode 2 against the weaker of the grown and the seed one; 0 is seeds only.
+ * Drift -- the cosine between the current centroid and the seed centroid -- is
+ * REPORTED per round and gates nothing, because no measurement yet says what a
+ * poisoned round looks like.
  */
 static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules)
 {
-  enum { LEARN_SECT_MAX = 64 };
+  enum { LEARN_SEED_MAX = 64 };
   size_t result = 0;
   size_t nspecul = 0;
   const int want = answer_rules_learn_count();
@@ -666,17 +1133,88 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
     const int minsrc = (int)answer_rules_learn_env("CONVERSE_RULES_MINSRC", 3.0);
     const int minfreq = (int)answer_rules_learn_env("CONVERSE_RULES_MINFREQ",
       5.0);
-    double* centroid = (double*)calloc(TOKEN_EMB_DIM, sizeof(double));
-    double* scentroid = (double*)calloc(TOKEN_EMB_DIM, sizeof(double));
+    const int refine = (int)answer_rules_learn_env("CONVERSE_RULES_REFINE", 0.0);
+    const int ceiling = (int)answer_rules_learn_env("CONVERSE_RULES_CEILING",
+      0.0);
+    double* csum = (double*)calloc(TOKEN_EMB_DIM, sizeof(double));
+    double* ssum = (double*)calloc(TOKEN_EMB_DIM, sizeof(double));
+    double* cwork = (double*)calloc(4 * TOKEN_EMB_DIM, sizeof(double));
     long* freq = (long*)calloc((size_t)vocab + 1, sizeof(long));
-    unsigned char* seen = (unsigned char*)calloc(((size_t)vocab + 1)
-      * LEARN_SECT_MAX, sizeof(unsigned char));
-    char (*sect)[ENTRY_SECTION_MAX] = (char (*)[ENTRY_SECTION_MAX])calloc(
-      LEARN_SECT_MAX, ENTRY_SECTION_MAX);
-    if (NULL != centroid && NULL != scentroid && NULL != freq && NULL != seen
-      && NULL != sect)
+    /**
+     * How often each word is the HEAD of its phrase rather than a MODIFIER in
+     * it. The distributional score cannot tell those apart -- an adjective is
+     * preceded and followed by what the noun it modifies is preceded and
+     * followed by -- so this is a positional count, not a similarity: a head is
+     * followed by a boundary or a function word, a modifier by another content
+     * word. Measured here before anything is allowed to depend on it.
+     */
+    long* nhead = (long*)calloc((size_t)vocab + 1, sizeof(long));
+    long* nmod = (long*)calloc((size_t)vocab + 1, sizeof(long));
+    /**
+     * The mirror count: how often the word is preceded by a FUNCTION word. A
+     * noun and the adjective before it are both introduced by a determiner,
+     * whereas an interjection stands on its own -- so the two positional counts
+     * fail on different things, which is the whole reason for measuring both
+     * before either is allowed to gate anything.
+     */
+    /**
+      * WHICH sources a word occurs in, as a saturating bitmap of hashed section
+      * identity rather than an exact set.
+      *
+      * The exact set needed a table of section names, and a table has a size: at
+      * 64 it silently tracked only the first 64 sections a corpus offered, so on a
+      * 473-section corpus `nsrc` was not merely capped, it was BIASED toward words
+      * appearing early. It also cost a linear scan of that table per entry.
+      *
+      * A bitmap answers the only question asked of it -- "at least minsrc distinct
+      * sources" -- in bounded memory and with no positional bias. Two collisions
+      * can hide one source, so it UNDERCOUNTS a word occurring in many sections;
+      * that direction is safe, because the test admits on a lower bound.
+      */
+    unsigned int* srcmask = (unsigned int*)calloc(2 * ((size_t)vocab + 1),
+      sizeof(unsigned int));
+    libxs_hist_t* hist_seed = libxs_hist_create(10, 2, NULL);
+    libxs_hist_t* hist_cand = libxs_hist_create(10, 2, NULL);
+    unsigned char* pushed = (unsigned char*)calloc((size_t)vocab + 1, 1);
+    /**
+     * The three arrays behind the LEARNED INTRODUCER test. `isseed` marks the
+     * asserted members so the first pass can record what stands in front of one;
+     * those predecessors become `isintro`, and `nintro` then counts how often any
+     * word is introduced by one of them. This is narrower than "preceded by a
+     * function word", which a verb passes easily because a pronoun is one.
+     */
+    unsigned char* isseed = (unsigned char*)calloc((size_t)vocab + 1, 1);
+    unsigned char* isintro = (unsigned char*)calloc((size_t)vocab + 1, 1);
+    /**
+     * The NOUN test, live only where the language file asserts `caps|nouns`.
+     * Where an orthography capitalizes every noun, "never lower-case AND
+     * capitalized where position did not force it" identifies nouns at nearly
+     * perfect precision -- the same rule that identifies NAMES in English, whose
+     * orthography reserves capitals for them instead. It is asserted rather than
+     * measured because no corpus can say which language it is written in.
+     */
+    const int caps = (0 != answer_relation_rule_has_term(RELATION_RULE_CAPS,
+      "nouns", 5)) ? 1 : 0;
+    long* ncap = (long*)calloc((size_t)vocab + 1, sizeof(long));
+    long* nupper = (long*)calloc((size_t)vocab + 1, sizeof(long));
+    long* nfree = (long*)calloc((size_t)vocab + 1, sizeof(long));
+    long* nprec = (long*)calloc((size_t)vocab + 1, sizeof(long));
+    long* nintro = (long*)calloc((size_t)vocab + 1, sizeof(long));
+    if (NULL != csum && NULL != ssum && NULL != cwork && NULL != freq
+      && NULL != srcmask && NULL != nhead && NULL != nmod
+      && NULL != pushed && NULL != isseed && NULL != isintro
+      && NULL != nprec && NULL != nintro && NULL != ncap && NULL != nupper
+      && NULL != nfree)
     {
-      int nsect = 0, nseed = 0, d, shown = 0;
+      double* centroid = cwork;
+      double* scentroid = cwork + TOKEN_EMB_DIM;
+      double* cseed = cwork + 2 * TOKEN_EMB_DIM;
+      double* sseed = cwork + 3 * TOKEN_EMB_DIM;
+      const char* seedterm[LEARN_SEED_MAX];
+      long seedk[LEARN_SEED_MAX][2], seedn[LEARN_SEED_MAX][2];
+      double pmin[2];
+      unsigned int seenmask[2];
+      int nseed = 0, shown = 0, exhausted = 0, nbucket = 0;
       const void* key = NULL;
       size_t cursor = 0;
       unsigned int id;
@@ -686,32 +1224,81 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
       if (0 == token_emb_ready()) {
         token_emb_build(corpus, lexicon, rules, nrules, 0);
       }
-      value = libxs_registry_begin(corpus, &key, &cursor);
+      seenmask[0] = 0;
+      seenmask[1] = 0;
+      { size_t rule_pos;
+        for (rule_pos = 0; rule_pos < answer_relation_rules_size; ++rule_pos) {
+          const answer_relation_rule_t* rule = answer_relation_rules + rule_pos;
+          if (RELATION_RULE_PERSON == rule->kind
+            && RELATION_RULE_ASSERTED == rule->provenance)
+          {
+            const unsigned int sid = libxs_lexicon_id(lexicon, rule->term,
+              (int)strlen(rule->term), 0, 0);
+            if (0 != sid && sid <= vocab) isseed[sid] = 1;
+          }
+        }
+      }
+      value = corpus_iter_begin(corpus, &key, &cursor);
       while (NULL != value) {
         const corpus_entry_t* entry = (const corpus_entry_t*)value;
         libxs_lexeme_stream_t stream;
         libxs_lexeme_stream_init(&stream);
-        /* Sentence scale only: the corpus holds each text at sentence AND
-           paragraph scale, so counting both would double every frequency and
-           make one source look like two. */
+        /**
+         * Sentence scale only, and no fragments: the corpus holds each text at
+         * sentence AND paragraph scale, so counting both would double every
+         * frequency, and a long sentence is stored again as OVERLAPPING clause
+         * fragments whose bytes the sentence entry already covers. Those weight a
+         * word by how many fragments happen to span it, which is heaviest at a
+         * clause boundary -- exactly where the positional counts below are read.
+         */
         if (SCALE_SENTENCE == entry->scale && entry->text_len > 0
+          && 0 == (entry->lexical_flags & ENTRY_LEX_FRAGMENT)
           && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &stream,
             (const unsigned char*)entry->text, (size_t)entry->text_len,
             rules, nrules, answer_lexnorms, answer_lexnorms_size, 0))
         {
-          int at = -1, s;
+          int at = -1;
           size_t pos;
-          for (s = 0; s < nsect && at < 0; ++s) {
-            if (0 == strncmp(sect[s], entry->section, ENTRY_SECTION_MAX - 1)) {
-              at = s;
-            }
+          if (0 < entry->section_len) {
+            const unsigned int h = libxs_hash(entry->section,
+              (size_t)entry->section_len, 0);
+            at = (int)(h & 63);
           }
-          if (at < 0 && nsect < LEARN_SECT_MAX && 0 < entry->section_len) {
-            int copy = entry->section_len;
-            if (copy > ENTRY_SECTION_MAX - 1) copy = ENTRY_SECTION_MAX - 1;
-            memcpy(sect[nsect], entry->section, (size_t)copy);
-            sect[nsect][copy] = '\0';
-            at = nsect++;
+          /**
+           * The surface pass. It is the only pass that must see the written form
+           * rather than the interned one, so it reads the entry text directly.
+           */
+          if (0 != caps) {
+            static const char delims[] = " \t\r\n,.;:!?()[]{}\"";
+            const int heading_len = corpus_title_len(entry->text,
+              entry->text_len);
+            const char* token;
+            int token_index = 0, token_len = 0;
+            while (NULL != (token = libxs_strtoken(entry->text, delims,
+              token_index, &token_len)))
+            {
+              int trimmed = 0, end = token_len;
+              while (end > trimmed
+                && 0 == corpus_word_byte(token, trimmed, token_len)) ++trimmed;
+              while (end > trimmed
+                && 0 == corpus_word_byte(token, end - 1, token_len)) --end;
+              if (end > trimmed) {
+                const unsigned int wid = corpus_word_id(lexicon,
+                  token + trimmed, end - trimmed);
+                if (0 != wid && wid <= vocab) {
+                  ++ncap[wid];
+                  if (0 != corpus_word_upper(token, trimmed, end)) {
+                    ++nupper[wid];
+                    if (0 == corpus_case_forced(entry->text,
+                      (int)(token - entry->text) + trimmed, heading_len))
+                    {
+                      ++nfree[wid];
+                    }
+                  }
+                }
+              }
+              ++token_index;
+            }
           }
           for (pos = 0; pos < stream.size; ++pos) {
             const libxs_lexeme_t* lex = stream.data + pos;
@@ -719,12 +1306,45 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
               && lex->id <= vocab)
             {
               ++freq[lex->id];
-              if (0 <= at) seen[(size_t)lex->id * LEARN_SECT_MAX + at] = 1;
+              if (0 <= at) {
+                srcmask[2 * (size_t)lex->id + (at >> 5)] |= 1u << (at & 31);
+                seenmask[at >> 5] |= 1u << (at & 31);
+              }
+              if (0 < pos) {
+                const libxs_lexeme_t* prev = stream.data + pos - 1;
+                /**
+                 * What stands in front of an ASSERTED member is what an
+                 * introducer is -- ANY word, not one the library already calls a
+                 * function word. That flag is language-specific, and a test built
+                 * on it went silently inert on a corpus whose language it does
+                 * not cover; the learned set has its own evidence test, so the
+                 * flag was never load-bearing. Measured on English, the flag test
+                 * then excluded NOTHING the learned one did not already exclude,
+                 * so it is gone rather than merely widened.
+                 */
+                if (0 != isseed[lex->id] && 0 != prev->id && prev->id <= vocab
+                  && 0 != (prev->flags & LIBXS_LEXEME_WORD))
+                {
+                  ++nprec[prev->id];
+                }
+              }
+              /* The last word of a sentence is a head by definition: there is
+                 nothing left for it to modify. */
+              if (pos + 1 < stream.size) {
+                const libxs_lexeme_t* next = stream.data + pos + 1;
+                if (0 != (next->flags & LIBXS_LEXEME_WORD)
+                  && 0 == (next->flags & LIBXS_LEXEME_STOP))
+                {
+                  ++nmod[lex->id];
+                }
+                else ++nhead[lex->id];
+              }
+              else ++nhead[lex->id];
             }
           }
         }
         libxs_lexeme_stream_release(&stream);
-        value = libxs_registry_next(corpus, &key, &cursor);
+        value = corpus_iter_next(corpus, &key, &cursor);
       }
       { size_t rule_pos;
         for (rule_pos = 0; rule_pos < answer_relation_rules_size; ++rule_pos) {
@@ -733,69 +1353,224 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
             const unsigned int sid = libxs_lexicon_id(lexicon, rule->term,
               (int)strlen(rule->term), 0, 0);
             if (0 != sid && sid <= vocab && 0 == token_emb_isnull(sid)) {
-              const double* e = token_emb_get(sid);
-              const double* v = token_semb_get(sid);
-              for (d = 0; d < TOKEN_EMB_DIM; ++d) {
-                centroid[d] += e[d];
-                scentroid[d] += v[d];
-              }
+              answer_rules_member(csum, ssum, sid);
               ++nseed;
             }
           }
         }
       }
       if (0 < nseed) {
-        double norm = 0.0, snorm = 0.0;
-        for (d = 0; d < TOKEN_EMB_DIM; ++d) {
-          norm += centroid[d] * centroid[d];
-          snorm += scentroid[d] * scentroid[d];
+        answer_rules_centroid(centroid, csum);
+        answer_rules_centroid(scentroid, ssum);
+        memcpy(cseed, centroid, TOKEN_EMB_DIM * sizeof(double));
+        memcpy(sseed, scentroid, TOKEN_EMB_DIM * sizeof(double));
+        /* Section BUCKETS, not sections: nsrc counts distinct buckets, and
+           saying "sections" would overstate its resolution. corpus_sections_size
+           is per FILE and would report only the last one of a multi-file corpus. */
+        { int b, w;
+          for (w = 0; w < 2; ++w) {
+            unsigned int bits = seenmask[w];
+            for (b = 0; b < 32; ++b) nbucket += (int)((bits >> b) & 1u);
+          }
         }
-        norm = (norm > 0.0) ? (1.0 / sqrt(norm)) : 0.0;
-        snorm = (snorm > 0.0) ? (1.0 / sqrt(snorm)) : 0.0;
-        for (d = 0; d < TOKEN_EMB_DIM; ++d) {
-          centroid[d] *= norm;
-          scentroid[d] *= snorm;
+        fprintf(stderr, "rule learning: %d seeds, %d source buckets of 64,"
+          " accept>=%.2f speculate>=%.2f minsrc=%d minfreq=%d refine=%d\n",
+          nseed, nbucket, accept, specul, minsrc, minfreq, refine);
+        /* The SEEDS are the known-good group: they are person nouns by
+           assertion, so their head fraction is what a member looks like. */
+        /**
+         * An introducer is not simply a function word that was ever seen in
+         * front of a member. Taken that way the set fills up with conjunctions,
+         * which stand in front of everything, and the test it feeds then passes
+         * the verbs it exists to catch. A word earns the label by preceding a
+         * member MORE OFTEN THAN ITS OWN FREQUENCY EXPLAINS -- the same tail, now
+         * read from the other end.
+         */
+        { long ntoken = 0, nslot = 0;
+          for (id = 1; id <= vocab; ++id) {
+            ntoken += freq[id];
+            if (0 != isseed[id]) nslot += freq[id];
+          }
+          for (id = 1; id <= vocab; ++id) {
+            if (0 < nprec[id] && 0 < ntoken && 0 < nslot) {
+              const double base = (double)freq[id] / (double)ntoken;
+              if (1.0 - answer_rules_tail(nprec[id] - 1, nslot, base) < 1e-3) {
+                isintro[id] = 1;
+              }
+            }
+          }
         }
-        fprintf(stderr, "rule learning: %d seeds, %d sections,"
-          " accept>=%.2f speculate>=%.2f minsrc=%d minfreq=%d\n",
-          nseed, nsect, accept, specul, minsrc, minfreq);
-        while (shown < want) {
+        answer_rules_count_intro(corpus, lexicon, rules, nrules, isintro,
+          nintro, vocab);
+        /**
+         * The null for each test is the weakest rate an asserted member shows,
+         * which makes it an EXTREMUM -- and an extremum is set by whichever
+         * member is most unusual rather than by the population. Two ways that
+         * bites were measured here: a member whose spelling collides with an
+         * unrelated word in another language, and a member carrying two senses.
+         * Either one sits far below the rest and drags the bar down with it, and
+         * the test it feeds then excludes nothing.
+         *
+         * So a member must first look like the OTHERS to speak for them: each is
+         * asked, against the pooled rate of the remaining members, whether its own
+         * counts are implausible. That is the same tail the candidates face, and
+         * it costs no new constant. An outlier is REPORTED rather than dropped
+         * quietly, because a member that does not behave like the class it
+         * asserts is a fact about the rule file the reader wants.
+         */
+        { size_t rule_pos;
+          long k[2], n[2];
+          int nseedstat = 0, s, nintroducer = 0;
+          k[0] = 0; k[1] = 0; n[0] = 0; n[1] = 0;
+          for (rule_pos = 0; rule_pos < answer_relation_rules_size; ++rule_pos) {
+            const answer_relation_rule_t* rule = answer_relation_rules
+              + rule_pos;
+            if (RELATION_RULE_PERSON == rule->kind
+              && RELATION_RULE_ASSERTED == rule->provenance)
+            {
+              const unsigned int sid = libxs_lexicon_id(lexicon, rule->term,
+                (int)strlen(rule->term), 0, 0);
+              if (0 != sid && sid <= vocab && nseedstat < LEARN_SEED_MAX
+                && 0 < (nhead[sid] + nmod[sid]) && 0 == pushed[sid])
+              {
+                pushed[sid] = 1;
+                seedterm[nseedstat] = rule->term;
+                seedk[nseedstat][0] = nhead[sid];
+                seedn[nseedstat][0] = nhead[sid] + nmod[sid];
+                seedk[nseedstat][1] = nintro[sid];
+                seedn[nseedstat][1] = freq[sid];
+                k[0] += seedk[nseedstat][0];
+                n[0] += seedn[nseedstat][0];
+                k[1] += seedk[nseedstat][1];
+                n[1] += seedn[nseedstat][1];
+                ++nseedstat;
+              }
+            }
+          }
+          pmin[0] = 1.0;
+          pmin[1] = 1.0;
+          for (s = 0; s < nseedstat; ++s) {
+            static const char* const which[] = { "", "  OUTLIER head",
+              "  OUTLIER intro", "  OUTLIER head+intro" };
+            double sample[2];
+            int t, out = 0;
+            for (t = 0; t < 2; ++t) {
+              const long rest_k = k[t] - seedk[s][t];
+              const long rest_n = n[t] - seedn[s][t];
+              sample[t] = (0 < seedn[s][t])
+                ? ((double)seedk[s][t] / (double)seedn[s][t]) : 0.0;
+              /* Per test, not per member: a member may sit low on one dimension
+                 and still speak for the class on the other. */
+              if (0 < rest_n && 0 != answer_rules_implausible(seedk[s][t],
+                seedn[s][t], (double)rest_k / (double)rest_n))
+              {
+                out |= (1 << t);
+              }
+              else {
+                /**
+                 * MEASURED AND NOT ADOPTED (CONVERSE_RULES_CEILING=1 restores it).
+                 * The ceiling fixes the stated defect -- a member with ten
+                 * observations can no longer drag the bar down to what is really
+                 * sampling noise -- but it OVERSHOOTS for a well-evidenced member
+                 * too, raising the bar above rates that members demonstrably do
+                 * show. On the two corpora the two effects cancel: German gains
+                 * one class noun of 25, English loses one error of 40. A minimum
+                 * over observed rates is biased low and a minimum over ceilings
+                 * is biased high; neither is the estimator this wants.
+                 */
+                const double rate = (0 != ceiling)
+                  ? answer_rules_ceiling(seedk[s][t], seedn[s][t]) : sample[t];
+                if (rate < pmin[t]) pmin[t] = rate;
+              }
+            }
+            libxs_hist_push(NULL, hist_seed, sample);
+            fprintf(stderr, "  seed %-12s head=%.3f/%.3f intro=%.3f/%.3f"
+              " of %ld%s\n", seedterm[s], sample[0],
+              answer_rules_ceiling(seedk[s][0], seedn[s][0]), sample[1],
+              answer_rules_ceiling(seedk[s][1], seedn[s][1]), seedn[s][0],
+              which[out]);
+          }
+          for (id = 1; id <= vocab; ++id) nintroducer += isintro[id];
+          fprintf(stderr, "  weakest asserted: head=%.3f intro=%.3f"
+            " from %d introducers\n", pmin[0], pmin[1], nintroducer);
+          if (0 != caps) {
+            int nnoun = 0;
+            for (id = 1; id <= vocab; ++id) {
+              if (freq[id] >= minfreq && nupper[id] == ncap[id]
+                && 0 != nfree[id]) ++nnoun;
+            }
+            fprintf(stderr, "  caps|nouns asserted: %d of the vocabulary are"
+              " nouns by orthography\n", nnoun);
+          }
+        }
+        if (0.0 == answer_rules_learn_env("CONVERSE_RULES_INTRO", 1.0)) {
+          pmin[1] = 0.0;
+        }
+        if (0.0 == answer_rules_learn_env("CONVERSE_RULES_HEAD", 1.0)) {
+          pmin[0] = 0.0;
+        }
+        { int test;
+          static const char* const label[] = { "modifies rather than heads",
+            "not introduced as a member is" };
+          for (test = 0; test < 2; ++test) {
+            int nout = 0;
+            for (id = 1; id <= vocab; ++id) {
+              if (freq[id] >= minfreq
+                && 0 != answer_rules_excluded(test, id, freq, nhead, nmod,
+                  nintro, pmin))
+              {
+                int textlen = 0;
+                const char* text = libxs_lexicon_text(lexicon, id, &textlen,
+                  NULL);
+                if (NULL != text && 0 < textlen) {
+                  if (0 == nout) fprintf(stderr, "  %s:", label[test]);
+                  if (nout < 16) {
+                    fprintf(stderr, "%s %.*s", (0 != nout) ? "," : "", textlen,
+                      text);
+                  }
+                  ++nout;
+                }
+              }
+            }
+            if (0 != nout) fprintf(stderr, " (%d words)\n", nout);
+          }
+        }
+        while (shown < want && 0 == exhausted) {
           unsigned int best = 0;
           double bestcos = 0.0;
           int bestsrc = 0;
           for (id = 1; id <= vocab; ++id) {
-            if (freq[id] >= minfreq && 0 == token_emb_isnull(id)) {
+            if (freq[id] >= minfreq && 0 == token_emb_isnull(id)
+              && (0 == caps || (nupper[id] == ncap[id] && 0 != nfree[id]))
+              && 0 == answer_rules_excluded(0, id, freq, nhead, nmod, nintro,
+                pmin)
+              && 0 == answer_rules_excluded(1, id, freq, nhead, nmod, nintro,
+                pmin))
+            {
               int textlen = 0;
               const char* text = libxs_lexicon_text(lexicon, id, &textlen, NULL);
               if (NULL != text && 0 < textlen
                 && 0 == answer_relation_rule_has_term(RELATION_RULE_PERSON,
                   text, textlen))
               {
-                double cf = 0.0, cp = 0.0, cos;
-                double vnorm = 0.0;
+                double cos = answer_rules_score(centroid, scentroid, id);
                 int nsrc = 0, s;
-                for (d = 0; d < TOKEN_EMB_DIM; ++d) {
-                  const double vd = token_semb_get(id)[d];
-                  cf += centroid[d] * token_emb_get(id)[d];
-                  cp += scentroid[d] * vd;
-                  vnorm += vd * vd;
-                }
-                /* token_semb is unnormalized (it is raw V), so the successor side
-                   needs its own normalization to be a cosine at all. */
-                vnorm = (vnorm > 0.0) ? (1.0 / sqrt(vnorm)) : 0.0;
-                cp *= vnorm;
                 /**
-                 * A class member must look like one in BOTH directions: followed
-                 * by what persons are followed by, AND preceded by what persons
-                 * are preceded by. Scoring the weaker side is what excludes a
-                 * function word -- "there" takes person-like continuations but
-                 * nothing puts a determiner in front of it, and nsrc cannot see
-                 * that because a function word occurs in EVERY source (it had the
-                 * highest nsrc of any candidate, 58).
+                 * Under REFINE=2 the term must resemble the GROWN class and the
+                 * SEEDS, which is the same weaker-of-both construction applied to
+                 * provenance instead of direction: the seed side is fixed, so a
+                 * centroid that walks away from it cannot carry candidates along.
                  */
-                cos = (cf < cp) ? cf : cp;
-                for (s = 0; s < nsect; ++s) {
-                  nsrc += seen[(size_t)id * LEARN_SECT_MAX + s];
+                if (2 == refine) {
+                  const double seedcos = answer_rules_score(cseed, sseed, id);
+                  if (seedcos < cos) cos = seedcos;
+                }
+                for (s = 0; s < 2; ++s) {
+                  unsigned int bits = srcmask[2 * (size_t)id + s];
+                  while (0 != bits) {
+                    nsrc += (int)(bits & 1u);
+                    bits >>= 1;
+                  }
                 }
                 if (nsrc >= minsrc && (0 == best || cos > bestcos)) {
                   best = id;
@@ -805,14 +1580,25 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
               }
             }
           }
-          if (0 == best || bestcos < specul) shown = want;
+          if (0 == best || bestcos < specul) exhausted = 1;
           else {
             int textlen = 0;
             const char* text = libxs_lexicon_text(lexicon, best, &textlen, NULL);
             const int ok = (bestcos >= accept) ? 1 : 0;
-            fprintf(stderr, "  %-14s min-cos=%.3f freq=%ld nsrc=%d -> %s\n",
-              (NULL != text) ? text : "?", bestcos, freq[best], bestsrc,
-              (0 != ok) ? "ACCEPTED" : "PROPOSED");
+            { const long total = nhead[best] + nmod[best];
+              const double head = (0 < total)
+                ? ((double)nhead[best] / (double)total) : 0.0;
+              const double intro = (0 < freq[best])
+                ? ((double)nintro[best] / (double)freq[best]) : 0.0;
+              double sample[2];
+              fprintf(stderr, "  %-14s min-cos=%.3f freq=%ld nsrc=%d"
+                " head=%.3f intro=%.3f -> %s\n",
+                (NULL != text) ? text : "?", bestcos, freq[best], bestsrc,
+                head, intro, (0 != ok) ? "ACCEPTED" : "PROPOSED");
+              sample[0] = head;
+              sample[1] = intro;
+              libxs_hist_push(NULL, hist_cand, sample);
+            }
             /**
              * The margin is ADMITTED, not discarded. Its terms cannot be
              * promoted by moving the threshold -- wrong terms score
@@ -828,6 +1614,14 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
               if (0 != ok) ++result;
               else ++nspecul;
             }
+            if (0 != ok && 0 != refine) {
+              answer_rules_member(csum, ssum, best);
+              answer_rules_centroid(centroid, csum);
+              answer_rules_centroid(scentroid, ssum);
+              fprintf(stderr, "    refit %d members, drift fwd=%.3f bwd=%.3f\n",
+                nseed + (int)result, answer_rules_cosine(centroid, cseed),
+                answer_rules_cosine(scentroid, sseed));
+            }
             /* Either way it is now in the class, so stop re-proposing it. */
             freq[best] = 0;
             ++shown;
@@ -835,16 +1629,41 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
         }
         /* Both counts are labelled in replies: see the provenance comment in
            converse.h for why the accepted band is not trusted either. */
+        /**
+          * A cap that binds is REPORTED. `want` is a cap and never a target: E1
+          * measured that precision at a fixed count cannot be improved, because
+          * every term an exclusion removes is replaced by the next wrong one just
+          * below it. So a run that stops at the cap has not measured the class, it
+          * has measured the first N of it, and saying nothing would read as
+          * "these are the terms that qualify".
+          */
         fprintf(stderr, "rule learning: %lu accepted, %lu proposed"
-          " (both labelled in replies)\n", (unsigned long)result,
-          (unsigned long)nspecul);
+          " (both labelled in replies)%s\n", (unsigned long)result,
+          (unsigned long)nspecul, (0 == exhausted)
+            ? " -- CAP REACHED, more terms clear the bar" : "");
+        libxs_hist_print(stderr, hist_seed, NULL,
+          "head fraction of ASSERTED members");
+        libxs_hist_print(stderr, hist_cand, NULL,
+          "head fraction of PROPOSED terms");
       }
     }
-    free(centroid);
-    free(scentroid);
+    libxs_hist_destroy(hist_seed);
+    libxs_hist_destroy(hist_cand);
+    free(csum);
+    free(ssum);
+    free(cwork);
     free(freq);
-    free(seen);
-    free(sect);
+    free(srcmask);
+    free(nhead);
+    free(nmod);
+    free(pushed);
+    free(isseed);
+    free(isintro);
+    free(ncap);
+    free(nupper);
+    free(nfree);
+    free(nprec);
+    free(nintro);
   }
   return result;
 }
@@ -877,6 +1696,50 @@ static void answer_lexnorms_build(void)
       ++answer_lexnorms_size;
     }
   }
+}
+
+
+/**
+ * Whether text IS a term of this kind, as opposed to CONTAINING one. The
+ * containment test is for sentences; a single token has to match whole or the
+ * marker "in" would fire on "into" and on every word holding those two letters.
+ */
+/** The first declared term of a kind, or NULL: vocabulary a renderer may use. */
+const char* answer_relation_rule_first_term(int kind, int* term_len)
+{
+  const char* result = NULL;
+  size_t rule_pos;
+  if (NULL != term_len) *term_len = 0;
+  for (rule_pos = 0; rule_pos < answer_relation_rules_size && NULL == result;
+    ++rule_pos)
+  {
+    const answer_relation_rule_t* rule = answer_relation_rules + rule_pos;
+    if (rule->kind == kind && '\0' != rule->term[0]) {
+      result = rule->term;
+      if (NULL != term_len) *term_len = (int)strlen(rule->term);
+    }
+  }
+  return result;
+}
+
+
+int answer_relation_rule_is_term(int kind, const char* text, int text_len)
+{
+  int result = 0;
+  size_t rule_pos;
+  if (NULL != text && text_len > 0) {
+    for (rule_pos = 0; rule_pos < answer_relation_rules_size && 0 == result;
+      ++rule_pos)
+    {
+      const answer_relation_rule_t* rule = answer_relation_rules + rule_pos;
+      if (rule->kind == kind && 0 != libxs_striequal(rule->term,
+        strlen(rule->term), text, (size_t)text_len))
+      {
+        result = 1;
+      }
+    }
+  }
+  return result;
 }
 
 
@@ -962,13 +1825,73 @@ static void converse_namespace_init(const char* prefix)
   }
   if (base_len > 0 && 0 != strcmp(base, "converse")) {
     sprintf(converse_path_corpus, "%s.dat", base);
+    sprintf(converse_path_parent, "%s.par", base);
     sprintf(converse_path_lexicon, "%s.lex", base);
     sprintf(converse_path_predict, "%s.prd", base);
     sprintf(converse_path_bridge, "%s.bridges", base);
     sprintf(converse_path_relation, "%s.relations", base);
+    sprintf(converse_path_language_own, "%s.rules", base);
     sprintf(converse_path_eval, "%s.eval", base);
+    sprintf(converse_path_eval_learn, "%s.learn.eval", base);
     sprintf(converse_path_predict_eval, "%s.predict", base);
+    sprintf(converse_path_facts, "%s.facts", base);
   }
+}
+
+
+static libxs_registry_t* corpus_parents_get(void)
+{
+  if (NULL == corpus_parents) corpus_parents = libxs_registry_create();
+  return corpus_parents;
+}
+
+
+/**
+ * Read the parent texts a stored corpus refers to. Returns how many it holds, so a
+ * corpus carrying spans with no parents to resolve can be discarded rather than
+ * silently losing its windows.
+ */
+static size_t corpus_parents_load(void)
+{
+  size_t result = 0;
+  FILE* f = fopen(converse_path_parent, "rb");
+  if (NULL != f) {
+    long len;
+    fseek(f, 0, SEEK_END);
+    len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (len > 0) {
+      void* buf = malloc((size_t)len);
+      if (NULL != buf) {
+        if ((long)fread(buf, 1, (size_t)len, f) == len) {
+          size_t stale = 0;
+          libxs_registry_t* loaded = libxs_registry_load(buf, (size_t)len,
+            corpus_parent_fixup, &stale);
+          if (NULL != loaded) {
+            libxs_registry_info_t info;
+            if (0 == stale && EXIT_SUCCESS == libxs_registry_info(loaded,
+              &info))
+            {
+              result = info.size;
+            }
+            if (0 < result) {
+              /* The views were rebuilt FROM the parents being replaced, so they
+                 no longer stand for anything this registry holds. */
+              corpus_view_free();
+              if (NULL != corpus_parents) {
+                libxs_registry_destroy(corpus_parents);
+              }
+              corpus_parents = loaded;
+            }
+            else libxs_registry_destroy(loaded);
+          }
+        }
+        free(buf);
+      }
+    }
+    fclose(f);
+  }
+  return result;
 }
 
 
@@ -985,7 +1908,25 @@ static libxs_registry_t* corpus_load(void)
       void* buf = malloc((size_t)len);
       if (NULL != buf) {
         if ((long)fread(buf, 1, (size_t)len, f) == len) {
-          result = libxs_registry_load(buf, (size_t)len, corpus_fixup, NULL);
+          size_t stale = 0;
+          corpus_span_stored = 0;
+          result = libxs_registry_load(buf, (size_t)len, corpus_fixup, &stale);
+          if (0 != stale && NULL != result) {
+            fprintf(stderr, "corpus %s: %lu entries do not match this build's"
+              " layout, discarded\n", converse_path_corpus,
+              (unsigned long)stale);
+            libxs_registry_destroy(result);
+            result = NULL;
+          }
+          if (NULL != result && 0 < corpus_span_stored
+            && 0 == corpus_parents_load())
+          {
+            fprintf(stderr, "corpus %s: %ld windows have no parent text in %s,"
+              " discarded\n", converse_path_corpus, corpus_span_stored,
+              converse_path_parent);
+            libxs_registry_destroy(result);
+            result = NULL;
+          }
         }
         free(buf);
       }
@@ -996,16 +1937,16 @@ static libxs_registry_t* corpus_load(void)
 }
 
 
-static int corpus_save(const libxs_registry_t* corpus)
+static int corpus_save_file(const libxs_registry_t* registry, const char* path)
 {
   int result = EXIT_FAILURE;
   size_t size = 0;
-  if (NULL == corpus) return EXIT_FAILURE;
-  if (EXIT_SUCCESS == libxs_registry_save(corpus, NULL, &size) && size > 0) {
+  if (NULL == registry || NULL == path) return EXIT_FAILURE;
+  if (EXIT_SUCCESS == libxs_registry_save(registry, NULL, &size) && size > 0) {
     void* buf = malloc(size);
     if (NULL != buf) {
-      if (EXIT_SUCCESS == libxs_registry_save(corpus, buf, &size)) {
-        FILE* f = fopen(converse_path_corpus, "wb");
+      if (EXIT_SUCCESS == libxs_registry_save(registry, buf, &size)) {
+        FILE* f = fopen(path, "wb");
         if (NULL != f) {
           if (fwrite(buf, 1, size, f) == size) result = EXIT_SUCCESS;
           fclose(f);
@@ -1013,6 +1954,16 @@ static int corpus_save(const libxs_registry_t* corpus)
       }
       free(buf);
     }
+  }
+  return result;
+}
+
+
+static int corpus_save(const libxs_registry_t* corpus)
+{
+  int result = corpus_save_file(corpus, converse_path_corpus);
+  if (NULL != corpus_parents) {
+    corpus_save_file(corpus_parents, converse_path_parent);
   }
   return result;
 }
@@ -1289,6 +2240,7 @@ int corpus_entry_build(corpus_entry_t* entry,
     text, 1, &shape, NULL, FPRINT_ORDER, 0, 0, 0))
   {
     corpus_fprint_pack(&entry->fprint, &full);
+    entry->kind = ENTRY_KIND_FULL;
     entry->text_len = len;
     memcpy(entry->text, text, (size_t)len);
     entry->connector = CONN_NEWLINE;
@@ -1314,34 +2266,17 @@ int corpus_entry_build(corpus_entry_t* entry,
       if (0 != (lexeme->flags & LIBXS_LEXEME_QUESTION)) {
         entry->lexical_flags |= ENTRY_LEX_QUESTION;
       }
-      if (0 != lexeme_text_is(lexicon, lexeme, "in")
-        || 0 != lexeme_text_is(lexicon, lexeme, "at")
-        || 0 != lexeme_text_is(lexicon, lexeme, "near")
-        || 0 != lexeme_text_is(lexicon, lexeme, "from")
-        || 0 != lexeme_text_is(lexicon, lexeme, "inside")
-        || 0 != lexeme_text_is(lexicon, lexeme, "outside"))
-      {
-        entry->lexical_flags |= ENTRY_LEX_PLACE;
-      }
-      if (0 != lexeme_text_is(lexicon, lexeme, "because")
-        || 0 != lexeme_text_is(lexicon, lexeme, "therefore")
-        || 0 != lexeme_text_is(lexicon, lexeme, "since")
-        || 0 != lexeme_text_is(lexicon, lexeme, "hence")
-        || 0 != lexeme_text_is(lexicon, lexeme, "thus")
-        || 0 != lexeme_text_is(lexicon, lexeme, "reason")
-        || 0 != lexeme_text_is(lexicon, lexeme, "result"))
-      {
-        entry->lexical_flags |= ENTRY_LEX_CAUSE;
-      }
-      if (0 != lexeme_text_is(lexicon, lexeme, "by")
-        || 0 != lexeme_text_is(lexicon, lexeme, "through")
-        || 0 != lexeme_text_is(lexicon, lexeme, "using")
-        || 0 != lexeme_text_is(lexicon, lexeme, "with")
-        || 0 != lexeme_text_is(lexicon, lexeme, "via")
-        || 0 != lexeme_text_is(lexicon, lexeme, "method")
-        || 0 != lexeme_text_is(lexicon, lexeme, "process"))
-      {
-        entry->lexical_flags |= ENTRY_LEX_METHOD;
+      { int marker_len = 0;
+        const char* marker = libxs_lexicon_text(lexicon, lexeme->id,
+          &marker_len, NULL);
+        if (NULL != marker && 0 < marker_len) {
+          if (0 != answer_relation_rule_is_term(RELATION_RULE_WHERE, marker,
+            marker_len)) entry->lexical_flags |= ENTRY_LEX_PLACE;
+          if (0 != answer_relation_rule_is_term(RELATION_RULE_WHY, marker,
+            marker_len)) entry->lexical_flags |= ENTRY_LEX_CAUSE;
+          if (0 != answer_relation_rule_is_term(RELATION_RULE_HOW, marker,
+            marker_len)) entry->lexical_flags |= ENTRY_LEX_METHOD;
+        }
       }
       if (entry->ntokens < ENTRY_TOKEN_MAX
         && 0 != (lexeme->flags & (LIBXS_LEXEME_WORD | LIBXS_LEXEME_NUMBER))
@@ -1370,6 +2305,112 @@ static void corpus_entry_set_section(corpus_entry_t* entry,
   memcpy(entry->section, section, (size_t)copy_len);
   entry->section[copy_len] = '\0';
   entry->section_len = (unsigned short)copy_len;
+}
+
+
+/**
+ * UTF-8 aware helpers for the SURFACE pass, which is the only pass that reads
+ * written form rather than interned form.
+ *
+ * `isalpha` is false for every byte of a multi-byte letter, so trimming a token's
+ * non-alpha margins with it EATS a leading umlaut and leaves a stump that matches
+ * nothing: an umlaut-initial noun was invisible to the noun test. Transliterating
+ * the corpus (ae for a-umlaut) would also work and the `norm` rules could do it,
+ * but that changes what citations and replies PRINT, and the lexeme path already
+ * handles these bytes -- only this pass did not.
+ *
+ * The Latin-1 supplement in UTF-8 is 0xC3 followed by 0x80-0xBE, upper case below
+ * 0x9F and lower case above, differing by 0x20 exactly as ASCII does. That is all
+ * this needs to know; nothing here decodes further.
+ */
+static int corpus_word_byte(const char* text, int at, int len)
+{
+  const unsigned char c = (unsigned char)text[at];
+  LIBXS_UNUSED(len);
+  return (0 != isalpha(c) || 0x80 <= c) ? 1 : 0;
+}
+
+
+static int corpus_word_upper(const char* text, int at, int len)
+{
+  const unsigned char c = (unsigned char)text[at];
+  int result = 0;
+  if (0xc3 == c && at + 1 < len) {
+    const unsigned char d = (unsigned char)text[at + 1];
+    result = (0x80 <= d && d <= 0x9e && 0x97 != d) ? 1 : 0;
+  }
+  else result = (0 != isupper(c)) ? 1 : 0;
+  return result;
+}
+
+
+/**
+ * Lexicon id of a SURFACE word. The lexicon interns lower-cased text but looks
+ * up raw bytes, so a capitalized word silently misses without this.
+ */
+static unsigned int corpus_word_id(libxs_lexicon_t* lexicon, const char* word,
+  int word_len)
+{
+  unsigned int result = 0;
+  if (NULL != lexicon && NULL != word && 0 < word_len
+    && word_len <= LIBXS_LEXEME_MAXBYTES)
+  {
+    char lower[LIBXS_LEXEME_MAXBYTES + 1];
+    int pos;
+    for (pos = 0; pos < word_len; ++pos) {
+      const unsigned char c = (unsigned char)word[pos];
+      /* One case rule, two encodings: the supplement differs by 0x20 too. */
+      if (0xc3 == c && pos + 1 < word_len
+        && 0 != corpus_word_upper(word, pos, word_len))
+      {
+        lower[pos] = (char)c;
+        lower[pos + 1] = (char)(((unsigned char)word[pos + 1]) + 0x20);
+        ++pos;
+      }
+      else lower[pos] = (char)tolower(c);
+    }
+    lower[word_len] = '\0';
+    result = libxs_lexicon_id(lexicon, lower, word_len, 0, 0);
+  }
+  return result;
+}
+
+
+/**
+ * Is the capital at `at` FORCED by position rather than chosen by the author?
+ *
+ * Three positions force one, and all three are structural: the start of the
+ * text, anything after a sentence or clause terminator, and the first word
+ * inside an opening quotation mark -- an utterance begins there, which is why
+ * interjections look like names. A heading forces every capital in it, and the
+ * heading map already says where one is.
+ *
+ * This lives in core because two consumers read it and must not disagree: the
+ * NAME census, which asks whether an author CHOSE a capital, and the NOUN test,
+ * which asks the same question of a language that capitalizes every noun. One
+ * question, two capabilities, decided by what the orthography encodes.
+ */
+int corpus_case_forced(const char* text, int at, int heading_len)
+{
+  int result = (at <= heading_len) ? 1 : 0;
+  int scan = at;
+  while (0 == result && 0 < scan && ' ' == text[scan - 1]) --scan;
+  if (0 == result) {
+    if (0 == scan) result = 1;
+    else {
+      const unsigned char c = (unsigned char)text[scan - 1];
+      if ('.' == c || '!' == c || '?' == c || ':' == c || ';' == c
+        || '\n' == c || '"' == c || '\'' == c || '`' == c)
+      {
+        result = 1;
+      }
+      /* The typeset quotes are three bytes and end with these, which is enough
+         to recognise them without decoding: no other character here does. The
+         last two are the guillemets a German edition opens an utterance with. */
+      else if (0x98 == c || 0x9c == c || 0xab == c || 0xbb == c) result = 1;
+    }
+  }
+  return result;
 }
 
 
@@ -1418,6 +2459,19 @@ int corpus_title_len(const char* text, int len)
 }
 
 
+/** Non-zero if the line is bracketed markup rather than content. */
+static int corpus_line_markup(const char* text, int len)
+{
+  int result = 0;
+  if (NULL != text && 0 < len && '[' == text[0]) {
+    int end = len;
+    while (0 < end && 0 != isspace((unsigned char)text[end - 1])) --end;
+    if (0 < end && ']' == text[end - 1]) result = 1;
+  }
+  return result;
+}
+
+
 static int corpus_sections_append(const char* text, int len, size_t begin,
   int depth)
 {
@@ -1448,46 +2502,117 @@ static int corpus_sections_append(const char* text, int len, size_t begin,
 
 
 /**
- * Map the headings of one file, deepest separation first.
+ * Map the headings of one file.
  *
- * Two rules, both structural rather than scored. A heading is a whole LINE, so a
- * numbered one is not a heading at all -- the older per-pass scan took such a
- * line for one, because sentence splitting handed it the text after the number
- * and the remainder looked like a title. And a heading below the file's widest
- * separation is a SUBSECTION, which names a part of a section rather than a
- * source, so it does not open one: crediting an answer to a part number says
- * nothing about where it came from.
+ * A heading is a LINE that STANDS ALONE at the SEPARATION THAT DIVIDES THIS FILE.
+ * Nothing here reads the letters, so no edition's typography is assumed: three
+ * corpora that mark their titles by case, by centring, and by a trailing period
+ * are all read by the same rule, and a fourth that does something else again
+ * would be too.
+ *
+ * Three properties carry it, and each replaced a reading that failed on some
+ * edition:
+ *  - STANDS ALONE separates a title from VERSE. A spell or a rhyme inside a tale
+ *    is set apart and indented exactly as a title is, but it is a BLOCK; only its
+ *    last line is followed by blank space, and that line is not preceded by any.
+ *  - AT LEAST TWO blank lines, because ONE is how paragraphs are separated. That
+ *    is the only depth excluded, and it is excluded because it is the ordinary
+ *    case rather than because it measured badly.
+ *  - SHORTER than the file's median line. Where a file holds one paragraph per
+ *    LINE, the opening paragraph of each part also stands alone at a separation
+ *    of its own and outvoted the titles; a title is not a thousand characters of
+ *    prose. The median is the file's own, so nothing assumes a line width.
+ *  - the MOST COMMON such depth, not the widest. The widest is an extremum, and
+ *    an extremum is set by whichever line is most unusual: two pieces of front
+ *    and back matter carrying one blank line more than sixty-one titles reduced a
+ *    whole book to two sections. The mode answers identically wherever the widest
+ *    was already right.
+ *
+ * A heading below that separation is a SUBSECTION, which names a part of a
+ * section rather than a source, so it does not open one: crediting an answer to a
+ * part number says nothing about where it came from.
  */
 static void corpus_sections_build(const unsigned char* text, size_t size)
 {
+  enum { SECTION_DEPTH_MAX = 64, SECTION_LINE_MAX = 1024 };
   size_t pos = 0, line_start = 0;
-  int blanks = 0, maxdepth = 0, pass;
+  int depths[SECTION_DEPTH_MAX];
+  int lengths[SECTION_LINE_MAX];
+  int blanks = 0, level = 0, pass, d, median = 0;
+  long nline = 0, seen = 0;
   corpus_sections_size = 0;
+  for (d = 0; d < SECTION_DEPTH_MAX; ++d) depths[d] = 0;
+  for (d = 0; d < SECTION_LINE_MAX; ++d) lengths[d] = 0;
+  for (pos = 0, line_start = 0; pos <= size && NULL != text; ++pos) {
+    if (pos == size || '\n' == text[pos]) {
+      int len = (int)(pos - line_start), indent = 0;
+      while (0 < len && 0 != isspace(text[line_start + len - 1])) --len;
+      while (indent < len && 0 != isspace(text[line_start + indent])) ++indent;
+      if (indent < len) {
+        const int body = len - indent;
+        ++lengths[(body < SECTION_LINE_MAX) ? body : (SECTION_LINE_MAX - 1)];
+        ++nline;
+      }
+      line_start = pos + 1;
+    }
+  }
+  for (d = 0; d < SECTION_LINE_MAX && 2 * seen < nline; ++d) {
+    seen += lengths[d];
+    median = d;
+  }
   for (pass = 0; pass < 2 && NULL != text; ++pass) {
+    if (1 == pass) {
+      /* Deeper wins a tie, which is what the widest-separation reading did. */
+      for (d = 2; d < SECTION_DEPTH_MAX; ++d) {
+        if (0 < depths[d] && (0 == level || depths[d] >= depths[level])) {
+          level = d;
+        }
+      }
+      if (0 == level) level = 2;
+    }
     line_start = 0;
     blanks = 0;
     for (pos = 0; pos <= size; ++pos) {
       if (pos == size || '\n' == text[pos]) {
-        int len = (int)(pos - line_start);
+        int len = (int)(pos - line_start), indent = 0;
         while (0 < len && 0 != isspace(text[line_start + len - 1])) --len;
+        while (indent < len && 0 != isspace(text[line_start + indent])) ++indent;
+        /* Markup neither separates two sections nor is content, and where it
+           stands between a heading and the space above it, counting it as
+           content hides the separation the heading was given. */
+        if (indent < len && 0 != corpus_line_markup((const char*)text
+          + line_start + indent, len - indent))
+        {
+          len = 0;
+        }
         if (0 == len) ++blanks;
         else {
-          const int title_len = corpus_title_len((const char*)text + line_start,
-            len);
-          if (title_len == len) {
+          const size_t at = line_start + (size_t)indent;
+          const int body = len - indent;
+          size_t scan = pos + 1;
+          int alone;
+          while (scan < size && '\n' != text[scan] && 0 != isspace(text[scan])) {
+            ++scan;
+          }
+          alone = (scan >= size || '\n' == text[scan]) ? 1 : 0;
+          if (0 < body && body < median && 0 != alone
+            && (1 < blanks || 0 == line_start))
+          {
             /* The first heading of a file has no separation above it and is
-               still the outermost one there is. */
-            const int depth = (0 == line_start) ? maxdepth : blanks;
+               still the outermost one there is, so it never votes and always
+               qualifies. */
+            const int depth = (0 == line_start) ? level : blanks;
             if (0 == pass) {
-              if (depth > maxdepth) maxdepth = depth;
+              if (0 != line_start && depth < SECTION_DEPTH_MAX) {
+                ++depths[depth];
+              }
             }
-            else if (depth >= maxdepth) {
+            else if (depth >= level) {
               /* The section begins AT its heading, not after it: ingest stores
                  the first sentence of a section from the heading onward, so a
                  section that began below its own heading would credit the first
                  sentence of every section to the previous one. */
-              corpus_sections_append((const char*)text + line_start, title_len,
-                line_start, depth);
+              corpus_sections_append((const char*)text + at, body, at, depth);
             }
           }
           blanks = 0;
@@ -1520,21 +2645,6 @@ static int corpus_section_at(size_t offset, const char** text)
   return result;
 }
 
-
-static int corpus_entry_same_section(const corpus_entry_t* lhs,
-  size_t lhs_size, const corpus_entry_t* rhs)
-{
-  int result = 0;
-  if (NULL != lhs && NULL != rhs) {
-    if (lhs_size < sizeof(*lhs)) result = (0 == rhs->section_len) ? 1 : 0;
-    else if (lhs->section_len == rhs->section_len
-      && 0 == libxs_memcmp(lhs->section, rhs->section, lhs->section_len))
-    {
-      result = 1;
-    }
-  }
-  return result;
-}
 
 /**
  * Upper bound on the fingerprint-collision probe chain. 65536 was effectively
@@ -1586,8 +2696,269 @@ static void corpus_key_from_text(const corpus_entry_t* entry,
 }
 
 
-static int corpus_store_entry(libxs_registry_t* corpus,
-  const corpus_entry_t* entry)
+static const corpus_blob_t* corpus_blob_get(unsigned int id)
+{
+  const corpus_blob_t* result = NULL;
+  if (NULL != corpus_parents) {
+    unsigned char key[12];
+    size_t key_size = 0;
+    corpus_blob_key(id, key, &key_size);
+    result = (const corpus_blob_t*)libxs_registry_get(corpus_parents, key,
+      key_size, NULL);
+  }
+  return result;
+}
+
+
+/**
+ * The text and section a stored record stands for, whichever kind it is. The
+ * duplicate walk compares texts, and a span's text lives in its parent, so the
+ * comparison needs one definition of "the text of this record" rather than a
+ * special case at the one site that happens to hit a span first.
+ *
+ * The section is reported ABSENT below CORPUS_ENTRY_META_SIZE rather than read: an
+ * entry is stored at its actual text length, so a size test against sizeof would
+ * be true of essentially every entry and would collapse the comparison to "equal
+ * only if the new record has no section". With sections that is never true, so
+ * re-ingesting a text stored a SECOND COPY of every sentence in it -- the corpus
+ * doubled on each warm run, which is the mechanism behind the standing warm-start
+ * warning.
+ */
+static int corpus_record_text(const void* value, size_t value_size,
+  const char** text, int* len, const char** section, int* section_len)
+{
+  int result = EXIT_FAILURE;
+  *text = NULL; *len = 0; *section = NULL; *section_len = 0;
+  if (ENTRY_KIND_FULL == corpus_value_kind(value)) {
+    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    *text = entry->text;
+    *len = entry->text_len;
+    if (CORPUS_ENTRY_META_SIZE <= value_size) {
+      *section = entry->section;
+      *section_len = entry->section_len;
+    }
+    result = EXIT_SUCCESS;
+  }
+  else if (ENTRY_KIND_SPAN == corpus_value_kind(value)) {
+    const corpus_span_t* span = (const corpus_span_t*)value;
+    const corpus_blob_t* blob = corpus_blob_get(span->parent);
+    if (NULL != blob
+      && (size_t)span->offset + (size_t)span->text_len
+        <= (size_t)blob->text_len)
+    {
+      *text = blob->text + span->offset;
+      *len = span->text_len;
+      *section = blob->section;
+      *section_len = blob->section_len;
+      result = EXIT_SUCCESS;
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Store the parent text a set of windows will be cut from, and return its id.
+ * Nothing de-duplicates parents: two identical paragraphs are rare, and the windows
+ * they yield collapse in the content key space anyway, which leaves at worst an
+ * unreferenced parent -- and the caller removes that one, because on a warm
+ * re-ingest EVERY parent is that one.
+ */
+static unsigned int corpus_store_blob(const unsigned char* text, int len,
+  const char* section, int section_len)
+{
+  unsigned int result = 0;
+  libxs_registry_t* parents = corpus_parents_get();
+  if (NULL != parents && NULL != text && 0 < len) {
+    const size_t size = CORPUS_BLOB_META_SIZE + (size_t)len + 1;
+    corpus_blob_t* blob = (corpus_blob_t*)malloc(size);
+    if (NULL != blob) {
+      unsigned char key[12];
+      size_t key_size = 0;
+      int copy_len = (NULL != section) ? section_len : 0;
+      if (copy_len >= ENTRY_SECTION_MAX) copy_len = ENTRY_SECTION_MAX - 1;
+      memset(blob, 0, CORPUS_BLOB_META_SIZE);
+      blob->kind = (unsigned short)ENTRY_KIND_BLOB;
+      blob->connector = CONN_NEWLINE;
+      blob->scale = SCALE_PARAGRAPH;
+      blob->text_len = len;
+      blob->source = (unsigned short)corpus_source_id;
+      if (0 < copy_len) {
+        memcpy(blob->section, section, (size_t)copy_len);
+        blob->section_len = (unsigned short)copy_len;
+      }
+      memcpy(blob->text, text, (size_t)len);
+      blob->text[len] = '\0';
+      corpus_blob_key(corpus_blob_max + 1, key, &key_size);
+      if (NULL != libxs_registry_set(parents, key, key_size, blob, size,
+        NULL))
+      {
+        ++corpus_blob_max;
+        result = corpus_blob_max;
+      }
+      free(blob);
+    }
+  }
+  return result;
+}
+
+
+void corpus_view_bind(libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules,
+  int nrules)
+{
+  corpus_view_lexicon = lexicon;
+  corpus_view_rules = rules;
+  corpus_view_nrules = nrules;
+}
+
+
+/**
+ * Release every materialized window.
+ *
+ * A view is OWNED here and its pointer is handed out, so whoever kept one --
+ * recombination's pivot index is the only such reader -- must release its own
+ * structures FIRST. That order is not incidental: the two live in different
+ * translation units, and freeing this side first would leave the index holding
+ * pointers into freed memory with every count still looking correct.
+ */
+void corpus_view_free(void)
+{
+  if (NULL != corpus_views) {
+    const void* key = NULL;
+    size_t cursor = 0;
+    void* value = libxs_registry_begin(corpus_views, &key, &cursor);
+    while (NULL != value) {
+      free(*(corpus_entry_t**)value);
+      value = libxs_registry_next(corpus_views, &key, &cursor);
+    }
+    libxs_registry_destroy(corpus_views);
+    corpus_views = NULL;
+  }
+  corpus_view_count = 0;
+}
+
+
+/**
+ * Rebuild a window into the entry it stood for. Everything the stored entry carried
+ * is recovered here: the tokens and the fingerprint from the same bytes through the
+ * same builder, the section and the SOURCE from the parent -- the source because the
+ * builder stamps whichever file ingest is currently reading, which by materialization
+ * time has moved on, and recombination reports same-source agreement.
+ */
+static int corpus_span_build(const corpus_span_t* span, corpus_entry_t* entry)
+{
+  int result = EXIT_FAILURE;
+  const corpus_blob_t* blob = corpus_blob_get(span->parent);
+  if (NULL != blob && 0 < span->text_len
+    && (size_t)span->offset + (size_t)span->text_len <= (size_t)blob->text_len
+    && EXIT_SUCCESS == corpus_entry_build(entry,
+      (const unsigned char*)blob->text + span->offset, span->text_len,
+      span->scale, corpus_view_lexicon, corpus_view_rules, corpus_view_nrules))
+  {
+    entry->lexical_flags |= ENTRY_LEX_FRAGMENT;
+    entry->source = blob->source;
+    corpus_entry_set_section(entry, blob->section, blob->section_len);
+    result = EXIT_SUCCESS;
+  }
+  return result;
+}
+
+
+int corpus_value_viable(const void* value)
+{
+  int result = 0;
+  const unsigned int kind = corpus_value_kind(value);
+  if (ENTRY_KIND_FULL == kind) result = 1;
+  else if (ENTRY_KIND_SPAN == kind) {
+    const corpus_span_t* span = (const corpus_span_t*)value;
+    const corpus_blob_t* blob = corpus_blob_get(span->parent);
+    result = (NULL != blob && 0 < span->text_len
+      && (size_t)span->offset + (size_t)span->text_len
+        <= (size_t)blob->text_len) ? 1 : 0;
+  }
+  return result;
+}
+
+
+const corpus_entry_t* corpus_entry_scan(const void* value,
+  corpus_entry_t* scratch)
+{
+  const corpus_entry_t* result = NULL;
+  const unsigned int kind = corpus_value_kind(value);
+  if (ENTRY_KIND_FULL == kind) result = (const corpus_entry_t*)value;
+  else if (ENTRY_KIND_SPAN == kind && NULL != scratch
+    && EXIT_SUCCESS == corpus_span_build((const corpus_span_t*)value, scratch))
+  {
+    result = scratch;
+  }
+  return result;
+}
+
+
+/**
+ * Cache key: WHICH WINDOW, not where the window's record happens to sit.
+ *
+ * Keying on the span record's address would make one registry's storage part of
+ * another registry's keys, and then any reallocation, removal or teardown on the
+ * corpus side silently redefines what a cached view stands for -- a stale entry
+ * returned for a different window, with nothing to notice it. The parent id and
+ * the offset identify the window itself, so the cache survives the corpus moving
+ * its records and cannot outlive its meaning.
+ */
+static void corpus_view_key(const corpus_span_t* span, unsigned int key[2])
+{
+  key[0] = span->parent;
+  key[1] = span->offset;
+}
+
+
+const corpus_entry_t* corpus_entry_view(const void* value)
+{
+  const corpus_entry_t* result = NULL;
+  const unsigned int kind = corpus_value_kind(value);
+  if (ENTRY_KIND_FULL == kind) result = (const corpus_entry_t*)value;
+  else if (ENTRY_KIND_SPAN == kind) {
+    unsigned int key[2];
+    corpus_entry_t** cached = NULL;
+    corpus_view_key((const corpus_span_t*)value, key);
+    if (NULL == corpus_views) corpus_views = libxs_registry_create();
+    if (NULL != corpus_views) {
+      cached = (corpus_entry_t**)libxs_registry_get(corpus_views,
+        key, sizeof(key), NULL);
+    }
+    if (NULL != cached) result = *cached;
+    else if (NULL != corpus_views) {
+      corpus_entry_t entry;
+      if (EXIT_SUCCESS == corpus_span_build((const corpus_span_t*)value, &entry))
+      {
+        const size_t size = corpus_entry_size(&entry);
+        corpus_entry_t* made = (corpus_entry_t*)malloc(size);
+        if (NULL != made) {
+          memcpy(made, &entry, size);
+          if (NULL != libxs_registry_set(corpus_views, key, sizeof(key),
+            &made, sizeof(made), NULL))
+          {
+            result = made;
+            ++corpus_view_count;
+          }
+          else free(made);
+        }
+      }
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Store a record under the content key of `entry`, writing either the entry itself
+ * or, when `span` is given, the sixteen bytes that locate the same text inside its
+ * parent. The duplicate walk is shared deliberately: what collapses two identical
+ * windows is the KEY, so a derived pool de-duplicates exactly as a stored one did
+ * and no separate rule can drift away from it.
+ */
+static int corpus_store_record(libxs_registry_t* corpus,
+  const corpus_entry_t* entry, const corpus_span_t* span)
 {
   int result = 0;
   unsigned char key[20];
@@ -1617,35 +2988,60 @@ static int corpus_store_entry(libxs_registry_t* corpus,
     existing = libxs_registry_get(corpus, key, key_size, NULL);
     if (NULL == existing) {
       if (0 == matched) {
-        libxs_registry_set(corpus, key, key_size,
-          entry, corpus_entry_size(entry), NULL);
+        if (NULL != span) {
+          libxs_registry_set(corpus, key, key_size, span, sizeof(*span), NULL);
+        }
+        else {
+          libxs_registry_set(corpus, key, key_size,
+            entry, corpus_entry_size(entry), NULL);
+        }
         result = 1;
       }
       break;
     }
     else {
-      const corpus_entry_t* old_entry = (const corpus_entry_t*)existing;
+      const char* old_text = NULL;
+      const char* old_section = NULL;
+      int old_len = 0, old_section_len = 0;
       size_t old_size = libxs_registry_value_size(corpus, key,
         key_size, NULL);
-      if (old_entry->text_len == entry->text_len
-        && 0 == libxs_memcmp(old_entry->text, entry->text,
-          (size_t)entry->text_len)
-        && 0 != corpus_entry_same_section(old_entry, old_size, entry))
+      if (EXIT_SUCCESS == corpus_record_text(existing, old_size,
+          &old_text, &old_len, &old_section, &old_section_len)
+        && old_len == entry->text_len
+        && 0 == libxs_memcmp(old_text, entry->text, (size_t)entry->text_len)
+        && old_section_len == (int)entry->section_len
+        && (0 == old_section_len || 0 == libxs_memcmp(old_section,
+          entry->section, (size_t)old_section_len)))
       {
+        const corpus_entry_t* old_entry = (ENTRY_KIND_FULL
+          == corpus_value_kind(existing))
+          ? (const corpus_entry_t*)existing : NULL;
         matched = 1;
         /* Replace only to gain token metadata; sizes now vary by text
-           length, so an unequal size is no longer evidence of anything. */
-        if (0 == old_entry->ntokens && entry->ntokens > 0) {
-          libxs_registry_set(corpus, key, key_size,
-            entry, corpus_entry_size(entry), NULL);
+           length, so an unequal size is no longer evidence of anything.
+           A span was built from the same text as this entry, so it has the
+           same tokens and there is nothing to gain from replacing it. */
+        if (NULL != old_entry) {
+          if (0 == old_entry->ntokens && entry->ntokens > 0) {
+            libxs_registry_set(corpus, key, key_size,
+              entry, corpus_entry_size(entry), NULL);
+          }
+          if (old_entry->ntokens > 0) break;
         }
-        if (old_entry->ntokens > 0) break;
+        else break;
       }
     }
   }
   /* Chain exhausted without placing or matching: the text is dropped. */
   if (0 == result && 0 == matched) ++corpus_chain_dropped;
   return result;
+}
+
+
+static int corpus_store_entry(libxs_registry_t* corpus,
+  const corpus_entry_t* entry)
+{
+  return corpus_store_record(corpus, entry, NULL);
 }
 
 
@@ -1658,7 +3054,33 @@ int answer_relation_reply(const answer_relation_match_t* match,
   if (NULL == match || NULL == output || 0 == output_size
     || match->answer_len <= 0 || match->relation_len <= 0) return EXIT_FAILURE;
   copula = (0 != match->plural) ? " were " : " was ";
-  if ((size_t)match->answer_len + strlen(copula)
+  /**
+   * The ACTIVE shape is re-emitted in the voice the corpus used, which is what
+   * makes it grammatical without consulting morphology. A passive rendering needs
+   * the relation word to be a PARTICIPLE, and the active shape reads the SURFACE
+   * form of the clause: "Gretel laid the spit" passivizes, but "Frederick walked
+   * the fastest" and "Lily let the nut fall" do not, and nothing in the extractor
+   * knows which is which. Stating what the corpus stated cannot be ungrammatical.
+   */
+  if (0 != match->active) {
+    if (match->actor_len > 0 && (size_t)match->actor_len
+      + (size_t)match->relation_len + (size_t)match->answer_len + 4
+      < output_size)
+    {
+      memcpy(output + pos, match->actor, (size_t)match->actor_len);
+      pos += (size_t)match->actor_len;
+      output[pos++] = ' ';
+      memcpy(output + pos, match->relation, (size_t)match->relation_len);
+      pos += (size_t)match->relation_len;
+      output[pos++] = ' ';
+      memcpy(output + pos, match->answer, (size_t)match->answer_len);
+      pos += (size_t)match->answer_len;
+      output[pos++] = '.';
+      output[pos] = '\0';
+      result = EXIT_SUCCESS;
+    }
+  }
+  else if ((size_t)match->answer_len + strlen(copula)
     + (size_t)match->relation_len + (size_t)match->actor_len + 8
     < output_size)
   {
@@ -1798,7 +3220,7 @@ static void answer_predict_report(const char* label,
   const answer_predict_profile_t* profile)
 {
   libxs_predict_query_t info;
-  LIBXS_MEMZERO(&info);
+  memset(&info, 0, sizeof(info));
   if (NULL == profile) profile = answer_predict_profile_default();
   if (NULL != label && NULL != model) {
     libxs_predict_query(model, &info);
@@ -1823,7 +3245,7 @@ static libxs_predict_t* converse_predict_train(const libxs_registry_t* corpus,
   if (NULL == corpus) return NULL;
   model = answer_predict_create(profile);
   if (NULL == model) return NULL;
-  value = libxs_registry_begin_length(corpus, &key, &key_size, &cursor);
+  value = corpus_iter_begin_length(corpus, &key, &key_size, &cursor);
   while (NULL != value) {
     const corpus_entry_t* entry = (const corpus_entry_t*)value;
     /* Key size from the iterator: see the note in answer_relation_reply. */
@@ -1847,7 +3269,7 @@ static libxs_predict_t* converse_predict_train(const libxs_registry_t* corpus,
         }
       }
     }
-    value = libxs_registry_next_length(corpus, &key, &key_size, &cursor);
+    value = corpus_iter_next_length(corpus, &key, &key_size, &cursor);
   }
   if (ntrain >= 8 && EXIT_SUCCESS == answer_predict_build_model(model,
     profile))
@@ -2146,9 +3568,10 @@ static void bpe_build(const libxs_registry_t* corpus, int holdout)
   { const void* key = NULL;
     size_t cursor = 0;
     long index = 0;
-    void* value = libxs_registry_begin(corpus, &key, &cursor);
+    corpus_entry_t scratch;
+    void* value = corpus_iterx_begin(corpus, &key, &cursor);
     while (NULL != value && nwords < BPE_WORD_CAP) {
-      const corpus_entry_t* entry = (const corpus_entry_t*)value;
+      const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
       if (0 == predict_is_test(index, holdout)) {
         int pos = 0;
         while (pos < entry->text_len && nwords < BPE_WORD_CAP) {
@@ -2184,7 +3607,7 @@ static void bpe_build(const libxs_registry_t* corpus, int holdout)
         }
       }
       ++index;
-      value = libxs_registry_next(corpus, &key, &cursor);
+      value = corpus_iterx_next(corpus, &key, &cursor);
     }
   }
   for (merge = 0; merge < nmerges; ++merge) {
@@ -3017,11 +4440,12 @@ libxs_registry_t* ngram_build(const libxs_registry_t* corpus,
   if (NULL != corpus) {
     const void* key = NULL;
     size_t cursor = 0;
+    corpus_entry_t scratch;
     long index = 0;
     const int onescale = ngram_dedup_scale();
-    void* value = libxs_registry_begin(corpus, &key, &cursor);
+    void* value = corpus_iterx_begin(corpus, &key, &cursor);
     while (NULL != value) {
-      const corpus_entry_t* entry = (const corpus_entry_t*)value;
+      const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
       if (0 == predict_is_test(index, holdout)
         && (0 == onescale
           || (((2 == onescale) ? SCALE_PARAGRAPH : SCALE_SENTENCE)
@@ -3032,7 +4456,7 @@ libxs_registry_t* ngram_build(const libxs_registry_t* corpus,
           entry->text, entry->text_len);
       }
       ++index;
-      value = libxs_registry_next(corpus, &key, &cursor);
+      value = corpus_iterx_next(corpus, &key, &cursor);
     }
   }
   return converse_ngram.store;
@@ -3711,16 +5135,17 @@ void token_emb_build(const libxs_registry_t* corpus,
       size_t cursor = 0, nnz = 0;
       long index = 0;
       unsigned int id;
-      void* value = libxs_registry_begin(corpus, &key, &cursor);
+      corpus_entry_t scratch;
+      void* value = corpus_iterx_begin(corpus, &key, &cursor);
       token_emb_size = vocab;
       while (NULL != value) {
-        const corpus_entry_t* entry = (const corpus_entry_t*)value;
+        const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
         if (0 == predict_is_test(index, holdout)) {
           token_emb_cooc_text(pairs, rowcnt, lexicon, rules, nrules,
             entry->text, entry->text_len);
         }
         ++index;
-        value = libxs_registry_next(corpus, &key, &cursor);
+        value = corpus_iterx_next(corpus, &key, &cursor);
       }
       /* rowcnt was already accumulated for the backfill, so the unigram prior
          the successor distribution rescales costs one normalization. */
@@ -4057,6 +5482,125 @@ static int corpus_profile_for_path(const char* path)
 }
 
 /**
+ * Store the clause windows of a span as sentence-scale fragments; returns how
+ * many were stored.
+ *
+ * This was TWO identical loops, and they cut clauses for two unrelated reasons:
+ * the clauses of an over-long SENTENCE, which have no other representation at all
+ * because the whole-sentence branch requires a length below COMPOSE_MAXTEXT, and
+ * the clauses of a long PARAGRAPH, whose bytes the paragraph entry already covers.
+ * They differ only in their bound and their section. Writing the cutting rule
+ * twice is how two definitions of one thing begin, which this line has now paid
+ * for more than once.
+ *
+ * The windows OVERLAP by construction: each starts at a clause boundary and runs
+ * to the LAST boundary within 240 bytes, so a clause belongs to every window that
+ * reaches it. They are recombination's donor pool -- measured, not assumed:
+ * withholding the paragraph ones costs a third of the splice yield and twenty
+ * points of same-section coherence while every eval stays green.
+ *
+ * `derive` stores them as SPANS of one parent text instead of as entries in their
+ * own right, which is what the two reasons above finally buy: the windows of a long
+ * paragraph are byte ranges of a text that is worth keeping once, while the windows
+ * of an over-long sentence are the only copy of theirs and stay entries. The parent
+ * is written on the first window rather than up front, so a paragraph that yields
+ * none costs nothing.
+ */
+static int corpus_store_clauses(libxs_registry_t* corpus,
+  const unsigned char* text, size_t begin, size_t end, const char* section,
+  int section_len, libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules,
+  int nrules, int derive)
+{
+  int result = 0;
+  unsigned int parent = 0;
+  size_t frag_start = begin;
+  while (frag_start < end) {
+    size_t scan = frag_start;
+    size_t frag_end = frag_start;
+    while (scan < end && scan - frag_start < 240) {
+      if (',' == text[scan] || ';' == text[scan] || ':' == text[scan]
+        || '.' == text[scan] || '?' == text[scan] || '!' == text[scan])
+      {
+        frag_end = scan + 1;
+      }
+      ++scan;
+    }
+    if (frag_end > frag_start) {
+      size_t trim_start = frag_start;
+      int frag_len;
+      while (trim_start < frag_end
+        && 0 != isspace(text[trim_start])) ++trim_start;
+      frag_len = (int)(frag_end - trim_start);
+      while (frag_len > 0
+        && 0 != isspace(text[trim_start + frag_len - 1]))
+      {
+        --frag_len;
+      }
+      if (frag_len > 24 && frag_len < COMPOSE_MAXTEXT
+        && count_words(text + trim_start, frag_len) >= 4)
+      {
+        corpus_entry_t entry;
+        if (0 != derive && 0 == parent) {
+          parent = corpus_store_blob(text + begin, (int)(end - begin),
+            section, section_len);
+        }
+        if (EXIT_SUCCESS == corpus_entry_build(&entry, text + trim_start,
+          frag_len, SCALE_SENTENCE, lexicon, rules, nrules))
+        {
+          corpus_span_t span;
+          entry.lexical_flags |= ENTRY_LEX_FRAGMENT;
+          corpus_entry_set_section(&entry, section, section_len);
+          memset(&span, 0, sizeof(span));
+          span.kind = (unsigned short)ENTRY_KIND_SPAN;
+          span.connector = entry.connector;
+          span.scale = entry.scale;
+          span.text_len = frag_len;
+          span.parent = parent;
+          span.offset = (unsigned int)(trim_start - begin);
+          if (0 != parent && 0 != corpus_span_check()) {
+            corpus_entry_t rebuilt;
+            if (EXIT_SUCCESS != corpus_span_build(&span, &rebuilt)
+              || 0 != libxs_memcmp(&rebuilt, &entry, corpus_entry_size(&entry)))
+            {
+              ++corpus_span_mismatch;
+            }
+          }
+          if (0 != corpus_store_record(corpus, &entry,
+            (0 != parent) ? &span : NULL)) ++result;
+        }
+      }
+    }
+    while (frag_start < end && ',' != text[frag_start]
+      && ';' != text[frag_start] && ':' != text[frag_start]
+      && '.' != text[frag_start] && '?' != text[frag_start]
+      && '!' != text[frag_start]) ++frag_start;
+    if (frag_start < end) ++frag_start;
+    while (frag_start < end
+      && 0 != isspace(text[frag_start])) ++frag_start;
+  }
+  /**
+   * A parent whose every window turned out to be a duplicate is unreferenced, and
+   * a warm re-ingest makes that the NORM: the windows collapse in the key space
+   * while the parent, keyed by a fresh number, does not. Left alone it grows the
+   * parent file by the whole corpus on every warm run -- the same shape as the
+   * warm-start doubling the section comparison once caused.
+   */
+  if (0 != parent && 0 == result && NULL != corpus_parents) {
+    unsigned char key[12];
+    size_t key_size = 0;
+    corpus_blob_key(parent, key, &key_size);
+    libxs_registry_remove(corpus_parents, key, key_size, NULL);
+    /* The id is handed out again, so any window cached under it would now stand
+       for a different parent's text: one registry's removal invalidating the
+       other's contents, which is the reason the views are dropped here. */
+    corpus_view_free();
+    if (corpus_blob_max == parent) --corpus_blob_max;
+  }
+  return result;
+}
+
+
+/**
  * Index prose markdown blocks at sentence scale in addition to paragraph scale.
  *
  * Off by default, and the default is not tidiness: the n-gram trainer scans every
@@ -4311,7 +5855,7 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
   }
   else if (EXIT_SUCCESS == result && NULL != text && text_size > 0) {
     size_t sent_start = 0;
-    int nsentences = 0, nparagraphs = 0;
+    int nsentences = 0, nparagraphs = 0, nfragsent = 0, nfragpara = 0;
     const char* current_section = NULL;
     int current_section_len = 0;
     size_t i;
@@ -4332,53 +5876,11 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
           current_section_len = corpus_section_at(sent_start,
             &current_section);
           if (len >= COMPOSE_MAXTEXT) {
-            size_t frag_start = sent_start;
-            while (frag_start < sent_end) {
-              size_t scan = frag_start;
-              size_t frag_end = frag_start;
-              while (scan < sent_end && scan - frag_start < 240) {
-                if (',' == text[scan] || ';' == text[scan]
-                  || ':' == text[scan] || '.' == text[scan]
-                  || '?' == text[scan] || '!' == text[scan])
-                {
-                  frag_end = scan + 1;
-                }
-                ++scan;
-              }
-              if (frag_end > frag_start) {
-                size_t trim_start = frag_start;
-                int frag_len;
-                while (trim_start < frag_end
-                  && 0 != isspace(text[trim_start])) ++trim_start;
-                frag_len = (int)(frag_end - trim_start);
-                while (frag_len > 0
-                  && 0 != isspace(text[trim_start + frag_len - 1])) --frag_len;
-                if (frag_len > 24 && frag_len < COMPOSE_MAXTEXT
-                  && count_words(text + trim_start, frag_len) >= 4)
-                {
-                  corpus_entry_t entry;
-                  if (EXIT_SUCCESS == corpus_entry_build(&entry,
-                    text + trim_start, frag_len, SCALE_SENTENCE,
-                    lexicon, rules, nrules))
-                  {
-                    /* A clause cut from the sentence stored below: its bytes
-                       are already covered by that entry. */
-                    entry.lexical_flags |= ENTRY_LEX_FRAGMENT;
-                    corpus_entry_set_section(&entry, current_section,
-                      current_section_len);
-                    if (0 != corpus_store_entry(corpus, &entry)) ++nsentences;
-                  }
-                }
-              }
-              while (frag_start < sent_end && ',' != text[frag_start]
-                && ';' != text[frag_start] && ':' != text[frag_start]
-                && '.' != text[frag_start] && '?' != text[frag_start]
-                && '!' != text[frag_start]) ++frag_start;
-              if (frag_start < sent_end) ++frag_start;
-              while (frag_start < sent_end && 0 != isspace(text[frag_start])) {
-                ++frag_start;
-              }
-            }
+            const int made = corpus_store_clauses(corpus, text,
+              sent_start, sent_end, current_section, current_section_len,
+              lexicon, rules, nrules, 0);
+            nfragsent += made;
+            nsentences += made;
           }
           if (len > 8 && len < COMPOSE_MAXTEXT) {
             int nwords = count_words(text + sent_start, len);
@@ -4410,55 +5912,12 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
           while (plen > 0 && 0 != isspace(text[para_start + plen - 1]))
             --plen;
           para_section_len = corpus_section_at(para_start, &para_section);
-          if (plen >= COMPOSE_MAXTEXT) {
-            size_t frag_start = para_start;
-            size_t para_end = para_start + (size_t)plen;
-            while (frag_start < para_end) {
-              size_t scan = frag_start;
-              size_t frag_end = frag_start;
-              while (scan < para_end && scan - frag_start < 240) {
-                if (',' == text[scan] || ';' == text[scan]
-                  || ':' == text[scan] || '.' == text[scan]
-                  || '?' == text[scan] || '!' == text[scan])
-                {
-                  frag_end = scan + 1;
-                }
-                ++scan;
-              }
-              if (frag_end > frag_start) {
-                size_t trim_start = frag_start;
-                int frag_len;
-                while (trim_start < frag_end
-                  && 0 != isspace(text[trim_start])) ++trim_start;
-                frag_len = (int)(frag_end - trim_start);
-                while (frag_len > 0
-                  && 0 != isspace(text[trim_start + frag_len - 1])) --frag_len;
-                if (frag_len > 24 && frag_len < COMPOSE_MAXTEXT
-                  && count_words(text + trim_start, frag_len) >= 4)
-                {
-                  corpus_entry_t entry;
-                  if (EXIT_SUCCESS == corpus_entry_build(&entry,
-                    text + trim_start, frag_len, SCALE_SENTENCE,
-                    lexicon, rules, nrules))
-                  {
-                    /* A clause cut from the sentence stored below: its bytes
-                       are already covered by that entry. */
-                    entry.lexical_flags |= ENTRY_LEX_FRAGMENT;
-                    corpus_entry_set_section(&entry, para_section,
-                      para_section_len);
-                    if (0 != corpus_store_entry(corpus, &entry)) ++nsentences;
-                  }
-                }
-              }
-              while (frag_start < para_end && ',' != text[frag_start]
-                && ';' != text[frag_start] && ':' != text[frag_start]
-                && '.' != text[frag_start] && '?' != text[frag_start]
-                && '!' != text[frag_start]) ++frag_start;
-              if (frag_start < para_end) ++frag_start;
-              while (frag_start < para_end && 0 != isspace(text[frag_start])) {
-                ++frag_start;
-              }
-            }
+          if (plen >= COMPOSE_MAXTEXT && 0 != corpus_fragments_para()) {
+            const int made = corpus_store_clauses(corpus, text,
+              para_start, para_start + (size_t)plen, para_section,
+              para_section_len, lexicon, rules, nrules, 1);
+            nfragpara += made;
+            nsentences += made;
           }
           if (plen > 40 && plen < COMPOSE_MAXTEXT) {
             int nwords = count_words(text + para_start, plen);
@@ -4481,6 +5940,12 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
     }
     /* Sections are reported because attribution rests on them and a heading the
        scan misses is invisible in every other figure. */
+    fprintf(stderr, "  fragments: %d from over-long sentences (the only copy),"
+      " %d from long paragraphs (covered twice)\n", nfragsent, nfragpara);
+    if (0 != corpus_span_check()) {
+      fprintf(stderr, "  windows rebuilt: %ld of %d differ from the entry"
+        " they replace\n", corpus_span_mismatch, nfragpara);
+    }
     fprintf(stderr, "  ingested %s: %d sentences, %d paragraphs, %d sections\n",
       path, nsentences, nparagraphs, corpus_sections_size);
   }
@@ -4669,15 +6134,37 @@ const char* converse_bridge_path(void)
 }
 
 
-const char* converse_eval_path(void)
-{
-  return converse_path_eval;
-}
-
-
 const char* converse_predict_eval_path(void)
 {
   return converse_path_predict_eval;
+}
+
+
+const char* converse_facts_path(void)
+{
+  return converse_path_facts;
+}
+
+
+/**
+ * The fixture to score against. Rule learning changes what the system asserts,
+ * so it needs its OWN expectations -- scoring a learned run against the asserted
+ * fixture would either fail on answers that are correct for that mode or, worse,
+ * pass because the modes happen to agree on the cases nobody re-checked. The
+ * asserted fixture is used when no learn-mode file exists, which keeps every
+ * historical command behaving as before.
+ */
+const char* converse_eval_path(void)
+{
+  const char* result = converse_path_eval;
+  if (0 < answer_rules_learn_count()) {
+    FILE* probe = fopen(converse_path_eval_learn, "r");
+    if (NULL != probe) {
+      fclose(probe);
+      result = converse_path_eval_learn;
+    }
+  }
+  return result;
 }
 
 
@@ -5025,6 +6512,7 @@ int converse_setup(int argc, char* argv[], int role, converse_run_t* run)
     if (NULL == run->corpus || NULL == run->lexicon || run->nrules <= 0) {
       result = EXIT_FAILURE;
     }
+    else corpus_view_bind(run->lexicon, converse_lexrules, run->nrules);
   }
   if (EXIT_SUCCESS == result) {
     /**
@@ -5033,8 +6521,18 @@ int converse_setup(int argc, char* argv[], int role, converse_run_t* run)
      * Loading appends, so a corpus adds its own vocabulary without restating the
      * language's function words, and neither file contains anything the source
      * needs to know about.
+     *
+     * `<prefix>.rules` REPLACES the shared file rather than extending it, because
+     * a corpus that brings its own language rules is not in the shared file's
+     * language, and the shared file's assertions are then not merely unhelpful --
+     * they are claims about a vocabulary this corpus does not have. Extending is
+     * still what `<prefix>.relations` does, for a corpus in the same language.
      */
-    answer_relation_rules_load_file(converse_path_language);
+    if ('\0' == converse_path_language_own[0]
+      || 0 == answer_relation_rules_load_file(converse_path_language_own))
+    {
+      answer_relation_rules_load_file(converse_path_language);
+    }
     answer_relation_rules_load_file(converse_path_norm);
     answer_relation_rules_load_file(converse_path_relation);
     answer_relation_rules_report(stderr);
@@ -5109,23 +6607,90 @@ int converse_setup(int argc, char* argv[], int role, converse_run_t* run)
   }
   free(basenames);
   if (EXIT_SUCCESS == result) {
-    libxs_registry_info_t rinfo;
+    const void* key = NULL;
+    size_t cursor = 0, nfrag = 0, ntext = 0, ntok = 0, nall = 0;
+    size_t nspan = 0, nblob = 0, nspantext = 0, nblobtext = 0;
+    size_t nbig[4];
+    void* value;
     /* Before the facts, because a widened person class is what makes new facts
        extractable at all: run it after and the learned terms would sit unused. */
     answer_relation_rules_learn(run->corpus, run->lexicon, converse_lexrules,
       run->nrules);
     token_emb_pair_probe(run->corpus, run->lexicon, converse_lexrules,
       run->nrules);
-    libxs_registry_info(run->corpus, &rinfo);
-    fprintf(stderr, "corpus: %lu sentences\n", (unsigned long)rinfo.size);
+    /**
+     * Where the corpus file's bytes actually go, and how many records STAND FOR an
+     * entry. Worth reporting because the shape is counter-intuitive: an entry
+     * carries FIXED metadata -- the token id and flag arrays at ENTRY_TOKEN_MAX,
+     * and the section NAME -- whether or not it uses them, so a corpus of short
+     * entries is mostly metadata. Any work on the corpus size should read this
+     * first rather than assume.
+     *
+     * The count excludes the parent texts, and that is not cosmetic: it is what
+     * every train/test SPLIT is taken over, so counting them would shift the
+     * holdout boundary and move figures that have nothing to do with parents.
+     */
+    nbig[0] = 0; nbig[1] = 0; nbig[2] = 0; nbig[3] = 0;
+    if (NULL != corpus_parents) {
+      value = libxs_registry_begin(corpus_parents, &key, &cursor);
+      while (NULL != value) {
+        ++nblob;
+        nblobtext += (size_t)((const corpus_blob_t*)value)->text_len;
+        value = libxs_registry_next(corpus_parents, &key, &cursor);
+      }
+      key = NULL;
+      cursor = 0;
+    }
+    value = libxs_registry_begin(run->corpus, &key, &cursor);
+    while (NULL != value) {
+      const corpus_entry_t* entry = (const corpus_entry_t*)value;
+      switch (corpus_value_kind(value)) {
+        case ENTRY_KIND_SPAN: {
+          ++nspan;
+          nspantext += (size_t)((const corpus_span_t*)value)->text_len;
+        } break;
+        default: {
+          ++nall;
+          if (0 != (entry->lexical_flags & ENTRY_LEX_FRAGMENT)) ++nfrag;
+          if (0 < entry->text_len) ntext += (size_t)entry->text_len;
+          ntok += entry->ntokens;
+          if (entry->ntokens > 16) ++nbig[0];
+          if (entry->ntokens > 24) ++nbig[1];
+          if (entry->ntokens > 32) ++nbig[2];
+          if (entry->ntokens >= ENTRY_TOKEN_MAX) ++nbig[3];
+        }
+      }
+      value = libxs_registry_next(run->corpus, &key, &cursor);
+    }
+    fprintf(stderr, "corpus: %lu sentences\n", (unsigned long)(nall + nspan));
+    { if (0 < nall) {
+        const size_t meta = nall * CORPUS_ENTRY_META_SIZE
+          + nspan * sizeof(corpus_span_t) + nblob * CORPUS_BLOB_META_SIZE;
+        fprintf(stderr, "corpus bytes: %lu meta + %lu text = %lu"
+          " (%lu fragments, %lu tokens of %lu slots)\n",
+          (unsigned long)meta, (unsigned long)(ntext + nblobtext),
+          (unsigned long)(meta + ntext + nblobtext), (unsigned long)nfrag,
+          (unsigned long)ntok, (unsigned long)(nall * ENTRY_TOKEN_MAX));
+        if (0 < nspan) {
+          fprintf(stderr, "corpus windows: %lu spans over %lu parents,"
+            " %lu located Bytes of %lu kept\n", (unsigned long)nspan,
+            (unsigned long)nblob, (unsigned long)nspantext,
+            (unsigned long)nblobtext);
+        }
+        fprintf(stderr, "corpus tokens: >16 %lu, >24 %lu, >32 %lu, at cap %lu"
+          " of %lu entries\n", (unsigned long)nbig[0], (unsigned long)nbig[1],
+          (unsigned long)nbig[2], (unsigned long)nbig[3], (unsigned long)nall);
+      }
+    }
     if (corpus_chain_dropped > 0) {
       fprintf(stderr, "  fingerprint chain cap reached: %ld texts dropped"
         " (CONVERSE_CHAIN_MAX=%u)\n", corpus_chain_dropped, corpus_chain_max());
     }
-    run->nsentences = (long)rinfo.size;
+    run->nsentences = (long)(nall + nspan);
     predict_ntotal = run->nsentences;
     if (0 != run->learn_mode) {
-      fprintf(stderr, "learned: %s, %s, %s\n", converse_path_corpus,
+      fprintf(stderr, "learned: %s%s, %s, %s\n", converse_path_corpus,
+        (NULL != corpus_parents) ? " + parents" : "",
         converse_path_lexicon, converse_path_predict);
     }
     else run->pending = 1;
@@ -5148,7 +6713,12 @@ void converse_release(converse_run_t* run)
     }
     libxs_predict_destroy(run->answer_model);
     libxs_lexicon_destroy(run->lexicon);
+    corpus_view_free();
     libxs_registry_destroy(run->corpus);
+    if (NULL != corpus_parents) {
+      libxs_registry_destroy(corpus_parents);
+      corpus_parents = NULL;
+    }
     answer_relation_rules_free();
     free(corpus_sections);
     corpus_sections = NULL;

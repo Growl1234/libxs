@@ -429,13 +429,14 @@ static void ngram_syllable_oracle(libxs_registry_t* model,
   enum { ORACLE_MAXLEN = 12 };
   const void* key = NULL;
   size_t cursor = 0;
+  corpus_entry_t scratch;
   void* value;
   double heur_bits = 0.0, oracle_bits = 0.0, single_bits = 0.0;
   long nword = 0, nskipped = 0, nheur_optimal = 0;
   long index = 0;
-  value = libxs_registry_begin(corpus, &key, &cursor);
+  value = corpus_iterx_begin(corpus, &key, &cursor);
   while (NULL != value) {
-    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
     const int is_test = (0 == holdout || 0 != predict_is_test(index, holdout));
     if (0 != is_test && entry->text_len > 0) {
       int pos = 0;
@@ -476,7 +477,7 @@ static void ngram_syllable_oracle(libxs_registry_t* model,
     }
     LIBXS_UNUSED(rules); LIBXS_UNUSED(nrules);
     ++index;
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iterx_next(corpus, &key, &cursor);
   }
   if (0 < nword) {
     fprintf(stderr, "syllable oracle (words 2..%d letters, n=%ld, skipped %ld"
@@ -1505,6 +1506,7 @@ static int ngram_gen_eval(libxs_registry_t* model,
   void* gen_context = NULL;
   const void* key = NULL;
   size_t cursor = 0;
+  corpus_entry_t scratch;
   void* value;
   if (NULL == model || NULL == corpus || NULL == lexicon) return EXIT_FAILURE;
   { int k, nslot = 0;
@@ -1522,9 +1524,9 @@ static int ngram_gen_eval(libxs_registry_t* model,
     gen_context = libxs_predict_prob_create(store);
   }
 
-  value = libxs_registry_begin(corpus, &key, &cursor);
+  value = corpus_iterx_begin(corpus, &key, &cursor);
   while (NULL != value) {
-    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
     int is_test = (0 == holdout || 0 != predict_is_test(index, holdout));
     libxs_lexeme_stream_t stream;
     const int native = ngram_native_mode();
@@ -1804,7 +1806,7 @@ static int ngram_gen_eval(libxs_registry_t* model,
     }
     libxs_lexeme_stream_release(&stream);
     ++index;
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iterx_next(corpus, &key, &cursor);
   }
   libxs_predict_prob_destroy(gen_context);
   if (nsent > 0) {
@@ -1911,11 +1913,12 @@ static void slot_scan(const libxs_registry_t* corpus,
 {
   const void* key = NULL;
   size_t cursor = 0;
+  corpus_entry_t scratch;
   long index = 0;
-  void* value = libxs_registry_begin(corpus, &key, &cursor);
+  void* value = corpus_iterx_begin(corpus, &key, &cursor);
   const int maxorder = ngram_maxorder();
   while (NULL != value) {
-    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
     const int is_test = (0 != predict_is_test(index, holdout)) ? 1 : 0;
     libxs_lexeme_stream_t stream;
     libxs_lexeme_stream_init(&stream);
@@ -1948,7 +1951,7 @@ static void slot_scan(const libxs_registry_t* corpus,
     }
     libxs_lexeme_stream_release(&stream);
     ++index;
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iterx_next(corpus, &key, &cursor);
   }
 }
 
@@ -2250,6 +2253,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   const double inv_log2 = 1.0 / log(2.0);
   const void* key = NULL;
   size_t cursor = 0;
+  corpus_entry_t scratch;
   void* value;
   FILE* file;
   if (NULL == model || NULL == corpus || NULL == lexicon) return EXIT_FAILURE;
@@ -2295,9 +2299,9 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   memset(novel_match, 0, sizeof(novel_match));
   memset(novel_match_bits, 0, sizeof(novel_match_bits));
   memset(novel_match_bytes, 0, sizeof(novel_match_bytes));
-  value = libxs_registry_begin(corpus, &key, &cursor);
+  value = corpus_iterx_begin(corpus, &key, &cursor);
   while (NULL != value) {
-    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
     libxs_lexeme_stream_t stream;
     int is_test = (0 == holdout || 0 != predict_is_test(index, holdout));
     int native = ngram_native_mode();
@@ -2589,7 +2593,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
     }
     libxs_lexeme_stream_release(&stream);
     ++index;
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iterx_next(corpus, &key, &cursor);
   }
   if (npairs > 0) {
     fprintf(stdout,
@@ -2841,6 +2845,7 @@ static libxs_predict_t* token_predict_build(const libxs_registry_t* corpus,
   if (NULL != model && NULL != corpus && NULL != profile) {
     const void* key = NULL;
     size_t cursor = 0;
+    corpus_entry_t scratch;
     long index = 0;
     void* value;
     libxs_predict_set_mode(model, profile->mode);
@@ -2854,9 +2859,9 @@ static libxs_predict_t* token_predict_build(const libxs_registry_t* corpus,
       }
       libxs_predict_set_weights(model, weights);
     }
-    value = libxs_registry_begin(corpus, &key, &cursor);
+    value = corpus_iterx_begin(corpus, &key, &cursor);
     while (NULL != value && pushed < TOKEN_PREDICT_TRAIN_MAX) {
-      const corpus_entry_t* entry = (const corpus_entry_t*)value;
+      const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
       libxs_lexeme_stream_t stream;
       int is_train = (0 == predict_is_test(index, holdout));
       libxs_lexeme_stream_init(&stream);
@@ -2901,7 +2906,7 @@ static libxs_predict_t* token_predict_build(const libxs_registry_t* corpus,
       }
       libxs_lexeme_stream_release(&stream);
       ++index;
-      value = libxs_registry_next(corpus, &key, &cursor);
+      value = corpus_iterx_next(corpus, &key, &cursor);
     }
     if (pushed <= 0 || EXIT_SUCCESS != libxs_predict_build(model,
       profile->clusters, profile->order, profile->quality))
@@ -2940,11 +2945,12 @@ static int token_predict_eval(const libxs_predict_t* model,
   int stride = predict_eval_stride();
   const void* key = NULL;
   size_t cursor = 0;
+  corpus_entry_t scratch;
   void* value;
   if (NULL == model || NULL == corpus || NULL == lexicon) return EXIT_FAILURE;
-  value = libxs_registry_begin(corpus, &key, &cursor);
+  value = corpus_iterx_begin(corpus, &key, &cursor);
   while (NULL != value) {
-    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
     libxs_lexeme_stream_t stream;
     int is_test = (0 == holdout || 0 != predict_is_test(index, holdout));
     libxs_lexeme_stream_init(&stream);
@@ -2980,7 +2986,7 @@ static int token_predict_eval(const libxs_predict_t* model,
     }
     libxs_lexeme_stream_release(&stream);
     ++index;
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iterx_next(corpus, &key, &cursor);
   }
   if (npairs > 0) {
     fprintf(stdout, "predict-%s%s: top1=%.1f%% n=%ld (stride=%d)\n",
@@ -3125,6 +3131,7 @@ static libxs_predict_t* rerank_build(const libxs_registry_t* corpus,
   if (NULL != model && NULL != corpus && NULL != ngram && NULL != profile) {
     const void* key = NULL;
     size_t cursor = 0;
+    corpus_entry_t scratch;
     long index = 0;
     void* value;
     static const double weights[RERANK_INPUTS] = {
@@ -3135,9 +3142,9 @@ static libxs_predict_t* rerank_build(const libxs_registry_t* corpus,
     libxs_predict_set_weights(model, weights);
     if (0.0 != profile->smooth) libxs_predict_set_smooth(model,
       profile->smooth);
-    value = libxs_registry_begin(corpus, &key, &cursor);
+    value = corpus_iterx_begin(corpus, &key, &cursor);
     while (NULL != value && pushed < TOKEN_PREDICT_TRAIN_MAX) {
-      const corpus_entry_t* entry = (const corpus_entry_t*)value;
+      const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
       libxs_lexeme_stream_t stream;
       int is_train = (0 == predict_is_test(index, holdout));
       libxs_lexeme_stream_init(&stream);
@@ -3185,7 +3192,7 @@ static libxs_predict_t* rerank_build(const libxs_registry_t* corpus,
       }
       libxs_lexeme_stream_release(&stream);
       ++index;
-      value = libxs_registry_next(corpus, &key, &cursor);
+      value = corpus_iterx_next(corpus, &key, &cursor);
     }
     if (pushed <= 0 || EXIT_SUCCESS != libxs_predict_build(model,
       profile->clusters, profile->order, profile->quality))
@@ -3254,13 +3261,14 @@ static int rerank_eval(libxs_registry_t* ngram,
   int stride = predict_eval_stride();
   const void* key = NULL;
   size_t cursor = 0;
+  corpus_entry_t scratch;
   void* value;
   if (NULL == ngram || NULL == reranker || NULL == corpus || NULL == lexicon) {
     return EXIT_FAILURE;
   }
-  value = libxs_registry_begin(corpus, &key, &cursor);
+  value = corpus_iterx_begin(corpus, &key, &cursor);
   while (NULL != value) {
-    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
     libxs_lexeme_stream_t stream;
     int is_test = (0 == holdout || 0 != predict_is_test(index, holdout));
     libxs_lexeme_stream_init(&stream);
@@ -3304,7 +3312,7 @@ static int rerank_eval(libxs_registry_t* ngram,
     }
     libxs_lexeme_stream_release(&stream);
     ++index;
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iterx_next(corpus, &key, &cursor);
   }
   if (npairs > 0) {
     fprintf(stdout,
@@ -4104,14 +4112,15 @@ static int knnlm_eval(libxs_registry_t* ngram, const libxs_predict_t* store,
   int dynamic = (NULL != dyn_env && '0' != dyn_env[0]) ? 1 : 0;
   const void* key = NULL;
   size_t cursor = 0;
+  corpus_entry_t scratch;
   void* value;
   if (NULL == ngram || NULL == store || NULL == corpus || NULL == lexicon) {
     return EXIT_FAILURE;
   }
   if (0 != dynamic) knnlm_dyn_reset();
-  value = libxs_registry_begin(corpus, &key, &cursor);
+  value = corpus_iterx_begin(corpus, &key, &cursor);
   while (NULL != value) {
-    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
     libxs_lexeme_stream_t stream;
     int is_test = (0 == holdout || 0 != predict_is_test(index, holdout));
     libxs_lexeme_stream_init(&stream);
@@ -4208,7 +4217,7 @@ static int knnlm_eval(libxs_registry_t* ngram, const libxs_predict_t* store,
     }
     libxs_lexeme_stream_release(&stream);
     ++index;
-    value = libxs_registry_next(corpus, &key, &cursor);
+    value = corpus_iterx_next(corpus, &key, &cursor);
   }
   if (npairs > 0) {
     fprintf(stdout,

@@ -119,15 +119,67 @@ filler words out of source. Each non-comment line is one of:
 alias|query-relation|evidence-verb
 person|term
 skip|term
+where|term
+place|term
+topic|term
+copula|term
+article|term
+prep|term
+own|term
+poss|shape
+aux|term
+agent|term
 ```
 
-For example `alias|eaten|devoured`, `person|grandmother`, `skip|the`. After
-ingestion the sample rebuilds an in-memory fact index and reports
-`relation facts: N learned` and `identity facts: N learned`. Relation questions
+For example `alias|eaten|devoured`, `person|grandmother`, `skip|the`. `where|in`
+declares a location MARKER and `place|forest` a place noun, and the two together
+give `Where ...?` questions a proposition to answer with: the reply is the actor
+followed by a verbatim span of the actor's own sentence, cited. `why|because` and
+`how|by` declare the corresponding markers. All of these are language facts rather
+than corpus facts, so they belong in the shared `converse.rules`; a corpus whose
+own `<corpus>.rules` replaces that file must state its own. After ingestion the
+sample rebuilds an in-memory fact index and reports `relation facts: N learned`,
+`identity facts: N learned` and `location facts: N learned`. `CONVERSE_FACTS_LIST=1`
+prints the relation and location facts themselves, which is the only way to judge
+them.
+
+`topic|about` marks the subject of an attribute question, so
+`What do we know about Hansel?` answers with several cited propositions collected
+from the fact layers rather than with one retrieved sentence. Attested facts are
+stated plainly; a speculative one speaks only when nothing about that name is
+attested, and is labelled when it does.
+
+Relation questions
 consult this index before falling back to raw evidence. Identity facts of the
 form `name is the role` draw their role words from the `person|term` rules and
 bind a role to a name only within a single sentence; a `Who is X?` question then
 answers from the highest-scoring identity fact for X, or abstains.
+
+`copula|is`, `article|a` and `prep|of` are the syntactic classes the type shapes
+need: with them, `Who is Aristotle?` can answer from the copular ("X is a Y") and
+appositive ("X, a Y, ...") shapes prose states definitions in. `own|belongs` marks a
+possession question, and `poss|apostrophe-s` declares how the language WRITES
+possession -- English marks it with an apostrophe and an s, German with a bare s and
+no apostrophe at all -- so `What belongs to Curdken?` enumerates what is attested,
+each item cited. Declaring the wrong shape costs silence rather than error, because
+the name census still has to recognize what remains once the mark is removed.
+
+`aux|had` and `agent|by` are what the passive shape needs. The auxiliaries are
+declared for one reason: the word an auxiliary governs is a VERB, so the class of
+verbs is DERIVED from the corpus rather than listed (`verbs derived: N from the
+auxiliary frame`). That class is incomplete by construction -- English narrative is
+past simple, which no auxiliary governs -- so it is used only to REJECT: a name the
+corpus puts after a verb is that verb's object, not the subject of its clause.
+`agent|by` then makes any passive readable without a rule per verb, so
+`X was visited by Y` becomes an edge between two entities.
+
+The same derived class carries the ACTIVE shape -- a name, a verb, and either
+another name or an article-headed phrase, as in `Agassi won the Australian Open` --
+where it is a REQUIREMENT rather than a rejection: a word the corpus never puts
+after an auxiliary is not read as a verb, so the shape declines to look rather than
+guessing. What it declines costs a fact that is never stated, which is why the same
+incomplete class is safe in both polarities. Such a fact is re-emitted in the voice
+the corpus used, since restating what the corpus stated cannot be ungrammatical.
 
 Bridge rules (`converse.bridges`) provide optional evidence-backed answer frames.
 Each non-comment line has five pipe-separated fields:
@@ -195,6 +247,8 @@ and ignored by version control:
 
 - `texts/` -- corpus files.
 - `converse.dat` -- persisted corpus registry.
+- `converse.par` -- parent texts the corpus refers to. Written beside the corpus
+  and required with it: delete one and the other is rebuilt.
 - `converse.lex` -- persisted lexicon and token IDs.
 - `converse.prd` -- persisted answer reranker.
 - `converse.eval` -- evaluation fixture.

@@ -905,6 +905,7 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
                 &shape, NULL, FPRINT_ORDER, 0, 0, 0))
               {
                 corpus_fprint_pack(&entry.fprint, &full);
+                entry.kind = ENTRY_KIND_FULL;
                 entry.text_len = len;
                 memcpy(entry.text, text + sent_start, (size_t)len);
                 entry.connector = CONN_NEWLINE;
@@ -1055,7 +1056,7 @@ static int compose_document(const libxs_registry_t* corpus,
       const void* iter_key = NULL;
       void* iter_val;
 
-      iter_val = libxs_registry_begin(corpus, &iter_key, &cursor);
+      iter_val = corpus_iter_begin(corpus, &iter_key, &cursor);
       while (NULL != iter_val) {
         const corpus_entry_t* e = (const corpus_entry_t*)iter_val;
         if (e->text_len >= 8) {
@@ -1101,7 +1102,7 @@ static int compose_document(const libxs_registry_t* corpus,
             libxs_lexeme_stream_release(&candidate_tokens);
           }
         }
-        iter_val = libxs_registry_next(corpus, &iter_key, &cursor);
+        iter_val = corpus_iter_next(corpus, &iter_key, &cursor);
       }
 
       if (NULL == best_entry) break;
