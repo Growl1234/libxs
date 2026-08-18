@@ -679,8 +679,12 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model,
 
 /**
  * Load a model from a binary buffer (previously saved with libxs_predict_save).
- * Returns a ready-to-eval model, or NULL on failure (corrupt data, version mismatch).
- * The returned model does not reference the buffer after this call returns.
+ * Files written by any released version are accepted; fields introduced later
+ * take their default (a v1.0.0 flat model has no global entry order, hence no
+ * inverse and no recency weighting, exactly as under v1.0.0).
+ * Returns a ready-to-eval model, or NULL on failure (corrupt data, version newer
+ * than this library). The returned model does not reference the buffer after
+ * this call returns.
  */
 LIBXS_API libxs_predict_t* libxs_predict_load(
   const void* buffer, size_t size);

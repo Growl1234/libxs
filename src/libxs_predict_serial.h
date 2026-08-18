@@ -56,6 +56,19 @@ LIBXS_API_INLINE int internal_libxs_predict_load_entries(libxs_predict_t* model)
   const int p = model->nentries;
   int result = EXIT_SUCCESS;
   int recoverable = (0 < p && NULL != model->clusters && NULL != model->input_rng);
+  if (0 != recoverable) {
+    /**
+     * sorted_idx supplies the global position of each cluster-local entry, so
+     * without it no entry can be placed.  A version-1 flat file carries none;
+     * allocating the entry set anyway would leave every entry with NULL inputs,
+     * which libxs_predict_inverse would dereference instead of abstaining.
+     */
+    int c;
+    for (c = 0; c < model->nclusters; ++c) {
+      const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
+      if (0 < cl->nentries && NULL == cl->sorted_idx) recoverable = 0;
+    }
+  }
   if (0 != recoverable && NULL != model->weights) {
     /**
      * Feature selection (Fisher, setdiff, PCA) zeroes the weight of a dropped
@@ -116,6 +129,27 @@ LIBXS_API_INLINE int internal_libxs_predict_load_entries(libxs_predict_t* model)
 }
 
 
+/**
+ * Outputs served by one per-output partition.  A per-output cluster stores its
+ * outputs strided by this, so the writer, the reader, and eval must agree on it
+ * or the payload is truncated and then read past its end -- the clamp mirrors
+ * what eval applies (see libxs_predict_eval).
+ */
+LIBXS_API_INLINE int internal_libxs_predict_gsize(const int* po_groups,
+  int noutputs, int group)
+{
+  int result = 0, j;
+  for (j = 0; j < noutputs; ++j) {
+    if ((NULL != po_groups && po_groups[j] == group)
+      || (NULL == po_groups && j == group))
+    {
+      ++result;
+    }
+  }
+  return (0 < result) ? result : 1;
+}
+
+
 LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
   const libxs_predict_t* model, void* buffer, size_t* size)
 {
@@ -146,16 +180,18 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     required += (size_t)p * (size_t)ng * sizeof(uint16_t);
     for (j = 0; j < ng; ++j) {
       const int po_nc = model->hknn_po_nclusters[j];
+      const int gsz = internal_libxs_predict_gsize(model->hknn_po_groups, n, j);
       required += sizeof(uint16_t);
       if (NULL != model->hknn_po_clusters[j]) {
         for (c = 0; c < po_nc; ++c) {
           const internal_libxs_predict_cluster_t* pcl =
             &model->hknn_po_clusters[j][c];
-          required += sizeof(uint16_t) + 2 + sizeof(uint16_t) + sizeof(double);
+          required += sizeof(uint16_t) + sizeof(uint8_t) + sizeof(double);
+          required += (size_t)gsz * (sizeof(uint8_t) + sizeof(uint16_t));
           required += (size_t)m * sizeof(double);
           if (pcl->nentries > 0) {
             required += (size_t)pcl->nentries * (size_t)m * sizeof(double);
-            required += (size_t)pcl->nentries * sizeof(double);
+            required += (size_t)pcl->nentries * (size_t)gsz * sizeof(double);
           }
         }
       }
@@ -233,23 +269,29 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
       WRITE_U8(1);
       for (j = 0; j < ng; ++j) {
         const int po_nc = model->hknn_po_nclusters[j];
+        const int gsz = internal_libxs_predict_gsize(model->hknn_po_groups, n, j);
         int ci;
         WRITE_U16(po_nc);
         if (NULL != model->hknn_po_clusters[j]) {
           for (ci = 0; ci < po_nc; ++ci) {
             const internal_libxs_predict_cluster_t* pcl =
               &model->hknn_po_clusters[j][ci];
+            int gi;
             WRITE_U16(pcl->nentries);
             WRITE_U8(pcl->k_eff);
-            WRITE_U8(pcl->mode ? pcl->mode[0] : 0);
-            WRITE_U16(pcl->ndistinct ? pcl->ndistinct[0] : 0);
+            for (gi = 0; gi < gsz; ++gi) {
+              WRITE_U8(NULL != pcl->mode ? pcl->mode[gi] : 0);
+            }
+            for (gi = 0; gi < gsz; ++gi) {
+              WRITE_U16(NULL != pcl->ndistinct ? pcl->ndistinct[gi] : 0);
+            }
             WRITE_F64(pcl->dmax);
             WRITE_BLK(pcl->centroid, (size_t)m * sizeof(double));
             if (pcl->nentries > 0) {
               WRITE_BLK(pcl->kd_pts,
                 (size_t)pcl->nentries * (size_t)m * sizeof(double));
               WRITE_BLK(pcl->raw_outputs,
-                (size_t)pcl->nentries * sizeof(double));
+                (size_t)pcl->nentries * (size_t)gsz * sizeof(double));
             }
           }
         }
@@ -294,9 +336,18 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
   }
   else {
     size_t required = 0;
-    int c, j;
+    int c, j, has_sidx = 1;
+    /**
+     * A model loaded from a version-1 flat file has no sorted_idx to write, so
+     * its presence is a flag rather than an invariant.  Fabricating indices
+     * instead would silently enable recency weighting on an invented order.
+     */
+    for (c = 0; c < model->nclusters; ++c) {
+      const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
+      if (0 < cl->nentries && NULL == cl->sorted_idx) has_sidx = 0;
+    }
     required += sizeof(uint32_t) + 4 * sizeof(uint16_t) + 2 * sizeof(uint8_t);
-    required += 7 * sizeof(uint16_t) + 5 * sizeof(uint8_t) + sizeof(uint32_t)
+    required += 7 * sizeof(uint16_t) + 6 * sizeof(uint8_t) + sizeof(uint32_t)
       + sizeof(double);
     required += (size_t)model->ninputs * 2 * sizeof(double);
     if (NULL != model->weights) required += (size_t)model->ninputs * sizeof(double);
@@ -315,7 +366,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       required += (size_t)model->noutputs * sizeof(double);
       required += (size_t)cl->nentries * (size_t)model->ninputs * sizeof(double);
       required += (size_t)cl->nentries * (size_t)model->noutputs * sizeof(double);
-      required += (size_t)cl->nentries * sizeof(uint32_t);
+      if (0 != has_sidx) required += (size_t)cl->nentries * sizeof(uint32_t);
       for (j = 0; j < model->noutputs; ++j) {
         required += (size_t)(cl->order[j] + 1) * sizeof(double);
       }
@@ -376,6 +427,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       WRITE_U8(model->diff_order);
       WRITE_U8(model->refine);
       WRITE_U8(NULL != model->decompose_mat ? 1 : 0);
+      WRITE_U8(has_sidx);
       WRITE_U16(model->order);
       WRITE_U8(model->iterations);
       WRITE_U32(model->nentries);
@@ -413,7 +465,8 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
          * the model it was saved from.  U32 because it indexes the global entry
          * set, which is not bounded by 64K like a per-cluster count.
          */
-        { int si;
+        if (0 != has_sidx) {
+          int si;
           for (si = 0; si < cl->nentries; ++si) WRITE_U32(cl->sorted_idx[si]);
         }
         for (j = 0; j < model->noutputs; ++j) {
@@ -540,7 +593,7 @@ LIBXS_API_INLINE void internal_libxs_predict_read_escape(
 
 
 LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
-  const unsigned char* src, const unsigned char* end)
+  const unsigned char* src, const unsigned char* end, int version)
 {
   libxs_predict_t* model = NULL;
   uint16_t ninp = 0, nout = 0, nclust = 0, has_weights = 0;
@@ -644,11 +697,22 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
       else ok = internal_libxs_predict_read(&src, end,
         cl->raw_outputs, (size_t)ne * (size_t)nout * sizeof(double));
     }
+    /**
+     * out_rms arrived with version 2.  A version-1 file carries no fit residual,
+     * and every consumer reads it as "no calibration" when it is zero and falls
+     * back to out_var, which is derived below -- what version 1 itself did.
+     */
     if (EXIT_SUCCESS == ok) {
-      cl->out_rms = (double*)malloc((size_t)nout * sizeof(double));
-      if (NULL == cl->out_rms) ok = EXIT_FAILURE;
-      else ok = internal_libxs_predict_read(&src, end,
-        cl->out_rms, (size_t)nout * sizeof(double));
+      if (1 < version) {
+        cl->out_rms = (double*)malloc((size_t)nout * sizeof(double));
+        if (NULL == cl->out_rms) ok = EXIT_FAILURE;
+        else ok = internal_libxs_predict_read(&src, end,
+          cl->out_rms, (size_t)nout * sizeof(double));
+      }
+      else {
+        cl->out_rms = (double*)calloc((size_t)nout, sizeof(double));
+        if (NULL == cl->out_rms) ok = EXIT_FAILURE;
+      }
     }
     if (EXIT_SUCCESS == ok) {
       ok = internal_libxs_predict_load_var(cl, nout);
@@ -689,10 +753,18 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     uint16_t ngroups = 0;
     for (c = 0; c < (int)nclust; ++c) p += model->clusters[c].nentries;
     model->nentries = p;
-    ok = internal_libxs_predict_read(&src, end, &ngroups, 2);
-    if (EXIT_SUCCESS == ok) {
-      if (0 < ngroups && (int)ngroups <= (int)nout) ng = (int)ngroups;
-      else ok = EXIT_FAILURE;
+    /**
+     * Version 1 has no group count and no group map: outputs never share a
+     * partition, so the assignment blocks that follow are per-output.  The
+     * identity map is materialized rather than left NULL so that eval's group
+     * filtering stays on one path for both versions.
+     */
+    if (1 < version) {
+      ok = internal_libxs_predict_read(&src, end, &ngroups, 2);
+      if (EXIT_SUCCESS == ok) {
+        if (0 < ngroups && (int)ngroups <= (int)nout) ng = (int)ngroups;
+        else ok = EXIT_FAILURE;
+      }
     }
     if (EXIT_SUCCESS == ok) {
       model->hknn_ngroups = ng;
@@ -700,10 +772,13 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
       if (NULL == model->hknn_po_groups) ok = EXIT_FAILURE;
     }
     for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
-      uint16_t g = 0;
-      ok = internal_libxs_predict_read(&src, end, &g, 2);
-      if (EXIT_SUCCESS == ok && (int)g < ng) model->hknn_po_groups[j] = (int)g;
-      else ok = EXIT_FAILURE;
+      if (1 < version) {
+        uint16_t g = 0;
+        ok = internal_libxs_predict_read(&src, end, &g, 2);
+        if (EXIT_SUCCESS == ok && (int)g < ng) model->hknn_po_groups[j] = (int)g;
+        else ok = EXIT_FAILURE;
+      }
+      else model->hknn_po_groups[j] = j;
     }
     model->hknn_po_assignments = (int**)calloc((size_t)nout, sizeof(int*));
     model->hknn_po_nclusters = (int*)calloc((size_t)nout, sizeof(int));
@@ -733,6 +808,8 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
       if (NULL == model->hknn_po_clusters) ok = EXIT_FAILURE;
       /* the writer emits one block per GROUP, not per output */
       for (j = 0; j < ng && EXIT_SUCCESS == ok; ++j) {
+        const int gsz = internal_libxs_predict_gsize(
+          model->hknn_po_groups, (int)nout, j);
         uint16_t po_nc = 0;
         int ci;
         ok = internal_libxs_predict_read(&src, end, &po_nc, 2);
@@ -745,39 +822,43 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
           model->hknn_po_nclusters[j] = (int)po_nc;
           for (ci = 0; ci < (int)po_nc && EXIT_SUCCESS == ok; ++ci) {
             uint16_t ne = 0;
-            uint8_t ke = 0, md = 0;
-            uint16_t nd = 0;
+            uint8_t ke = 0;
+            int gi;
             ok = internal_libxs_predict_read(&src, end, &ne, 2);
             if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &ke, 1);
-            if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &md, 1);
-            if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &nd, 2);
-            if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &cls[ci].dmax, 8);
             if (EXIT_SUCCESS == ok && ke > LIBXS_PREDICT_KNN) ok = EXIT_FAILURE;
             if (EXIT_SUCCESS == ok) {
               cls[ci].nentries = (int)ne;
               cls[ci].k_eff = (int)ke;
-              cls[ci].mode = (int*)malloc(sizeof(int));
-              cls[ci].ndistinct = (int*)malloc(sizeof(int));
+              cls[ci].mode = (int*)calloc((size_t)gsz, sizeof(int));
+              cls[ci].ndistinct = (int*)calloc((size_t)gsz, sizeof(int));
               cls[ci].centroid = (double*)malloc((size_t)ninp * sizeof(double));
               if (NULL == cls[ci].mode || NULL == cls[ci].ndistinct
                 || NULL == cls[ci].centroid) ok = EXIT_FAILURE;
-              else {
-                cls[ci].mode[0] = (int)md;
-                cls[ci].ndistinct[0] = (int)nd;
-              }
             }
+            for (gi = 0; gi < gsz && EXIT_SUCCESS == ok; ++gi) {
+              uint8_t v = 0;
+              ok = internal_libxs_predict_read(&src, end, &v, 1);
+              if (EXIT_SUCCESS == ok) cls[ci].mode[gi] = (int)v;
+            }
+            for (gi = 0; gi < gsz && EXIT_SUCCESS == ok; ++gi) {
+              uint16_t v = 0;
+              ok = internal_libxs_predict_read(&src, end, &v, 2);
+              if (EXIT_SUCCESS == ok) cls[ci].ndistinct[gi] = (int)v;
+            }
+            if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &cls[ci].dmax, 8);
             if (EXIT_SUCCESS == ok) {
               ok = internal_libxs_predict_read(&src, end,
                 cls[ci].centroid, (size_t)ninp * sizeof(double));
             }
             if (EXIT_SUCCESS == ok && ne > 0) {
               ok = internal_libxs_predict_avail(src, end,
-                (size_t)ne * ((size_t)ninp + 1), sizeof(double));
+                (size_t)ne * ((size_t)ninp + (size_t)gsz), sizeof(double));
               if (EXIT_SUCCESS == ok) {
                 cls[ci].kd_pts = (double*)malloc(
                   (size_t)ne * (size_t)ninp * sizeof(double));
                 cls[ci].raw_outputs = (double*)malloc(
-                  (size_t)ne * sizeof(double));
+                  (size_t)ne * (size_t)gsz * sizeof(double));
                 if (NULL == cls[ci].kd_pts || NULL == cls[ci].raw_outputs) {
                   ok = EXIT_FAILURE;
                 }
@@ -787,8 +868,8 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
                   cls[ci].kd_pts, (size_t)ne * (size_t)ninp * sizeof(double));
               }
               if (EXIT_SUCCESS == ok) {
-                ok = internal_libxs_predict_read(&src, end,
-                  cls[ci].raw_outputs, (size_t)ne * sizeof(double));
+                ok = internal_libxs_predict_read(&src, end, cls[ci].raw_outputs,
+                  (size_t)ne * (size_t)gsz * sizeof(double));
               }
             }
           }
@@ -812,11 +893,12 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
      * The escape block is fixed-length and written last, so it is located from
      * the end rather than by having consumed every preceding field.  The hknn
      * reader tolerates a short read of optional sections, which would otherwise
-     * leave src mid-payload and skip the block silently.
+     * leave src mid-payload and skip the block silently.  Version 1 has no such
+     * block, and probing from the end would read model payload as weights.
      */
     const size_t esclen = 2 * sizeof(uint8_t)
       + (size_t)nout * LIBXS_PREDICT_NESCAPE * sizeof(double);
-    if (src <= end && (size_t)(end - src) >= esclen) {
+    if (1 < version && src <= end && (size_t)(end - src) >= esclen) {
       const unsigned char* esc = end - esclen;
       internal_libxs_predict_read_escape(model, &esc, end);
     }
@@ -838,26 +920,39 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
   libxs_predict_t* model = NULL;
   int hknn = 0;
   if (NULL != buffer
-    && size >= 2 * sizeof(uint32_t) + 4 * sizeof(uint16_t))
+    && size >= sizeof(uint32_t) + 4 * sizeof(uint16_t))
   {
     const unsigned char* src = (const unsigned char*)buffer;
-    const unsigned char* end = src + size - sizeof(uint32_t);
-    uint32_t magic = 0, crc = 0, expected = 0;
+    const unsigned char* end = src + size;
+    uint32_t magic = 0;
     uint16_t version = 0, ninp = 0, nout = 0, nclust = 0;
-    int ok = internal_libxs_predict_crc(buffer, size - sizeof(uint32_t), &crc);
-    if (EXIT_SUCCESS == ok) memcpy(&expected, end, sizeof(uint32_t));
-    if (EXIT_SUCCESS == ok && crc != expected) ok = EXIT_FAILURE;
-    if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &magic, 4);
+    int has_sidx = 0;
+    int ok = internal_libxs_predict_read(&src, end, &magic, 4);
     if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &version, 2);
-    if (EXIT_SUCCESS == ok && LIBXS_PREDICT_MAGIC_HKNN == magic
-      && LIBXS_PREDICT_VERSION == version)
-    {
+    if (EXIT_SUCCESS == ok
+      && (0 == version || LIBXS_PREDICT_VERSION < version)) ok = EXIT_FAILURE;
+    /**
+     * The CRC trailer arrived with version 2, so the payload end can only be
+     * fixed once the version is known: a version-1 payload runs to the end of
+     * the buffer, and treating its last four bytes as a checksum would both
+     * fail the comparison and truncate the model.
+     */
+    if (EXIT_SUCCESS == ok && 1 < version) {
+      if (size >= 2 * sizeof(uint32_t) + 4 * sizeof(uint16_t)) {
+        uint32_t crc = 0, expected = 0;
+        end -= sizeof(uint32_t);
+        ok = internal_libxs_predict_crc(buffer, size - sizeof(uint32_t), &crc);
+        if (EXIT_SUCCESS == ok) memcpy(&expected, end, sizeof(uint32_t));
+        if (EXIT_SUCCESS == ok && crc != expected) ok = EXIT_FAILURE;
+      }
+      else ok = EXIT_FAILURE;
+    }
+    if (EXIT_SUCCESS == ok && LIBXS_PREDICT_MAGIC_HKNN == magic) {
       hknn = 1;
-      model = internal_libxs_predict_load_hknn(src, end);
+      model = internal_libxs_predict_load_hknn(src, end, (int)version);
       ok = EXIT_FAILURE;
     }
-    if (EXIT_SUCCESS == ok && (magic != LIBXS_PREDICT_MAGIC
-      || version != LIBXS_PREDICT_VERSION)) ok = EXIT_FAILURE;
+    if (EXIT_SUCCESS == ok && magic != LIBXS_PREDICT_MAGIC) ok = EXIT_FAILURE;
     if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &ninp, 2);
     if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &nout, 2);
     if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &nclust, 2);
@@ -877,12 +972,20 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &ts_window, 2);
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &ts_target, 2);
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &ts_decompose, 2);
-      if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &ts_naux, 2);
-      if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &ts_nderiv, 2);
+      /* naux and nderiv arrived with version 2 and default to zero without them */
+      if (EXIT_SUCCESS == ok && 1 < version) {
+        ok = internal_libxs_predict_read(&src, end, &ts_naux, 2);
+        if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &ts_nderiv, 2);
+      }
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &eval_mode, 1);
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &diff_order, 1);
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &refine, 1);
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &has_dmat, 1);
+      if (EXIT_SUCCESS == ok && 1 < version) {
+        uint8_t v = 0;
+        ok = internal_libxs_predict_read(&src, end, &v, 1);
+        if (EXIT_SUCCESS == ok) has_sidx = (0 != v);
+      }
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &order, 2);
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &iterations, 1);
       { uint32_t nentries = 0;
@@ -1019,11 +1122,18 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
           ok = internal_libxs_predict_read(&src, end,
             cl->errors, (size_t)nout * sizeof(double));
         }
+        /* out_rms arrived with version 2; zero reads as "no calibration" */
         if (EXIT_SUCCESS == ok) {
-          cl->out_rms = (double*)malloc((size_t)nout * sizeof(double));
-          if (NULL == cl->out_rms) ok = EXIT_FAILURE;
-          else ok = internal_libxs_predict_read(&src, end,
-            cl->out_rms, (size_t)nout * sizeof(double));
+          if (1 < version) {
+            cl->out_rms = (double*)malloc((size_t)nout * sizeof(double));
+            if (NULL == cl->out_rms) ok = EXIT_FAILURE;
+            else ok = internal_libxs_predict_read(&src, end,
+              cl->out_rms, (size_t)nout * sizeof(double));
+          }
+          else {
+            cl->out_rms = (double*)calloc((size_t)nout, sizeof(double));
+            if (NULL == cl->out_rms) ok = EXIT_FAILURE;
+          }
         }
         if (EXIT_SUCCESS == ok) {
           ok = internal_libxs_predict_avail(src, end,
@@ -1051,11 +1161,17 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
               cl->raw_outputs, (size_t)cl->nentries * (size_t)nout * sizeof(double));
           }
         }
-        if (EXIT_SUCCESS == ok) {
+        /**
+         * A version-1 flat file has no sorted_idx, and so has no global order to
+         * recover.  It is left NULL: eval already treats that as "no recency
+         * weighting" and the entry set stays unrecoverable, which is what such a
+         * model did before -- an invented order would be worse than none.
+         */
+        if (EXIT_SUCCESS == ok && 0 != has_sidx) {
           ok = internal_libxs_predict_avail(src, end,
             (size_t)cl->nentries, sizeof(uint32_t));
         }
-        if (EXIT_SUCCESS == ok) {
+        if (EXIT_SUCCESS == ok && 0 != has_sidx) {
           cl->sorted_idx = (int*)malloc((size_t)cl->nentries * sizeof(int));
           if (NULL == cl->sorted_idx) ok = EXIT_FAILURE;
           else {
@@ -1162,7 +1278,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         }
       }
     }
-    if (EXIT_SUCCESS == ok && 0 == hknn) {
+    if (EXIT_SUCCESS == ok && 0 == hknn && 1 < version) {
       internal_libxs_predict_read_escape(model, &src, end);
     }
     /* the writer sizes the payload exactly: a remainder signals layout drift */

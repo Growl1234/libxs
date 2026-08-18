@@ -458,6 +458,15 @@ libxs_predict_t* libxs_predict_load(
 Save: pass buffer=NULL to query required size, then allocate
 and call again. Load: returns a ready-to-eval model or NULL.
 
+Load accepts every released format version (currently 1 and 2)
+and defaults fields an older file does not carry. A v1.0.0 flat
+model stores no global entry order, so it abstains from
+`libxs_predict_inverse` and from recency weighting, as it did
+under v1.0.0; saving it again writes version 2 without that
+order rather than inventing one. Version 2 adds a CRC32
+trailer, so a truncated or corrupted file is rejected instead
+of silently loading a partial model.
+
 ## CSV Import
 
 ```C

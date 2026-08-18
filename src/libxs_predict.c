@@ -24,8 +24,13 @@
 #if !defined(LIBXS_PREDICT_MAGIC_HKNN)
 #  define LIBXS_PREDICT_MAGIC_HKNN 0x58534B4EU /* "XSKN" */
 #endif
+/**
+ * Serialization format version.  Bumped whenever the on-disk layout changes at
+ * a release boundary; libxs_predict_load accepts every released version down to
+ * 1 (v1.0.0), so the reader gates each field on the version it appeared in.
+ */
 #if !defined(LIBXS_PREDICT_VERSION)
-#  define LIBXS_PREDICT_VERSION 1
+#  define LIBXS_PREDICT_VERSION 2
 #endif
 #if !defined(LIBXS_PREDICT_KNN)
 #  define LIBXS_PREDICT_KNN 32
