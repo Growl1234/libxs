@@ -1269,6 +1269,17 @@ LIBXS_EXTERN double erf(double) LIBXS_NOTHROW;
 # else
 #   define LIBXS_RTLD_NEXT RTLD_NEXT
 # endif
+/**
+ * Global scope, i.e. the handle to look up a symbol this library does not
+ * define. LIBXS_RTLD_NEXT searches only what was loaded after the caller, which
+ * is what interposing a symbol needs and what makes it miss a provider that
+ * happens to come first.
+ */
+# if !defined(RTLD_DEFAULT)
+#   define LIBXS_RTLD_DEFAULT NULL
+# else
+#   define LIBXS_RTLD_DEFAULT RTLD_DEFAULT
+# endif
 #endif
 
 #endif /*LIBXS_MACROS_H*/
