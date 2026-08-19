@@ -254,7 +254,15 @@ OZAKI_API_INTERN void gemm_init(void)
           const int ocl_tm = (NULL != ozaki_tm_env ? atoi(ozaki_tm_env) : 0);
           const int ocl_tn = (NULL != ozaki_tn_env ? atoi(ozaki_tn_env) : 0);
           const int ocl_groups = (NULL != ozaki_groups_env ? atoi(ozaki_groups_env) : 0);
-          ozaki_ocl_handle = ozaki_ocl_create(GEMM_IS_DOUBLE, ozaki, ozaki_verbose, ocl_tm, ocl_tn, ozaki_n, ozaki_flags,
+          /**
+           * An unset OZAKI passes "no request" rather than this file's CPU
+           * default: the scheme that suits the CPU is not the scheme that suits
+           * an accelerator, and the device-side knowledge lives on the other side
+           * of this call. The CPU decision below stays here; the GPU default is
+           * ozaki_init's. An explicit OZAKI still forces both.
+           */
+          ozaki_ocl_handle = ozaki_ocl_create(GEMM_IS_DOUBLE, (NULL != ozaki_env) ? ozaki : -1 /*auto*/,
+            ozaki_verbose, ocl_tm, ocl_tn, ozaki_n, ozaki_flags,
             ozaki_trim, ocl_groups, ozaki_maxk, 0 != ozaki_profile);
         }
 #endif
