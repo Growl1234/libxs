@@ -1,14 +1,21 @@
 # Converse Sample
 
-Converse is a small, self-contained language sample built on libxs metatokens,
-lexemes, fingerprints, registries, n-grams, and parameter prediction. It provides
-grounded extractive question answering, learned relation and identity facts, an
-experimental next-token predictor, and evaluation fixtures. For design and
-measured comparisons, see `~/papers/converse/paper.tex`.
+Converse reads plain text or Markdown files and then answers questions about them,
+summarizes them, assembles new text from them, and trains small next-token models on
+them. Answers are extracted from the ingested text and carry a citation, or the sample
+abstains; nothing is generated from outside the corpus unless you ask for it.
+
+It is built only on libxs primitives (lexemes, metatokens, fingerprints, registries,
+n-grams, parameter prediction) and is self-contained: nothing is downloaded, no
+external service is contacted, and no data is used beyond the files you give it. It is experimental and adds no stable
+public API.
+
+For the design and the measurements, see `~/papers/converse/paper.tex` and
+`~/papers/converse/insights.md`.
 
 ## Build
 
-Build the library first so that the sample can link against it:
+Build the library first, then the sample:
 
 ```bash
 cd ../..
@@ -17,243 +24,283 @@ cd samples/converse
 make PEDANTIC=2
 ```
 
-Or from the `libxs` root:
-
-```bash
-make PEDANTIC=2 samples/converse
-```
+Or, from the `libxs` root, `make PEDANTIC=2 samples/converse`.
 
 ## Which binary
 
-The build produces three, and each links only what it serves:
-
-| binary | modes | contains |
+| binary | serves | use it for |
 | :--- | :--- | :--- |
-| `converse-qa.x` | interactive, `-e`, `-c`, `-L` | grounded answering and recombination |
-| `converse-lm.x` | `-E`, `-c -K KIND`, `-L` | next-token models and the byte model |
-| `converse.x` | all of the above | both halves |
+| `converse-qa.x` | interactive, `-e`, `-c`, `-L` | questions, evaluation, recombination |
+| `converse-lm.x` | `-E`, `-c -K KIND`, `-L` | next-token models, byte model |
+| `converse.x` | everything above | anything, and all documented examples |
 
-`-L` only writes the shared corpus, lexicon and predictor, so either half can do
-it. A mode the binary does not serve is rejected before any corpus work, naming
-the binary that does serve it. `converse.x` accepts every documented command and
-is what the reproduction script uses.
+`converse.x` accepts every command below. The split binaries link only what they
+serve, and a mode a binary does not serve is rejected up front, naming the one that
+does. One exception worth knowing: the byte model lives in the LM half, so under
+`converse-qa.x` the recombination probe prints `no seam judge` and leaves its bpc
+columns at zero. Use `converse.x` if you want those columns.
 
-The byte model (`converse_hier.c`) reaches the grounded half only as an installed
-judge, so `converse-qa.x` does not contain it: `CONVERSE_HIER_RESCORE=1` there
-answers without rescoring and the recombination probe prints `no seam judge` with
-its bpc columns at zero, which every other column reproduces regardless. Use
-`converse.x` when those columns are wanted.
+Run any binary without arguments to print its full option and environment list.
 
-## Summarize and compose
+## Getting text in
 
-Summarize a file by repeatedly fusing adjacent sentences (`-n` sets the target
-sentence count):
+Put files anywhere; `texts/` is the conventional place and is ignored by git. Two
+structures are understood:
+
+- **prose** -- paragraphs of running text, blank-line separated. Uppercase lines are
+  read as section headings and become the citation for everything under them.
+- **Markdown** -- headings, paragraphs and code blocks; `#` headings become the
+  citation.
+
+The structure is chosen by file extension (`.md` is Markdown, everything else is
+prose) and can be forced with `-p prose|markdown`.
+
+Pass files directly, or use `-b PREFIX` to pick up a numbered set without listing it:
 
 ```bash
-./summarize.x texts/prose1.txt
-./summarize.x -n 3 texts/prose1.txt
-printf '%s\n' 'First sentence. Second related sentence.' | ./summarize.x -
+./converse.x texts/prose1.txt texts/prose2.txt
+./converse.x -b texts/grimm                  # texts/grimm.txt, grimm-1.txt, ...
+./converse.x -b docs ~/libxs/documentation/*.md
 ```
 
-Compose mode (`-g`) ingests one or more files into `converse.dat`, fingerprints
-and tokenizes the first input as the target, and emits a short assembled text
-(`-n` sets the phrase budget). Remove `converse.dat` to rebuild from scratch:
+`-b PREFIX` probes `PREFIX`, `PREFIX.txt` and numbered parts (`PREFIX-N.txt`,
+`PREFIX_N.txt`, `PREFIX.N.txt`); missing siblings are fine as long as one file is
+usable. Markdown files are not probed, so pass them explicitly (a glob is fine, as
+above).
+
+`-b` also names the **state files**: the basename of the prefix is the prefix of
+everything the run persists, so `-b docs` keeps `docs.dat`, `docs.lex` and so on, and
+several corpora can live side by side in one directory. Without `-b`, state is named
+`converse.*`.
+
+Any UTF-8 text works. Suitable sources are Project Gutenberg books, a Wikipedia
+extract, your own notes, or the documentation of this repository. Larger corpora are
+supported; memory is the practical limit.
+
+### Warm and cold runs
+
+State is reused: a second run over the same files loads the persisted corpus, lexicon
+and reranker instead of re-ingesting, which is much faster. To force a full rebuild,
+delete the state files for that prefix:
 
 ```bash
-./summarize.x -g -n 8 texts/prose1.txt texts/prose2.txt
+rm -f grimm.dat grimm.par grimm.lex grimm.prd grimm.facts
 ```
 
-## Interactive question answering
+Do this before comparing two runs -- a warm run answers from state built by the
+previous one.
 
-Run the interactive sample with one or more corpus files:
+To build the state without asking anything -- useful before a batch of runs, or to
+time ingestion on its own -- use `-L`:
 
 ```bash
-./converse.x -n 3 texts/prejudice.txt texts/prose1.txt
+./converse.x -L -b texts/grimm
+```
+
+## Asking questions
+
+```bash
 ./converse.x -b texts/grimm
 ```
 
-The `-b` option treats its argument as a file prefix and probes known filenames
-without scanning the directory: `name`, `name.txt`, and numbered `.txt` parts
-using `name-N.txt`, `name_N.txt`, or `name.N.txt`. Missing siblings are fine as
-long as at least one candidate file is usable.
+The sample then reads one question per line:
 
-Question-shaped prompts are answered extractively and abstain
-(`I do not know from the corpus.`) when coverage is too low. Questions of the
-form `In Title, ...` are ranked only against a matching uppercase story heading.
-Non-question prompts use the fingerprint/Hilbert composition path.
+```text
+> Who is Gretel?
+Gretel is the girl.
+citation: HANSEL AND GRETEL
+> Where did Hans go?
+Hans went into the stable.
+citation: CLEVER HANS
+> Who was eaten by the wolf?
+Grandmother and Little Red-Cap were eaten by the wolf.
+citation: LITTLE RED-CAP [LITTLE RED RIDING HOOD]
+> What belongs to Curdken?
+hat belongs to Curdken.
+citation: THE GOOSE-GIRL
+> What do we know about Hansel?
+Hansel is the boy. Hansel stood still and peeped back at the house.
+citation: HANSEL AND GRETEL
+> Who is Sherlock Holmes?
+I do not know from the corpus.
+```
 
-## Answer evaluation
+What is answerable depends on the rule files (next section). With the shipped rules
+the sample answers:
 
-Run a data-driven evaluation over a local fixture. The sample reads
-`converse.eval` from the current directory; keep it next to the fixture text it
-describes:
+- `Who is X?` -- an identity or a definition ("X is a Y", "X, a Y, ...").
+- `Where did X go?` / `Where is X?` -- a place, as a proposition from X's own sentence.
+- `Who was V by X?` -- a relation, including passives it was never told about.
+- `What belongs to X?` -- an enumeration, each item cited.
+- `What do we know about X?` -- several cited propositions collected about one name.
+- anything else question-shaped -- the best matching sentence, ranked and cited.
+
+Two behaviours to expect: the sample **abstains** (`I do not know from the corpus.`)
+rather than guessing when coverage is too low, and a question of the form
+`In TITLE, ...` is ranked only against the matching heading, which is how to ask about
+one document in a corpus of many. Questions are case-insensitive.
+
+Non-question input is treated as a composition request and answered from the
+fingerprint path instead. `-n N` sets how many sentences a response may use.
+
+## Checking answers against a fixture
+
+`-e` runs a fixture of questions and expected terms and prints a pass count, which is
+how to tell whether a rule-file or corpus change helped:
 
 ```bash
 ./converse.x -e -b texts/grimm
+```
+
+The fixture is `<prefix>.eval` (so `grimm.eval` for `-b grimm`, `converse.eval`
+otherwise). Each non-comment line has three required fields and two optional ones:
+
+```text
+question|evidence-terms|reply-terms|fact-terms|citation-terms
+```
+
+Terms are comma-separated and matched case-insensitively. An empty evidence field
+marks an abstention case (the question SHOULD go unanswered); an empty reply field
+skips the concise-reply check. The fact field is checked only when relation facts were
+learned, so one fixture works with and without rule files.
+
+`-P PROFILE` selects the profile used to rank candidate answers (`raw`, `poly2`,
+`smooth`, `temporal`, `rf`, `fisher`, `hknn`), for both interactive use and `-e`:
+
+```bash
 ./converse.x -P temporal -e texts/prose1.txt
 ```
 
-Each non-comment `converse.eval` line has three required pipe-separated fields
-and an optional fourth:
+## Summarizing and composing
 
-```text
-question|expected-evidence-terms|expected-reply-terms|expected-fact-terms
+`summarize.x` is a separate, smaller entry point:
+
+```bash
+./summarize.x texts/prose1.txt              # fuse adjacent sentences
+./summarize.x -n 3 texts/prose1.txt         # to a target sentence count
+printf 'First sentence. Second one.' | ./summarize.x -
+./summarize.x -g -r -n 8 texts/prose1.txt texts/prose2.txt   # compose
 ```
 
-Expected terms are comma-separated. An empty evidence field marks an abstention
-case; an empty reply field skips the concise-reply check. The optional fourth
-field checks the learned-fact reply path and is evaluated only when relation
-facts were learned this run (that is, when a `converse.relations` file is
-present), so the same fixture passes with or without rules. Three-field lines
-behave exactly as before.
+- default: summarize one file by repeatedly fusing adjacent sentences.
+- `-g`: compose mode -- ingest all files, take the first as the target, and emit a
+  short assembled text (`-n` is the phrase budget).
+- `-r`: reflow text first, joining cosmetic line breaks (useful for Gutenberg files).
 
-## Local rule files
+## Recombining text from the corpus
 
-All corpus-specific vocabulary stays in local, ignored rule files rather than in
-`converse.c`.
+An experimental mode splices clauses from different sentences into new ones, keeping
+each half verbatim and cutting only at clause boundaries:
 
-Relation rules (`converse.relations`) keep aliases, person-like terms, and
-filler words out of source. Each non-comment line is one of:
-
-```text
-alias|query-relation|evidence-verb
-person|term
-skip|term
-where|term
-place|term
-topic|term
-copula|term
-article|term
-prep|term
-own|term
-poss|shape
-aux|term
-agent|term
+```bash
+CONVERSE_RECOMB=50 CONVERSE_HIER_RESCORE=1 ./converse.x -E -x -b texts/grimm
 ```
 
-For example `alias|eaten|devoured`, `person|grandmother`, `skip|the`. `where|in`
-declares a location MARKER and `place|forest` a place noun, and the two together
-give `Where ...?` questions a proposition to answer with: the reply is the actor
-followed by a verbatim span of the actor's own sentence, cited. `why|because` and
-`how|by` declare the corresponding markers. All of these are language facts rather
-than corpus facts, so they belong in the shared `converse.rules`; a corpus whose
-own `<corpus>.rules` replaces that file must state its own. After ingestion the
-sample rebuilds an in-memory fact index and reports `relation facts: N learned`,
-`identity facts: N learned` and `location facts: N learned`. `CONVERSE_FACTS_LIST=1`
-prints the relation and location facts themselves, which is the only way to judge
-them.
+`CONVERSE_RECOMB=N` attempts N joins and reports how many were made, with coherence
+and seam statistics. `CONVERSE_RECOMB_COMPOSE=1` additionally lets the interactive
+`-c` mode answer with a spliced sentence; it is off by default because every other
+mode emits text that occurs verbatim in the corpus and this one does not.
 
-`topic|about` marks the subject of an attribute question, so
-`What do we know about Hansel?` answers with several cited propositions collected
-from the fact layers rather than with one retrieved sentence. Attested facts are
-stated plainly; a speculative one speaks only when nothing about that name is
-attested, and is labelled when it does.
+## Next-token prediction
 
-Relation questions
-consult this index before falling back to raw evidence. Identity facts of the
-form `name is the role` draw their role words from the `person|term` rules and
-bind a role to a name only within a single sentence; a `Who is X?` question then
-answers from the highest-scoring identity fact for X, or abstains.
+An experimental predictor is trained from the token stream and kept out of the
+question-answering path:
 
-`copula|is`, `article|a` and `prep|of` are the syntactic classes the type shapes
-need: with them, `Who is Aristotle?` can answer from the copular ("X is a Y") and
-appositive ("X, a Y, ...") shapes prose states definitions in. `own|belongs` marks a
-possession question, and `poss|apostrophe-s` declares how the language WRITES
-possession -- English marks it with an apostrophe and an s, German with a bare s and
-no apostrophe at all -- so `What belongs to Curdken?` enumerates what is attested,
-each item cited. Declaring the wrong shape costs silence rather than error, because
-the name census still has to recognize what remains once the mark is removed.
+```bash
+./converse.x -E -b texts/grimm              # accuracy, default trigram
+./converse.x -E -K bigram -b texts/grimm    # pick the model
+./converse.x -E -H 10 -b texts/grimm        # held-out: train on 9/10, test on 1/10
+printf 'the little\n' | ./converse.x -c -b texts/grimm   # suggestions + continuation
+CONVERSE_GRAN=meta-word ./converse.x -E -b texts/grimm   # token unit
+```
 
-`aux|had` and `agent|by` are what the passive shape needs. The auxiliaries are
-declared for one reason: the word an auxiliary governs is a VERB, so the class of
-verbs is DERIVED from the corpus rather than listed (`verbs derived: N from the
-auxiliary frame`). That class is incomplete by construction -- English narrative is
-past simple, which no auxiliary governs -- so it is used only to REJECT: a name the
-corpus puts after a verb is that verb's object, not the subject of its clause.
-`agent|by` then makes any passive readable without a rule per verb, so
-`X was visited by Y` becomes an edge between two entities.
+- `-E` reports accuracy, `-c` prints the top few successors plus a short continuation.
+- `-H N` evaluates on a held-out split, `-T PREFIX` on a separate corpus, which is
+  what to use for an honest, non-memorized figure.
+- `-K` selects the model: `bigram`, `trigram` (default), `predict`, `embed`,
+  `rerank`, `knnlm`, or `hier` (evaluation-only: metatoken, byte and PPM bits per
+  character).
+- `-P PROFILE` selects the predictor profile for `predict|embed|rerank` (`raw`,
+  `poly2`, `smooth`, `temporal`, `rf`, `fisher`, `hknn`).
+- `-x` uses the deepest n-gram context.
+- `CONVERSE_GRAN` sets the token unit: `word`, `native`, `syllable`, `bpe`,
+  `meta-native`, `meta-word`, `meta-syllable`.
 
-The same derived class carries the ACTIVE shape -- a name, a verb, and either
-another name or an article-headed phrase, as in `Agassi won the Australian Open` --
-where it is a REQUIREMENT rather than a rejection: a word the corpus never puts
-after an auxiliary is not read as a verb, so the shape declines to look rather than
-guessing. What it declines costs a fact that is never stated, which is why the same
-incomplete class is safe in both polarities. Such a fact is re-emitted in the voice
-the corpus used, since restating what the corpus stated cannot be ungrammatical.
+An optional `<prefix>.predict` fixture of `context|expected-next` lines adds a curated
+check to `-E`. Many further knobs exist; run the binary with no arguments to list them.
 
-Bridge rules (`converse.bridges`) provide optional evidence-backed answer frames.
-Each non-comment line has five pipe-separated fields:
+## Teaching it a language and a corpus
+
+Everything corpus- and language-specific lives in local rule files rather than in the
+source, and they are what decide which questions can be answered. Two files, both
+optional and both ignored by git:
+
+- `converse.rules` -- the LANGUAGE: function words and syntactic classes. A
+  `<prefix>.rules` file REPLACES it (for a corpus in another language).
+- `<prefix>.relations` -- this CORPUS: aliases, role words, place names. It EXTENDS
+  the language file, so it need not restate function words.
+
+Each non-comment line is `kind|term`:
+
+| kind | declares | example |
+| :--- | :--- | :--- |
+| `alias` | a query verb and the verb the text uses | `alias\|eaten\|devoured` |
+| `person` | a role word that can be bound to a name | `person\|grandmother` |
+| `place` | a place noun | `place\|forest` |
+| `where`, `why`, `how` | the markers those questions turn on | `where\|in` |
+| `topic` | the marker of an attribute question | `topic\|about` |
+| `own` | the verb a possession question uses | `own\|belongs` |
+| `poss` | how the language WRITES possession | `poss\|apostrophe-s` |
+| `copula`, `article`, `prep` | the syntactic classes definitions need | `copula\|is` |
+| `aux` | the auxiliaries | `aux\|had` |
+| `agent` | the word a passive names its agent with | `agent\|by` |
+| `skip`, `negate` | filler words and negators | `skip\|the` |
+
+A few notes that matter in use:
+
+- `where|in` plus `place|forest` is what makes `Where ...?` answerable; declaring only
+  one of the two answers nothing.
+- `aux|had` and `agent|by` are enough to read passives and active clauses generally --
+  the sample derives which words the corpus uses as verbs and as nouns from those
+  frames and reports `verbs derived: N` and `nouns derived: N`. No verb list is needed.
+- `poss|apostrophe-s` (English) against `poss|apostrophe` (German): declare the wrong
+  one and possession answers go silent rather than wrong.
+
+The sample can also PROPOSE rules instead of only reading them:
+`CONVERSE_RULES_LEARN=N` offers up to N `person|` class members found in the corpus,
+which is a way to bootstrap a rule file for new text. What it proposes is speculative,
+so it is reported separately and, if a `<prefix>.learn.eval` fixture exists, that
+fixture is used for `-e` while learning is on.
+
+After ingestion the sample reports what it learned (`relation facts: N learned`,
+`identity facts`, `location facts`, `type facts`). Set `CONVERSE_FACTS_LIST=1` to
+print the facts themselves -- reading them is the only way to tell whether they are
+true.
+
+Optional `converse.bridges` adds evidence-backed answer frames, five fields per line:
 
 ```text
 name|query-groups|evidence-groups|score|reply
 ```
 
-Within query and evidence groups, whitespace separates required groups and `/`
-separates alternatives; evidence terms can use `_` for a literal space. The
-reply may be literal text or a small frame such as `{after:lighthouse had}` or
-`{keywords-after:recorded everything:}`.
+Whitespace separates required groups and `/` separates alternatives; `_` stands for a
+literal space in evidence terms. The reply is literal text or a small frame such as
+`{after:lighthouse had}`.
 
-## Next-token prediction
+## Files the sample writes
 
-A separate, experimental next-token predictor is trained from the ordered token
-stream of the ingested corpus and kept out of the grounded QA path. It is
-exercised through its own flags:
+All state is kept in the working directory, named after the `-b` prefix
+(`converse.*` without one), and all of it is ignored by git:
 
-```bash
-./converse.x -E -b texts/grimm            # next-token accuracy (default trigram)
-./converse.x -E -K bigram -b texts/grimm  # choose the model
-./converse.x -E -K hier -b texts/grimm    # hierarchy and byte PPM evaluation
-printf 'the little\n' | ./converse.x -c -b texts/grimm   # suggestions + greedy
-CONVERSE_GRAN=meta-word ./converse.x -E -b texts/grimm   # metatoken policy
-```
+| file | holds |
+| :--- | :--- |
+| `<prefix>.dat` | the ingested corpus |
+| `<prefix>.par` | the source texts the corpus refers to; required with `.dat` |
+| `<prefix>.lex` | lexicon and token IDs |
+| `<prefix>.prd` | the answer reranker |
+| `<prefix>.facts` | the derived fact layers, rebuilt when the corpus changes |
 
-`-E` reports next-token accuracy; `-c` reads prompts and prints the top few
-next-token suggestions plus a short greedy continuation. `-H N` evaluates on a
-held-out split (train on the other sentences, test on 1-in-N) for an honest,
-non-memorized accuracy. The model is chosen with `-K`:
-
-- `bigram` -- previous token to next token.
-- `trigram` (default) -- previous two tokens, backing off to bigram then to a
-  global unigram distribution.
-- `predict` -- `libxs_predict` over the previous token IDs, `-P PROFILE`.
-- `embed` -- `predict` over distributional token embeddings instead of raw IDs.
-- `rerank` -- `libxs_predict` reranks the trigram's candidate successors,
-  `-P PROFILE`.
-- `hier` -- report hierarchical metatoken, contextual-byte, and exact byte-PPM
-  BPC. This model is evaluation-only.
-
-`CONVERSE_GRAN` accepts `word`, `native`, `syllable`, `bpe`, `meta-native`,
-`meta-word`, or `meta-syllable`.
-
-For `-K hier`, `CONVERSE_HIER_MINCOUNT` sets the minimum known-unit count and
-`CONVERSE_HIER_CLOCK_ORDER` sets byte/state context order from 1 through 6
-(default 2). `CONVERSE_HIER_STATE_DECAY` sets fixed recurrent-state decay from
-zero up to, but not including, one. `CONVERSE_HIER_TOP_STRIDE` controls how
-often PPM top-1/top-3 is evaluated (default 40; use 1 for every byte).
-`CONVERSE_HIER_EXPERT_ORDER` sets the highest mixed PPM order (default 6),
-while `CONVERSE_HIER_EXPERT_RATE` and `CONVERSE_HIER_EXPERT_SHARE` control the
-online fixed-share mixer (defaults 0.15 and 0.005).
-
-An optional `converse.predict` fixture of `context|expected-next` lines adds a
-curated check to `-E`. The predictor profiles for `-K predict|embed|rerank` are
-selected with `-P` (`raw`, `poly2`, `smooth`, `temporal`, `rf`, `fisher`,
-`hknn`); see the paper for which profiles suit prediction and why.
-
-## Local state files
-
-The sample keeps all state in the sample directory and reuses corpus files by
-refreshing existing entries instead of duplicating them. The following are local
-and ignored by version control:
-
-- `texts/` -- corpus files.
-- `converse.dat` -- persisted corpus registry.
-- `converse.par` -- parent texts the corpus refers to. Written beside the corpus
-  and required with it: delete one and the other is rebuilt.
-- `converse.lex` -- persisted lexicon and token IDs.
-- `converse.prd` -- persisted answer reranker.
-- `converse.eval` -- evaluation fixture.
-- `converse.relations`, `converse.bridges`, `converse.predict` -- optional rule
-  and fixture files.
-
-The sample is intentionally experimental and does not add a stable public
-summarization API.
+Delete one of `.dat` / `.par` and both are rebuilt. The fixtures and rule files
+(`<prefix>.eval`, `<prefix>.learn.eval`, `<prefix>.predict`, `converse.rules`,
+`<prefix>.relations`, `converse.bridges`) are inputs you write; the sample never
+modifies them.

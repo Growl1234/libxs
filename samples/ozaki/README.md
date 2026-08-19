@@ -56,7 +56,7 @@ The `zgemm-wrap.x` and `cgemm-wrap.x` drivers call ZGEMM and CGEMM.
 
 | Variable        | Default   | Description                                                       |
 |-----------------|-----------|-------------------------------------------------------------------|
-| OZAKI           | 2         | 0=bypass (BLAS), 1=mantissa slicing, 2=CRT, 3=adaptive            |
+| OZAKI           | 2 (CPU)   | 0=bypass (BLAS), 1=mantissa slicing, 2=CRT, 3=adaptive            |
 | OZAKI_COMPLEX   | (auto)    | Complex dispatch: 0=BLAS, 1=CPU, 2=GPU+fallback. Auto: 2 if on    |
 | OZAKI_N         | (auto)    | Slices (Sch.1: fp64=8, fp32=4) or primes (Sch.2: fp64=16, fp32=9) |
 
@@ -65,6 +65,10 @@ learn the effective cutoff from preprocessing occupancy. Subsequent
 calls compare the Scheme-1 pair count (at the cached cutoff) against
 the Scheme-2 prime count and pick the cheaper path. On CPU, adaptive
 falls back to Scheme 2.
+
+Unset means CRT on the CPU and adaptive on the GPU: the GPU default is
+LIBXSTREAM's, so that it stays the same whichever driver asks for it.
+Setting OZAKI applies to both.
 
 ### Accuracy
 
