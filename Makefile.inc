@@ -472,6 +472,7 @@ ifneq (,$(filter-out 0,$(CUDA) $(OCL)))
   CUDA_FILE := $(wildcard $(NVCC_PATH)/../cuda/include/cuda.h)
   CUDA_PATH := $(if $(CUDA_FILE),$(NVCC_PATH)/../cuda,$(NVCC_PATH))
   CUDA_LDIR := $(if $(wildcard $(CUDA_PATH)/lib64),lib64,lib)
+  CUDA_HOME := $(CUDA_PATH)
 endif
 
 ifneq (,$(filter-out 0,$(OCL) $(CUDA) $(HIP)))
