@@ -50,12 +50,12 @@ typedef struct answer_fact_index_t {
 } answer_fact_index_t;
 
 #define ANSWER_FACTS_MAGIC 0x54434643u
-#define ANSWER_FACTS_VERSION 7
+#define ANSWER_FACTS_VERSION 9
 #define ANSWER_LOCATION_PHRASE_MAX 96
 /** Propositions one attribute collection may rest on, and cite. */
 #define ANSWER_TOPIC_MAX 4
 #define ANSWER_TYPE_PHRASE_MAX 128
-enum { ANSWER_TYPE_COPULAR = 0, ANSWER_TYPE_APPOSITIVE };
+enum { ANSWER_TYPE_COPULAR = 0, ANSWER_TYPE_APPOSITIVE, ANSWER_TYPE_KIN };
 /** Items one enumerated possession answer may state, and cite. */
 #define ANSWER_OWN_MAX 6
 #define ANSWER_OWN_ITEM_MAX 64
@@ -172,6 +172,17 @@ typedef struct answer_own_fact_t {
   double score;
 } answer_own_fact_t;
 
+/**
+ * What the article frame attests about one word: how often it HEADS an article-led
+ * phrase, how often that article was an indefinite one, and how often each declared
+ * indefinite article stands directly before it. The last is what lets a reply pick
+ * between "a" and "an" from the corpus rather than from a rule in the C.
+ */
+typedef struct answer_noun_t {
+  long head;
+  long mod;
+} answer_noun_t;
+
 typedef struct answer_describe_fact_t {
   char role[64];
   char text[192];
@@ -262,6 +273,13 @@ static size_t answer_own_facts_size = 0;
  */
 static libxs_registry_t* answer_verbs = NULL;
 static long answer_verbs_nkeys = 0;
+/**
+ * Words the corpus uses as NOUNS, derived from the article frame the same way, and
+ * build-time only for the same reason. Counted rather than flagged, because the
+ * question a caller asks is which of the two frames attests a word more often.
+ */
+static libxs_registry_t* answer_nouns = NULL;
+static long answer_nouns_nkeys = 0;
 static answer_identity_fact_t* answer_identity_facts = NULL;
 static size_t answer_identity_facts_size = 0;
 static answer_describe_fact_t* answer_describe_facts = NULL;
@@ -383,10 +401,27 @@ static int answer_type_render(const answer_type_fact_t* fact, char* output,
   size_t output_size);
 static int answer_type_fact_reply(const char* query_text, size_t query_len,
   char* output, size_t output_size);
+static int answer_type_reply_shape(const char* query_text, size_t query_len,
+  char* output, size_t output_size, int shape_only);
+/** Answers only from the kinship shape, which is asked before identity. */
+static int answer_type_kin_reply(const char* query_text, size_t query_len,
+  char* output, size_t output_size);
+static int answer_type_kin_append(const corpus_entry_t* entry, int heading_len,
+  const char* role, int role_len);
+/** Bytes of the PURE name in a token, with any declared possessive mark off. */
+static int answer_name_strip(const char* word, int word_len, int* mark);
 static void answer_verbs_free(void);
 static size_t answer_verbs_build(const libxs_registry_t* corpus);
 static void answer_verbs_report(FILE* stream);
 static int answer_word_is_verb(const char* word, int word_len);
+static long answer_word_verb_count(const char* word, int word_len);
+static void answer_nouns_free(void);
+static size_t answer_nouns_build(const libxs_registry_t* corpus);
+static void answer_nouns_report(FILE* stream);
+static answer_noun_t* answer_noun_record(const char* word, int word_len,
+  int create);
+/** Whether the corpus uses this word more as a noun than as a verb. */
+static int answer_word_is_noun(const char* word, int word_len);
 static void answer_own_facts_free(void);
 static int answer_own_fact_append(const char* owner, int owner_len,
   const char* item, int item_len, const corpus_entry_t* entry, double score);
@@ -2484,6 +2519,12 @@ static int answer_relation_fact_extract_active(const corpus_entry_t* entry)
            corpus does put that string where the auxiliary frame looks. */
         && token_len == (int)strspn(token, "abcdefghijklmnopqrstuvwxyz")
         && 0 == answer_word_is_function(token, token_len)
+        /* And the corpus must not use it more as a NOUN, because then this is a
+           bare appositive and not a clause: "Egyptian god Horus" and "Sparta
+           defeated Athens" are the same three token kinds in the same order, and
+           only the corpus's own usage of the middle word tells them apart. What
+           the noun class takes here the TYPE layer states properly. */
+        && 0 == answer_word_is_noun(token, token_len)
         && 0 != answer_word_is_verb(token, token_len))
       {
         const char* object = token + token_len;
@@ -3406,6 +3447,109 @@ static int answer_type_fact_append(const char* name, int name_len,
  * Both stop at clause punctuation, and the complement must fit the field: a type
  * that runs the length of a sentence is not a type.
  */
+/**
+ * The POSSESSIVE KINSHIP appositive: a possessed role word standing directly before a
+ * name relates the two -- "Lincoln's father Thomas", "Alexander's mother Olympias".
+ *
+ * Unlike the other shapes here this one is triggered by the ROLE, which is why both
+ * sides can be read by pointer and no state has to be carried across tokens: the role
+ * class is DECLARED (`person|`), so a match is evidence before either flank is seen.
+ * Declared is what makes the shape trustworthy -- the same frame with a derived noun
+ * class admits "the 4th century Amsterdam" and asserts nonsense.
+ *
+ * The possessor is the second argument, so this is a relation and not a type, and it
+ * is stated with the corpus's own possessive: the phrase runs verbatim from the
+ * possessive name through the role, and only the copula is supplied. A pronoun
+ * possessor ("his mother Thetis") is skipped, because resolving it is coreference and
+ * the fact would rest on a guess.
+ */
+static int answer_type_kin_append(const corpus_entry_t* entry, int heading_len,
+  const char* role, int role_len)
+{
+  int result = 0;
+  const char* limit = entry->text + heading_len;
+  const char* text_end = entry->text + entry->text_len;
+  const char* owner_end;
+  const char* owner;
+  int owner_len, pure_len = 0, mark = 0;
+  int hop;
+  if (role <= limit + 1 || ' ' != role[-1]
+    || 0 != isupper((unsigned char)*role)) return 0;
+  owner_end = role - 1;
+  /* At most one modifier between the two -- "Lincoln's oldest son Robert". */
+  for (hop = 0; hop < 2; ++hop) {
+    owner = owner_end;
+    while (owner > limit && 0 == isspace((unsigned char)owner[-1])
+      && ',' != owner[-1] && '.' != owner[-1]) --owner;
+    owner_len = (int)(owner_end - owner);
+    if (0 == owner_len) return 0;
+    pure_len = answer_name_strip(owner, owner_len, &mark);
+    if (0 != mark && 0 < pure_len
+      && 0 != answer_identity_word_is_name(owner, pure_len)) break;
+    mark = 0;
+    if (0 != hop || owner <= limit + 1 || ' ' != owner[-1]
+      || 0 != answer_word_is_function(owner, owner_len)) return 0;
+    owner_end = owner - 1;
+  }
+  if (0 != mark) {
+    const char* name = role + role_len;
+    const char* name_end;
+    int name_len;
+    while (name < text_end && ' ' == *name) ++name;
+    name_end = name;
+    while (name_end < text_end
+      && ('-' == *name_end || 0 != isalpha((unsigned char)*name_end)))
+    {
+      ++name_end;
+    }
+    /* The name is a maximal RUN, so "Thomas Lincoln" is not just "Thomas". */
+    while (name_end < text_end && ' ' == *name_end) {
+      const char* more = name_end + 1;
+      int more_len = 0;
+      while (more + more_len < text_end
+        && ('-' == more[more_len]
+          || 0 != isalpha((unsigned char)more[more_len]))) ++more_len;
+      if (0 == more_len
+        || 0 == answer_identity_word_is_name(more, more_len)) break;
+      name_end = more + more_len;
+    }
+    name_len = (int)(name_end - name);
+    if (1 < name_len && name_len < 64
+      && 0 != answer_identity_word_is_name(name, name_len)
+      /* Not the possessor itself: "Lincoln's father Lincoln" states nothing. */
+      && 0 == libxs_striequal(name, (size_t)name_len, owner, (size_t)pure_len))
+    {
+      int copula_len = 0;
+      const char* copula = answer_relation_rule_first_term(
+        RELATION_RULE_COPULA, &copula_len);
+      const int span_len = (int)(role + role_len - owner);
+      if (NULL != copula && 0 < copula_len
+        && name_len + copula_len + span_len + 3 < ANSWER_TYPE_PHRASE_MAX)
+      {
+        char phrase[ANSWER_TYPE_PHRASE_MAX];
+        size_t at = 0;
+        memcpy(phrase + at, name, (size_t)name_len);
+        at += (size_t)name_len;
+        phrase[at++] = ' ';
+        memcpy(phrase + at, copula, (size_t)copula_len);
+        at += (size_t)copula_len;
+        phrase[at++] = ' ';
+        memcpy(phrase + at, owner, (size_t)span_len);
+        at += (size_t)span_len;
+        phrase[at] = '\0';
+        if (EXIT_SUCCESS == answer_type_fact_append(name, name_len, phrase,
+          (int)at, ANSWER_TYPE_KIN, entry,
+          (double)(ANSWER_TYPE_PHRASE_MAX - (int)at)))
+        {
+          result = 1;
+        }
+      }
+    }
+  }
+  return result;
+}
+
+
 static size_t answer_type_facts_build(const libxs_registry_t* corpus)
 {
   static const char delims[] = " \t\r\n,.;:!?()[]{}\"";
@@ -3484,6 +3628,14 @@ static size_t answer_type_facts_build(const libxs_registry_t* corpus)
                 ++result;
               }
             }
+          }
+          /* The kinship shape triggers on the DECLARED role, not on a name, so it
+             reads both of its flanks itself. */
+          if (0 != answer_relation_rule_has_term(RELATION_RULE_PERSON, token,
+            token_len))
+          {
+            result += (size_t)answer_type_kin_append(entry, heading_len, token,
+              token_len);
           }
           if (0 != answer_identity_word_is_name(token, token_len)) {
             const char* comma = token + token_len;
@@ -3622,9 +3774,10 @@ static void answer_type_facts_report(FILE* stream)
       size_t fact_pos;
       for (fact_pos = 0; fact_pos < answer_type_facts_size; ++fact_pos) {
         const answer_type_fact_t* fact = answer_type_facts + fact_pos;
-        fprintf(stream, "  type[%s] %s\n",
-          (ANSWER_TYPE_COPULAR == fact->shape) ? "copular" : "appositive",
-          fact->phrase);
+        const char* shape = "appositive";
+        if (ANSWER_TYPE_COPULAR == fact->shape) shape = "copular";
+        else if (ANSWER_TYPE_KIN == fact->shape) shape = "kin";
+        fprintf(stream, "  type[%s] %s\n", shape, fact->phrase);
       }
     }
   }
@@ -3650,8 +3803,17 @@ static int answer_type_render(const answer_type_fact_t* fact, char* output,
 }
 
 
-static int answer_type_fact_reply(const char* query_text, size_t query_len,
-  char* output, size_t output_size)
+/**
+ * Answer from the type layer, optionally from ONE shape only.
+ *
+ * The kinship shape is asked before the identity layer and the others after it, so
+ * the filter is what keeps that from needing a second copy of this function. Asking
+ * kinship first is not a preference between layers: an identity fact and a kinship
+ * fact about the same name are the SAME evidence, and the kinship one keeps the
+ * possessor ("Olympias is Alexander's mother" against "Olympias is the mother").
+ */
+static int answer_type_reply_shape(const char* query_text, size_t query_len,
+  char* output, size_t output_size, int shape_only)
 {
   int result = EXIT_FAILURE;
   char name[64];
@@ -3673,7 +3835,8 @@ static int answer_type_fact_reply(const char* query_text, size_t query_len,
     const answer_type_fact_t* fact = answer_type_facts + fact_pos;
     /* Word containment, not equality: the fact holds the full run ("Thomas
        Lincoln") and a question names one word of it. */
-    if (0 != text_contains_word_ci(fact->name, fact->name_len, name)
+    if ((shape_only < 0 || shape_only == fact->shape)
+      && 0 != text_contains_word_ci(fact->name, fact->name_len, name)
       && (NULL == best || fact->score > best->score))
     {
       best = fact;
@@ -3689,6 +3852,21 @@ static int answer_type_fact_reply(const char* query_text, size_t query_len,
 }
 
 
+static int answer_type_fact_reply(const char* query_text, size_t query_len,
+  char* output, size_t output_size)
+{
+  return answer_type_reply_shape(query_text, query_len, output, output_size, -1);
+}
+
+
+static int answer_type_kin_reply(const char* query_text, size_t query_len,
+  char* output, size_t output_size)
+{
+  return answer_type_reply_shape(query_text, query_len, output, output_size,
+    ANSWER_TYPE_KIN);
+}
+
+
 static void answer_verbs_free(void)
 {
   if (NULL != answer_verbs) {
@@ -3696,6 +3874,16 @@ static void answer_verbs_free(void)
     answer_verbs = NULL;
   }
   answer_verbs_nkeys = 0;
+}
+
+
+static void answer_nouns_free(void)
+{
+  if (NULL != answer_nouns) {
+    libxs_registry_destroy(answer_nouns);
+    answer_nouns = NULL;
+  }
+  answer_nouns_nkeys = 0;
 }
 
 
@@ -3770,6 +3958,21 @@ static size_t answer_verbs_build(const libxs_registry_t* corpus)
             {
               /* Stepped over: a negator or a declared filler is not the verb. */
             }
+            else if (0 != isupper((unsigned char)*word)) {
+              /**
+               * A CAPITAL says this is not the verb, and it is what put nouns in
+               * the class: the optative and the month both put a capitalized word
+               * straight after an auxiliary ("May God", "May General", "May King"),
+               * and those words are attested noun heads 104 to 165 times each. A
+               * finite verb governed by an auxiliary is lower case mid-clause, so
+               * the capital costs only what a title-cased heading would have given.
+               * This matters in BOTH polarities: such a member makes the location
+               * layer reject a true actor and the active shape read a noun as a verb
+               * ("the Middle Persian work Arda Wiraz"), and it is over-represented in
+               * multi-hop paths because a frequent word joins many entities.
+               */
+              governed = 0;
+            }
             else {
               if (2 < word_len && word_len < 32) {
                 char lower[32];
@@ -3819,6 +4022,190 @@ static int answer_word_is_verb(const char* word, int word_len)
       (size_t)word_len + 1, NULL)) ? 1 : 0;
   }
   return result;
+}
+
+
+static long answer_word_verb_count(const char* word, int word_len)
+{
+  long result = 0;
+  if (NULL != answer_verbs && NULL != word && 2 < word_len && word_len < 32) {
+    char lower[32];
+    const long* count;
+    int at;
+    for (at = 0; at < word_len; ++at) {
+      lower[at] = (char)tolower((unsigned char)word[at]);
+    }
+    lower[word_len] = '\0';
+    count = (const long*)libxs_registry_get(answer_verbs, lower,
+      (size_t)word_len + 1, NULL);
+    if (NULL != count) result = *count;
+  }
+  return result;
+}
+
+
+static answer_noun_t* answer_noun_record(const char* word, int word_len,
+  int create)
+{
+  answer_noun_t* result = NULL;
+  if (NULL != answer_nouns && NULL != word && 2 < word_len && word_len < 32) {
+    char lower[32];
+    int at;
+    for (at = 0; at < word_len; ++at) {
+      lower[at] = (char)tolower((unsigned char)word[at]);
+    }
+    lower[word_len] = '\0';
+    result = (answer_noun_t*)libxs_registry_get(answer_nouns, lower,
+      (size_t)word_len + 1, NULL);
+    if (NULL == result && 0 != create) {
+      answer_noun_t fresh;
+      memset(&fresh, 0, sizeof(fresh));
+      result = (answer_noun_t*)libxs_registry_set(answer_nouns, lower,
+        (size_t)word_len + 1, &fresh, sizeof(fresh), NULL);
+      if (NULL != result) ++answer_nouns_nkeys;
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Derive the words this corpus uses as NOUNS from the frame that says so without
+ * morphology: an ARTICLE heads a noun phrase.
+ *
+ * The naive reading of that frame -- the word after an article is a noun -- is
+ * REFUTED by measurement, because a participle modifies from exactly that position:
+ * "the married couple", "the published work", "the defeated army" would take
+ * `married`, `published` and `defeated` out of the verb class, and on Wikipedia that
+ * costs the most valuable edges there are (Sparta defeated Athens, Meade defeated
+ * Lee). So the frame is read STRICTLY: the word must END the phrase, which is what a
+ * HEAD does and what a modifier never does. The phrase ends where the text does, at
+ * anything that is not a letter, or at a declared preposition, auxiliary or copula.
+ * Measured on wiki8m, that separates cleanly -- `god` 65 heads, `king` 109, `name`
+ * 294, `work` 89, against 0 for `defeated`, `signed`, `won`, `held`, `killed`.
+ *
+ * The counts, not a flag, are the point: a caller asks which of the two derived
+ * frames attests a word MORE OFTEN, so there is no threshold to pick -- the corpus
+ * decides, and a word both frames attest equally is read as the noun, since the verb
+ * frame is the one known to be incomplete.
+ */
+static size_t answer_nouns_build(const libxs_registry_t* corpus)
+{
+  static const char delims[] = " \t\r\n,.;:!?()[]{}\"";
+  const void* key = NULL;
+  size_t cursor = 0;
+  void* value;
+  size_t result = 0;
+  answer_nouns_free();
+  answer_nouns = libxs_registry_create();
+  if (NULL == corpus || NULL == answer_nouns) return 0;
+  value = corpus_iter_begin(corpus, &key, &cursor);
+  while (NULL != value) {
+    const corpus_entry_t* entry = (const corpus_entry_t*)value;
+    if (SCALE_SENTENCE == entry->scale
+      && 0 == (entry->lexical_flags & ENTRY_LEX_FRAGMENT))
+    {
+      const char* text_end = entry->text + entry->text_len;
+      const char* token;
+      int token_index = 0, token_len = 0;
+      while (NULL != (token = libxs_strtoken(entry->text, delims,
+        token_index, &token_len)))
+      {
+        const char* word = token;
+        int word_len = token_len;
+        while (word_len > 0 && 0 == isalpha((unsigned char)*word)) {
+          ++word;
+          --word_len;
+        }
+        while (word_len > 0
+          && 0 == isalpha((unsigned char)word[word_len - 1])) --word_len;
+        if (word_len > 0 && 0 != answer_relation_rule_is_term(
+          RELATION_RULE_ARTICLE, word, word_len))
+        {
+          const char* head = word + word_len;
+          int head_len = 0;
+          while (head < text_end && ' ' == *head) ++head;
+          while (head + head_len < text_end
+            && 0 != isalpha((unsigned char)head[head_len])) ++head_len;
+          if (2 < head_len) {
+            const char* after = head + head_len;
+            int after_len = 0;
+            int ends;
+            while (after < text_end && ' ' == *after) ++after;
+            while (after + after_len < text_end
+              && 0 != isalpha((unsigned char)after[after_len])) ++after_len;
+            /**
+             * A COMMA does not end a noun phrase, and reading it as one is what put
+             * adjectives in the class: "a poor, ragged girl" made `poor` a head, and
+             * the type shape then asserted "Snowdrop is a poor". Only the marks that
+             * end a CLAUSE end the phrase for this purpose.
+             */
+            /**
+             * And the DERIVED VERB CLASS is what says the clause continues, which is
+             * the other half of reading this frame: "the girl said" ends the phrase at
+             * `girl`, while "the little girl" does not end it at `little`. Without
+             * that, every article-led noun followed by an ordinary word counted as
+             * modifier evidence and the dominance test rejected `girl` itself. The
+             * class is incomplete, so what it misses costs evidence rather than
+             * inventing it -- the same trade as everywhere else it is read.
+             */
+            ends = ((0 == after_len
+                && (after >= text_end || '.' == *after || '!' == *after
+                  || '?' == *after || ';' == *after || ':' == *after))
+              || 0 != answer_relation_rule_is_term(RELATION_RULE_PREP, after,
+                after_len)
+              || 0 != answer_relation_rule_is_term(RELATION_RULE_AUX, after,
+                after_len)
+              || 0 != answer_relation_rule_is_term(RELATION_RULE_COPULA, after,
+                after_len)
+              || 0 != answer_word_is_verb(after, after_len)) ? 1 : 0;
+            { answer_noun_t* record = answer_noun_record(head, head_len, 1);
+              if (NULL != record) {
+                if (0 != ends) {
+                  ++record->head;
+                  ++result;
+                }
+                else ++record->mod;
+              }
+            }
+          }
+        }
+        ++token_index;
+      }
+    }
+    value = corpus_iter_next(corpus, &key, &cursor);
+  }
+  return result;
+}
+
+
+/**
+ * Is the corpus's own usage of this word more nominal than verbal? Asked where a
+ * shape has to tell a clause from an appositive, since "Sparta defeated Athens" and
+ * "Egyptian god Horus" are the same three token kinds in the same order.
+ */
+static int answer_word_is_noun(const char* word, int word_len)
+{
+  int result = 0;
+  const answer_noun_t* record = answer_noun_record(word, word_len, 0);
+  if (NULL != record && 0 < record->head) {
+    /* Both comparisons are between two attestations of the SAME word, so neither
+       carries a constant to tune: more often a head than a verb, and more often a
+       head than a modifier. The second is what excludes adjectives, which stand
+       where a noun stands but head nothing ("the little girl" against "the girl"). */
+    result = (record->head >= answer_word_verb_count(word, word_len)
+      && record->head >= record->mod) ? 1 : 0;
+  }
+  return result;
+}
+
+
+static void answer_nouns_report(FILE* stream)
+{
+  if (NULL != stream && 0 < answer_nouns_nkeys) {
+    fprintf(stream, "nouns derived: %ld from the article frame\n",
+      answer_nouns_nkeys);
+  }
 }
 
 
@@ -6773,7 +7160,7 @@ static int answer_fact_reply(const libxs_registry_t* corpus,
   best_section[0] = '\0';
   best_learned[0] = '\0';
   if (0 == answer_query_is_negated(query_text, query_len)) {
-    for (step = 0; step < 9 && RELATION_RULE_ASSERTED < best; ++step) {
+    for (step = 0; step < 10 && RELATION_RULE_ASSERTED < best; ++step) {
       int ok;
       answer_fact_section_set(NULL, 0);
       answer_fact_learned_set(NULL, 0, RELATION_RULE_ASSERTED);
@@ -6783,17 +7170,19 @@ static int answer_fact_reply(const libxs_registry_t* corpus,
           output, output_size); break;
         case 1: ok = answer_relation_aggregate_reply(corpus, query_text,
           query_len, output, output_size); break;
-        case 2: ok = answer_identity_fact_reply(query_text, query_len,
+        case 2: ok = answer_type_kin_reply(query_text, query_len,
           output, output_size); break;
-        case 3: ok = answer_describe_fact_reply(query_text, query_len,
+        case 3: ok = answer_identity_fact_reply(query_text, query_len,
           output, output_size); break;
-        case 4: ok = answer_location_fact_reply(query_text, query_len,
+        case 4: ok = answer_describe_fact_reply(query_text, query_len,
           output, output_size); break;
-        case 5: ok = answer_type_fact_reply(query_text, query_len,
+        case 5: ok = answer_location_fact_reply(query_text, query_len,
           output, output_size); break;
-        case 6: ok = answer_own_fact_reply(query_text, query_len,
+        case 6: ok = answer_type_fact_reply(query_text, query_len,
           output, output_size); break;
-        case 7: ok = answer_topic_reply(query_text, query_len,
+        case 7: ok = answer_own_fact_reply(query_text, query_len,
+          output, output_size); break;
+        case 8: ok = answer_topic_reply(query_text, query_len,
           output, output_size); break;
         default: ok = answer_docdef_fact_reply(query_text, query_len,
           output, output_size); break;
@@ -8118,6 +8507,9 @@ int converse_qa_run(converse_run_t* run)
     converse_stage_end("f_case");
     answer_verbs_build(run->corpus);
     converse_stage_end("f_verbs");
+    /* After the verbs, because the noun test compares the two frames' counts. */
+    answer_nouns_build(run->corpus);
+    converse_stage_end("f_nouns");
     answer_relation_facts_build(run->corpus);
     converse_stage_end("f_relation");
     answer_identity_facts_build(run->corpus);
@@ -8136,6 +8528,7 @@ int converse_qa_run(converse_run_t* run)
     converse_stage_end("f_save");
   }
   else converse_stage_end("f_load");
+  answer_nouns_report(stderr);
   answer_relation_facts_report(stderr);
   answer_identity_facts_report(stderr);
   answer_describe_facts_report(stderr);
@@ -8182,5 +8575,6 @@ int converse_qa_run(converse_run_t* run)
   answer_type_facts_free();
   answer_own_facts_free();
   answer_verbs_free();
+  answer_nouns_free();
   return result;
 }
