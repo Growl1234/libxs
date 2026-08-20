@@ -266,9 +266,7 @@ def add_runs(para, text, font_size=None, code=False):
             if font_size:
                 run.font.size = font_size
         elif style == "dim":
-            run.font.size = Pt(
-                round((font_size or BODY_SIZE).pt * DIM_SCALE)
-            )
+            run.font.size = Pt(round((font_size or BODY_SIZE).pt * DIM_SCALE))
             run.font.color.rgb = DIM_COLOR
             _keep_color(run)
         if href:
@@ -658,8 +656,12 @@ def _parse_slide(text):
         # started a new text block, so inline markup spanning the wrap (a
         # "**title** wrapped over two source lines") never matched and the
         # asterisks reached the slide verbatim.
-        if cur and cur["type"] == "bullets" and cur["items"] \
-                and line[:1] in (" ", "\t"):
+        if (
+            cur
+            and cur["type"] == "bullets"
+            and cur["items"]
+            and line[:1] in (" ", "\t")
+        ):
             cur["items"][-1] += " " + line.strip()
             i += 1
             continue

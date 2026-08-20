@@ -17,20 +17,21 @@ import sys
 def generate_uniform(n, boxsize, seed):
     try:
         import numpy as np
+
         rng = np.random.default_rng(seed)
         return rng.uniform(0.0, boxsize, size=(n, 3))
     except ImportError:
         import random
+
         random.seed(seed)
-        return [[random.uniform(0.0, boxsize) for _ in range(3)]
-                for _ in range(n)]
+        return [[random.uniform(0.0, boxsize) for _ in range(3)] for _ in range(n)]
 
 
 def generate_clustered(n, boxsize, nclusters, seed):
     import numpy as np
+
     rng = np.random.default_rng(seed)
-    centers = rng.uniform(0.1 * boxsize, 0.9 * boxsize,
-                          size=(nclusters, 3))
+    centers = rng.uniform(0.1 * boxsize, 0.9 * boxsize, size=(nclusters, 3))
     sigma = boxsize * 0.05
     pts = []
     per_cluster = n // nclusters
@@ -52,6 +53,7 @@ def write_text(pts, path):
 def write_ff(pts, path, boxsize):
     """Write Fortran fastfood binary (float32, matches Corrfunc .ff)."""
     import numpy as np
+
     pts = np.asarray(pts, dtype=np.float32)
     n = len(pts)
     idat = np.array([0, n, 0, 0, 0], dtype=np.int32)
@@ -81,7 +83,8 @@ def write_ff(pts, path, boxsize):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate point catalog for pair counting")
+        description="Generate point catalog for pair counting"
+    )
     parser.add_argument("--npoints", type=int, default=10000)
     parser.add_argument("--boxsize", type=float, default=420.0)
     parser.add_argument("--clustered", action="store_true")
@@ -91,8 +94,7 @@ def main():
     args = parser.parse_args()
 
     if args.clustered:
-        pts = generate_clustered(args.npoints, args.boxsize,
-                                 args.nclusters, args.seed)
+        pts = generate_clustered(args.npoints, args.boxsize, args.nclusters, args.seed)
     else:
         pts = generate_uniform(args.npoints, args.boxsize, args.seed)
 
@@ -101,10 +103,13 @@ def main():
     else:
         write_text(pts, args.out)
 
-    print(f"{args.npoints} points -> {args.out} "
-          f"(boxsize={args.boxsize}, "
-          f"{'clustered' if args.clustered else 'uniform'}, "
-          f"seed={args.seed})", file=sys.stderr)
+    print(
+        f"{args.npoints} points -> {args.out} "
+        f"(boxsize={args.boxsize}, "
+        f"{'clustered' if args.clustered else 'uniform'}, "
+        f"seed={args.seed})",
+        file=sys.stderr,
+    )
 
 
 if __name__ == "__main__":

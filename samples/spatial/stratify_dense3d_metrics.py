@@ -26,13 +26,22 @@ class LibxsFprint(ctypes.Structure):
 
 def configure_fprint(libxs):
     size_ptr = ctypes.POINTER(ctypes.c_size_t)
-    libxs.libxs_fprint.argtypes = [ctypes.POINTER(LibxsFprint), ctypes.c_int,
-                                   ctypes.c_void_p, ctypes.c_int, size_ptr,
-                                   size_ptr, ctypes.c_int, ctypes.c_int]
+    libxs.libxs_fprint.argtypes = [
+        ctypes.POINTER(LibxsFprint),
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_int,
+        size_ptr,
+        size_ptr,
+        ctypes.c_int,
+        ctypes.c_int,
+    ]
     libxs.libxs_fprint.restype = ctypes.c_int
-    libxs.libxs_fprint_diff.argtypes = [ctypes.POINTER(LibxsFprint),
-                                        ctypes.POINTER(LibxsFprint),
-                                        ctypes.POINTER(ctypes.c_double)]
+    libxs.libxs_fprint_diff.argtypes = [
+        ctypes.POINTER(LibxsFprint),
+        ctypes.POINTER(LibxsFprint),
+        ctypes.POINTER(ctypes.c_double),
+    ]
     libxs.libxs_fprint_diff.restype = ctypes.c_double
     libxs.libxs_fprint_decay.argtypes = [ctypes.POINTER(LibxsFprint)]
     libxs.libxs_fprint_decay.restype = ctypes.c_double
@@ -81,27 +90,51 @@ def fingerprint(libxs, values, shape, order):
     count = len(values)
     data = (ctypes.c_double * count)(*values)
     dims = (ctypes.c_size_t * len(shape))(*shape)
-    result = libxs.libxs_fprint(ctypes.byref(info), LIBXS_DATATYPE_F64,
-                                data, len(shape), dims, None, order, 0, 0, 0)
+    result = libxs.libxs_fprint(
+        ctypes.byref(info),
+        LIBXS_DATATYPE_F64,
+        data,
+        len(shape),
+        dims,
+        None,
+        order,
+        0,
+        0,
+        0,
+    )
     if result != 0:
         raise RuntimeError("libxs_fprint failed")
     return info
 
 
-def add_fingerprint_metrics(libxs, metrics, volume, reconstructed, sheet,
-                            depth, height, width, sheet_height, sheet_width):
+def add_fingerprint_metrics(
+    libxs,
+    metrics,
+    volume,
+    reconstructed,
+    sheet,
+    depth,
+    height,
+    width,
+    sheet_height,
+    sheet_width,
+):
     order = 4
     source = fingerprint(libxs, volume, (width, height, depth), order)
     recovered = fingerprint(libxs, reconstructed, (width, height, depth), order)
     sheet_fp = fingerprint(libxs, sheet, (sheet_width, sheet_height), order)
     metrics["fprint.order"] = min(source.order, sheet_fp.order)
     metrics["fprint.source.decay"] = libxs.libxs_fprint_decay(ctypes.byref(source))
-    metrics["fprint.reconstructed.decay"] = libxs.libxs_fprint_decay(ctypes.byref(recovered))
+    metrics["fprint.reconstructed.decay"] = libxs.libxs_fprint_decay(
+        ctypes.byref(recovered)
+    )
     metrics["fprint.sheet.decay"] = libxs.libxs_fprint_decay(ctypes.byref(sheet_fp))
     metrics["fprint.source_reconstructed.diff"] = libxs.libxs_fprint_diff(
-        ctypes.byref(source), ctypes.byref(recovered), None)
+        ctypes.byref(source), ctypes.byref(recovered), None
+    )
     metrics["fprint.source_sheet.diff"] = libxs.libxs_fprint_diff(
-        ctypes.byref(source), ctypes.byref(sheet_fp), None)
+        ctypes.byref(source), ctypes.byref(sheet_fp), None
+    )
     for index in range(0, min(source.order, sheet_fp.order) + 1):
         metrics["fprint.source.l2.%d" % index] = source.l2[index]
         metrics["fprint.sheet.l2.%d" % index] = sheet_fp.l2[index]
@@ -153,11 +186,17 @@ def source_neighbor_distances(depth, height, width, src_to_dst):
                 v0, u0 = src_to_dst[src]
                 neighbors = []
                 if x_coord + 1 < width:
-                    neighbors.append(source_index(z_coord, y_coord, x_coord + 1, height, width))
+                    neighbors.append(
+                        source_index(z_coord, y_coord, x_coord + 1, height, width)
+                    )
                 if y_coord + 1 < height:
-                    neighbors.append(source_index(z_coord, y_coord + 1, x_coord, height, width))
+                    neighbors.append(
+                        source_index(z_coord, y_coord + 1, x_coord, height, width)
+                    )
                 if z_coord + 1 < depth:
-                    neighbors.append(source_index(z_coord + 1, y_coord, x_coord, height, width))
+                    neighbors.append(
+                        source_index(z_coord + 1, y_coord, x_coord, height, width)
+                    )
                 for neighbor in neighbors:
                     v1, u1 = src_to_dst[neighbor]
                     distance = abs(v0 - v1) + abs(u0 - u1)
@@ -198,7 +237,8 @@ def sheet_neighbor_source_distances(sheet_height, sheet_width, dst_to_src):
 
 def compute_metrics(libxs, curve, frame, depth, height, width, volume):
     sheet, sheet_height, sheet_width, records, map_seconds = stratify_dense3d.stratify(
-        libxs, curve, depth, height, width, volume, frame)
+        libxs, curve, depth, height, width, volume, frame
+    )
     src_to_dst, dst_to_src = build_maps(records, sheet_width)
     reconstructed = reconstruct_volume(sheet, records, sheet_width, len(volume))
     source_sum = sum(volume)
@@ -225,18 +265,32 @@ def compute_metrics(libxs, curve, frame, depth, height, width, volume):
         "invariant.reconstruction_max_absdiff": max_abs_delta(volume, reconstructed),
         "profile.z_max_absdiff": max_abs_delta(
             profile(volume, depth, height, width, "z"),
-            profile(reconstructed, depth, height, width, "z")),
+            profile(reconstructed, depth, height, width, "z"),
+        ),
         "profile.y_max_absdiff": max_abs_delta(
             profile(volume, depth, height, width, "y"),
-            profile(reconstructed, depth, height, width, "y")),
+            profile(reconstructed, depth, height, width, "y"),
+        ),
         "profile.x_max_absdiff": max_abs_delta(
             profile(volume, depth, height, width, "x"),
-            profile(reconstructed, depth, height, width, "x")),
+            profile(reconstructed, depth, height, width, "x"),
+        ),
     }
-    add_fingerprint_metrics(libxs, metrics, volume, reconstructed, sheet,
-                            depth, height, width, sheet_height, sheet_width)
+    add_fingerprint_metrics(
+        libxs,
+        metrics,
+        volume,
+        reconstructed,
+        sheet,
+        depth,
+        height,
+        width,
+        sheet_height,
+        sheet_width,
+    )
     source_distances, adjacent, within2, within4 = source_neighbor_distances(
-        depth, height, width, src_to_dst)
+        depth, height, width, src_to_dst
+    )
     summarize(source_distances, "source_neighbors.sheet_manhattan", metrics)
     if source_distances:
         count = float(len(source_distances))
@@ -244,11 +298,13 @@ def compute_metrics(libxs, curve, frame, depth, height, width, volume):
         metrics["source_neighbors.sheet_within2_fraction"] = float(within2) / count
         metrics["source_neighbors.sheet_within4_fraction"] = float(within4) / count
     sheet_distances, sheet_adjacent = sheet_neighbor_source_distances(
-        sheet_height, sheet_width, dst_to_src)
+        sheet_height, sheet_width, dst_to_src
+    )
     summarize(sheet_distances, "sheet_neighbors.source_manhattan", metrics)
     if sheet_distances:
-        metrics["sheet_neighbors.source_adjacent_fraction"] = (
-            float(sheet_adjacent) / float(len(sheet_distances)))
+        metrics["sheet_neighbors.source_adjacent_fraction"] = float(
+            sheet_adjacent
+        ) / float(len(sheet_distances))
     return metrics
 
 
@@ -265,34 +321,75 @@ def write_metrics(metrics, path):
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--shape", type=int, nargs=3, metavar=("D", "H", "W"),
-                        default=(8, 16, 16), help="source volume shape")
+    parser.add_argument(
+        "--shape",
+        type=int,
+        nargs=3,
+        metavar=("D", "H", "W"),
+        default=(8, 16, 16),
+        help="source volume shape",
+    )
     parser.add_argument("--curve", choices=("hilbert", "morton"), default="hilbert")
-    parser.add_argument("--frame", choices=("compact", "canonical"),
-                        default="compact",
-                        help="sheet framing policy for finite-bit stratification")
+    parser.add_argument(
+        "--frame",
+        choices=("compact", "canonical"),
+        default="compact",
+        help="sheet framing policy for finite-bit stratification",
+    )
     parser.add_argument("--libxs", help="path to libxs shared library")
     parser.add_argument("--hdf5", help="read source volume from an HDF5 file")
-    parser.add_argument("--hdf5-dataset", default="ECAL",
-                        help="HDF5 dataset containing source volumes")
-    parser.add_argument("--hdf5-layout", choices=("auto", "dhw", "ndhw", "ncdhw", "ndhwc", "flat"),
-                        default="auto", help="HDF5 dataset layout")
-    parser.add_argument("--hdf5-reshape", type=int, nargs=3, metavar=("D", "H", "W"),
-                        help="reshape selected flat HDF5 data to a 3D volume")
-    parser.add_argument("--hdf5-event", type=int, default=0,
-                        help="event index for batched HDF5 layouts")
-    parser.add_argument("--hdf5-channel", type=int, default=0,
-                        help="channel index for channelled HDF5 layouts")
-    parser.add_argument("--medmnist3d", action="store_true",
-                        help="read source volume from MedMNIST3D root/flag lookup")
-    parser.add_argument("--medmnist3d-npz", help="read source volume from a MedMNIST3D NPZ file")
-    parser.add_argument("--medmnist3d-root", default="~/.medmnist",
-                        help="directory containing MedMNIST3D NPZ files")
-    parser.add_argument("--medmnist3d-flag", default="organmnist3d",
-                        help="MedMNIST3D dataset flag used with --medmnist3d-root")
-    parser.add_argument("--medmnist3d-size", type=int, default=28,
-                        help="MedMNIST image size used with --medmnist3d-root")
-    parser.add_argument("--medmnist3d-split", choices=("train", "val", "test"), default="train")
+    parser.add_argument(
+        "--hdf5-dataset", default="ECAL", help="HDF5 dataset containing source volumes"
+    )
+    parser.add_argument(
+        "--hdf5-layout",
+        choices=("auto", "dhw", "ndhw", "ncdhw", "ndhwc", "flat"),
+        default="auto",
+        help="HDF5 dataset layout",
+    )
+    parser.add_argument(
+        "--hdf5-reshape",
+        type=int,
+        nargs=3,
+        metavar=("D", "H", "W"),
+        help="reshape selected flat HDF5 data to a 3D volume",
+    )
+    parser.add_argument(
+        "--hdf5-event", type=int, default=0, help="event index for batched HDF5 layouts"
+    )
+    parser.add_argument(
+        "--hdf5-channel",
+        type=int,
+        default=0,
+        help="channel index for channelled HDF5 layouts",
+    )
+    parser.add_argument(
+        "--medmnist3d",
+        action="store_true",
+        help="read source volume from MedMNIST3D root/flag lookup",
+    )
+    parser.add_argument(
+        "--medmnist3d-npz", help="read source volume from a MedMNIST3D NPZ file"
+    )
+    parser.add_argument(
+        "--medmnist3d-root",
+        default="~/.medmnist",
+        help="directory containing MedMNIST3D NPZ files",
+    )
+    parser.add_argument(
+        "--medmnist3d-flag",
+        default="organmnist3d",
+        help="MedMNIST3D dataset flag used with --medmnist3d-root",
+    )
+    parser.add_argument(
+        "--medmnist3d-size",
+        type=int,
+        default=28,
+        help="MedMNIST image size used with --medmnist3d-root",
+    )
+    parser.add_argument(
+        "--medmnist3d-split", choices=("train", "val", "test"), default="train"
+    )
     parser.add_argument("--medmnist3d-index", type=int, default=0)
     parser.add_argument("--csv", help="write metrics as CSV")
     return parser.parse_args(argv)
@@ -305,23 +402,34 @@ def main(argv):
         raise ValueError("choose either --hdf5 or --medmnist3d-npz, not both")
     if args.hdf5:
         volume, depth, height, width = stratify_dense3d.load_hdf5_volume(
-            args.hdf5, args.hdf5_dataset, args.hdf5_layout,
-            args.hdf5_event, args.hdf5_channel, args.hdf5_reshape)
+            args.hdf5,
+            args.hdf5_dataset,
+            args.hdf5_layout,
+            args.hdf5_event,
+            args.hdf5_channel,
+            args.hdf5_reshape,
+        )
     elif args.medmnist3d or args.medmnist3d_npz:
         import stratify_medmnist3d
+
         npz_path = stratify_medmnist3d.resolve_npz_path(
-            args.medmnist3d_npz, args.medmnist3d_root,
-            args.medmnist3d_flag, args.medmnist3d_size)
+            args.medmnist3d_npz,
+            args.medmnist3d_root,
+            args.medmnist3d_flag,
+            args.medmnist3d_size,
+        )
         volume, depth, height, width, _ = stratify_medmnist3d.load_medmnist3d_volume(
-            npz_path, args.medmnist3d_split, args.medmnist3d_index)
+            npz_path, args.medmnist3d_split, args.medmnist3d_index
+        )
     else:
         if depth <= 0 or height <= 0 or width <= 0:
             raise ValueError("shape entries must be positive")
         volume = stratify_dense3d.shower_volume(depth, height, width)
     libxs, lib_path = stratify_dense3d.load_libxs(args.libxs)
     configure_fprint(libxs)
-    metrics = compute_metrics(libxs, args.curve, args.frame,
-                              depth, height, width, volume)
+    metrics = compute_metrics(
+        libxs, args.curve, args.frame, depth, height, width, volume
+    )
     metrics["libxs"] = lib_path
     write_metrics(metrics, args.csv)
     return 0

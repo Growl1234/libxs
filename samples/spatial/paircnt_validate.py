@@ -28,16 +28,26 @@ def read_text_catalog(path):
 
 def run_corrfunc(x, y, z, rmin, rmax, nbins, boxsize, periodic):
     from Corrfunc.theory.DD import DD
+
     edges = np.logspace(np.log10(rmin), np.log10(rmax), nbins + 1)
     binfile = edges
-    results = DD(1, 1, binfile, x, y, z,
-                 periodic=periodic, boxsize=boxsize, verbose=False)
+    results = DD(
+        1, 1, binfile, x, y, z, periodic=periodic, boxsize=boxsize, verbose=False
+    )
     return results["npairs"], edges
 
 
 def run_paircnt_dd(catalog, rmin, rmax, nbins, boxsize, exe="./paircnt_dd"):
-    cmd = [exe, catalog, "--rmin", str(rmin), "--rmax", str(rmax),
-           "--nbins", str(nbins)]
+    cmd = [
+        exe,
+        catalog,
+        "--rmin",
+        str(rmin),
+        "--rmax",
+        str(rmax),
+        "--nbins",
+        str(nbins),
+    ]
     if boxsize > 0:
         cmd += ["--boxsize", str(boxsize)]
     proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -55,8 +65,7 @@ def run_paircnt_dd(catalog, rmin, rmax, nbins, boxsize, exe="./paircnt_dd"):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Validate paircnt_dd against Corrfunc")
+    parser = argparse.ArgumentParser(description="Validate paircnt_dd against Corrfunc")
     parser.add_argument("catalog")
     parser.add_argument("--rmin", type=float, default=0.1)
     parser.add_argument("--rmax", type=float, default=25.0)
@@ -71,14 +80,17 @@ def main():
     print(f"catalog: {len(x)} points", file=sys.stderr)
 
     corrfunc_counts, edges = run_corrfunc(
-        x, y, z, args.rmin, args.rmax, args.nbins, args.boxsize, periodic)
+        x, y, z, args.rmin, args.rmax, args.nbins, args.boxsize, periodic
+    )
 
     our_counts = run_paircnt_dd(
-        args.catalog, args.rmin, args.rmax, args.nbins, args.boxsize,
-        args.exe)
+        args.catalog, args.rmin, args.rmax, args.nbins, args.boxsize, args.exe
+    )
 
-    print(f"{'bin':>4s} {'rmin':>12s} {'rmax':>12s} "
-          f"{'corrfunc':>12s} {'ours':>12s} {'diff':>8s}")
+    print(
+        f"{'bin':>4s} {'rmin':>12s} {'rmax':>12s} "
+        f"{'corrfunc':>12s} {'ours':>12s} {'diff':>8s}"
+    )
     total_cf = 0
     total_ours = 0
     mismatches = 0
@@ -91,10 +103,14 @@ def main():
         flag = " *" if diff != 0 else ""
         if diff != 0:
             mismatches += 1
-        print(f"{i:4d} {edges[i]:12.6e} {edges[i+1]:12.6e} "
-              f"{cf:12d} {ours:12d} {diff:8d}{flag}")
-    print(f"{'total':>4s} {'':>12s} {'':>12s} "
-          f"{total_cf:12d} {total_ours:12d} {total_ours - total_cf:8d}")
+        print(
+            f"{i:4d} {edges[i]:12.6e} {edges[i+1]:12.6e} "
+            f"{cf:12d} {ours:12d} {diff:8d}{flag}"
+        )
+    print(
+        f"{'total':>4s} {'':>12s} {'':>12s} "
+        f"{total_cf:12d} {total_ours:12d} {total_ours - total_cf:8d}"
+    )
 
     if mismatches == 0:
         print("\nPASS: all bins match exactly", file=sys.stderr)

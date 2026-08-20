@@ -46,12 +46,8 @@ def _build_ford(docs_dir, site_dir):
     try:
         with open(project_path, "r") as f:
             proj_docs = f.read()
-        proj_docs, proj_data = ford.load_settings(
-            proj_docs, docs_dir, FORD_PROJECT
-        )
-        proj_data, proj_docs = ford.parse_arguments(
-            {}, proj_docs, proj_data, docs_dir
-        )
+        proj_docs, proj_data = ford.load_settings(proj_docs, docs_dir, FORD_PROJECT)
+        proj_data, proj_docs = ford.parse_arguments({}, proj_docs, proj_data, docs_dir)
         if proj_data and proj_docs:
             proj_data.output_dir = Path(site_dir) / FORD_OUTPUT
             ford.main(proj_data, proj_docs)
@@ -79,14 +75,16 @@ def _build_slides(docs_dir, site_dir):
         try:
             result = subprocess.run(
                 ["mkslides", "build", slides_src, "-d", slides_dst],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             if result.returncode == 0:
                 log.info("Slides built successfully")
             else:
                 log.warning(
                     "mkslides exited with %d: %s",
-                    result.returncode, result.stderr.strip(),
+                    result.returncode,
+                    result.stderr.strip(),
                 )
         except Exception:
             log.exception("mkslides build failed")
