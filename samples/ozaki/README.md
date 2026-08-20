@@ -91,7 +91,7 @@ Setting OZAKI applies to both.
 
 GPU-specific kernel tuning variables (OZAKI_RTM, OZAKI_RTN, OZAKI_WG,
 OZAKI_SG, OZAKI_KU, OZAKI_RC, OZAKI_PB, OZAKI_HIER, OZAKI_PREFETCH,
-OZAKI_SCALAR_ACC, OZAKI_DEVPOOL, OZAKI_CACHE) are documented in the
+OZAKI_SCALAR_ACC, OZAKI_CACHE, OZAKI_ARENA) are documented in the
 LIBXSTREAM Ozaki README.
 
 ### Monitoring and Diagnostics
@@ -104,7 +104,6 @@ LIBXSTREAM Ozaki README.
 | OZAKI_EPS       | inf       | Dump A/B when epsilon error exceeds threshold                     |
 | OZAKI_RSQ       | 0         | Dump A/B when RSQ drops below threshold (updated after dump)      |
 | OZAKI_EXIT      | 1         | Exit on accuracy violation after dump. 0=continue                 |
-| OZAKI_PROFILE   | 0         | Profile: 0=off, 1=all, 2=kernel, 3=preprocess A, 4=preprocess B   |
 
 ### Benchmark
 
@@ -174,24 +173,18 @@ schemes (Ozaki-1, Ozaki-2) are well-matched.
 
 ## Profiling
 
-The OZAKI_PROFILE variable enables per-GEMM timing collected into a
-histogram reported at program exit:
+Set `LIBXSTREAM_PROFILE=1` for per-kernel device timings, reported at
+program exit:
 
 ```text
-OZAKI PROF: 850 DP-GFLOPS/s (17.0 INT8-TOPS/s, 20x)
+PROF ACC/OpenCL: ID=171071 gemm_crt_fused=2.987 ms 5751.0 GFLOPS/s
 ```
 
-Profile modes select which phase is measured:
-
-| Mode         | CPU                           | GPU                    |
-|--------------|-------------------------------|------------------------|
-| 1/negative   | All phases (preprocess+dot)   | All profiled kernels   |
-| 2            | Kernel only (dot products)    | Dotprod kernel only    |
-| 3            | Preprocessing (A+B)           | Preprocess A kernel    |
-| 4            | Preprocessing (A+B)           | Preprocess B kernel    |
-
-On the CPU, modes 3 and 4 are equivalent (A and B preprocessing is
-interleaved across OpenMP threads).
+There is no separate host-side profile: on the CPU the intercepted call
+and the kernel it spends its time in agree to within a few percent, so
+the `OZAKI GEMM` line already reports the kernel. It is a mean over the
+whole timed loop, so use `NREPEAT` to average several calls -- host
+timings vary between runs, the more so on a many-core part.
 
 ## Example
 
@@ -202,7 +195,7 @@ OZAKI_TRIM=4 OZAKI=1 ./dgemm-wrap.x 256     # drop 4 least significant diagonals
 OZAKI=2 OZAKI_GROUPS=4 ./dgemm-wrap.x 4096  # CRT with K-grouping
 OZAKI=3 ./dgemm-wrap.x 4096                 # adaptive scheme selection
 EVIL=512 ./dgemm-wrap.x 1024                # accuracy grading (wide exponent span)
-EVIL=1 OZAKI_PROFILE=1 ./dgemm-wrap.x 1024  # narrow span (shows pair savings)
+EVIL=1 ./dgemm-wrap.x 1024                  # narrow span (cutoff drops pairs)
 EVIL=-52 ./dgemm-wrap.x 1024                # per-element span (worst for cutoff)
 OZAKI_DECAY=1 OZAKI=1 ./dgemm-wrap.x 256    # decay diagnostic (no reorder)
 OZAKI_DECAY=2 OZAKI=1 ./dgemm-wrap.x 256    # sort by norm + decay diagnostic

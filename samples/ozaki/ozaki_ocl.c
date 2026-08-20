@@ -25,7 +25,7 @@ typedef struct ozaki_ocl_handle_t {
 
 
 void* ozaki_ocl_create(int use_double, int kind, int verbosity, int tm, int tn, int ndecomp, int ozflags, int oztrim, int ozgroups,
-  int maxk, int profiling)
+  int maxk)
 {
   ozaki_ocl_handle_t* h = NULL;
   /**
@@ -61,7 +61,7 @@ void* ozaki_ocl_create(int use_double, int kind, int verbosity, int tm, int tn, 
   }
   if (NULL != h) {
     if (EXIT_SUCCESS !=
-        ozaki_init(&h->ctx, tm, tn, use_double, kind, verbosity, ndecomp, ozflags, oztrim, ozgroups, maxk, profiling))
+        ozaki_init(&h->ctx, tm, tn, use_double, kind, verbosity, ndecomp, ozflags, oztrim, ozgroups, maxk))
     {
       free(h);
       h = NULL;
@@ -79,8 +79,7 @@ void* ozaki_ocl_create(int use_double, int kind, int verbosity, int tm, int tn, 
       h = NULL;
       reason = "FP64 requested but the device supports FP32 only";
     }
-    else if (EXIT_SUCCESS != libxstream_stream_create(
-                               &h->stream, "ozaki_wrap", profiling ? LIBXSTREAM_STREAM_PROFILING : LIBXSTREAM_STREAM_DEFAULT))
+    else if (EXIT_SUCCESS != libxstream_stream_create(&h->stream, "ozaki_wrap", LIBXSTREAM_STREAM_DEFAULT))
     {
       ozaki_destroy(&h->ctx);
       free(h);

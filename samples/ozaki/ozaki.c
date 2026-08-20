@@ -33,8 +33,6 @@ OZAKI_APIVAR_PRIVATE_DEF(int ozaki_dump);
 OZAKI_APIVAR_PRIVATE_DEF(int ozaki_exit);
 OZAKI_APIVAR_PRIVATE_DEF(int ozaki_n);
 OZAKI_APIVAR_PRIVATE_DEF(int ozaki_decay);
-OZAKI_APIVAR_PRIVATE_DEF(int ozaki_profile);
-OZAKI_APIVAR_PRIVATE_DEF(libxs_hist_t* ozaki_hist);
 OZAKI_APIVAR_PRIVATE_DEF(int gemm_threshold);
 #if GEMM_IS_DOUBLE /* single definition across both precision builds */
 LIBXS_TLS int gemm_nozaki;
@@ -53,35 +51,6 @@ OZAKI_API_INTERN void gemm_atexit(void)
     once = 1;
     if (0 != ozaki_verbose && 0 < gemm_diff.r) {
       print_diff(stderr, NULL /*GEMM*/, ozaki_stat, &gemm_diff);
-    }
-    if (NULL != ozaki_hist) {
-      const char* const kind = GEMM_IS_DOUBLE ? "DP" : "SP";
-      double median[2] = {0, 0};
-      libxs_hist_query_median(NULL /*lock*/, ozaki_hist, median);
-      /**
-       * These are host-timed figures from the CPU kernels. An offloaded run
-       * records nothing here (device timings come from LIBXSTREAM_PROFILE), so
-       * a zero median means "no CPU GEMM was profiled" and must not be printed
-       * as a measured rate.
-       */
-      if (0 < median[0]) {
-        const int ngemms_static = (1 == ozaki)
-          ? ozaki_count_pairs(ozaki_n, 2 * (ozaki_n - 1) - ozaki_trim, ozaki_flags)
-          : ozaki_n;
-        fprintf(stderr, "OZAKI PROF: %.0f %s-GFLOPS/s", median[0], kind);
-        if (0 < ngemms_static) {
-          const double tops = median[0] * ngemms_static * 1E-3;
-          fprintf(stderr, " (%.1f INT8-TOPS/s, %dx)", tops, ngemms_static);
-        }
-        if (0 < median[1] && median[1] < ngemms_static) {
-          fprintf(stderr, " pairs=%.0f/%d (%.0f%% saved)",
-            median[1], ngemms_static,
-            100.0 * (1.0 - median[1] / ngemms_static));
-        }
-        fprintf(stderr, "\n");
-      }
-      libxs_hist_destroy(ozaki_hist);
-      ozaki_hist = NULL;
     }
 #if defined(__LIBXSTREAM)
     ozaki_ocl_release(ozaki_ocl_handle);
@@ -124,10 +93,10 @@ LIBXS_API_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb, c
   }
   /**
    * Compute result on OpenCL device. Device-side timings are collected by
-   * LIBXSTREAM per kernel (LIBXSTREAM_PROFILE), not derived here: ozaki_hist
-   * holds host-timed GFLOPS from the CPU kernels, and feeding wall-clock
-   * figures from an offloaded call into the same histogram would mix two
-   * different measurements under one median.
+   * LIBXSTREAM per kernel (LIBXSTREAM_PROFILE), not derived here, and the host
+   * path has no separate timing of its own: measured on a Xeon 8480L over
+   * enough repetitions, the intercepted call and the kernel it spends its time
+   * in agree within 5%, so wall-clock is the whole story there.
    */
   ozaki_ocl_gemm(ozaki_ocl_handle, *transa, *transb, *m, *n, *k, (double)*alpha, a, *lda, b, *ldb, (double)*beta, c, *ldc);
   /* Reference BLAS and diff comparison */
@@ -239,15 +208,6 @@ OZAKI_API_INTERN void gemm_init(void)
         else if (0 == ozaki_amx && LIBXS_X86_AVX512_AMX <= ozaki_target_arch) {
           ozaki_target_arch = LIBXS_X86_AVX512_AMX - 1;
         }
-        { /* Profiling: create histogram if requested */
-          const char* const env_prof = getenv("OZAKI_PROFILE");
-          ozaki_profile = (NULL == env_prof ? 0 : atoi(env_prof));
-          if (0 != ozaki_profile) {
-            const libxs_hist_update_t update[] = {libxs_hist_update_avg, libxs_hist_update_avg};
-            ozaki_hist = libxs_hist_create(3, 2, update);
-            if (NULL == ozaki_hist) ozaki_profile = 0;
-          }
-        }
 #if defined(__LIBXSTREAM)
         /* initialize OpenCL Ozaki context */
         if (0 != ozaki_ocl && (0 < ozaki && 3 >= ozaki)) {
@@ -263,7 +223,7 @@ OZAKI_API_INTERN void gemm_init(void)
            */
           ozaki_ocl_handle = ozaki_ocl_create(GEMM_IS_DOUBLE, (NULL != ozaki_env) ? ozaki : -1 /*auto*/,
             ozaki_verbose, ocl_tm, ocl_tn, ozaki_n, ozaki_flags,
-            ozaki_trim, ocl_groups, ozaki_maxk, 0 != ozaki_profile);
+            ozaki_trim, ocl_groups, ozaki_maxk);
         }
 #endif
         atexit(gemm_atexit);

@@ -418,7 +418,6 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
   double* expb_fp = NULL;
   GEMM_REAL_TYPE* c_ref = NULL;
   const size_t c_size = (size_t)ldcv * (size_t)N * sizeof(GEMM_REAL_TYPE);
-  GEMM_PROFILE_DECL;
   int i, j;
   LIBXS_ASSERT(LIBXS_DATATYPE_F64 == LIBXS_DATATYPE(GEMM_REAL_TYPE) || LIBXS_DATATYPE_F32 == LIBXS_DATATYPE(GEMM_REAL_TYPE));
 
@@ -485,14 +484,7 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
 #endif
   {
     GEMM_INT_TYPE row, col, ib, jb, mi, nj, kb, kb_grp;
-    int pidx, tid;
-    tid = 0;
-#if defined(_OPENMP)
-    tid = omp_get_thread_num();
-#endif
-    GEMM_PROFILE_START(tid);
-    GEMM_PROFILE_PAIRS(nprimes);
-
+    int pidx;
     /**
      * Phase 3: scale C by beta (once, before K-group loop).
      * Per BLAS spec, beta=0 must zero C unconditionally (NaN/Inf safe).
@@ -817,7 +809,6 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
       }
     } /* end K-group loop */
 
-    GEMM_PROFILE_END(tid, M, N, K);
   } /* end parallel */
 
   /* Reference BLAS and diff comparison (whole-matrix, consistent with GPU path) */

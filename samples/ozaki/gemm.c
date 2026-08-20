@@ -22,6 +22,9 @@ LIBXS_PRAGMA_WEAK(gemm_diff)
 LIBXS_PRAGMA_WEAK(GEMM_REAL)
 
 
+static double gemm_duration(double* times, int nrepeat, double total);
+
+
 int main(int argc, char* argv[])
 {
   const char* const nrepeat_env = getenv("NREPEAT");
@@ -214,6 +217,7 @@ int main(int argc, char* argv[])
     const GEMM_REAL_TYPE* const ga = (0 != complex_input) ? complex_alpha : &alpha;
     const GEMM_REAL_TYPE* const gb = (0 != complex_input) ? complex_beta : &beta;
     const double gflops = (0 != complex_input ? 8.0 : 2.0) * m * n * k * 1E-9;
+    double* const times = (double*)malloc((size_t)nrepeat * sizeof(double));
     libxs_timer_tick_t start;
     double duration;
     /* Warmup: untimed call to trigger lazy initialization (JIT, etc.) */
@@ -221,11 +225,19 @@ int main(int argc, char* argv[])
     else GEMM(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c, &ldc);
     start = libxs_timer_tick();
     for (i = 0; i < nrepeat; ++i) {
+      const libxs_timer_tick_t tick = libxs_timer_tick();
       if (0 != complex_input) ZGEMM(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c, &ldc);
       else GEMM(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c, &ldc);
+      if (NULL != times) times[i] = libxs_timer_duration(tick, libxs_timer_tick());
     }
-    duration = libxs_timer_duration(start, libxs_timer_tick()) / nrepeat;
-    printf("OZAKI GEMM: %.1f ms (%.1f GFLOPS/s)\n", 1E3 * duration, gflops / duration);
+    duration = gemm_duration(times, nrepeat, libxs_timer_duration(start, libxs_timer_tick()));
+    printf("OZAKI GEMM: %.3f ms (%.1f GFLOPS/s)", 1E3 * duration, gflops / duration);
+    /* The spread is the point of the median: it is what an unpinned run shows. */
+    if (NULL != times && 1 < nrepeat) {
+      printf(" [%i calls %.3f-%.3f ms]", nrepeat, 1E3 * times[0], 1E3 * times[nrepeat-1]);
+    }
+    printf("\n");
+    free(times);
   }
 
   if (EXIT_SUCCESS == result) { /* Reference BLAS GEMM + diff */
@@ -236,6 +248,7 @@ int main(int argc, char* argv[])
                                                                                        : (NULL != &GEMM_REAL ? GEMM_REAL : NULL);
     if (NULL != ref_gemm) {
       const double gflops = (0 != complex_input ? 8.0 : 2.0) * m * n * k * 1E-9;
+      double* const times = (double*)malloc((size_t)nrepeat * sizeof(double));
       libxs_timer_tick_t start;
       double duration;
       /* Warmup */
@@ -243,11 +256,19 @@ int main(int argc, char* argv[])
       else ref_gemm(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c_ref, &ldc);
       start = libxs_timer_tick();
       for (i = 0; i < nrepeat; ++i) {
+        const libxs_timer_tick_t tick = libxs_timer_tick();
         if (0 != complex_input) ZGEMM(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c_ref, &ldc);
         else ref_gemm(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c_ref, &ldc);
+        if (NULL != times) times[i] = libxs_timer_duration(tick, libxs_timer_tick());
       }
-      duration = libxs_timer_duration(start, libxs_timer_tick()) / nrepeat;
-      printf("BLAS GEMM:  %.1f ms (%.1f GFLOPS/s)\n", 1E3 * duration, gflops / duration);
+      /* Same statistic on both sides, or the ratio is not a comparison. */
+      duration = gemm_duration(times, nrepeat, libxs_timer_duration(start, libxs_timer_tick()));
+      printf("BLAS GEMM:  %.3f ms (%.1f GFLOPS/s)", 1E3 * duration, gflops / duration);
+      if (NULL != times && 1 < nrepeat) {
+        printf(" [%i calls %.3f-%.3f ms]", nrepeat, 1E3 * times[0], 1E3 * times[nrepeat-1]);
+      }
+      printf("\n");
+      free(times);
       {
         const libxs_data_t dt = (0 != complex_input) ? (GEMM_IS_DOUBLE ? LIBXS_DATATYPE_C64 : LIBXS_DATATYPE_C32)
                                                      : LIBXS_DATATYPE(GEMM_REAL_TYPE);
@@ -286,5 +307,33 @@ int main(int argc, char* argv[])
   free(b);
   free(a);
 
+  return result;
+}
+
+
+/**
+ * Time of one call out of nrepeat: the median of the per-call durations rather
+ * than the mean of their sum.  A host GEMM's spread is dominated by thread
+ * placement, so a single migrated call moves a mean that is then read as a rate,
+ * and the figure stops being comparable with the device side - which reports a
+ * per-kernel median of its own.  The median needs the samples, which is why the
+ * caller collects them; they are sorted in place, so times[0] and
+ * times[nrepeat-1] are the extremes afterwards.  A NULL times (allocation
+ * failed) leaves the mean of total as the only figure available.
+ */
+static double gemm_duration(double* times, int nrepeat, double total)
+{
+  double result;
+  if (NULL != times && 0 < nrepeat) {
+    int i;
+    for (i = 1; i < nrepeat; ++i) { /* insertion sort: nrepeat is a repetition count, i.e. tens */
+      const double t = times[i];
+      int j = i;
+      for (; 0 < j && times[j-1] > t; --j) times[j] = times[j-1];
+      times[j] = t;
+    }
+    result = (0 == (nrepeat % 2)) ? (0.5 * (times[nrepeat/2-1] + times[nrepeat/2])) : times[nrepeat/2];
+  }
+  else result = total / (0 < nrepeat ? nrepeat : 1);
   return result;
 }

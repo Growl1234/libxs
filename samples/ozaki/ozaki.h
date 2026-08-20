@@ -87,32 +87,6 @@
 # endif
 #endif
 
-/**
- * CPU-side profiling helpers (used inside omp parallel regions).
- * Per-phase timing (modes 2-4) is only meaningful on GPU where
- * preprocessing and kernel are distinct operations; on CPU the
- * K-group loop interleaves them, so we always measure total time.
- * GEMM_PROFILE_START(TID): record start tick on master thread.
- * GEMM_PROFILE_END(TID, M, N, K): compute duration, push GFLOPS to histogram.
- */
-#define GEMM_PROFILE_DECL \
-  libxs_timer_tick_t gemm_profile_start_ = 0; \
-  int gemm_profile_pairs_ = 0
-#define GEMM_PROFILE_START(TID) \
-  if (0 == (TID) && 0 != ozaki_profile) gemm_profile_start_ = libxs_timer_tick()
-#define GEMM_PROFILE_PAIRS(NPAIRS) \
-  gemm_profile_pairs_ += (NPAIRS)
-#define GEMM_PROFILE_END(TID, M, N, K) \
-  if (0 == (TID) && 0 != ozaki_profile) { \
-    const double duration = libxs_timer_duration(gemm_profile_start_, libxs_timer_tick()); \
-    if (0 < duration) { \
-      double vals[2]; \
-      vals[0] = 2.0 * (M) * (N) * (K) / (duration * 1E9); \
-      vals[1] = (double)gemm_profile_pairs_; \
-      libxs_hist_push(NULL, ozaki_hist, vals); \
-    } \
-  }
-
 #define OZAKI_GEMM_WRAPPER(DIFF_FN, LABEL, NCOMP) \
   if (0 == ozaki_verbose) { \
     DIFF_FN(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc, NULL); \
@@ -151,8 +125,6 @@
 #define ozaki_complex LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_complex)
 #define ozaki_maxk LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_maxk)
 #define ozaki_n LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_n)
-#define ozaki_profile LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_profile)
-#define ozaki_hist LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_hist)
 #define ozaki_flags LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_flags)
 #define ozaki_trim LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_trim)
 #define ozaki_stat LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_stat)
@@ -303,8 +275,6 @@ OZAKI_APIVAR_PRIVATE(int ozaki_dump);
 OZAKI_APIVAR_PRIVATE(int ozaki_exit);
 OZAKI_APIVAR_PRIVATE(int ozaki_n);
 OZAKI_APIVAR_PRIVATE(int ozaki_decay);
-OZAKI_APIVAR_PRIVATE(int ozaki_profile);
-OZAKI_APIVAR_PRIVATE(libxs_hist_t* ozaki_hist);
 OZAKI_APIVAR_PRIVATE(int gemm_threshold);
 
 OZAKI_API_INTERN void gemm_init(void);
@@ -333,7 +303,7 @@ extern LIBXS_TLS int gemm_dump_inhibit;
 /** Opaque OpenCL handle (bridge to LIBXSTREAM Ozaki). */
 OZAKI_APIVAR_PRIVATE(void* ozaki_ocl_handle);
 void* ozaki_ocl_create(int use_double, int kind, int verbosity, int tm, int tn, int ndecomp, int ozflags, int oztrim, int ozgroups,
-  int maxk, int profiling);
+  int maxk);
 void ozaki_ocl_release(void* handle);
 int ozaki_ocl_gemm(void* handle, char transa, char transb, int M, int N, int K, double alpha, const void* a, int lda, const void* b,
   int ldb, double beta, void* c, int ldc);

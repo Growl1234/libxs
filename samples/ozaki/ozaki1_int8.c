@@ -74,7 +74,6 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
   double* expb_fp = NULL;
   GEMM_REAL_TYPE* c_ref = NULL;
   const size_t c_size = (size_t)ldcv * (size_t)N * sizeof(GEMM_REAL_TYPE);
-  GEMM_PROFILE_DECL;
   int s;
   LIBXS_ASSERT(LIBXS_DATATYPE_F64 == LIBXS_DATATYPE(GEMM_REAL_TYPE) || LIBXS_DATATYPE_F32 == LIBXS_DATATYPE(GEMM_REAL_TYPE));
 
@@ -114,13 +113,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
 #endif
   {
     GEMM_INT_TYPE row, col, ib, jb, mi, nj, kb_grp;
-    int slice_a, slice_b, tid;
-    tid = 0;
-#if defined(_OPENMP)
-    tid = omp_get_thread_num();
-#endif
-    GEMM_PROFILE_START(tid);
-
+    int slice_a, slice_b;
     /**
      * Phase 3: scale C by beta (once, before K-group loop).
      * Per BLAS spec, beta=0 must zero C unconditionally (NaN/Inf safe).
@@ -272,7 +265,6 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
 #endif
       {
         eff_cutoff = (sma >= 0 && smb >= 0) ? LIBXS_MIN(cutoff, sma + smb) : -1;
-        GEMM_PROFILE_PAIRS(ozaki_count_pairs(nslices, eff_cutoff, ozaki_flags));
       }
 
       /**
@@ -468,7 +460,6 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
       }
     } /* end K-group loop */
 
-    GEMM_PROFILE_END(tid, M, N, K);
   } /* end parallel */
 
   /* Reference BLAS and diff comparison (whole-matrix, consistent with GPU path) */
