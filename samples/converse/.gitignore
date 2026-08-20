@@ -8,6 +8,7 @@ todo*
 *.bin
 *.dat
 *.par
+*.src
 *.lex
 *.prd
 *.predict

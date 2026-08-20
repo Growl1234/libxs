@@ -174,6 +174,8 @@ typedef struct corpus_entry_t {
   unsigned short nnumbers;
   unsigned short lexical_flags;
   unsigned short source;
+  /** 1-based line of the SOURCE FILE this text begins on; 0 if unknown. */
+  unsigned int line;
   unsigned int token_ids[ENTRY_TOKEN_MAX];
   unsigned short token_flags[ENTRY_TOKEN_MAX];
   unsigned short section_len;
@@ -246,6 +248,14 @@ typedef struct corpus_span_t {
   int text_len;
   unsigned int parent;
   unsigned int offset;
+  /**
+   * Line of the source file this window begins on, STORED rather than derived from
+   * the parent. Deriving it would mean counting newlines inside the parent text,
+   * and prose is ingested REFLOWED: a cosmetic line break is a space there, so the
+   * count would be short by every line reflow joined. Four bytes settles it, and
+   * the stored value is the one the span-check invariant compares.
+   */
+  unsigned int line;
 } corpus_span_t;
 
 /**

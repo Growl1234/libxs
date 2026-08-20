@@ -434,15 +434,27 @@ int internal_reflow_is_structural(const unsigned char* text, size_t size,
 }
 
 
-LIBXS_API int libxs_text_reflow(const unsigned char* text, size_t size,
-  unsigned char** out, size_t* out_size)
+LIBXS_API int libxs_text_reflow_map(const unsigned char* text, size_t size,
+  unsigned char** out, size_t* out_size, size_t** line_offsets, size_t* nlines)
 {
   int result = EXIT_FAILURE;
   unsigned char* buf;
+  size_t* lines = NULL;
+  size_t nline = 0;
   size_t i, j;
   if (NULL == text || NULL == out || NULL == out_size) return EXIT_FAILURE;
   buf = (unsigned char*)malloc(size + 1);
   if (NULL == buf) return EXIT_FAILURE;
+  if (NULL != line_offsets && NULL != nlines) {
+    /* One entry per input line at most, and a newline costs one byte, so the
+       input size bounds the count without a counting pass. */
+    lines = (size_t*)malloc((size + 2) * sizeof(*lines));
+    if (NULL == lines) {
+      free(buf);
+      return EXIT_FAILURE;
+    }
+    lines[nline++] = 0;
+  }
   j = 0;
   for (i = 0; i < size; ++i) {
     if ('\n' == text[i]) {
@@ -453,6 +465,7 @@ LIBXS_API int libxs_text_reflow(const unsigned char* text, size_t size,
       else {
         if (j > 0 && ' ' != buf[j - 1]) buf[j++] = ' ';
       }
+      if (NULL != lines) lines[nline++] = j;
     }
     else if ('\r' == text[i]) {
       size_t nl = i;
@@ -463,6 +476,7 @@ LIBXS_API int libxs_text_reflow(const unsigned char* text, size_t size,
       else {
         if (j > 0 && ' ' != buf[j - 1]) buf[j++] = ' ';
       }
+      if (NULL != lines) lines[nline++] = j;
     }
     else {
       buf[j++] = text[i];
@@ -471,6 +485,17 @@ LIBXS_API int libxs_text_reflow(const unsigned char* text, size_t size,
   buf[j] = 0;
   *out = buf;
   *out_size = j;
+  if (NULL != lines) {
+    *line_offsets = lines;
+    *nlines = nline;
+  }
   result = EXIT_SUCCESS;
   return result;
+}
+
+
+LIBXS_API int libxs_text_reflow(const unsigned char* text, size_t size,
+  unsigned char** out, size_t* out_size)
+{
+  return libxs_text_reflow_map(text, size, out, out_size, NULL, NULL);
 }

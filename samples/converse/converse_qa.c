@@ -50,7 +50,7 @@ typedef struct answer_fact_index_t {
 } answer_fact_index_t;
 
 #define ANSWER_FACTS_MAGIC 0x54434643u
-#define ANSWER_FACTS_VERSION 9
+#define ANSWER_FACTS_VERSION 10
 #define ANSWER_LOCATION_PHRASE_MAX 96
 /** Propositions one attribute collection may rest on, and cite. */
 #define ANSWER_TOPIC_MAX 4
@@ -84,6 +84,8 @@ typedef struct answer_relation_fact_t {
   int relation_len;
   int actor_len;
   int section_len;
+  unsigned short source;
+  unsigned int line;
   int plural;
   int made;
   int active;
@@ -97,6 +99,8 @@ typedef struct answer_identity_fact_t {
   int name_len;
   int role_len;
   int section_len;
+  unsigned short source;
+  unsigned int line;
   /** Where the role's class term came from; ASSERTED outranks any score. */
   int provenance;
   double score;
@@ -124,6 +128,8 @@ typedef struct answer_location_fact_t {
   int phrase_len;
   int place_len;
   int section_len;
+  unsigned short source;
+  unsigned int line;
   int provenance;
   double score;
 } answer_location_fact_t;
@@ -147,6 +153,8 @@ typedef struct answer_type_fact_t {
   int name_len;
   int phrase_len;
   int section_len;
+  unsigned short source;
+  unsigned int line;
   int shape;
   double score;
 } answer_type_fact_t;
@@ -169,6 +177,8 @@ typedef struct answer_own_fact_t {
   int owner_len;
   int item_len;
   int section_len;
+  unsigned short source;
+  unsigned int line;
   double score;
 } answer_own_fact_t;
 
@@ -190,6 +200,8 @@ typedef struct answer_describe_fact_t {
   int role_len;
   int text_len;
   int section_len;
+  unsigned short source;
+  unsigned int line;
   double score;
 } answer_describe_fact_t;
 
@@ -200,6 +212,8 @@ typedef struct answer_docdef_fact_t {
   int title_len;
   int header_len;
   int text_len;
+  unsigned short source;
+  unsigned int line;
 } answer_docdef_fact_t;
 
 
@@ -219,6 +233,24 @@ static size_t answer_bridge_loaded_size = 0;
  * reads exactly as a single citation always did.
  */
 static char answer_fact_section[4 * ENTRY_SECTION_MAX];
+/**
+ * Where the reply came from in the FILES, beside the titles it came from.
+ *
+ * A title is only as good as the corpus's own structure -- a corpus with no
+ * headings has none to give -- while a file and a line always exist, so this is the
+ * part of a citation that cannot be wrong. One entry per source, because a reply
+ * resting on two files should name a range in each rather than one range spanning
+ * both, and the range collapses to a single line when it is one line.
+ */
+typedef struct answer_origin_t {
+  unsigned int source;
+  unsigned int first;
+  unsigned int last;
+} answer_origin_t;
+
+#define ANSWER_ORIGIN_MAX 4
+static answer_origin_t answer_origins[ANSWER_ORIGIN_MAX];
+static int answer_norigins = 0;
 static int answer_fact_section_len = 0;
 /**
  * Class term the most recent fact reply rested on, and where that term came
@@ -533,8 +565,13 @@ static int answer_query_is_negated(const char* query_text, size_t query_len);
 static int answer_fact_reply(const libxs_registry_t* corpus,
   const char* query_text, size_t query_len, char* output, size_t output_size);
 static int answer_citation_len(const char* section, int section_len);
+/** The whole citation a reader sees, so the evaluation can check the same text. */
+static int answer_citation_text(const char* section, int section_len,
+  char* output, size_t output_size);
 static void answer_print_citation(const char* section, int section_len);
 static void answer_fact_section_set(const char* section, int section_len);
+/** Record where one item of a reply came from: source id and line. */
+static void answer_origin_add(unsigned int source, unsigned int line);
 /** Name one more source, for a reply that rests on several facts. */
 static void answer_fact_section_add(const char* section, int section_len);
 static void answer_fact_learned_set(const char* term, int term_len,
@@ -2120,6 +2157,8 @@ static int answer_relation_fact_append(const corpus_entry_t* entry,
     memcpy(fact.actor, match->actor, (size_t)fact.actor_len + 1);
   }
   fact.section_len = entry->section_len;
+  fact.source = (NULL != entry) ? entry->source : 0;
+  fact.line = (NULL != entry) ? entry->line : 0;
   if (fact.section_len > 0) {
     memcpy(fact.section, entry->section, (size_t)fact.section_len);
     fact.section[fact.section_len] = '\0';
@@ -2831,6 +2870,8 @@ static int answer_identity_fact_append(const char* name, int name_len,
     memcpy(fact.section, entry->section, (size_t)entry->section_len);
     fact.section[entry->section_len] = '\0';
     fact.section_len = entry->section_len;
+    fact.source = (NULL != entry) ? entry->source : 0;
+    fact.line = (NULL != entry) ? entry->line : 0;
   }
   fact.score = score;
   fact.provenance = answer_relation_rule_provenance(RELATION_RULE_PERSON,
@@ -3036,6 +3077,7 @@ static int answer_identity_fact_reply(const char* query_text,
   }
   if (NULL != best) {
     answer_fact_section_set(best->section, best->section_len);
+    answer_origin_add(best->source, best->line);
     answer_fact_learned_set(best->role, best->role_len,
       answer_relation_rule_provenance(RELATION_RULE_PERSON, best->role,
         best->role_len));
@@ -3081,6 +3123,8 @@ static int answer_location_fact_append(const char* actor, int actor_len,
   {
     memcpy(fact.section, entry->section, (size_t)entry->section_len);
     fact.section_len = entry->section_len;
+    fact.source = (NULL != entry) ? entry->source : 0;
+    fact.line = (NULL != entry) ? entry->line : 0;
   }
   fact.score = score;
   fact.provenance = answer_relation_rule_provenance(RELATION_RULE_PLACE,
@@ -3361,6 +3405,7 @@ static int answer_location_fact_reply(const char* query_text,
       output[pos++] = '.';
       output[pos] = '\0';
       answer_fact_section_set(best->section, best->section_len);
+      answer_origin_add(best->source, best->line);
       answer_fact_learned_set(best->place, best->place_len, best->provenance);
       result = EXIT_SUCCESS;
     }
@@ -3403,6 +3448,8 @@ static int answer_type_fact_append(const char* name, int name_len,
   {
     memcpy(fact.section, entry->section, (size_t)entry->section_len);
     fact.section_len = entry->section_len;
+    fact.source = (NULL != entry) ? entry->source : 0;
+    fact.line = (NULL != entry) ? entry->line : 0;
   }
   /* One type per name, the TIGHTEST binding: a corpus states what something is
      more than once, and the shortest statement of it is the definition rather
@@ -3846,6 +3893,7 @@ static int answer_type_reply_shape(const char* query_text, size_t query_len,
     && EXIT_SUCCESS == answer_type_render(best, output, output_size))
   {
     answer_fact_section_set(best->section, best->section_len);
+    answer_origin_add(best->source, best->line);
     result = EXIT_SUCCESS;
   }
   return result;
@@ -4331,6 +4379,8 @@ static int answer_own_fact_append(const char* owner, int owner_len,
   {
     memcpy(fact.section, entry->section, (size_t)entry->section_len);
     fact.section_len = entry->section_len;
+    fact.source = (NULL != entry) ? entry->source : 0;
+    fact.line = (NULL != entry) ? entry->line : 0;
   }
   /**
    * An owner may own many things, so only the same item collapses -- and one item
@@ -4597,6 +4647,7 @@ static int answer_own_fact_reply(const char* query_text, size_t query_len,
       pos += joiner_len;
       pos = answer_append_clean(output, output_size, pos, items[item]->item,
         items[item]->item_len);
+      answer_origin_add(items[item]->source, items[item]->line);
       answer_fact_section_add(items[item]->section,
         items[item]->section_len);
     }
@@ -4685,6 +4736,8 @@ static int answer_topic_reply(const char* query_text, size_t query_len,
   char items[ANSWER_TOPIC_MAX][COMPOSE_MAXTEXT];
   const char* sections[ANSWER_TOPIC_MAX];
   int section_lens[ANSWER_TOPIC_MAX];
+  unsigned int origin_sources[ANSWER_TOPIC_MAX];
+  unsigned int origin_lines[ANSWER_TOPIC_MAX];
   int worst = RELATION_RULE_ASSERTED;
   char worst_term[64];
   int worst_term_len = 0;
@@ -4710,6 +4763,8 @@ static int answer_topic_reply(const char* query_text, size_t query_len,
     {
       sections[count] = fact->section;
       section_lens[count] = fact->section_len;
+      origin_sources[count] = fact->source;
+      origin_lines[count] = fact->line;
       if (fact->provenance > worst) {
         worst = fact->provenance;
         memcpy(worst_term, fact->role, (size_t)fact->role_len + 1);
@@ -4749,6 +4804,8 @@ static int answer_topic_reply(const char* query_text, size_t query_len,
       {
         sections[count] = fact->section;
         section_lens[count] = fact->section_len;
+        origin_sources[count] = fact->source;
+        origin_lines[count] = fact->line;
         ++count;
       }
     }
@@ -4772,6 +4829,8 @@ static int answer_topic_reply(const char* query_text, size_t query_len,
         items[count][at] = '\0';
         sections[count] = fact->section;
         section_lens[count] = fact->section_len;
+        origin_sources[count] = fact->source;
+        origin_lines[count] = fact->line;
         if (fact->provenance > worst) {
           worst = fact->provenance;
           memcpy(worst_term, fact->place, (size_t)fact->place_len + 1);
@@ -4814,6 +4873,8 @@ static int answer_topic_reply(const char* query_text, size_t query_len,
       {
         sections[count] = fact->section;
         section_lens[count] = fact->section_len;
+        origin_sources[count] = fact->source;
+        origin_lines[count] = fact->line;
         worst = RELATION_RULE_PROPOSED;
         memcpy(worst_term, fact->relation, (size_t)fact->relation_len + 1);
         worst_term_len = fact->relation_len;
@@ -4829,6 +4890,7 @@ static int answer_topic_reply(const char* query_text, size_t query_len,
     memcpy(output + pos, items[item], len);
     pos += len;
     output[pos] = '\0';
+    answer_origin_add(origin_sources[item], origin_lines[item]);
     answer_fact_section_add(sections[item], section_lens[item]);
   }
   if (0 < pos) {
@@ -4867,6 +4929,8 @@ static int answer_describe_fact_append(const char* role, int role_len,
   fact.text[text_len] = '\0';
   fact.text_len = text_len;
   fact.section_len = entry->section_len;
+  fact.source = (NULL != entry) ? entry->source : 0;
+  fact.line = (NULL != entry) ? entry->line : 0;
   if (fact.section_len > 0) {
     memcpy(fact.section, entry->section, (size_t)fact.section_len);
     fact.section[fact.section_len] = '\0';
@@ -5059,6 +5123,7 @@ static int answer_describe_fact_reply(const char* query_text,
   }
   if (NULL != best && (size_t)best->text_len + 2 <= output_size) {
     answer_fact_section_set(best->section, best->section_len);
+    answer_origin_add(best->source, best->line);
     answer_fact_learned_set(best->role, best->role_len,
       answer_relation_rule_provenance(RELATION_RULE_PERSON, best->role,
         best->role_len));
@@ -5177,6 +5242,16 @@ static size_t answer_docdef_facts_build(const libxs_registry_t* corpus)
             memcpy(fact->title, entry->section, (size_t)entry->section_len);
             fact->title[entry->section_len] = '\0';
             fact->title_len = entry->section_len;
+            fact->source = entry->source;
+            /* The header prefix is STRIPPED from what this fact states, so its line
+               is the entry's plus whatever the strip skipped over -- otherwise a
+               definition is cited to the line its "Header:" line sits on. */
+            fact->line = entry->line;
+            { int at;
+              for (at = 0; at < offset && at < entry->text_len; ++at) {
+                if ('\n' == entry->text[at]) ++fact->line;
+              }
+            }
             fact->header_len = header_len;
             if (header_len > 0) memcpy(fact->header, header,
               (size_t)header_len + 1);
@@ -5506,6 +5581,7 @@ static int answer_docdef_fact_reply(const char* query_text,
   }
   if (NULL != best && (size_t)best->text_len + 1 <= output_size) {
     answer_fact_section_set(best->title, best->title_len);
+    answer_origin_add(best->source, best->line);
     memcpy(output, best->text, (size_t)best->text_len);
     output[best->text_len] = '\0';
     result = EXIT_SUCCESS;
@@ -5850,6 +5926,8 @@ static int answer_relation_fact_reply(const char* query_text,
          than to neither. */
       for (item = 0; item < count; ++item) {
         if (NULL != answer_facts[item]) {
+          answer_origin_add(answer_facts[item]->source,
+            answer_facts[item]->line);
           answer_fact_section_add(answer_facts[item]->section,
             answer_facts[item]->section_len);
         }
@@ -7152,6 +7230,8 @@ static int answer_fact_reply(const libxs_registry_t* corpus,
   char best_output[COMPOSE_MAXTEXT];
   char best_section[sizeof(answer_fact_section)];
   char best_learned[sizeof(answer_fact_learned)];
+  answer_origin_t best_origins[ANSWER_ORIGIN_MAX];
+  int best_norigins = 0;
   int best_section_len = 0;
   int best_learned_len = 0;
   int best_learned_from = RELATION_RULE_ASSERTED;
@@ -7204,6 +7284,10 @@ static int answer_fact_reply(const libxs_registry_t* corpus,
             (size_t)answer_fact_learned_len + 1);
           best_learned_len = answer_fact_learned_len;
           best_learned_from = answer_fact_learned_from;
+          /* The winning resolver's ORIGINS travel with its section, or the reset
+             at the top of the next step discards what it found. */
+          memcpy(best_origins, answer_origins, sizeof(best_origins));
+          best_norigins = answer_norigins;
           best = prov;
         }
       }
@@ -7215,6 +7299,8 @@ static int answer_fact_reply(const libxs_registry_t* corpus,
     memcpy(output, best_output, len);
     output[len] = '\0';
     answer_fact_section_set(best_section, best_section_len);
+    memcpy(answer_origins, best_origins, sizeof(answer_origins));
+    answer_norigins = best_norigins;
     answer_fact_learned_set(best_learned, best_learned_len, best_learned_from);
     result = EXIT_SUCCESS;
   }
@@ -7261,12 +7347,98 @@ static void answer_print_learned(void)
  * Shared with the evaluation so a checked citation is the SAME text the reader is
  * shown, rather than the raw section a fixture would then have to describe.
  */
+/**
+ * How much of a section may be printed as a citation, and zero when it may not.
+ *
+ * A citation names a TITLE, and prose that the heading rule read as one is not a
+ * title: a corpus whose extract dropped its titles offers lead sentences instead,
+ * and crediting an answer to "For the region in northwest Iran, see ..." says
+ * nothing about where it came from. Two marks refuse those without reading words --
+ * a comma, and a clause-ending mark at the end -- and the cost of refusing is now
+ * bearable, because the FILE and LINE are cited whether a title exists or not. A
+ * title that ends in a period loses its half of the citation and keeps the half
+ * that cannot be wrong.
+ */
 static int answer_citation_len(const char* section, int section_len)
 {
   int result = 0;
   if (NULL != section) {
+    int at;
     while (result < section_len && '\n' != section[result]
       && '\r' != section[result] && '\0' != section[result]) ++result;
+    for (at = 0; at < result; ++at) {
+      if (',' == section[at]) {
+        result = 0;
+        break;
+      }
+    }
+    if (0 < result) {
+      const char last = section[result - 1];
+      if ('.' == last || '!' == last || '?' == last || ':' == last) result = 0;
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Print the citation: the titles when the corpus has any, and always the files and
+ * lines. One range per file, and a single line rather than a range when the reply
+ * rests on one line of it -- "grimm.txt:2104-2110" against "grimm.txt:2104".
+ */
+/**
+ * Format the citation: the title when the corpus has one, and always the files and
+ * lines. One range per file, and a single line rather than a range when the reply
+ * rests on one line of it -- "grimm.txt:2104-2110" against "grimm.txt:2104".
+ *
+ * One formatter, because the EVALUATION has to check the same string a reader sees.
+ * Checking the title alone left the file and line ungated, which is the half that
+ * cannot be wrong and therefore the half worth asserting in a fixture.
+ */
+static int answer_citation_text(const char* section, int section_len,
+  char* output, size_t output_size)
+{
+  int result = 0;
+  const int len = answer_citation_len(section, section_len);
+  if (NULL != output && 0 < output_size) {
+    size_t pos = 0;
+    int at, nfiles = 0;
+    output[0] = '\0';
+    if (0 < len && (size_t)len + 1 < output_size) {
+      memcpy(output, section, (size_t)len);
+      pos = (size_t)len;
+      output[pos] = '\0';
+    }
+    for (at = 0; at < answer_norigins; ++at) {
+      const char* path = corpus_source_path(answer_origins[at].source);
+      char range[ENTRY_SECTION_MAX * 8];
+      size_t range_len;
+      if (NULL == path) continue;
+      if (answer_origins[at].first != answer_origins[at].last) {
+        sprintf(range, "%s%s:%u-%u", (0 < nfiles) ? "; " : "", path,
+          answer_origins[at].first, answer_origins[at].last);
+      }
+      else {
+        sprintf(range, "%s%s:%u", (0 < nfiles) ? "; " : "", path,
+          answer_origins[at].first);
+      }
+      range_len = strlen(range);
+      if (0 < pos && 0 == nfiles) {
+        if (pos + 2 >= output_size) break;
+        memcpy(output + pos, " (", 2);
+        pos += 2;
+      }
+      if (pos + range_len + 2 >= output_size) break;
+      memcpy(output + pos, range, range_len);
+      pos += range_len;
+      output[pos] = '\0';
+      ++nfiles;
+    }
+    if (0 < len && 0 < nfiles && pos + 2 < output_size) {
+      output[pos++] = ')';
+      output[pos] = '\0';
+    }
+    result = (int)pos;
   }
   return result;
 }
@@ -7274,8 +7446,10 @@ static int answer_citation_len(const char* section, int section_len)
 
 static void answer_print_citation(const char* section, int section_len)
 {
-  const int len = answer_citation_len(section, section_len);
-  if (0 < len) printf("citation: %.*s\n", len, section);
+  char text[COMPOSE_MAXTEXT];
+  if (0 < answer_citation_text(section, section_len, text, sizeof(text))) {
+    printf("citation: %s\n", text);
+  }
 }
 
 
@@ -7296,10 +7470,33 @@ static void answer_fact_learned_set(const char* term, int term_len,
 }
 
 
+/** Record one item's origin, widening the range of a source already named. */
+static void answer_origin_add(unsigned int source, unsigned int line)
+{
+  if (0 != source && 0 != line) {
+    int at;
+    for (at = 0; at < answer_norigins; ++at) {
+      if (answer_origins[at].source == source) {
+        if (line < answer_origins[at].first) answer_origins[at].first = line;
+        if (line > answer_origins[at].last) answer_origins[at].last = line;
+        return;
+      }
+    }
+    if (answer_norigins < ANSWER_ORIGIN_MAX) {
+      answer_origins[answer_norigins].source = source;
+      answer_origins[answer_norigins].first = line;
+      answer_origins[answer_norigins].last = line;
+      ++answer_norigins;
+    }
+  }
+}
+
+
 static void answer_fact_section_set(const char* section, int section_len)
 {
   answer_fact_section_len = 0;
   answer_fact_section[0] = '\0';
+  answer_norigins = 0;
   if (NULL != section && section_len > 0
     && section_len < (int)sizeof(answer_fact_section))
   {
@@ -7458,6 +7655,11 @@ static int answer_render(const char* query_text, size_t query_len,
   {
     pos = answer_visible_append(output, output_size, pos, reply,
       (int)strlen(reply));
+    /* Ranked evidence cites the entry it came from, so the origin is the entry's
+       own rather than a fact's -- registered whether or not this run prints, since
+       the evaluation reads the same citation without printing it. */
+    answer_fact_section_set(entries[0]->section, entries[0]->section_len);
+    answer_origin_add(entries[0]->source, entries[0]->line);
     if (0 != print) {
       printf("%s\n", reply);
       answer_print_citation(entries[0]->section, entries[0]->section_len);
@@ -7480,6 +7682,9 @@ static int answer_render(const char* query_text, size_t query_len,
         if (0 != print) {
           if (nshown > 1) printf("\n");
           printf("%s\n", reply);
+          answer_fact_section_set(entries[slot]->section,
+            entries[slot]->section_len);
+          answer_origin_add(entries[slot]->source, entries[slot]->line);
           answer_print_citation(entries[slot]->section,
             entries[slot]->section_len);
         }
@@ -7783,6 +7988,7 @@ static int eval_converse(const libxs_registry_t* corpus,
     int cite_pass;
     int cite_len;
     const char* cite = NULL;
+    char cite_text[COMPOSE_MAXTEXT];
     int pass;
     char reply[COMPOSE_MAXTEXT];
     char visible[4 * COMPOSE_MAXTEXT];
@@ -7848,8 +8054,9 @@ static int eval_converse(const libxs_registry_t* corpus,
       if (rn >= sizeof(visible)) rn = sizeof(visible) - 1;
       memcpy(visible, reply, rn);
       visible[rn] = '\0';
-      cite = fact_section;
-      cite_len = answer_citation_len(fact_section, fact_section_len);
+      cite = cite_text;
+      cite_len = answer_citation_text(fact_section, fact_section_len, cite_text,
+        sizeof(cite_text));
     }
     if (0 != fact_checked) {
       fact_pass = (0 != have_fact) ? eval_terms_match_text(visible,
@@ -7858,9 +8065,9 @@ static int eval_converse(const libxs_registry_t* corpus,
     /* Before the fact-only and abstention branches, both of which return early:
        a fact reply is exactly the kind of answer whose attribution matters. */
     if (0 == cite_len && 0 < nanswers && NULL != entries[0]) {
-      cite = entries[0]->section;
-      cite_len = answer_citation_len(entries[0]->section,
-        entries[0]->section_len);
+      cite = cite_text;
+      cite_len = answer_citation_text(entries[0]->section,
+        entries[0]->section_len, cite_text, sizeof(cite_text));
     }
     cite_pass = 1;
     if (NULL != fields[4] && 0 == eval_terms_empty(fields[4])) {

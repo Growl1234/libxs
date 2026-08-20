@@ -84,7 +84,7 @@ and reranker instead of re-ingesting, which is much faster. To force a full rebu
 delete the state files for that prefix:
 
 ```bash
-rm -f grimm.dat grimm.par grimm.lex grimm.prd grimm.facts
+rm -f grimm.dat grimm.par grimm.src grimm.lex grimm.prd grimm.facts
 ```
 
 Do this before comparing two runs -- a warm run answers from state built by the
@@ -108,19 +108,19 @@ The sample then reads one question per line:
 ```text
 > Who is Gretel?
 Gretel is the girl.
-citation: HANSEL AND GRETEL
+citation: HANSEL AND GRETEL (texts/grimm.txt:2544)
 > Where did Hans go?
 Hans went into the stable.
-citation: CLEVER HANS
+citation: CLEVER HANS (texts/grimm.txt:6031)
 > Who was eaten by the wolf?
 Grandmother and Little Red-Cap were eaten by the wolf.
-citation: LITTLE RED-CAP [LITTLE RED RIDING HOOD]
+citation: LITTLE RED-CAP [LITTLE RED RIDING HOOD] (texts/grimm.txt:3104-3112)
 > What belongs to Curdken?
 hat belongs to Curdken.
-citation: THE GOOSE-GIRL
+citation: THE GOOSE-GIRL (texts/grimm.txt:1771)
 > What do we know about Hansel?
 Hansel is the boy. Hansel stood still and peeped back at the house.
-citation: HANSEL AND GRETEL
+citation: HANSEL AND GRETEL (texts/grimm.txt:2544-2579)
 > Who is Sherlock Holmes?
 I do not know from the corpus.
 ```
@@ -134,6 +134,13 @@ the sample answers:
 - `What belongs to X?` -- an enumeration, each item cited.
 - `What do we know about X?` -- several cited propositions collected about one name.
 - anything else question-shaped -- the best matching sentence, ranked and cited.
+
+Every answer is followed by a citation naming where it came from: the section title
+when the corpus has headings, and always the file and the line. An answer assembled from several propositions cites the range of lines it rests on
+(`texts/grimm.txt:2544-2579`), one range per file, and a single line when it is one
+line. Titles are only printed when the text really carries them -- a corpus of flat
+prose is cited by file and line alone rather than by a sentence that happened to look
+like a heading.
 
 Two behaviours to expect: the sample **abstains** (`I do not know from the corpus.`)
 rather than guessing when coverage is too low, and a question of the form
@@ -158,6 +165,9 @@ otherwise). Each non-comment line has three required fields and two optional one
 ```text
 question|evidence-terms|reply-terms|fact-terms|citation-terms
 ```
+
+The fifth field checks the citation, and it is matched against the whole citation --
+title, file and line -- so a fixture can assert `texts/grimm.txt:2544`.
 
 Terms are comma-separated and matched case-insensitively. An empty evidence field
 marks an abstention case (the question SHOULD go unanswered); an empty reply field
@@ -298,6 +308,7 @@ All state is kept in the working directory, named after the `-b` prefix
 | `<prefix>.par` | the source texts the corpus refers to; required with `.dat` |
 | `<prefix>.lex` | lexicon and token IDs |
 | `<prefix>.prd` | the answer reranker |
+| `<prefix>.src` | the file names the corpus refers to, for citations |
 | `<prefix>.facts` | the derived fact layers, rebuilt when the corpus changes |
 
 Delete one of `.dat` / `.par` and both are rebuilt. The fixtures and rule files

@@ -53,6 +53,7 @@
 /** Derived from the corpus and the rules: rebuilt whenever the stamp differs. */
 #define FACTS_FILE "converse.facts"
 #define PARENT_FILE "converse.par"
+#define SOURCE_FILE "converse.src"
 
 #define NGRAM_NATIVE_WIDTH 4
 
@@ -158,6 +159,7 @@ static const answer_predict_profile_t answer_predict_profiles[] = {
 
 static char converse_path_corpus[CONVERSE_PATH_MAX] = CORPUS_FILE;
 static char converse_path_parent[CONVERSE_PATH_MAX] = PARENT_FILE;
+static char converse_path_source[CONVERSE_PATH_MAX] = SOURCE_FILE;
 static char converse_path_lexicon[CONVERSE_PATH_MAX] = LEXICON_FILE;
 static char converse_path_predict[CONVERSE_PATH_MAX] = PREDICT_FILE;
 static char converse_path_bridge[CONVERSE_PATH_MAX] = BRIDGE_FILE;
@@ -191,6 +193,16 @@ static int answer_lexnorms_size = 0;
  */
 static unsigned short corpus_source_id = 0;
 /**
+ * Paths of the ingested files, indexed by the source id every record carries. The
+ * ids were anonymous before, which is why a citation could name a section but never
+ * a file; persisted beside the corpus so a warm start can still resolve them.
+ */
+static char** corpus_source_paths = NULL;
+static int corpus_source_npaths = 0;
+/** Line map of the file being ingested: see libxs_text_reflow_map. */
+static size_t* corpus_ingest_lines = NULL;
+static size_t corpus_ingest_nlines = 0;
+/**
  * Where each section of the file being ingested begins. Built once from the
  * LINE structure of the document, because a section is a property of the
  * document and not of whichever pass happens to be scanning it: the sentence
@@ -200,6 +212,14 @@ static unsigned short corpus_source_id = 0;
  * two headings, and one reply came back twice with two different citations.
  */
 static corpus_section_t* corpus_sections = NULL;
+/**
+ * Monotone cursor for mapping a byte offset to a line of the SOURCE FILE.
+ *
+ * Ingest visits offsets in increasing order within each pass, so a cursor turns
+ * what would be a scan per entry into one scan per pass. `map` is the reflow line
+ * map when the text was reflowed, since a line of the reflowed text is not a line
+ * of the file the reader will open.
+ */
 static int corpus_sections_size = 0;
 static int corpus_sections_cap = 0;
 
@@ -380,6 +400,14 @@ static int corpus_record_text(const void* value, size_t value_size,
   const char** text, int* len, const char** section, int* section_len);
 static unsigned int corpus_store_blob(const unsigned char* text, int len,
   const char* section, int section_len);
+/** The 1-based source-file line an ingest offset belongs to. */
+static unsigned int corpus_line_at(const unsigned char* text, size_t size,
+  size_t offset);
+static void corpus_lines_index(const unsigned char* text, size_t size);
+static int corpus_source_path_set(int id, const char* path);
+static void corpus_source_paths_free(void);
+static void corpus_source_paths_save(const char* path);
+static void corpus_source_paths_load(const char* path);
 static int corpus_store_record(libxs_registry_t* corpus,
   const corpus_entry_t* entry, const corpus_span_t* span);
 static int corpus_store_entry(libxs_registry_t* corpus,
@@ -445,13 +473,13 @@ static int ngram_render_separated(void);
 static int corpus_profile_for_path(const char* path);
 static int corpus_md_sentences(void);
 static int corpus_md_store(libxs_registry_t* corpus,
-  const unsigned char* text, int len, const char* section, int section_len,
-  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
-  int code_like);
+  const unsigned char* text, int len, size_t offset, const char* section,
+  int section_len, libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules,
+  int nrules, int code_like);
 static int corpus_md_emit_block(libxs_registry_t* corpus,
-  const unsigned char* text, int len, const char* section, int section_len,
-  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
-  int code_like);
+  const unsigned char* text, int len, size_t offset, const char* section,
+  int section_len, libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules,
+  int nrules, int code_like);
 static int corpus_ingest_markdown(libxs_registry_t* corpus,
   const unsigned char* text, size_t text_size, const char* path,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules);
@@ -1826,6 +1854,7 @@ static void converse_namespace_init(const char* prefix)
   if (base_len > 0 && 0 != strcmp(base, "converse")) {
     sprintf(converse_path_corpus, "%s.dat", base);
     sprintf(converse_path_parent, "%s.par", base);
+    sprintf(converse_path_source, "%s.src", base);
     sprintf(converse_path_lexicon, "%s.lex", base);
     sprintf(converse_path_predict, "%s.prd", base);
     sprintf(converse_path_bridge, "%s.bridges", base);
@@ -1918,6 +1947,7 @@ static libxs_registry_t* corpus_load(void)
             libxs_registry_destroy(result);
             result = NULL;
           }
+          if (NULL != result) corpus_source_paths_load(converse_path_source);
           if (NULL != result && 0 < corpus_span_stored
             && 0 == corpus_parents_load())
           {
@@ -1965,6 +1995,8 @@ static int corpus_save(const libxs_registry_t* corpus)
   if (NULL != corpus_parents) {
     corpus_save_file(corpus_parents, converse_path_parent);
   }
+  /* The ids inside the records are only useful with the names they stand for. */
+  corpus_source_paths_save(converse_path_source);
   return result;
 }
 
@@ -2485,6 +2517,149 @@ static int corpus_line_markup(const char* text, int len)
 }
 
 
+/**
+ * The 1-based line of the source file an offset belongs to.
+ *
+ * Two things make this exact rather than approximate. The offset is into the text
+ * ingest works on, which for prose is the REFLOWED text -- a line there is not a
+ * line of the file a reader opens -- so the reflow map is consulted when there is
+ * one. And the map is monotone, so the answer is the last input line whose output
+ * offset does not exceed the position asked about.
+ */
+static unsigned int corpus_line_at(const unsigned char* text, size_t size,
+  size_t offset)
+{
+  unsigned int result = 1;
+  if (NULL != corpus_ingest_lines && 0 < corpus_ingest_nlines) {
+    size_t lo = 0, hi = corpus_ingest_nlines - 1, found = 0;
+    while (lo <= hi) {
+      const size_t mid = lo + (hi - lo) / 2;
+      if (corpus_ingest_lines[mid] <= offset) {
+        found = mid;
+        lo = mid + 1;
+      }
+      else if (0 < mid) hi = mid - 1;
+      else break;
+    }
+    result = (unsigned int)(found + 1);
+  }
+  else if (NULL != text && offset <= size) {
+    size_t at;
+    for (at = 0; at < offset; ++at) {
+      if ('\n' == text[at]) ++result;
+    }
+  }
+  return result;
+}
+
+
+/**
+ * Build the same map for text that was NOT reflowed, so both ingest paths ask
+ * corpus_line_at the same question and neither needs the text again.
+ */
+static void corpus_lines_index(const unsigned char* text, size_t size)
+{
+  free(corpus_ingest_lines);
+  corpus_ingest_lines = NULL;
+  corpus_ingest_nlines = 0;
+  if (NULL != text) {
+    size_t* lines = (size_t*)malloc((size + 2) * sizeof(*lines));
+    if (NULL != lines) {
+      size_t at, n = 0;
+      lines[n++] = 0;
+      for (at = 0; at < size; ++at) {
+        if ('\n' == text[at]) lines[n++] = at + 1;
+      }
+      corpus_ingest_lines = lines;
+      corpus_ingest_nlines = n;
+    }
+  }
+}
+
+
+/** Remember which file a source id stands for, so a citation can name it. */
+static int corpus_source_path_set(int id, const char* path)
+{
+  int result = EXIT_FAILURE;
+  if (0 <= id && NULL != path) {
+    if (id >= corpus_source_npaths) {
+      const int grown = id + 1;
+      char** paths = (char**)realloc(corpus_source_paths,
+        (size_t)grown * sizeof(*paths));
+      if (NULL != paths) {
+        int at;
+        for (at = corpus_source_npaths; at < grown; ++at) paths[at] = NULL;
+        corpus_source_paths = paths;
+        corpus_source_npaths = grown;
+      }
+    }
+    if (id < corpus_source_npaths) {
+      const size_t len = strlen(path);
+      char* copy = (char*)malloc(len + 1);
+      if (NULL != copy) {
+        memcpy(copy, path, len + 1);
+        free(corpus_source_paths[id]);
+        corpus_source_paths[id] = copy;
+        result = EXIT_SUCCESS;
+      }
+    }
+  }
+  return result;
+}
+
+
+const char* corpus_source_path(unsigned int id)
+{
+  const char* result = NULL;
+  if ((int)id < corpus_source_npaths) result = corpus_source_paths[id];
+  return result;
+}
+
+
+static void corpus_source_paths_free(void)
+{
+  int at;
+  for (at = 0; at < corpus_source_npaths; ++at) free(corpus_source_paths[at]);
+  free(corpus_source_paths);
+  corpus_source_paths = NULL;
+  corpus_source_npaths = 0;
+}
+
+
+/** One path per line, the line number being the source id it resolves. */
+static void corpus_source_paths_save(const char* path)
+{
+  FILE* f = (NULL != path && 0 < corpus_source_npaths) ? fopen(path, "w") : NULL;
+  if (NULL != f) {
+    int at;
+    for (at = 0; at < corpus_source_npaths; ++at) {
+      fprintf(f, "%s\n", (NULL != corpus_source_paths[at])
+        ? corpus_source_paths[at] : "");
+    }
+    fclose(f);
+  }
+}
+
+
+static void corpus_source_paths_load(const char* path)
+{
+  FILE* f = (NULL != path) ? fopen(path, "r") : NULL;
+  if (NULL != f) {
+    char line[CONVERSE_PATH_MAX];
+    int at = 0;
+    while (NULL != fgets(line, (int)sizeof(line), f)) {
+      size_t len = strlen(line);
+      while (0 < len && ('\n' == line[len - 1] || '\r' == line[len - 1])) {
+        line[--len] = '\0';
+      }
+      if (0 < len) corpus_source_path_set(at, line);
+      ++at;
+    }
+    fclose(f);
+  }
+}
+
+
 static int corpus_sections_append(const char* text, int len, size_t begin,
   int depth)
 {
@@ -2880,6 +3055,7 @@ static int corpus_span_build(const corpus_span_t* span, corpus_entry_t* entry)
   {
     entry->lexical_flags |= ENTRY_LEX_FRAGMENT;
     entry->source = blob->source;
+    entry->line = span->line;
     corpus_entry_set_section(entry, blob->section, blob->section_len);
     result = EXIT_SUCCESS;
   }
@@ -5572,6 +5748,7 @@ static int corpus_store_clauses(libxs_registry_t* corpus,
         {
           corpus_span_t span;
           entry.lexical_flags |= ENTRY_LEX_FRAGMENT;
+          entry.line = corpus_line_at(text, end, trim_start);
           corpus_entry_set_section(&entry, section, section_len);
           memset(&span, 0, sizeof(span));
           span.kind = (unsigned short)ENTRY_KIND_SPAN;
@@ -5580,6 +5757,7 @@ static int corpus_store_clauses(libxs_registry_t* corpus,
           span.text_len = frag_len;
           span.parent = parent;
           span.offset = (unsigned int)(trim_start - begin);
+          span.line = entry.line;
           if (0 != parent && 0 != corpus_span_check()) {
             corpus_entry_t rebuilt;
             if (EXIT_SUCCESS != corpus_span_build(&span, &rebuilt)
@@ -5649,9 +5827,9 @@ static int corpus_md_sentences(void)
 
 
 static int corpus_md_store(libxs_registry_t* corpus,
-  const unsigned char* text, int len, const char* section, int section_len,
-  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
-  int code_like)
+  const unsigned char* text, int len, size_t offset, const char* section,
+  int section_len, libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules,
+  int nrules, int code_like)
 {
   int result = 0;
   int min_bytes = (0 != code_like) ? 2 : 8;
@@ -5664,6 +5842,7 @@ static int corpus_md_store(libxs_registry_t* corpus,
     if (EXIT_SUCCESS == corpus_entry_build(&entry, text, len,
       SCALE_PARAGRAPH, lexicon, rules, nrules))
     {
+      entry.line = corpus_line_at(NULL, 0, offset);
       corpus_entry_set_section(&entry, section, section_len);
       if (0 != corpus_store_entry(corpus, &entry)) result = 1;
     }
@@ -5692,6 +5871,7 @@ static int corpus_md_store(libxs_registry_t* corpus,
             && EXIT_SUCCESS == corpus_entry_build(&entry, text + begin, span,
               SCALE_SENTENCE, lexicon, rules, nrules))
           {
+            entry.line = corpus_line_at(NULL, 0, offset + (size_t)begin);
             corpus_entry_set_section(&entry, section, section_len);
             corpus_store_entry(corpus, &entry);
           }
@@ -5705,13 +5885,13 @@ static int corpus_md_store(libxs_registry_t* corpus,
 
 
 static int corpus_md_emit_block(libxs_registry_t* corpus,
-  const unsigned char* text, int len, const char* section, int section_len,
-  libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
-  int code_like)
+  const unsigned char* text, int len, size_t offset, const char* section,
+  int section_len, libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules,
+  int nrules, int code_like)
 {
   int result = 0;
   if (len < COMPOSE_MAXTEXT) {
-    result = corpus_md_store(corpus, text, len, section, section_len,
+    result = corpus_md_store(corpus, text, len, offset, section, section_len,
       lexicon, rules, nrules, code_like);
   }
   else {
@@ -5720,8 +5900,8 @@ static int corpus_md_emit_block(libxs_registry_t* corpus,
       if (i == len || '\n' == text[i]) {
         if (i > line_start) {
           result += corpus_md_store(corpus, text + line_start,
-            i - line_start, section, section_len, lexicon, rules, nrules,
-            code_like);
+            i - line_start, offset + (size_t)line_start, section, section_len,
+            lexicon, rules, nrules, code_like);
         }
         line_start = i + 1;
       }
@@ -5754,8 +5934,8 @@ static int corpus_ingest_markdown(libxs_registry_t* corpus,
         block_has = 1;
         if (0 != fence) {
           nblocks += corpus_md_emit_block(corpus, text + block_start,
-            (int)(i - block_start), section, section_len, lexicon, rules,
-            nrules, 1);
+            (int)(i - block_start), block_start, section, section_len, lexicon,
+            rules, nrules, 1);
           in_fence = 0;
           block_start = i + 1;
           block_has = 0;
@@ -5764,8 +5944,8 @@ static int corpus_ingest_markdown(libxs_registry_t* corpus,
       else if (0 != fence) {
         if (0 != block_has) {
           nblocks += corpus_md_emit_block(corpus, text + block_start,
-            (int)(line_start - block_start), section, section_len, lexicon,
-            rules, nrules, block_code);
+            (int)(line_start - block_start), block_start, section, section_len,
+            lexicon, rules, nrules, block_code);
         }
         in_fence = 1;
         block_start = line_start;
@@ -5776,8 +5956,8 @@ static int corpus_ingest_markdown(libxs_registry_t* corpus,
         size_t h = ls;
         if (0 != block_has) {
           nblocks += corpus_md_emit_block(corpus, text + block_start,
-            (int)(line_start - block_start), section, section_len, lexicon,
-            rules, nrules, block_code);
+            (int)(line_start - block_start), block_start, section, section_len,
+            lexicon, rules, nrules, block_code);
           block_has = 0;
         }
         while (h < i && '#' == text[h]) ++h;
@@ -5803,8 +5983,8 @@ static int corpus_ingest_markdown(libxs_registry_t* corpus,
         }
         if (0 != block_has && 0 == header_only) {
           nblocks += corpus_md_emit_block(corpus, text + block_start,
-            (int)(line_start - block_start), section, section_len, lexicon,
-            rules, nrules, block_code);
+            (int)(line_start - block_start), block_start, section, section_len,
+            lexicon, rules, nrules, block_code);
           block_has = 0;
         }
         if (0 == header_only) {
@@ -5822,8 +6002,8 @@ static int corpus_ingest_markdown(libxs_registry_t* corpus,
   }
   if (0 != block_has) {
     nblocks += corpus_md_emit_block(corpus, text + block_start,
-      (int)(text_size - block_start), section, section_len, lexicon, rules,
-      nrules, block_code);
+      (int)(text_size - block_start), block_start, section, section_len,
+      lexicon, rules, nrules, block_code);
   }
   fprintf(stderr, "  ingested %s: %d markdown blocks\n", path, nblocks);
   return (nblocks > 0) ? EXIT_SUCCESS : EXIT_FAILURE;
@@ -5839,7 +6019,6 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
   unsigned char* text = NULL;
   size_t text_size = 0;
   if (NULL == corpus || NULL == path) return EXIT_FAILURE;
-  if (corpus_source_id < 0xffff) ++corpus_source_id;
   profile = corpus_profile_for_path(path);
   f = fopen(path, "rb");
   if (NULL != f) {
@@ -5851,6 +6030,11 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
       if (NULL != text) {
         if (fread(text, 1, text_size, f) == text_size) {
           text[text_size] = 0;
+          /* The id is spent only on a file that was actually read, so it stands for
+             a name a citation can print: -b probes many candidates that do not
+             exist, and numbering those left the table mostly empty. */
+          if (corpus_source_id < 0xffff) ++corpus_source_id;
+          corpus_source_path_set((int)corpus_source_id, path);
           result = EXIT_SUCCESS;
         }
       }
@@ -5862,8 +6046,10 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
   {
     unsigned char* reflowed = NULL;
     size_t reflowed_size = 0;
-    if (EXIT_SUCCESS == libxs_text_reflow(text, text_size,
-      &reflowed, &reflowed_size))
+    /* The map comes from the same pass, because a line of the reflowed text is
+       not a line of the file a reader opens. */
+    if (EXIT_SUCCESS == libxs_text_reflow_map(text, text_size,
+      &reflowed, &reflowed_size, &corpus_ingest_lines, &corpus_ingest_nlines))
     {
       free(text);
       text = reflowed;
@@ -5873,6 +6059,7 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
   if (EXIT_SUCCESS == result && NULL != text && text_size > 0
     && PROFILE_MARKDOWN == profile)
   {
+    corpus_lines_index(text, text_size);
     result = corpus_ingest_markdown(corpus, text, text_size, path,
       lexicon, rules, nrules);
   }
@@ -5913,6 +6100,7 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
                 text + sent_start, len, SCALE_SENTENCE,
                 lexicon, rules, nrules))
               {
+                entry.line = corpus_line_at(text, text_size, sent_start);
                 corpus_entry_set_section(&entry, current_section,
                   current_section_len);
                 if (0 != corpus_store_entry(corpus, &entry)) ++nsentences;
@@ -5950,6 +6138,7 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
                 text + para_start, plen, SCALE_PARAGRAPH,
                 lexicon, rules, nrules))
               {
+                entry.line = corpus_line_at(text, text_size, para_start);
                 corpus_entry_set_section(&entry, para_section,
                   para_section_len);
                 if (0 != corpus_store_entry(corpus, &entry)) ++nparagraphs;
@@ -5973,6 +6162,9 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
       path, nsentences, nparagraphs, corpus_sections_size);
   }
   free(text);
+  free(corpus_ingest_lines);
+  corpus_ingest_lines = NULL;
+  corpus_ingest_nlines = 0;
   return result;
 }
 
@@ -6747,6 +6939,7 @@ void converse_release(converse_run_t* run)
     corpus_sections = NULL;
     corpus_sections_size = 0;
     corpus_sections_cap = 0;
+    corpus_source_paths_free();
     memset(run, 0, sizeof(*run));
   }
 }
