@@ -95,6 +95,18 @@
 #   define LIBXS_BITS 32
 # endif
 #endif
+/** Width of size_t, which is a different property than LIBXS_BITS (width of a pointer). */
+#if !defined(LIBXS_BITS_SIZE)
+# if  (defined(__SIZEOF_SIZE_T__) && 4 < (__SIZEOF_SIZE_T__)) || \
+      (defined(__SIZE_MAX__) && (4294967295U < (__SIZE_MAX__))) || \
+      (defined(SIZE_MAX) && (4294967295U < (SIZE_MAX)))
+#   define LIBXS_BITS_SIZE 64
+# elif defined(__SIZEOF_SIZE_T__) || defined(__SIZE_MAX__) || defined(SIZE_MAX)
+#   define LIBXS_BITS_SIZE 32
+# else /* no probe available (MSVC): size_t matches the width of a pointer */
+#   define LIBXS_BITS_SIZE LIBXS_BITS
+# endif
+#endif
 
 #define LIBXS_STRINGIFY_AUX(SYMBOL) #SYMBOL
 #define LIBXS_STRINGIFY(SYMBOL) LIBXS_STRINGIFY_AUX(SYMBOL)

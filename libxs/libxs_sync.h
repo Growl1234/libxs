@@ -330,6 +330,14 @@ typedef enum libxs_atomic_kind_t {
 # error LIBXS is missing atomic compiler builtins!
 #endif
 
+/**
+ * Selects the atomic operation matching the width of size_t, e.g.
+ * LIBXS_ATOMIC_SIZE(LIBXS_ATOMIC_ADD_FETCH)(&nbytes, n, LIBXS_ATOMIC_RELAXED).
+ * The unqualified operations are 32-bit in some configurations, and LIBXS_BITS
+ * is the width of a pointer rather than that of size_t.
+ */
+#define LIBXS_ATOMIC_SIZE(FN) (size_t)LIBXS_ATOMIC(FN, LIBXS_BITS_SIZE)
+
 #if !defined(LIBXS_SYNC_CYCLE)
 # if (0 < LIBXS_SYNC_NPAUSE)
 #   define LIBXS_SYNC_CYCLE_ELSE(DST_PTR, EXP_STATE, NPAUSE, ELSE) do { int libxs_sync_cycle_npause_ = 1; \
