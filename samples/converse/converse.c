@@ -731,6 +731,48 @@ static int answer_relation_rule_kind(const char* text)
      * word of the corpus.
      */
     else if (0 == strcmp(text, "genitive")) result = RELATION_RULE_GENITIVE;
+    /**
+     * `join|ampersand` names an ORTHOGRAPHIC joiner, the way `poss|apostrophe-s` names
+     * an orthographic possessive: the term names a SHAPE so no vocabulary enters the C.
+     * It is read in ONE place only, inside an article-headed phrase, and the reason is
+     * measured rather than chosen -- see E17.
+     */
+    else if (0 == strcmp(text, "join")) result = RELATION_RULE_JOIN;
+    /**
+     * `ask|who|who` declares a QUESTION WORD: the first field is the question KIND,
+     * which is a tag this code knows the way it knows "apostrophe-s", and the second
+     * is the word the language uses for it. German writes `ask|who|wer`.
+     *
+     * It exists because the query classifier was the LAST place English survived in
+     * the C -- it tested for "who", "what", "where" as literals while `where|`, `why|`
+     * and `how|` sat declared in the rule file two screens away. Those declare the
+     * markers that make a SENTENCE answer a question; this declares the words that make
+     * a QUERY ask one, which is the other half and was never written down.
+     */
+    else if (0 == strcmp(text, "ask")) result = RELATION_RULE_ASK;
+    /**
+     * `pron|it` declares the BACK-REFERENCE pronouns, the words a follow-up uses to
+     * point at what was just discussed. The multi-turn rewrite substitutes the
+     * remembered topic for one, so which words those are is a fact about the language
+     * and belongs here -- the last eight English literals the C still held.
+     *
+     * Only the third-person back-references belong: a first- or second-person pronoun
+     * refers to a participant in the conversation and never to the topic, so
+     * substituting one would answer about the wrong thing.
+     */
+    else if (0 == strcmp(text, "pron")) result = RELATION_RULE_PRON;
+    /**
+     * `result|made` is the light verb that introduces a RESULTING STATE -- "Hansel is
+     * to be made fat" -- and the shape reads whatever word follows it as the predicate.
+     * One word per language, declared for the same reason `agent|by` is, and it was the
+     * last English literal left in a fact layer.
+     *
+     * Declaring it does not make the shape trustworthy: only 2 of its 16 facts on the
+     * tales are true, the rest idioms ("made use of", "made her way"), which is why a
+     * reply built on it is LABELLED rather than trusted. What declaring buys is that a
+     * corpus in another language can silence it, or name its own word.
+     */
+    else if (0 == strcmp(text, "result")) result = RELATION_RULE_RESULT;
   }
   return result;
 }
@@ -743,7 +785,8 @@ static int answer_relation_rule_append(int kind, const char* relation,
   answer_relation_rule_t* rules;
   if (kind > 0 && NULL != term && '\0' != term[0]
     && strlen(term) < sizeof(answer_relation_rules[0].term)
-    && ((RELATION_RULE_ALIAS != kind && RELATION_RULE_NORM != kind)
+    && ((RELATION_RULE_ALIAS != kind && RELATION_RULE_NORM != kind
+        && RELATION_RULE_ASK != kind)
       || (NULL != relation && '\0' != relation[0]
         && strlen(relation) < sizeof(answer_relation_rules[0].relation))))
   {
@@ -792,13 +835,15 @@ static int answer_relation_rule_parse_line(char* line)
   }
   if (NULL != fields[0] && NULL != fields[1]) {
     int kind = answer_relation_rule_kind(fields[0]);
-    if ((RELATION_RULE_ALIAS == kind || RELATION_RULE_NORM == kind)
-      && NULL != fields[2])
+    if ((RELATION_RULE_ALIAS == kind || RELATION_RULE_NORM == kind
+      || RELATION_RULE_ASK == kind) && NULL != fields[2])
     {
       result = answer_relation_rule_append(kind, fields[1], fields[2],
         RELATION_RULE_ASSERTED);
     }
-    else if (RELATION_RULE_ALIAS != kind && RELATION_RULE_NORM != kind) {
+    else if (RELATION_RULE_ALIAS != kind && RELATION_RULE_NORM != kind
+      && RELATION_RULE_ASK != kind)
+    {
       result = answer_relation_rule_append(kind, NULL, fields[1],
         RELATION_RULE_ASSERTED);
     }
@@ -1761,6 +1806,36 @@ const char* answer_relation_rule_first_term(int kind, int* term_len)
     if (rule->kind == kind && '\0' != rule->term[0]) {
       result = rule->term;
       if (NULL != term_len) *term_len = (int)strlen(rule->term);
+    }
+  }
+  return result;
+}
+
+
+/**
+ * The nth declared term of a kind, with its first field, or NULL past the end.
+ *
+ * Needed where a class is a MAP rather than a set: `ask|who|wer` binds a question
+ * KIND to a language's word, so a reader has to walk the pairs instead of testing
+ * membership.
+ */
+const char* answer_relation_rule_term_at(int kind, int index,
+  const char** relation)
+{
+  const char* result = NULL;
+  size_t rule_pos;
+  int seen = 0;
+  if (NULL != relation) *relation = NULL;
+  for (rule_pos = 0; rule_pos < answer_relation_rules_size && NULL == result;
+    ++rule_pos)
+  {
+    const answer_relation_rule_t* rule = answer_relation_rules + rule_pos;
+    if (rule->kind == kind && '\0' != rule->term[0]) {
+      if (seen == index) {
+        result = rule->term;
+        if (NULL != relation) *relation = rule->relation;
+      }
+      else ++seen;
     }
   }
   return result;

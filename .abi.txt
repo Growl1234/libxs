@@ -284,6 +284,7 @@ libxs_syrk_dispatch
 libxs_syrk_dispatch_base
 libxs_syrk_task
 libxs_text_reflow
+libxs_text_reflow_map
 libxs_textrule_defaults
 libxs_textrule_eval
 libxs_textrule_load

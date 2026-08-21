@@ -56,6 +56,9 @@ int answer_relation_rule_has_term(int kind, const char* text, int text_len);
 int answer_relation_rule_is_term(int kind, const char* text, int text_len);
 /** The first declared term of a kind, or NULL. */
 const char* answer_relation_rule_first_term(int kind, int* term_len);
+/** The nth declared term of a kind with its first field, for MAP-shaped classes. */
+const char* answer_relation_rule_term_at(int kind, int index,
+  const char** relation);
 /** ASSERTED, LEARNED or PROPOSED, for a term a reply is about to rest on. */
 int answer_relation_rule_provenance(int kind, const char* text, int text_len);
 int answer_relation_reply(const answer_relation_match_t* match,

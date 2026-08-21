@@ -4,7 +4,8 @@
 #          negate|term, norm|from|to, where|term, why|term, how|term,
 #          place|term, topic|term, copula|term, article|term,
 #          prep|term, own|term, poss|shape, aux|term, agent|term,
-#          link|term, genitive|term
+#          link|term, genitive|term, join|shape, ask|kind|term,
+#          pron|term, result|term
 # where/why/how are the MARKER words that make a sentence answer that question;
 # place seeds the place class the way person seeds the person class.
 person|grandmother
@@ -178,3 +179,41 @@ link|connects
 link|connection
 link|related
 genitive|of
+join|ampersand
+# The QUESTION WORDS. The first field is the question KIND -- a fixed tag this code
+# knows, like the shape names in poss| -- and the second is this language's word for
+# it, so German writes ask|who|wer. A query matching none of these is one the rule
+# file does not recognize, and a reply says so rather than guessing.
+ask|who|who
+ask|who|whom
+ask|who|whose
+ask|what|what
+ask|what|which
+ask|where|where
+ask|when|when
+ask|why|why
+ask|how|how
+ask|yesno|is
+ask|yesno|are
+ask|yesno|was
+ask|yesno|were
+ask|yesno|do
+ask|yesno|does
+ask|yesno|did
+ask|yesno|can
+ask|yesno|could
+ask|yesno|has
+ask|yesno|have
+# The BACK-REFERENCE pronouns a follow-up points with ("What does IT do?"). The rewrite
+# substitutes the remembered topic for one of these, so only third person belongs here:
+# "me" and "you" refer to a participant, never to the topic.
+pron|it
+pron|its
+pron|it's
+pron|that
+pron|this
+pron|they
+pron|them
+pron|their
+# The light verb that introduces a RESULTING STATE: "Hansel is to be made fat".
+result|made

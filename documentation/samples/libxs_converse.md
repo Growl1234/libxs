@@ -156,10 +156,19 @@ citation: texts/wiki2m.txt:813-895
 If nothing in the corpus joins them, the sample says so rather than answering with a
 sentence about one of them.
 
-Two behaviours to expect: the sample **abstains** (`I do not know from the corpus.`)
-rather than guessing when coverage is too low, and a question of the form
-`In TITLE, ...` is ranked only against the matching heading, which is how to ask about
-one document in a corpus of many. Questions are case-insensitive.
+Three behaviours to expect:
+
+- The sample **abstains** (`I do not know from the corpus.`) rather than guessing when
+  the corpus does not support an answer.
+- A question whose KIND it does not recognize -- one using none of the declared `ask|`
+  words -- still gets an answer, introduced by `I did not recognize the question. The
+  closest the corpus comes:` so a relevant sentence is never mistaken for a direct
+  answer. That is different from abstaining: the question was not read, rather than
+  read and unsupported.
+- A question of the form `In TITLE, ...` is ranked only against the matching heading,
+  which is how to ask about one document in a corpus of many.
+
+Questions are case-insensitive.
 
 Non-question input is treated as a composition request and answered from the
 fingerprint path instead. `-n N` sets how many sentences a response may use.
@@ -279,7 +288,11 @@ Each non-comment line is `kind|term`:
 | `aux` | the auxiliaries | `aux\|had` |
 | `agent` | the word a passive names its agent with | `agent\|by` |
 | `genitive` | the word that marks a possessor after the thing | `genitive\|of` |
+| `join` | how the language writes a joiner inside a name | `join\|ampersand` |
 | `link` | the words that ask how two entities relate | `link\|connected` |
+| `ask` | a question KIND and this language's word for it | `ask\|who\|who` |
+| `pron` | the back-reference pronouns a follow-up points with | `pron\|it` |
+| `result` | the light verb introducing a resulting state | `result\|made` |
 | `skip`, `negate` | filler words and negators | `skip\|the` |
 
 A few notes that matter in use:
@@ -291,6 +304,10 @@ A few notes that matter in use:
   frames and reports `verbs derived: N` and `nouns derived: N`. No verb list is needed.
 - `poss|apostrophe-s` (English) against `poss|apostrophe` (German): declare the wrong
   one and possession answers go silent rather than wrong.
+- `ask|` is how the sample knows a question's KIND. The first field is the kind (`who`,
+  `what`, `where`, `when`, `why`, `how`, `yesno`), the second is the word -- so a German
+  rule file writes `ask|who|wer`. A question using none of the declared words still gets
+  an answer, prefixed with a note that the question was not recognized.
 - `person|father` plus `genitive|of` is what makes kinship answerable in BOTH forms --
   "Lincoln's father Thomas" and "Aegeus, the father of Theseus". A role word you do not
   declare is simply not read, so extend the `person|` class for the kinds of relation
@@ -301,6 +318,12 @@ The sample can also PROPOSE rules instead of only reading them:
 which is a way to bootstrap a rule file for new text. What it proposes is speculative,
 so it is reported separately and, if a `<prefix>.learn.eval` fixture exists, that
 fixture is used for `-e` while learning is on.
+
+With `CONVERSE_FACTS_LIST=1` the sample also prints the FACTS themselves, plus a
+`graph reach:` line (edges, entities, pairs joined by one middle, largest degree) --
+useful for judging whether a corpus is big enough to ask connection questions of. Prose
+of a few MB gives tens of edges; the tales give none, because a story names few entities
+that act on each other.
 
 After ingestion the sample reports what it learned (`relation facts: N learned`,
 `identity facts`, `location facts`, `type facts`). Set `CONVERSE_FACTS_LIST=1` to

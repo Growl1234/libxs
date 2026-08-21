@@ -533,6 +533,8 @@ static double answer_semantic_bridge_score(const answer_bridge_t* bridge);
 static double lexical_score(const libxs_lexeme_stream_t* query,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
   const corpus_entry_t* entry, size_t entry_size, int query_type);
+/** Whether a DECLARED link term makes this a question about the graph. */
+static int answer_graph_asked(const char* query_text, size_t query_len);
 static int answer_select(const libxs_registry_t* corpus,
   const char* query_text, size_t query_len, int budget,
   libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules, int nrules,
@@ -950,6 +952,42 @@ static int answer_query_type_text(const char* query_text, size_t query_len)
 }
 
 
+/**
+ * The question KIND a declared `ask|` tag names, or QUERY_GENERIC for an unknown tag.
+ *
+ * The tags are identifiers rather than English -- the same status `poss|apostrophe-s`
+ * has -- so a rule file names the kind in this fixed vocabulary and supplies its own
+ * word for it: `ask|who|wer`.
+ */
+static int query_type_of_tag(const char* tag)
+{
+  int result = QUERY_GENERIC;
+  if (NULL != tag) {
+    if (0 == strcmp(tag, "who")) result = QUERY_WHO;
+    else if (0 == strcmp(tag, "what")) result = QUERY_WHAT;
+    else if (0 == strcmp(tag, "where")) result = QUERY_WHERE;
+    else if (0 == strcmp(tag, "when")) result = QUERY_WHEN;
+    else if (0 == strcmp(tag, "why")) result = QUERY_WHY;
+    else if (0 == strcmp(tag, "how")) result = QUERY_HOW;
+    else if (0 == strcmp(tag, "yesno")) result = QUERY_YESNO;
+  }
+  return result;
+}
+
+
+/**
+ * Which question this query asks, read from the DECLARED question words.
+ *
+ * This function was the LAST PLACE ENGLISH SURVIVED IN THE C: it tested for "who",
+ * "what", "where" and eleven more as literals, while `where|`, `why|` and `how|` sat
+ * declared in the rule file. Those declare the markers that make a SENTENCE answer a
+ * question; `ask|` declares the words that make a QUERY ask one, which is the other
+ * half and had never been written down.
+ *
+ * QUERY_GENERIC now means the RULE FILE does not recognize the question -- a fact
+ * about the rules rather than about the corpus, and the signal that lets a reply say
+ * it did not understand instead of guessing.
+ */
 static int query_type_of(const libxs_lexeme_stream_t* query,
   const libxs_lexicon_t* lexicon)
 {
@@ -961,25 +999,17 @@ static int query_type_of(const libxs_lexeme_stream_t* query,
     {
       const libxs_lexeme_t* lexeme = query->data + lexeme_pos;
       if (0 != (lexeme->flags & LIBXS_LEXEME_WORD)) {
-        if (0 != lexeme_text_is(lexicon, lexeme, "who")) result = QUERY_WHO;
-        else if (0 != lexeme_text_is(lexicon, lexeme, "what")) result = QUERY_WHAT;
-        else if (0 != lexeme_text_is(lexicon, lexeme, "where")) result = QUERY_WHERE;
-        else if (0 != lexeme_text_is(lexicon, lexeme, "when")) result = QUERY_WHEN;
-        else if (0 != lexeme_text_is(lexicon, lexeme, "why")) result = QUERY_WHY;
-        else if (0 != lexeme_text_is(lexicon, lexeme, "how")) result = QUERY_HOW;
-        else if (0 != lexeme_text_is(lexicon, lexeme, "is")
-          || 0 != lexeme_text_is(lexicon, lexeme, "are")
-          || 0 != lexeme_text_is(lexicon, lexeme, "was")
-          || 0 != lexeme_text_is(lexicon, lexeme, "were")
-          || 0 != lexeme_text_is(lexicon, lexeme, "do")
-          || 0 != lexeme_text_is(lexicon, lexeme, "does")
-          || 0 != lexeme_text_is(lexicon, lexeme, "did")
-          || 0 != lexeme_text_is(lexicon, lexeme, "can")
-          || 0 != lexeme_text_is(lexicon, lexeme, "could")
-          || 0 != lexeme_text_is(lexicon, lexeme, "has")
-          || 0 != lexeme_text_is(lexicon, lexeme, "have"))
+        const char* tag;
+        const char* term;
+        int index = 0;
+        while (QUERY_GENERIC == result
+          && NULL != (term = answer_relation_rule_term_at(RELATION_RULE_ASK,
+            index, &tag)))
         {
-          result = QUERY_YESNO;
+          if (0 != lexeme_text_is(lexicon, lexeme, term)) {
+            result = query_type_of_tag(tag);
+          }
+          ++index;
         }
       }
     }
@@ -1894,12 +1924,16 @@ static int answer_relation_match_query(const char* query_text,
     int made_scan = 0;
     int before = rel_pos;
     int answer_begin, answer_end;
-    while (rel_pos > made_scan) {
-      int next_pos = text_find_word_ci(entry->text + made_scan,
-        rel_pos - made_scan, "made");
-      if (next_pos < 0) break;
-      made_pos = made_scan + next_pos;
-      made_scan = made_pos + 4;
+    { int made_len = 0;
+      const char* made_term = answer_relation_rule_first_term(
+        RELATION_RULE_RESULT, &made_len);
+      while (NULL != made_term && 0 < made_len && rel_pos > made_scan) {
+        int next_pos = text_find_word_ci(entry->text + made_scan,
+          rel_pos - made_scan, made_term);
+        if (next_pos < 0) break;
+        made_pos = made_scan + next_pos;
+        made_scan = made_pos + made_len;
+      }
     }
     if (rel_pos >= 0 && made_pos >= 0 && made_pos < rel_pos
       && rel_pos - made_pos <= 16)
@@ -2640,6 +2674,29 @@ static int answer_relation_fact_extract_active(const corpus_entry_t* entry)
             {
               const char* more = object_end + 1;
               int more_len = 0;
+              /**
+               * AN AMPERSAND JOINS, and only here. "the Alton & Sangamon Railroad" and
+               * "the Boys & Girls Club" are each ONE thing, and the phrase used to end
+               * at the mark, so "Lincoln represented the Alton" asserted something the
+               * corpus does not say. The ARTICLE is what licenses the join: it says the
+               * whole is one noun phrase, so the joined parts cannot be two entities.
+               * Without that mark the join is REFUTED -- 36 `&` pairs on 2 MB and many
+               * join two entities ("Milius & Francis Ford Coppola"), with nothing in the
+               * text to tell the readings apart. Article-headed: 2 of 2 correct.
+               */
+              if ('&' == *more && more + 2 < text_end && ' ' == more[1]
+                && 0 != answer_relation_rule_is_term(RELATION_RULE_JOIN,
+                  "ampersand", 9))
+              {
+                more += 2;
+                while (more + more_len < text_end
+                  && 0 != isalpha((unsigned char)more[more_len])) ++more_len;
+                if (0 == more_len
+                  || 0 == answer_identity_word_is_name(more, more_len)) break;
+                object_end = more + more_len;
+                ++taken;
+                continue;
+              }
               while (more + more_len < text_end
                 && ('-' == more[more_len] || '\'' == more[more_len]
                   || 0 != isalpha((unsigned char)more[more_len]))) ++more_len;
@@ -2751,13 +2808,19 @@ static size_t answer_relation_facts_build(const libxs_registry_t* corpus)
       value = corpus_iterx_next(corpus, &key, &cursor);
       continue;
     }
-    while (made_scan < entry->text_len) {
-      int made_pos = text_find_word_ci(entry->text + made_scan,
-        entry->text_len - made_scan, "made");
-      if (made_pos < 0) break;
-      made_pos += made_scan;
-      if (0 != answer_relation_fact_extract_made(entry, made_pos)) ++result;
-      made_scan = made_pos + 4;
+    { int made_len = 0;
+      const char* made_term = answer_relation_rule_first_term(
+        RELATION_RULE_RESULT, &made_len);
+      while (NULL != made_term && 0 < made_len
+        && made_scan < entry->text_len)
+      {
+        int made_pos = text_find_word_ci(entry->text + made_scan,
+          entry->text_len - made_scan, made_term);
+        if (made_pos < 0) break;
+        made_pos += made_scan;
+        if (0 != answer_relation_fact_extract_made(entry, made_pos)) ++result;
+        made_scan = made_pos + made_len;
+      }
     }
     { /* The passive shape, wherever the declared agent marker stands. */
       int by_len = 0;
@@ -4248,6 +4311,133 @@ static int answer_edge_next(const char* name, int name_len, size_t* cursor,
 }
 
 
+/**
+ * GRAPH REACH: the edges, the entities they touch, the pairs one middle joins, and the
+ * largest degree -- reported so the connectivity table can be RE-RUN instead of
+ * quoted from memory. It existed only as a hand-count, which is why it went stale
+ * three times while the fact counts beneath it moved (E24, E16 STEP 3, E26).
+ *
+ * The pair count is EXACTLY what a two-hop reply can answer: two entities with no edge
+ * of their own, joined by a common middle, counted once per unordered pair. That is a
+ * bound on REACH and never on correctness -- a path's precision is the PRODUCT of its
+ * hops, so only reading a sample can report it, which is what the wiki track does.
+ */
+static void answer_graph_report(FILE* stream)
+{
+  enum { GRAPH_ENTITY_MAX = 4096, GRAPH_NEIGHBOUR_MAX = 64 };
+  const char* list = (NULL != stream) ? getenv("CONVERSE_FACTS_LIST") : NULL;
+  if (NULL != list && '\0' != *list && '0' != *list) {
+    libxs_registry_t* seen = libxs_registry_create();
+    libxs_registry_t* joined = libxs_registry_create();
+    char (*names)[128] = (char(*)[128])malloc(GRAPH_ENTITY_MAX * sizeof(*names));
+    size_t edges = 0, entities = 0, pairs = 0, dropped = 0;
+    int degree_max = 0;
+    size_t fact_pos, entity_pos;
+    for (fact_pos = 0;
+      fact_pos < answer_relation_facts_size + answer_type_facts_size; ++fact_pos)
+    {
+      answer_edge_t edge;
+      const int ok = (fact_pos < answer_relation_facts_size)
+        ? answer_edge_of_relation(answer_relation_facts + fact_pos, &edge)
+        : answer_edge_of_type(answer_type_facts
+          + (fact_pos - answer_relation_facts_size), &edge);
+      if (0 != ok) {
+        int side;
+        ++edges;
+        for (side = 0; side < 2; ++side) {
+          const char* text = (0 == side) ? edge.from : edge.to;
+          const int len = (0 == side) ? edge.from_len : edge.to_len;
+          char key[128];
+          int at;
+          if (0 < len && len < (int)sizeof(key) && NULL != seen) {
+            for (at = 0; at < len; ++at) {
+              key[at] = (char)tolower((unsigned char)text[at]);
+            }
+            key[len] = '\0';
+            if (NULL == libxs_registry_get(seen, key, (size_t)len + 1, NULL)) {
+              const long fresh = 1;
+              if (NULL != libxs_registry_set(seen, key, (size_t)len + 1, &fresh,
+                sizeof(fresh), NULL))
+              {
+                if (NULL != names && entities < GRAPH_ENTITY_MAX) {
+                  memcpy(names[entities], text, (size_t)len);
+                  names[entities][len] = '\0';
+                }
+                else ++dropped;
+                ++entities;
+              }
+            }
+          }
+        }
+      }
+    }
+    for (entity_pos = 0; NULL != names && NULL != joined
+      && entity_pos < entities && entity_pos < GRAPH_ENTITY_MAX; ++entity_pos)
+    {
+      const char* middle = names[entity_pos];
+      const int middle_len = (int)strlen(middle);
+      char neighbour[GRAPH_NEIGHBOUR_MAX][128];
+      size_t cursor = 0;
+      answer_edge_t walk;
+      int degree = 0, a, b;
+      while (0 != answer_edge_next(middle, middle_len, &cursor, &walk)) {
+        if (degree < GRAPH_NEIGHBOUR_MAX && 0 < walk.to_len
+          && walk.to_len < (int)sizeof(neighbour[0]))
+        {
+          memcpy(neighbour[degree], walk.to, (size_t)walk.to_len);
+          neighbour[degree][walk.to_len] = '\0';
+          ++degree;
+        }
+      }
+      if (degree > degree_max) degree_max = degree;
+      for (a = 0; a < degree; ++a) {
+        for (b = a + 1; b < degree; ++b) {
+          const int lo = (0 < strcmp(neighbour[a], neighbour[b])) ? b : a;
+          const int hi = (lo == a) ? b : a;
+          char key[264];
+          size_t key_len;
+          size_t probe = 0;
+          answer_edge_t direct;
+          int adjacent = 0;
+          if (0 == strcmp(neighbour[a], neighbour[b])) continue;
+          /* A pair the corpus relates DIRECTLY is one proposition, not a path. */
+          while (0 == adjacent && 0 != answer_edge_next(neighbour[lo],
+            (int)strlen(neighbour[lo]), &probe, &direct))
+          {
+            if (0 != libxs_striequal(direct.to, (size_t)direct.to_len,
+              neighbour[hi], strlen(neighbour[hi])))
+            {
+              adjacent = 1;
+            }
+          }
+          if (0 != adjacent) continue;
+          key_len = (size_t)sprintf(key, "%s|%s", neighbour[lo], neighbour[hi]);
+          if (NULL == libxs_registry_get(joined, key, key_len + 1, NULL)) {
+            const long fresh = 1;
+            if (NULL != libxs_registry_set(joined, key, key_len + 1, &fresh,
+              sizeof(fresh), NULL))
+            {
+              ++pairs;
+            }
+          }
+        }
+      }
+    }
+    fprintf(stream, "graph reach: %lu edges, %lu entities, %lu pairs joined by one"
+      " middle, max degree %d\n", (unsigned long)edges, (unsigned long)entities,
+      (unsigned long)pairs, degree_max);
+    /* No silent cap: a bounded walk that dropped anything says so. */
+    if (0 != dropped) {
+      fprintf(stream, "graph reach: %lu entities beyond the %d scanned\n",
+        (unsigned long)dropped, (int)GRAPH_ENTITY_MAX);
+    }
+    free(names);
+    if (NULL != joined) libxs_registry_destroy(joined);
+    if (NULL != seen) libxs_registry_destroy(seen);
+  }
+}
+
+
 /** State one edge as the layer that holds it would state it, and cite it. */
 static int answer_edge_render(const answer_edge_t* edge, char* output,
   size_t output_size)
@@ -5255,7 +5445,7 @@ static int answer_topic_reply(const char* query_text, size_t query_len,
   int worst = RELATION_RULE_ASSERTED;
   char worst_term[64];
   int worst_term_len = 0;
-  int name_len, count = 0, item;
+  int name_len, count = 0, item, relation_base;
   size_t fact_pos, pos = 0;
   if (NULL == query_text || NULL == output || 0 == output_size) {
     return EXIT_FAILURE;
@@ -5287,11 +5477,21 @@ static int answer_topic_reply(const char* query_text, size_t query_len,
       ++count;
     }
   }
-  /* What happened to or through it: a relation fact reads from either side, since
-     "X was eaten by the wolf" is a fact about X and about the wolf alike. */
-  for (fact_pos = 0; fact_pos < answer_relation_facts_size
-    && count < ANSWER_TOPIC_MAX; ++fact_pos)
-  {
+  /**
+   * What happened to or through it: a relation fact reads from either side, since
+   * "X was eaten by the wolf" is a fact about X and about the wolf alike.
+   *
+   * WHICH of them, when a Wikipedia entity has thirty, was the last arbitrary choice
+   * in a reply -- the first four in fact order, which is registry hash order and so
+   * means nothing to a reader. The corpus supplies the order itself: the EARLIEST
+   * cited facts are the ones its lead states, and a lead states what defines its
+   * subject. So this selects and shows the earliest, which is a relevance order the
+   * text asserts rather than one this code scores. Prediction was considered for the
+   * same slot and DECLINED: ordering by a model would be a judgement where the corpus
+   * already answers, and the field it would rank on is the one being replaced.
+   */
+  relation_base = count;
+  for (fact_pos = 0; fact_pos < answer_relation_facts_size; ++fact_pos) {
     const answer_relation_fact_t* fact = answer_relation_facts + fact_pos;
     const int is_answer = (fact->answer_len > 0
       && 0 != text_contains_word_ci(fact->answer, fact->answer_len, name))
@@ -5303,6 +5503,7 @@ static int answer_topic_reply(const char* query_text, size_t query_len,
       && 0 == fact->made)
     {
       answer_relation_match_t match;
+      char rendered[COMPOSE_MAXTEXT];
       memset(&match, 0, sizeof(match));
       memcpy(match.answer, fact->answer, (size_t)fact->answer_len + 1);
       match.answer_len = fact->answer_len;
@@ -5313,14 +5514,37 @@ static int answer_topic_reply(const char* query_text, size_t query_len,
       match.plural = fact->plural;
       match.made = fact->made;
       match.active = fact->active;
-      if (EXIT_SUCCESS == answer_relation_reply(&match, items[count],
-        sizeof(items[count])))
+      if (EXIT_SUCCESS == answer_relation_reply(&match, rendered,
+        sizeof(rendered)))
       {
-        sections[count] = fact->section;
-        section_lens[count] = fact->section_len;
-        origin_sources[count] = fact->source;
-        origin_lines[count] = fact->line;
-        ++count;
+        int slot = count;
+        while (slot > relation_base
+          && (origin_sources[slot - 1] > fact->source
+            || (origin_sources[slot - 1] == fact->source
+              && origin_lines[slot - 1] > fact->line)))
+        {
+          --slot;
+        }
+        if (count >= ANSWER_TOPIC_MAX) {
+          if (slot < ANSWER_TOPIC_MAX) --count;
+          else slot = -1;
+        }
+        if (0 <= slot) {
+          int at;
+          for (at = count; at > slot; --at) {
+            memcpy(items[at], items[at - 1], sizeof(items[at]));
+            sections[at] = sections[at - 1];
+            section_lens[at] = section_lens[at - 1];
+            origin_sources[at] = origin_sources[at - 1];
+            origin_lines[at] = origin_lines[at - 1];
+          }
+          memcpy(items[slot], rendered, sizeof(rendered));
+          sections[slot] = fact->section;
+          section_lens[slot] = fact->section_len;
+          origin_sources[slot] = fact->source;
+          origin_lines[slot] = fact->line;
+          ++count;
+        }
       }
     }
   }
@@ -6128,24 +6352,17 @@ static void conv_remember(const char* query_text, size_t query_len)
 }
 
 
+/**
+ * Is this a BACK-REFERENCE pronoun -- a word a follow-up points at the topic with?
+ *
+ * Declared (`pron|it`), which retires the last eight English literals the C held. The
+ * class is deliberately third-person only: "me" and "you" name a participant in the
+ * conversation and never the topic, so substituting one would answer about the wrong
+ * thing. A language that back-references differently says so in its rule file.
+ */
 static int conv_word_is_pronoun(const char* word, int len)
 {
-  static const char* const pronouns[] = { "it", "its", "it's", "that",
-    "this", "they", "them", "their" };
-  int result = 0;
-  int p;
-  for (p = 0; p < (int)(sizeof(pronouns) / sizeof(*pronouns)) && 0 == result;
-    ++p)
-  {
-    if ((int)strlen(pronouns[p]) == len) {
-      int i, same = 1;
-      for (i = 0; i < len && 0 != same; ++i) {
-        if ((word[i] | 32) != pronouns[p][i]) same = 0;
-      }
-      result = same;
-    }
-  }
-  return result;
+  return answer_relation_rule_is_term(RELATION_RULE_PRON, word, len);
 }
 
 /**
@@ -6155,6 +6372,54 @@ static int conv_word_is_pronoun(const char* word, int len)
  * answer path is scoped to it. Returns EXIT_SUCCESS only when a rewrite was
  * made, leaving the original query untouched otherwise.
  */
+/**
+ * Does this question already name what it is ABOUT?
+ *
+ * The multi-turn rewrite carries a remembered topic in by appending " of the <topic>"
+ * to a question with no subject of its own, and that is right for "What does it do?"
+ * and wrong for everything else. `answer_docdef_term` was the only test, and it reads
+ * a DEFINITION term, so "Tell me about the wolf?" looked subjectless: asked alone it
+ * abstained correctly, asked after a question about Gretel it answered ABOUT GRETEL,
+ * cited -- a confident wrong answer, and the same defect E16 STEP 3 fixed at a
+ * different trigger.
+ *
+ * The test is DECLARATIVE and deliberately not the derived noun class, which was tried
+ * first and is too weak on narrative prose: "wolf" is not a noun by that class on the
+ * tales, because the phrase-end rule needs a derived VERB after it and the tales are
+ * past simple, which no auxiliary governs. So a subject is any word the rule file does
+ * NOT account for -- not a function word, not a question word, not the topic marker,
+ * not a back-reference pronoun. A genuine follow-up ("What does it do?") is made
+ * entirely of declared words and still rewrites.
+ */
+static int conv_query_has_subject(const char* query_text, size_t query_len)
+{
+  static const char delims[] = " \t\r\n,.;:!?()[]{}\"'";
+  int result = 0;
+  int token_index = 0, token_len = 0;
+  const char* token;
+  char buffer[COMPOSE_MAXTEXT];
+  size_t copy = query_len;
+  if (NULL == query_text || 0 == query_len) return 0;
+  if (copy >= sizeof(buffer)) copy = sizeof(buffer) - 1;
+  memcpy(buffer, query_text, copy);
+  buffer[copy] = '\0';
+  while (0 == result && NULL != (token = libxs_strtoken(buffer, delims,
+    token_index, &token_len)))
+  {
+    if (1 < token_len && 0 == answer_word_is_function(token, token_len)
+      && 0 == answer_relation_rule_is_term(RELATION_RULE_ASK, token, token_len)
+      && 0 == answer_relation_rule_is_term(RELATION_RULE_TOPIC, token,
+        token_len)
+      && 0 == conv_word_is_pronoun(token, token_len))
+    {
+      result = 1;
+    }
+    ++token_index;
+  }
+  return result;
+}
+
+
 static int conv_rewrite(const char* query_text, size_t query_len,
   char* out, size_t out_size)
 {
@@ -6196,7 +6461,9 @@ static int conv_rewrite(const char* query_text, size_t query_len,
   else {
     own_len = answer_docdef_term(query_text, query_len, own,
       (int)sizeof(own));
-    if (own_len <= 0 && pos > 0) {
+    if (own_len <= 0 && pos > 0
+      && 0 == conv_query_has_subject(query_text, query_len))
+    {
       static const char suffix[] = " of the ";
       size_t suffix_len = sizeof(suffix) - 1;
       if (pos + suffix_len + (size_t)conv_topic_len < out_size) {
@@ -6641,8 +6908,14 @@ static double answer_identity_score(const char* query_text, size_t query_len,
     {
       result += 0.25;
     }
-    if (0 != text_contains_ci(entry->text, entry->text_len, "made")) {
-      result += 0.35;
+    { int made_len = 0;
+      const char* made_term = answer_relation_rule_first_term(
+        RELATION_RULE_RESULT, &made_len);
+      if (NULL != made_term && 0 != text_contains_word_ci(entry->text,
+        entry->text_len, made_term))
+      {
+        result += 0.35;
+      }
     }
     if (0 != (entry->lexical_flags & ENTRY_LEX_ENTITY)) result += 0.15;
   }
@@ -7083,11 +7356,17 @@ static int answer_select(const libxs_registry_t* corpus,
   int query_type = QUERY_GENERIC;
   int result = 0;
   int limit = budget;
+  const int graph_asked = answer_graph_asked(query_text, query_len);
   /**
    * Evidence selection scores term overlap, which is blind to polarity: a
    * negated question overlaps the affirmative sentence on every content word
    * and would rank it first. Abstain instead -- the corpus states positives,
    * so a complement is not answerable from it by selection either.
+   *
+   * A GRAPH QUESTION is refused here for a related reason: a sentence about one
+   * entity is not how two relate, and when the graph CAN answer, the fact chain wins
+   * and this is never read. Refusing here is also what makes the abstention hold on
+   * the eval's own probe path rather than only in the interactive one.
    */
   int negated = answer_query_is_negated(query_text, query_len);
   const libxs_predict_t* predictor = answer_model;
@@ -7119,7 +7398,7 @@ static int answer_select(const libxs_registry_t* corpus,
     entries[slot] = NULL;
     scores[slot] = 0.0;
   }
-  if (0 == negated && NULL != lexicon && nrules > 0
+  if (0 == negated && 0 == graph_asked && NULL != lexicon && nrules > 0
     && EXIT_SUCCESS == libxs_lexeme_stream_encode(lexicon, &query,
       (const unsigned char*)rank_query_text, rank_query_len, rules, nrules,
       converse_lexnorms(), converse_lexnorms_size(), 1))
@@ -7736,9 +8015,64 @@ static int answer_query_is_negated(const char* query_text, size_t query_len)
  * With no rules learned every answer is ASSERTED, so the first success wins and
  * breaks the loop: the historical behaviour and the historical cost, exactly.
  */
+/**
+ * Is this a question about the GRAPH? A DECLARED link term says so, and nothing else
+ * does -- not the endpoints resolving to census names, and not the failure of every
+ * other resolver. Consulted by the fact chain and by evidence selection alike, so the
+ * invariant "a graph question is answered by a path or not at all" cannot hold on one
+ * path and lapse on another. Two definitions of one rule is the defect E16 STEP 3
+ * found in the section table; this is the same rule asked once.
+ */
+static int answer_graph_asked(const char* query_text, size_t query_len)
+{
+  return (NULL != query_text && 0 < query_len
+    && 0 != answer_relation_rule_has_term(RELATION_RULE_LINK, query_text,
+      (int)query_len)) ? 1 : 0;
+}
+
+
+/**
+ * Does the RULE FILE recognize this as a question it knows how to ask?
+ *
+ * A declared `ask|` word is the whole test, so this reports a fact about the RULES and
+ * never about the corpus -- which is exactly the distinction a reply has to draw. Two
+ * failures were being rendered identically and only one of them is the project's
+ * result:
+ *
+ *   understood, unsupported  "Who was eaten by the elephant?"  -> abstain, as always;
+ *                            the shape is read perfectly and the corpus has no elephant
+ *   NOT understood           "Hansel Gretel forest"            -> say so, then offer
+ *                            what the corpus does hold
+ *
+ * Abstaining on the second is silence where something useful exists; answering it
+ * unlabelled is the confident non-answer the abstention discipline exists to prevent.
+ * Saying which of the two happened is neither, and it costs no new mechanism: the
+ * signal is the one the classifier already computes.
+ */
+static int answer_query_recognized(const char* query_text, size_t query_len)
+{
+  int result = 0;
+  int index = 0;
+  const char* term;
+  const char* tag;
+  if (NULL == query_text || 0 == query_len) return 0;
+  while (0 == result
+    && NULL != (term = answer_relation_rule_term_at(RELATION_RULE_ASK, index,
+      &tag)))
+  {
+    if (0 != text_contains_word_ci(query_text, (int)query_len, term)) {
+      result = 1;
+    }
+    ++index;
+  }
+  return result;
+}
+
+
 static int answer_fact_reply(const libxs_registry_t* corpus,
   const char* query_text, size_t query_len, char* output, size_t output_size)
 {
+  const int graph_asked = answer_graph_asked(query_text, query_len);
   int result = EXIT_FAILURE;
   int best = RELATION_RULE_PROPOSED + 1;
   char best_output[COMPOSE_MAXTEXT];
@@ -7754,7 +8088,13 @@ static int answer_fact_reply(const libxs_registry_t* corpus,
   best_section[0] = '\0';
   best_learned[0] = '\0';
   if (0 == answer_query_is_negated(query_text, query_len)) {
-    for (step = 0; step < 11 && RELATION_RULE_ASSERTED < best; ++step) {
+    /* A graph question may be answered by the GRAPH and by nothing else, so the chain
+       stops after step 0. Without this the same question in two phrasings behaved
+       differently: "How are Hansel and Gretel connected?" reached the identity layer,
+       which answered "Hansel is the boy." because that phrasing puts a copula next to
+       a name, while "What connects Hansel and Gretel?" abstained. */
+    const int steps = (0 != graph_asked) ? 1 : 11;
+    for (step = 0; step < steps && RELATION_RULE_ASSERTED < best; ++step) {
       int ok;
       answer_fact_section_set(NULL, 0);
       answer_fact_learned_set(NULL, 0, RELATION_RULE_ASSERTED);
@@ -8253,21 +8593,27 @@ static int answer_query(const libxs_registry_t* corpus,
   fact_ok = (EXIT_SUCCESS == answer_fact_reply(corpus, query_text, query_len,
     reply, sizeof(reply))) ? 1 : 0;
   /**
-   * A question about the GRAPH that found no path abstains rather than falling
-   * through to ranked evidence. Asking how two entities relate is not answered by a
-   * sentence about one of them, and the fall-through would have answered "How are
-   * Achilles and Lincoln connected?" with an unrelated paragraph about Achilles --
-   * a confident non-answer, which is the failure mode the abstention discipline
-   * exists to prevent.
+   * A GRAPH QUESTION IS ANSWERED BY A PATH OR NOT AT ALL.
+   *
+   * Asking how two entities relate is not answered by a sentence about one of them,
+   * and the fall-through answered "How are Achilles and Lincoln connected?" with an
+   * unrelated paragraph about Achilles -- a confident non-answer, which is the failure
+   * the abstention discipline exists to prevent.
+   *
+   * THE FIRST VERSION OF THIS GUARD WAS TOO WEAK: it asked only when no other layer
+   * had spoken, so a graph question that some other layer could answer was never
+   * tested, and the same question in two phrasings behaved differently -- "What
+   * connects Hansel and Gretel?" abstained while "How are Hansel and Gretel
+   * connected?" replied "Hansel is the boy." (the identity layer answering a question
+   * nobody asked, because that phrasing puts a copula next to a name). It also asked
+   * whether BOTH endpoints resolve to census names, which let "What connects Hansel
+   * and the witch?" fall through to a raw quotation.
+   *
+   * A DECLARED link term is what makes it a graph question -- not the endpoints
+   * resolving, and not the failure of everything else. So the test is the declared
+   * term, and the only admissible answer is the path the graph states.
    */
-  if (0 == fact_ok) {
-    char first[64], second[64];
-    if (0 != answer_link_query(query_text, query_len, first, (int)sizeof(first),
-      second, (int)sizeof(second)))
-    {
-      return 0;
-    }
-  }
+  if (0 == fact_ok && 0 != answer_graph_asked(query_text, query_len)) return 0;
   fact_prov = (0 < answer_fact_learned_len)
     ? answer_fact_learned_from : RELATION_RULE_ASSERTED;
   memcpy(fact_section, answer_fact_section,
@@ -8317,6 +8663,12 @@ static int answer_query(const libxs_registry_t* corpus,
       out_reply[rn] = '\0';
     }
     return 1;
+  }
+  /* Ranked evidence is reached only when no proposition was found. If the rule file
+     also did not recognize the QUESTION, the reader is told that before being handed
+     a sentence, so a relevant-looking quotation is never mistaken for an answer. */
+  if (0 < answer_count && 0 == answer_query_recognized(query_text, query_len)) {
+    printf("I did not recognize the question. The closest the corpus comes:\n");
   }
   rendered = answer_render(query_text, query_len, entries, answer_count,
     lexicon, rules, nrules, 1, visible, sizeof(visible));
@@ -9295,6 +9647,7 @@ int converse_qa_run(converse_run_t* run)
   answer_type_facts_report(stderr);
   answer_own_facts_report(stderr);
   answer_verbs_report(stderr);
+  answer_graph_report(stderr);
   converse_judge_open(run->corpus);
   if (0 != run->eval_mode) {
     result = eval_converse(run->corpus, run->lexicon, run->rules, run->nrules,
