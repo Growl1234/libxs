@@ -183,3 +183,32 @@ void ozaki_ocl_finalize(void)
 {
   libxstream_finalize();
 }
+
+
+/**
+ * Host allocation through LIBXSTREAM, exposed so a driver can measure the
+ * transport it gets with page-locked operands without linking LIBXSTREAM
+ * itself. This is a control arm and not the production path: an intercepted
+ * BLAS call receives whatever the application allocated, so the default must
+ * stay plain malloc or the measurement stops describing a drop-in replacement.
+ *
+ * No stream is taken. Matrices are allocated before any GEMM, hence before a
+ * stream exists, and both entry points fall back to the default stream for a
+ * NULL argument. Initialization is forced here for the same reason.
+ */
+void* ozaki_ocl_host_malloc(size_t nbytes)
+{
+  void* result = NULL;
+  if (0 != nbytes && EXIT_SUCCESS == libxstream_init()) {
+    if (EXIT_SUCCESS != libxstream_mem_host_allocate(&result, nbytes, NULL)) result = NULL;
+  }
+  return result;
+}
+
+
+int ozaki_ocl_host_free(void* ptr)
+{
+  int result = EXIT_SUCCESS;
+  if (NULL != ptr) result = libxstream_mem_host_deallocate(ptr, NULL);
+  return result;
+}

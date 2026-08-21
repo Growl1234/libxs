@@ -23,11 +23,24 @@ LIBXS_PRAGMA_WEAK(GEMM_REAL)
 
 
 static double gemm_duration(double* times, int nrepeat, double total);
+static void* gemm_host_malloc(size_t nbytes, int hostmem);
+static void gemm_host_free(void* ptr, int hostmem);
 
 
 int main(int argc, char* argv[])
 {
   const char* const nrepeat_env = getenv("NREPEAT");
+  /**
+   * GEMM_HOSTMEM=1 allocates the matrices with the offload library's host
+   * allocator, which returns page-locked pages, instead of malloc. It exists to
+   * separate two costs an intercepted BLAS call pays together: reaching the
+   * device at all, and reaching it from memory the driver never registered.
+   * The default is 0 on purpose -- an application that calls dgemm cannot
+   * choose its allocator, so 0 is the only arm that describes a drop-in
+   * replacement, and 1 is the ceiling it could reach.
+   */
+  const char* const env_hostmem = getenv("GEMM_HOSTMEM");
+  const int hostmem = (NULL != env_hostmem && 0 != *env_hostmem) ? atoi(env_hostmem) : 0;
   const char* const env_check = getenv("CHECK");
   const char* const env_evil = getenv("EVIL");
   const double check = (NULL == env_check || 0 == *env_check) ? 0 : atof(env_check);
@@ -148,10 +161,10 @@ int main(int argc, char* argv[])
 
   if (EXIT_SUCCESS == result) { /* Allocate matrices */
     const size_t nc = (0 != complex_input ? 2 : 1);
-    a = (GEMM_REAL_TYPE*)malloc(sizeof(GEMM_REAL_TYPE) * nc * lda * a_cols);
-    b = (GEMM_REAL_TYPE*)malloc(sizeof(GEMM_REAL_TYPE) * nc * ldb * b_cols);
-    c = (GEMM_REAL_TYPE*)malloc(sizeof(GEMM_REAL_TYPE) * nc * ldc * n);
-    c_ref = (GEMM_REAL_TYPE*)malloc(sizeof(GEMM_REAL_TYPE) * nc * ldc * n);
+    a = (GEMM_REAL_TYPE*)gemm_host_malloc(sizeof(GEMM_REAL_TYPE) * nc * lda * a_cols, hostmem);
+    b = (GEMM_REAL_TYPE*)gemm_host_malloc(sizeof(GEMM_REAL_TYPE) * nc * ldb * b_cols, hostmem);
+    c = (GEMM_REAL_TYPE*)gemm_host_malloc(sizeof(GEMM_REAL_TYPE) * nc * ldc * n, hostmem);
+    c_ref = (GEMM_REAL_TYPE*)gemm_host_malloc(sizeof(GEMM_REAL_TYPE) * nc * ldc * n, hostmem);
     if (NULL != a && NULL != b && NULL != c && NULL != c_ref) {
       if (0 == file_input || 0 == beta) {
         LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, 0, c, m, n, ldc, scale);
@@ -302,10 +315,10 @@ int main(int argc, char* argv[])
   }
 
   libxs_finalize();
-  free(c_ref);
-  free(c);
-  free(b);
-  free(a);
+  gemm_host_free(c_ref, hostmem);
+  gemm_host_free(c, hostmem);
+  gemm_host_free(b, hostmem);
+  gemm_host_free(a, hostmem);
 
   return result;
 }
@@ -321,6 +334,39 @@ int main(int argc, char* argv[])
  * times[nrepeat-1] are the extremes afterwards.  A NULL times (allocation
  * failed) leaves the mean of total as the only figure available.
  */
+static void* gemm_host_malloc(size_t nbytes, int hostmem)
+{
+  void* result = NULL;
+#if defined(__LIBXSTREAM)
+  if (0 != hostmem) result = ozaki_ocl_host_malloc(nbytes);
+  else result = malloc(nbytes);
+#else
+  /**
+   * Requested but unavailable is an error and not a fallback: a run that
+   * silently used malloc would be recorded as the page-locked arm, and the two
+   * differ by an order of magnitude on a PCIe part.
+   */
+  if (0 != hostmem) {
+    fprintf(stderr, "ERROR: GEMM_HOSTMEM=%i needs a LIBXSTREAM-enabled build.\n", hostmem);
+  }
+  else result = malloc(nbytes);
+#endif
+  return result;
+}
+
+
+static void gemm_host_free(void* ptr, int hostmem)
+{
+#if defined(__LIBXSTREAM)
+  if (0 != hostmem) LIBXS_EXPECT(EXIT_SUCCESS == ozaki_ocl_host_free(ptr));
+  else free(ptr);
+#else
+  LIBXS_UNUSED(hostmem);
+  free(ptr);
+#endif
+}
+
+
 static double gemm_duration(double* times, int nrepeat, double total)
 {
   double result;

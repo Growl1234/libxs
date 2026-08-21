@@ -305,6 +305,9 @@ OZAKI_APIVAR_PRIVATE(void* ozaki_ocl_handle);
 void* ozaki_ocl_create(int use_double, int kind, int verbosity, int tm, int tn, int ndecomp, int ozflags, int oztrim, int ozgroups,
   int maxk);
 void ozaki_ocl_release(void* handle);
+/** Page-locked host allocation, for the GEMM_HOSTMEM control arm. */
+void* ozaki_ocl_host_malloc(size_t nbytes);
+int ozaki_ocl_host_free(void* ptr);
 int ozaki_ocl_gemm(void* handle, char transa, char transb, int M, int N, int K, double alpha, const void* a, int lda, const void* b,
   int ldb, double beta, void* c, int ldc);
 int ozaki_ocl_gemm_complex(void* handle, char transa, char transb, int M, int N, int K, const double* alpha, const void* a, int lda,
