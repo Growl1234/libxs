@@ -50,7 +50,7 @@ typedef struct answer_fact_index_t {
 } answer_fact_index_t;
 
 #define ANSWER_FACTS_MAGIC 0x54434643u
-#define ANSWER_FACTS_VERSION 10
+#define ANSWER_FACTS_VERSION 11
 #define ANSWER_LOCATION_PHRASE_MAX 96
 /** Propositions one attribute collection may rest on, and cite. */
 #define ANSWER_TOPIC_MAX 4
@@ -153,6 +153,9 @@ typedef struct answer_type_fact_t {
   int name_len;
   int phrase_len;
   int section_len;
+  /** The entity at the other end, when the shape names one (kinship). */
+  char partner[64];
+  int partner_len;
   unsigned short source;
   unsigned int line;
   int shape;
@@ -570,6 +573,12 @@ static int answer_citation_text(const char* section, int section_len,
   char* output, size_t output_size);
 static void answer_print_citation(const char* section, int section_len);
 static void answer_fact_section_set(const char* section, int section_len);
+/** Answer a KNOWLEDGE-GRAPH question by stating the path between two entities. */
+static int answer_link_reply(const char* query_text, size_t query_len,
+  char* output, size_t output_size);
+/** The two entities a graph question names, or zero if it names no pair. */
+static int answer_link_query(const char* query_text, size_t query_len,
+  char* first, int first_size, char* second, int second_size);
 /** Record where one item of a reply came from: source id and line. */
 static void answer_origin_add(unsigned int source, unsigned int line);
 /** Name one more source, for a reply that rests on several facts. */
@@ -2219,9 +2228,20 @@ static int answer_relation_fact_extract_actor(const char* text, int text_len,
       && ('-' == text[*scan_pos]
         || 0 != isalnum((unsigned char)text[*scan_pos]))) ++*scan_pos;
     end = *scan_pos;
+    /**
+     * The actor must be something the corpus uses as a NOUN or attests as a NAME.
+     * Neither test alone works here: an alias actor is often a common noun ("the
+     * wolf"), which no census knows, and often a name ("Gretel"), which the article
+     * frame never sees. Requiring one OR the other is what stops a sentence-initial
+     * function word from becoming an entity -- "Then eaten Grandmother" and "Do
+     * eaten Grandmother" were edges of the fact graph, and a multi-hop walk over
+     * that graph would state paths through a node named "Then".
+     */
     if (end > begin && end - begin < actor_size
       && 0 == answer_relation_rule_has_term(RELATION_RULE_SKIP,
-        text + begin, end - begin))
+        text + begin, end - begin)
+      && (0 != answer_word_is_noun(text + begin, end - begin)
+        || 0 != answer_identity_word_is_name(text + begin, end - begin)))
     {
       memcpy(actor, text + begin, (size_t)(end - begin));
       actor[end - begin] = '\0';
@@ -2539,6 +2559,18 @@ static int answer_relation_fact_extract_active(const corpus_entry_t* entry)
               const int len = (int)(word_end - word);
               if (0 != answer_relation_rule_is_term(RELATION_RULE_PREP, word,
                   len)
+                /**
+                 * A LOWER-CASE NOUN before the name makes the name that noun's
+                 * appositive rather than the subject of a clause: "the postal
+                 * authority in West Germany turned a large radio dish" is not
+                 * Germany turning one. Lower case is required because a capitalized
+                 * one belongs to the name run itself ("President-elect Lincoln"),
+                 * and answer_word_is_noun rather than mere attestation because the
+                 * broader test costs 31 facts including fixture edges ("Berbers
+                 * adopted Islam", "French invaded Algiers").
+                 */
+                || (0 != islower((unsigned char)*word)
+                  && 0 != answer_word_is_noun(word, len))
                 || 0 != answer_word_is_verb(word, len))
               {
                 name_subject = 0;
@@ -2603,7 +2635,9 @@ static int answer_relation_fact_extract_active(const corpus_entry_t* entry)
             object, head_len))
           {
             int taken = 0;
-            while (taken < 3 && object_end < text_end && ' ' == *object_end) {
+            while (object_end - object < 120
+              && object_end < text_end && ' ' == *object_end)
+            {
               const char* more = object_end + 1;
               int more_len = 0;
               while (more + more_len < text_end
@@ -2614,6 +2648,25 @@ static int answer_relation_fact_extract_active(const corpus_entry_t* entry)
               object_end = more + more_len;
               ++taken;
             }
+            /**
+             * The phrase runs to where the corpus ends one, not for a fixed number of
+             * words. A COUNT was the bound and it cut the longer phrases at a
+             * modifier ("the first successful internal-combustion", "the most common
+             * character"), which is a false proposition rather than a short one.
+             *
+             * THE TAIL CANNOT BE GATED BY EITHER DERIVED CLASS, and three variants
+             * were REFUTED by reading the facts. Cutting BACK to the last attested
+             * phrase head truncated "the history books" to "the history", because head
+             * attestation is sparse for plurals -- the error being removed,
+             * reintroduced. Requiring the tail to appear in the article frame at all
+             * cost 26 truths for 6 rejections, since that frame sees a fraction of the
+             * nouns a corpus uses. Rejecting a tail in the DERIVED VERB class cost 19
+             * truths for 2, because English nouns are verb-homographous exactly where
+             * they are frequent ("the Australian Open", "a spectacular run", "the
+             * claim", "the use"). What remains -- a participle or an undeclared adverb
+             * taken into the phrase -- is a gap in a DECLARED class, and belongs in
+             * the rule file rather than in a test here.
+             */
             if (0 < taken) object_len = (int)(object_end - object);
           }
         }
@@ -2685,6 +2738,19 @@ static size_t answer_relation_facts_build(const libxs_registry_t* corpus)
     const corpus_entry_t* entry = corpus_entry_scan(value, &scratch);
     int made_scan = 0;
     size_t rule_pos;
+    /**
+     * A CAPTION IS NOT A PROPOSITION. The section table already refuses to read one
+     * as a heading, and the same mark answers the question this layer was asking
+     * wrongly: "thumb|300px|Alexander the Great fighting Persian king Darius III"
+     * yielded "BC | original | Greek" and a photo credit yielded "Hale Bopp | using
+     * | a standard". The text STAYS in the corpus -- it is words a reader wrote and
+     * the language models count it -- and only the fact layers decline to state a
+     * proposition on its behalf.
+     */
+    if (0 != corpus_line_markup(entry->text, entry->text_len)) {
+      value = corpus_iterx_next(corpus, &key, &cursor);
+      continue;
+    }
     while (made_scan < entry->text_len) {
       int made_pos = text_find_word_ci(entry->text + made_scan,
         entry->text_len - made_scan, "made");
@@ -2864,14 +2930,17 @@ static int answer_identity_fact_append(const char* name, int name_len,
   memcpy(fact.role, role, (size_t)role_len);
   fact.role[role_len] = '\0';
   fact.role_len = role_len;
+  /* The ORIGIN is not part of the section: a fact from an entry with no heading
+     still came from a file and a line, and keeping this inside the section guard
+     silently dropped every citation on a corpus that has no titles. */
+  fact.source = (NULL != entry) ? entry->source : 0;
+  fact.line = (NULL != entry) ? entry->line : 0;
   if (NULL != entry && entry->section_len > 0
     && entry->section_len < (int)sizeof(fact.section))
   {
     memcpy(fact.section, entry->section, (size_t)entry->section_len);
     fact.section[entry->section_len] = '\0';
     fact.section_len = entry->section_len;
-    fact.source = (NULL != entry) ? entry->source : 0;
-    fact.line = (NULL != entry) ? entry->line : 0;
   }
   fact.score = score;
   fact.provenance = answer_relation_rule_provenance(RELATION_RULE_PERSON,
@@ -3118,13 +3187,13 @@ static int answer_location_fact_append(const char* actor, int actor_len,
   fact.phrase_len = phrase_len;
   memcpy(fact.place, place, (size_t)place_len);
   fact.place_len = place_len;
+  fact.source = (NULL != entry) ? entry->source : 0;
+  fact.line = (NULL != entry) ? entry->line : 0;
   if (NULL != entry && entry->section_len > 0
     && entry->section_len < (int)sizeof(fact.section))
   {
     memcpy(fact.section, entry->section, (size_t)entry->section_len);
     fact.section_len = entry->section_len;
-    fact.source = (NULL != entry) ? entry->source : 0;
-    fact.line = (NULL != entry) ? entry->line : 0;
   }
   fact.score = score;
   fact.provenance = answer_relation_rule_provenance(RELATION_RULE_PLACE,
@@ -3443,13 +3512,13 @@ static int answer_type_fact_append(const char* name, int name_len,
   fact.phrase_len = phrase_len;
   fact.shape = shape;
   fact.score = score;
+  fact.source = (NULL != entry) ? entry->source : 0;
+  fact.line = (NULL != entry) ? entry->line : 0;
   if (NULL != entry && entry->section_len > 0
     && entry->section_len < (int)sizeof(fact.section))
   {
     memcpy(fact.section, entry->section, (size_t)entry->section_len);
     fact.section_len = entry->section_len;
-    fact.source = (NULL != entry) ? entry->source : 0;
-    fact.line = (NULL != entry) ? entry->line : 0;
   }
   /* One type per name, the TIGHTEST binding: a corpus states what something is
      more than once, and the shortest statement of it is the definition rather
@@ -3588,6 +3657,16 @@ static int answer_type_kin_append(const corpus_entry_t* entry, int heading_len,
           (int)at, ANSWER_TYPE_KIN, entry,
           (double)(ANSWER_TYPE_PHRASE_MAX - (int)at)))
         {
+          /* The possessor is the entity at the other end, and naming it in its own
+             field is what lets the graph traverse this fact instead of parsing the
+             sentence it renders as. */
+          answer_type_fact_t* stored = answer_type_facts
+            + (answer_type_facts_size - 1);
+          if (0 < pure_len && pure_len < (int)sizeof(stored->partner)) {
+            memcpy(stored->partner, owner, (size_t)pure_len);
+            stored->partner[pure_len] = '\0';
+            stored->partner_len = pure_len;
+          }
           result = 1;
         }
       }
@@ -3824,7 +3903,9 @@ static void answer_type_facts_report(FILE* stream)
         const char* shape = "appositive";
         if (ANSWER_TYPE_COPULAR == fact->shape) shape = "copular";
         else if (ANSWER_TYPE_KIN == fact->shape) shape = "kin";
-        fprintf(stream, "  type[%s] %s\n", shape, fact->phrase);
+        fprintf(stream, "  type[%s] %s  [%s:%u]\n", shape, fact->phrase,
+          (NULL != corpus_source_path(fact->source))
+            ? corpus_source_path(fact->source) : "?", fact->line);
       }
     }
   }
@@ -3912,6 +3993,332 @@ static int answer_type_kin_reply(const char* query_text, size_t query_len,
 {
   return answer_type_reply_shape(query_text, query_len, output, output_size,
     ANSWER_TYPE_KIN);
+}
+
+
+/**
+ * The KNOWLEDGE GRAPH: what the fact layers say about how two entities relate.
+ *
+ * No index and no new storage. The edges are the facts that already exist -- a
+ * relation fact whose actor and answer are both entities, and a kinship fact, which
+ * names its partner in a field for exactly this reason -- so an edge VIEW over them
+ * is all a walk needs. An index was priced and declined (C2): at these fact counts a
+ * scan per query is cheaper than a structure that has to be kept true.
+ */
+typedef struct answer_edge_t {
+  const char* from;
+  int from_len;
+  const char* to;
+  int to_len;
+  /* Which layer states it, so the reply can be rendered by that layer rather than
+     reassembled here from the pieces. */
+  const answer_relation_fact_t* relation;
+  const answer_type_fact_t* type;
+} answer_edge_t;
+
+
+/** Whether a fact field names an ENTITY rather than a phrase about one. */
+static int answer_edge_is_entity(const char* text, int text_len)
+{
+  int result = 0;
+  if (NULL != text && 1 < text_len) {
+    int at = 0, word_len = 0, clean = 1;
+    while (at < text_len && 0 != clean) {
+      word_len = 0;
+      while (at + word_len < text_len
+        && ('-' == text[at + word_len]
+          || 0 != isalpha((unsigned char)text[at + word_len]))) ++word_len;
+      if (0 == word_len) clean = 0;
+      /* The FIRST word carries the census evidence, and the rest only has to be
+         part of the same run: "Ross Perot" is one entity, "the wolf" is not, and
+         testing the whole string as one word rejected every two-word name. */
+      else if (0 == at
+        && 0 == answer_identity_word_is_name(text, word_len)) clean = 0;
+      else {
+        at += word_len;
+        if (at < text_len) {
+          if (' ' == text[at]) ++at;
+          else clean = 0;
+        }
+      }
+    }
+    result = clean;
+  }
+  return result;
+}
+
+
+/** Fill edge from a fact if it states one, and say whether it does. */
+static int answer_edge_of_relation(const answer_relation_fact_t* fact,
+  answer_edge_t* edge)
+{
+  int result = 0;
+  if (NULL != fact && NULL != edge && 0 == fact->made
+    && 0 != answer_edge_is_entity(fact->actor, fact->actor_len)
+    && 0 != answer_edge_is_entity(fact->answer, fact->answer_len))
+  {
+    memset(edge, 0, sizeof(*edge));
+    edge->from = fact->actor;
+    edge->from_len = fact->actor_len;
+    edge->to = fact->answer;
+    edge->to_len = fact->answer_len;
+    edge->relation = fact;
+    result = 1;
+  }
+  return result;
+}
+
+
+static int answer_edge_of_type(const answer_type_fact_t* fact,
+  answer_edge_t* edge)
+{
+  int result = 0;
+  if (NULL != fact && NULL != edge && 0 < fact->partner_len
+    && 0 != answer_edge_is_entity(fact->name, fact->name_len)
+    && 0 != answer_edge_is_entity(fact->partner, fact->partner_len))
+  {
+    memset(edge, 0, sizeof(*edge));
+    edge->from = fact->name;
+    edge->from_len = fact->name_len;
+    edge->to = fact->partner;
+    edge->to_len = fact->partner_len;
+    edge->type = fact;
+    result = 1;
+  }
+  return result;
+}
+
+
+/** The next edge touching this entity, from a cursor over both fact layers. */
+static int answer_edge_next(const char* name, int name_len, size_t* cursor,
+  answer_edge_t* edge)
+{
+  int result = 0;
+  if (NULL != name && 0 < name_len && NULL != cursor && NULL != edge) {
+    while (0 == result && *cursor < answer_relation_facts_size) {
+      const answer_relation_fact_t* fact = answer_relation_facts + *cursor;
+      ++*cursor;
+      if (0 != answer_edge_of_relation(fact, edge)
+        && (0 != text_contains_word_ci(edge->from, edge->from_len, name)
+          || 0 != text_contains_word_ci(edge->to, edge->to_len, name)))
+      {
+        /* Oriented so the entity asked about is always the near end: an edge reads
+           from either side, and the caller should not have to test which. */
+        if (0 == text_contains_word_ci(edge->from, edge->from_len, name)) {
+          const char* text = edge->from;
+          const int len = edge->from_len;
+          edge->from = edge->to;
+          edge->from_len = edge->to_len;
+          edge->to = text;
+          edge->to_len = len;
+        }
+        result = 1;
+      }
+    }
+    while (0 == result
+      && *cursor - answer_relation_facts_size < answer_type_facts_size)
+    {
+      const answer_type_fact_t* fact = answer_type_facts
+        + (*cursor - answer_relation_facts_size);
+      ++*cursor;
+      if (0 != answer_edge_of_type(fact, edge)
+        && (0 != text_contains_word_ci(edge->from, edge->from_len, name)
+          || 0 != text_contains_word_ci(edge->to, edge->to_len, name)))
+      {
+        if (0 == text_contains_word_ci(edge->from, edge->from_len, name)) {
+          const char* text = edge->from;
+          const int len = edge->from_len;
+          edge->from = edge->to;
+          edge->from_len = edge->to_len;
+          edge->to = text;
+          edge->to_len = len;
+        }
+        result = 1;
+      }
+    }
+  }
+  return result;
+}
+
+
+/** State one edge as the layer that holds it would state it, and cite it. */
+static int answer_edge_render(const answer_edge_t* edge, char* output,
+  size_t output_size)
+{
+  int result = EXIT_FAILURE;
+  if (NULL != edge && NULL != output && 0 < output_size) {
+    if (NULL != edge->relation) {
+      answer_relation_match_t match;
+      const answer_relation_fact_t* fact = edge->relation;
+      memset(&match, 0, sizeof(match));
+      memcpy(match.answer, fact->answer, (size_t)fact->answer_len + 1);
+      match.answer_len = fact->answer_len;
+      memcpy(match.relation, fact->relation, (size_t)fact->relation_len + 1);
+      match.relation_len = fact->relation_len;
+      memcpy(match.actor, fact->actor, (size_t)fact->actor_len + 1);
+      match.actor_len = fact->actor_len;
+      match.plural = fact->plural;
+      match.active = fact->active;
+      result = answer_relation_reply(&match, output, output_size);
+      if (EXIT_SUCCESS == result) {
+        answer_fact_section_add(fact->section, fact->section_len);
+        answer_origin_add(fact->source, fact->line);
+      }
+    }
+    else if (NULL != edge->type) {
+      result = answer_type_render(edge->type, output, output_size);
+      if (EXIT_SUCCESS == result) {
+        answer_fact_section_add(edge->type->section, edge->type->section_len);
+        answer_origin_add(edge->type->source, edge->type->line);
+      }
+    }
+  }
+  return result;
+}
+
+
+/**
+ * The two entities a graph question asks about.
+ *
+ * A declared `link|` term is what says the question is about the graph at all, and
+ * the two entities are the census names it mentions -- exactly two, or the question
+ * is not about a pair and this resolver has nothing to say.
+ */
+static int answer_link_query(const char* query_text, size_t query_len,
+  char* first, int first_size, char* second, int second_size)
+{
+  int result = 0;
+  static const char delims[] = " \t\r\n,.;:!?()[]{}\"\'";
+  char buffer[512];
+  size_t copy = query_len;
+  int found = 0, linked = 0;
+  int token_index = 0, token_len = 0;
+  const char* token;
+  if (NULL == query_text || NULL == first || NULL == second) return 0;
+  if (copy >= sizeof(buffer)) copy = sizeof(buffer) - 1;
+  memcpy(buffer, query_text, copy);
+  buffer[copy] = '\0';
+  first[0] = '\0';
+  second[0] = '\0';
+  while (NULL != (token = libxs_strtoken(buffer, delims, token_index,
+    &token_len)))
+  {
+    if (0 != answer_relation_rule_is_term(RELATION_RULE_LINK, token,
+      token_len))
+    {
+      linked = 1;
+    }
+    else if (0 != answer_identity_word_is_name(token, token_len)) {
+      char* slot = (0 == found) ? first : second;
+      const int size = (0 == found) ? first_size : second_size;
+      /* A name is a RUN, so "Ross Perot" is one entity and not two: counting words
+         made every two-word name look like a pair and the question unanswerable. */
+      int run_len = token_len;
+      const char* next;
+      int next_len = 0;
+      while (NULL != (next = libxs_strtoken(buffer, delims, token_index + 1,
+        &next_len)))
+      {
+        if (next != token + run_len + 1 || ' ' != token[run_len]
+          || 0 == answer_identity_word_is_name(next, next_len)) break;
+        run_len = (int)(next + next_len - token);
+        ++token_index;
+      }
+      if (run_len < size && 2 > found) {
+        memcpy(slot, token, (size_t)run_len);
+        slot[run_len] = '\0';
+        ++found;
+      }
+      else ++found;
+    }
+    ++token_index;
+  }
+  if (0 != linked && 2 == found) result = 1;
+  return result;
+}
+
+
+/**
+ * Answer a graph question by STATING THE PATH, never by composing it.
+ *
+ * A direct edge is one proposition; two edges through a middle entity are two, and
+ * both are stated with their own citations. What this deliberately does NOT do is
+ * assert a relation between the endpoints: no sentence in the corpus says one, so
+ * composing it would be inference, and inference here has always had to be judged.
+ * The reader is given the two attested facts and draws the connection.
+ */
+static int answer_link_reply(const char* query_text, size_t query_len,
+  char* output, size_t output_size)
+{
+  int result = EXIT_FAILURE;
+  char first[64], second[64];
+  if (NULL == output || 0 == output_size
+    || 0 == answer_link_query(query_text, query_len, first, (int)sizeof(first),
+      second, (int)sizeof(second)))
+  {
+    return EXIT_FAILURE;
+  }
+  { answer_edge_t edge;
+    size_t cursor = 0;
+    char text[COMPOSE_MAXTEXT];
+    answer_fact_section_set(NULL, 0);
+    output[0] = '\0';
+    /* A DIRECT edge first: two facts about a pair the corpus states outright would
+       be a longer answer than the one it states. */
+    while (EXIT_FAILURE == result
+      && 0 != answer_edge_next(first, (int)strlen(first), &cursor, &edge))
+    {
+      if (0 != text_contains_word_ci(edge.to, edge.to_len, second)
+        && EXIT_SUCCESS == answer_edge_render(&edge, text, sizeof(text)))
+      {
+        size_t len = strlen(text);
+        if (len < output_size) {
+          memcpy(output, text, len + 1);
+          result = EXIT_SUCCESS;
+        }
+      }
+    }
+    cursor = 0;
+    while (EXIT_FAILURE == result
+      && 0 != answer_edge_next(first, (int)strlen(first), &cursor, &edge))
+    {
+      char middle[64];
+      answer_edge_t onward;
+      size_t inner = 0;
+      int middle_len = edge.to_len;
+      if (middle_len >= (int)sizeof(middle)) continue;
+      memcpy(middle, edge.to, (size_t)middle_len);
+      middle[middle_len] = '\0';
+      if (0 != text_contains_word_ci(middle, middle_len, first)) continue;
+      while (EXIT_FAILURE == result
+        && 0 != answer_edge_next(middle, middle_len, &inner, &onward))
+      {
+        if (0 == text_contains_word_ci(onward.to, onward.to_len, second)
+          || 0 != text_contains_word_ci(onward.to, onward.to_len, first))
+        {
+          continue;
+        }
+        if (EXIT_SUCCESS == answer_edge_render(&edge, text, sizeof(text))) {
+          size_t pos = strlen(text);
+          if (pos + 2 < output_size) {
+            memcpy(output, text, pos);
+            output[pos++] = ' ';
+            output[pos] = '\0';
+            if (EXIT_SUCCESS == answer_edge_render(&onward, text,
+              sizeof(text)))
+            {
+              const size_t len = strlen(text);
+              if (pos + len < output_size) {
+                memcpy(output + pos, text, len + 1);
+                result = EXIT_SUCCESS;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return result;
 }
 
 
@@ -4374,13 +4781,13 @@ static int answer_own_fact_append(const char* owner, int owner_len,
   memcpy(fact.item, item, (size_t)item_len);
   fact.item_len = item_len;
   fact.score = score;
+  fact.source = (NULL != entry) ? entry->source : 0;
+  fact.line = (NULL != entry) ? entry->line : 0;
   if (NULL != entry && entry->section_len > 0
     && entry->section_len < (int)sizeof(fact.section))
   {
     memcpy(fact.section, entry->section, (size_t)entry->section_len);
     fact.section_len = entry->section_len;
-    fact.source = (NULL != entry) ? entry->source : 0;
-    fact.line = (NULL != entry) ? entry->line : 0;
   }
   /**
    * An owner may own many things, so only the same item collapses -- and one item
@@ -7240,29 +7647,33 @@ static int answer_fact_reply(const libxs_registry_t* corpus,
   best_section[0] = '\0';
   best_learned[0] = '\0';
   if (0 == answer_query_is_negated(query_text, query_len)) {
-    for (step = 0; step < 10 && RELATION_RULE_ASSERTED < best; ++step) {
+    for (step = 0; step < 11 && RELATION_RULE_ASSERTED < best; ++step) {
       int ok;
       answer_fact_section_set(NULL, 0);
       answer_fact_learned_set(NULL, 0, RELATION_RULE_ASSERTED);
       output[0] = '\0';
       switch (step) {
-        case 0: ok = answer_relation_fact_reply(query_text, query_len,
+        /* The graph question is asked first because it is the only one that reads a
+           PAIR of entities, so no other resolver can be answering it. */
+        case 0: ok = answer_link_reply(query_text, query_len, output,
+          output_size); break;
+        case 1: ok = answer_relation_fact_reply(query_text, query_len,
           output, output_size); break;
-        case 1: ok = answer_relation_aggregate_reply(corpus, query_text,
+        case 2: ok = answer_relation_aggregate_reply(corpus, query_text,
           query_len, output, output_size); break;
-        case 2: ok = answer_type_kin_reply(query_text, query_len,
+        case 3: ok = answer_type_kin_reply(query_text, query_len,
           output, output_size); break;
-        case 3: ok = answer_identity_fact_reply(query_text, query_len,
+        case 4: ok = answer_identity_fact_reply(query_text, query_len,
           output, output_size); break;
-        case 4: ok = answer_describe_fact_reply(query_text, query_len,
+        case 5: ok = answer_describe_fact_reply(query_text, query_len,
           output, output_size); break;
-        case 5: ok = answer_location_fact_reply(query_text, query_len,
+        case 6: ok = answer_location_fact_reply(query_text, query_len,
           output, output_size); break;
-        case 6: ok = answer_type_fact_reply(query_text, query_len,
+        case 7: ok = answer_type_fact_reply(query_text, query_len,
           output, output_size); break;
-        case 7: ok = answer_own_fact_reply(query_text, query_len,
+        case 8: ok = answer_own_fact_reply(query_text, query_len,
           output, output_size); break;
-        case 8: ok = answer_topic_reply(query_text, query_len,
+        case 9: ok = answer_topic_reply(query_text, query_len,
           output, output_size); break;
         default: ok = answer_docdef_fact_reply(query_text, query_len,
           output, output_size); break;
@@ -7734,6 +8145,22 @@ static int answer_query(const libxs_registry_t* corpus,
   if (NULL != out_reply && out_size > 0) out_reply[0] = '\0';
   fact_ok = (EXIT_SUCCESS == answer_fact_reply(corpus, query_text, query_len,
     reply, sizeof(reply))) ? 1 : 0;
+  /**
+   * A question about the GRAPH that found no path abstains rather than falling
+   * through to ranked evidence. Asking how two entities relate is not answered by a
+   * sentence about one of them, and the fall-through would have answered "How are
+   * Achilles and Lincoln connected?" with an unrelated paragraph about Achilles --
+   * a confident non-answer, which is the failure mode the abstention discipline
+   * exists to prevent.
+   */
+  if (0 == fact_ok) {
+    char first[64], second[64];
+    if (0 != answer_link_query(query_text, query_len, first, (int)sizeof(first),
+      second, (int)sizeof(second)))
+    {
+      return 0;
+    }
+  }
   fact_prov = (0 < answer_fact_learned_len)
     ? answer_fact_learned_from : RELATION_RULE_ASSERTED;
   memcpy(fact_section, answer_fact_section,
@@ -8506,13 +8933,30 @@ static int respond(const libxs_spatial_t* spatial,
     char rewritten[COMPOSE_MAXTEXT];
     const char* q = query_text;
     size_t qlen = query_len;
+    /**
+     * THE QUESTION AS ASKED COMES FIRST, and the multi-turn rewrite is a FALLBACK.
+     *
+     * The rewrite exists for a follow-up that cannot stand alone ("What does it
+     * do?"), and it carries the remembered topic in by appending " of the <topic>"
+     * to anything that has no term of its own. Applied first, that broke every
+     * self-contained question asked after a successful one: "What connects Admetus
+     * and Python?" became a question naming a third entity, and the graph resolver
+     * refused a pair it could not identify. A rewrite that is only reached when the
+     * question fails on its own cannot damage a question that does not need it.
+     */
+    if (0 != answer_query(corpus, q, qlen, budget,
+      lexicon, rules, nrules, answer_model, profile, NULL, 0))
+    {
+      conv_remember(q, qlen);
+      return result;
+    }
     if (EXIT_SUCCESS == conv_rewrite(query_text, query_len, rewritten,
       sizeof(rewritten)))
     {
       q = rewritten;
       qlen = strlen(rewritten);
     }
-    if (0 != answer_query(corpus, q, qlen, budget,
+    if (q != query_text && 0 != answer_query(corpus, q, qlen, budget,
       lexicon, rules, nrules, answer_model, profile, NULL, 0))
     {
       conv_remember(q, qlen);

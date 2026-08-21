@@ -715,6 +715,12 @@ static int answer_relation_rule_kind(const char* text)
      * "was visited by Odysseus" is an edge, "was visited in Athens" is not.
      */
     else if (0 == strcmp(text, "agent")) result = RELATION_RULE_AGENT;
+    /**
+     * `link|connected` marks a question about the KNOWLEDGE GRAPH -- how two entities
+     * relate -- which is a different question from any single shape's: it is answered
+     * by a PATH through facts rather than by one of them.
+     */
+    else if (0 == strcmp(text, "link")) result = RELATION_RULE_LINK;
   }
   return result;
 }
@@ -2502,7 +2508,7 @@ int corpus_title_len(const char* text, int len)
  * reading any words, since it is field syntax in every markup that has it and
  * punctuation in no prose.
  */
-static int corpus_line_markup(const char* text, int len)
+int corpus_line_markup(const char* text, int len)
 {
   int result = 0;
   if (NULL != text && 0 < len) {
@@ -2512,6 +2518,24 @@ static int corpus_line_markup(const char* text, int len)
       if (0 < end && ']' == text[end - 1]) result = 1;
     }
     if (0 == result && NULL != memchr(text, '|', (size_t)len)) result = 1;
+    /* An entity reference is markup by the same argument as the bar: "&nbsp;" and
+       "&ndash;" are syntax, and a line carrying one was never prose a reader wrote.
+       Without this, "Best Picture&nbsp;&ndash; 1928 to present" was a section and
+       answers were credited to it. */
+    if (0 == result) {
+      int at;
+      for (at = 0; at < len && 0 == result; ++at) {
+        if ('&' == text[at]) {
+          int scan = at + 1;
+          while (scan < len && scan < at + 9 && 0 == result) {
+            if (';' == text[scan]) result = 1;
+            else if (0 == isalnum((unsigned char)text[scan])
+              && '#' != text[scan]) break;
+            ++scan;
+          }
+        }
+      }
+    }
   }
   return result;
 }
@@ -2778,7 +2802,7 @@ static void corpus_sections_build(const unsigned char* text, size_t size)
           const size_t at = line_start + (size_t)indent;
           const int body = len - indent;
           size_t scan = pos + 1;
-          int alone;
+          int alone, cased = 0;
           while (scan < size && '\n' != text[scan] && 0 != isspace(text[scan])) {
             ++scan;
           }
@@ -2793,8 +2817,23 @@ static void corpus_sections_build(const unsigned char* text, size_t size)
            * whole cannot be a citation either, so the storage bound is the honest
            * one to test here.
            */
+          /**
+           * And the line must hold NO LOWER-CASE LETTER, which is the definition
+           * corpus_title_len already used for a heading inside an entry -- so there
+           * is one definition of "heading" in this file instead of two that
+           * disagree. It is what finally separates a title from prose on a corpus
+           * whose titles were dropped: every remaining false section on the wiki
+           * extracts was an ordinary sentence ("Rand's papers at The Library of
+           * Congress"), and no shape test could refuse them because they are shaped
+           * like titles. A prose corpus whose titles are mixed case loses its
+           * sections here and keeps its FILE and LINE, which is the trade this
+           * project takes every time: lose a truth rather than assert a falsehood.
+           */
+          for (d = 0; d < len - indent && 0 == cased; ++d) {
+            if (0 != islower((unsigned char)text[at + d])) cased = 1;
+          }
           if (0 < body && body < median && body < ENTRY_SECTION_MAX
-            && 0 != alone && (1 < blanks || 0 == line_start))
+            && 0 == cased && 0 != alone && (1 < blanks || 0 == line_start))
           {
             /* The first heading of a file has no separation above it and is
                still the outermost one there is, so it never votes and always

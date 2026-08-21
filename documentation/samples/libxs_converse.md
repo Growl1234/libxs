@@ -133,6 +133,8 @@ the sample answers:
 - `Who was V by X?` -- a relation, including passives it was never told about.
 - `What belongs to X?` -- an enumeration, each item cited.
 - `What do we know about X?` -- several cited propositions collected about one name.
+- `How are X and Y connected?` / `What connects X and Y?` -- the path between two
+  entities, stated as the propositions it is made of.
 - anything else question-shaped -- the best matching sentence, ranked and cited.
 
 Every answer is followed by a citation naming where it came from: the section title
@@ -141,6 +143,18 @@ when the corpus has headings, and always the file and the line. An answer assemb
 line. Titles are only printed when the text really carries them -- a corpus of flat
 prose is cited by file and line alone rather than by a sentence that happened to look
 like a heading.
+
+A connection question is answered by stating the facts that join the two entities,
+each with its own citation, and never by inventing a relation between them:
+
+```text
+> How are McClellan and Douglas connected?
+Lincoln restored McClellan. Lincoln forced Douglas.
+citation: texts/wiki2m.txt:813-895
+```
+
+If nothing in the corpus joins them, the sample says so rather than answering with a
+sentence about one of them.
 
 Two behaviours to expect: the sample **abstains** (`I do not know from the corpus.`)
 rather than guessing when coverage is too low, and a question of the form
@@ -264,6 +278,7 @@ Each non-comment line is `kind|term`:
 | `copula`, `article`, `prep` | the syntactic classes definitions need | `copula\|is` |
 | `aux` | the auxiliaries | `aux\|had` |
 | `agent` | the word a passive names its agent with | `agent\|by` |
+| `link` | the words that ask how two entities relate | `link\|connected` |
 | `skip`, `negate` | filler words and negators | `skip\|the` |
 
 A few notes that matter in use:

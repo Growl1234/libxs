@@ -32,6 +32,13 @@ int entry_sketch_has_id(const corpus_entry_t* entry, unsigned int id);
  * strips a captured heading back off cannot disagree about what a heading is.
  */
 int corpus_title_len(const char* text, int len);
+/**
+ * Non-zero if the text is MARKUP rather than prose: field syntax or an entity
+ * reference. One definition, so the section table that refuses to call a caption a
+ * heading and the fact layers that refuse to read a proposition out of one cannot
+ * disagree about what markup is.
+ */
+int corpus_line_markup(const char* text, int len);
 /** Path an entry's source id stands for, or NULL if the run has no name for it. */
 const char* corpus_source_path(unsigned int id);
 int corpus_case_forced(const char* text, int at, int heading_len);
