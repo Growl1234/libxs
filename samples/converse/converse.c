@@ -721,6 +721,16 @@ static int answer_relation_rule_kind(const char* text)
      * by a PATH through facts rather than by one of them.
      */
     else if (0 == strcmp(text, "link")) result = RELATION_RULE_LINK;
+    /**
+     * `genitive|of` is the word that marks a possessor AFTER the thing possessed, and
+     * it is one word per language like the agent marker -- English "of", German "von".
+     * Declared apart from the prepositions for the same reason `agent|by` is: "the
+     * father of Theseus" relates two entities and "the father in Athens" does not, and
+     * only this one preposition of the thirty tells them apart. The `poss|` class
+     * cannot hold it, since those terms name a SHAPE ("apostrophe-s") rather than a
+     * word of the corpus.
+     */
+    else if (0 == strcmp(text, "genitive")) result = RELATION_RULE_GENITIVE;
   }
   return result;
 }

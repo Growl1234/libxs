@@ -3,7 +3,8 @@
 # Grammar: alias|query-relation|evidence-verb, person|term, skip|term,
 #          negate|term, norm|from|to, where|term, why|term, how|term,
 #          place|term, topic|term, copula|term, article|term,
-#          prep|term, own|term, poss|shape, aux|term, agent|term
+#          prep|term, own|term, poss|shape, aux|term, agent|term,
+#          link|term, genitive|term
 # where/why/how are the MARKER words that make a sentence answer that question;
 # place seeds the place class the way person seeds the person class.
 person|grandmother
@@ -12,6 +13,8 @@ person|mother
 person|father
 person|brother
 person|sister
+person|son
+person|daughter
 person|child
 person|girl
 person|boy
@@ -174,3 +177,4 @@ link|connected
 link|connects
 link|connection
 link|related
+genitive|of

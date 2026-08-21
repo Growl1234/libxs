@@ -278,6 +278,7 @@ Each non-comment line is `kind|term`:
 | `copula`, `article`, `prep` | the syntactic classes definitions need | `copula\|is` |
 | `aux` | the auxiliaries | `aux\|had` |
 | `agent` | the word a passive names its agent with | `agent\|by` |
+| `genitive` | the word that marks a possessor after the thing | `genitive\|of` |
 | `link` | the words that ask how two entities relate | `link\|connected` |
 | `skip`, `negate` | filler words and negators | `skip\|the` |
 
@@ -290,6 +291,10 @@ A few notes that matter in use:
   frames and reports `verbs derived: N` and `nouns derived: N`. No verb list is needed.
 - `poss|apostrophe-s` (English) against `poss|apostrophe` (German): declare the wrong
   one and possession answers go silent rather than wrong.
+- `person|father` plus `genitive|of` is what makes kinship answerable in BOTH forms --
+  "Lincoln's father Thomas" and "Aegeus, the father of Theseus". A role word you do not
+  declare is simply not read, so extend the `person|` class for the kinds of relation
+  your text states.
 
 The sample can also PROPOSE rules instead of only reading them:
 `CONVERSE_RULES_LEARN=N` offers up to N `person|` class members found in the corpus,

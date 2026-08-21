@@ -3491,6 +3491,109 @@ static void answer_type_facts_free(void)
 }
 
 
+/**
+ * The OF-GENITIVE possessor in a type phrase, so kinship stated that way is an edge
+ * too: "Aegeus is the father of Theseus", "Python was a child of Gaia".
+ *
+ * The possessive appositive ("Lincoln's father Thomas") already names its possessor in
+ * a field, and this is the SAME relation written the other way round -- so the field is
+ * the same and only the frame differs. Everything the frame rests on is declared: the
+ * role is a `person|` term, so "the Royal Governor of Virginia" is not kinship, and the
+ * marker is the declared `genitive|` word, so a corpus that marks a possessor
+ * differently says so in its rule file rather than here.
+ *
+ * The possessor may carry ONE article and ONE modifier ("the son of the mortal
+ * Peleus"), the same single hop the possessive shape allows, and the run stops at the
+ * first word that is not a name -- which takes the first conjunct of "of Priam and
+ * Hecuba", and that is a true edge because coordination distributes.
+ */
+static int answer_type_partner_of(const char* phrase, int phrase_len,
+  const char* name, int name_len, char* out, int out_size)
+{
+  static const char delims[] = " \t\r\n,.;:!?()[]{}\"";
+  int result = 0;
+  int marker_len = 0;
+  const char* marker = answer_relation_rule_first_term(RELATION_RULE_GENITIVE,
+    &marker_len);
+  const char* token;
+  int token_index = 0, token_len = 0;
+  if (NULL == phrase || 0 >= phrase_len || NULL == marker || 0 >= marker_len
+    || 0 == isalpha((unsigned char)*marker))
+  {
+    return 0;
+  }
+  while (0 == result && NULL != (token = libxs_strtoken(phrase, delims,
+    token_index, &token_len)))
+  {
+    if (0 != answer_relation_rule_is_term(RELATION_RULE_PERSON, token,
+      token_len))
+    {
+      const char* scan = token + token_len;
+      const char* end = phrase + phrase_len;
+      int hop;
+      while (scan < end && ' ' == *scan) ++scan;
+      if (scan + marker_len <= end
+        && 0 != libxs_striequal(scan, (size_t)marker_len, marker,
+          (size_t)marker_len)
+        && (scan + marker_len == end || ' ' == scan[marker_len]))
+      {
+        int article = 0, modifier = 0;
+        scan += marker_len;
+        for (hop = 0; hop < 3 && scan < end; ++hop) {
+          const char* word;
+          int word_len = 0;
+          while (scan < end && ' ' == *scan) ++scan;
+          word = scan;
+          while (word + word_len < end
+            && ('-' == word[word_len]
+              || 0 != isalpha((unsigned char)word[word_len]))) ++word_len;
+          if (0 == word_len) break;
+          if (0 != answer_identity_word_is_name(word, word_len)) {
+            const char* run_end = word + word_len;
+            while (run_end < end && ' ' == *run_end) {
+              const char* more = run_end + 1;
+              int more_len = 0;
+              while (more + more_len < end
+                && ('-' == more[more_len]
+                  || 0 != isalpha((unsigned char)more[more_len]))) ++more_len;
+              if (0 == more_len
+                || 0 == answer_identity_word_is_name(more, more_len)) break;
+              run_end = more + more_len;
+            }
+            word_len = (int)(run_end - word);
+            /* "the father of Aegeus" under the name Aegeus states nothing. */
+            if (1 < word_len && word_len < out_size
+              && 0 == libxs_striequal(word, (size_t)word_len, name,
+                (size_t)name_len))
+            {
+              memcpy(out, word, (size_t)word_len);
+              out[word_len] = '\0';
+              result = word_len;
+            }
+            break;
+          }
+          /* At most one article and one modifier may stand before the name, which is
+             the single hop the possessive shape allows: "of the mortal Peleus". */
+          if (0 != answer_relation_rule_is_term(RELATION_RULE_ARTICLE, word,
+            word_len))
+          {
+            if (0 != article) break;
+            article = 1;
+          }
+          else if (0 == modifier && 0 != islower((unsigned char)*word)) {
+            modifier = 1;
+          }
+          else break;
+          scan = word + word_len;
+        }
+      }
+    }
+    ++token_index;
+  }
+  return result;
+}
+
+
 static int answer_type_fact_append(const char* name, int name_len,
   const char* phrase, int phrase_len, int shape,
   const corpus_entry_t* entry, double score)
@@ -3514,6 +3617,10 @@ static int answer_type_fact_append(const char* name, int name_len,
   fact.score = score;
   fact.source = (NULL != entry) ? entry->source : 0;
   fact.line = (NULL != entry) ? entry->line : 0;
+  /* Filled for EVERY shape rather than in one extractor, because the of-genitive
+     reaches this field through the copular shape as often as the appositive one. */
+  fact.partner_len = answer_type_partner_of(phrase, phrase_len, name, name_len,
+    fact.partner, (int)sizeof(fact.partner));
   if (NULL != entry && entry->section_len > 0
     && entry->section_len < (int)sizeof(fact.section))
   {
