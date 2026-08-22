@@ -10,6 +10,9 @@
 #include "gemm.h"
 #include <libxs/libxs_timer.h>
 #include <libxs/libxs_rng.h>
+#if defined(__LIBXSTREAM)
+# include <libxstream/libxstream_opencl.h>
+#endif
 
 /**
  * Weak references: gemm-blas.x links without the Ozaki library,
@@ -324,21 +327,15 @@ int main(int argc, char* argv[])
 }
 
 
-/**
- * Time of one call out of nrepeat: the median of the per-call durations rather
- * than the mean of their sum.  A host GEMM's spread is dominated by thread
- * placement, so a single migrated call moves a mean that is then read as a rate,
- * and the figure stops being comparable with the device side - which reports a
- * per-kernel median of its own.  The median needs the samples, which is why the
- * caller collects them; they are sorted in place, so times[0] and
- * times[nrepeat-1] are the extremes afterwards.  A NULL times (allocation
- * failed) leaves the mean of total as the only figure available.
- */
 static void* gemm_host_malloc(size_t nbytes, int hostmem)
 {
   void* result = NULL;
 #if defined(__LIBXSTREAM)
-  if (0 != hostmem) result = ozaki_ocl_host_malloc(nbytes);
+  if (0 != hostmem) {
+    if (0 != nbytes && EXIT_SUCCESS == libxstream_init()) {
+      if (EXIT_SUCCESS != libxstream_mem_host_allocate(&result, nbytes, NULL)) result = NULL;
+    }
+  }
   else result = malloc(nbytes);
 #else
   /**
@@ -358,7 +355,7 @@ static void* gemm_host_malloc(size_t nbytes, int hostmem)
 static void gemm_host_free(void* ptr, int hostmem)
 {
 #if defined(__LIBXSTREAM)
-  if (0 != hostmem) LIBXS_EXPECT(EXIT_SUCCESS == ozaki_ocl_host_free(ptr));
+  if (0 != hostmem) { if (NULL != ptr) LIBXS_EXPECT(EXIT_SUCCESS == libxstream_mem_host_deallocate(ptr, NULL)); }
   else free(ptr);
 #else
   LIBXS_UNUSED(hostmem);
@@ -367,6 +364,16 @@ static void gemm_host_free(void* ptr, int hostmem)
 }
 
 
+/**
+ * Time of one call out of nrepeat: the median of the per-call durations rather
+ * than the mean of their sum.  A host GEMM's spread is dominated by thread
+ * placement, so a single migrated call moves a mean that is then read as a rate,
+ * and the figure stops being comparable with the device side - which reports a
+ * per-kernel median of its own.  The median needs the samples, which is why the
+ * caller collects them; they are sorted in place, so times[0] and
+ * times[nrepeat-1] are the extremes afterwards.  A NULL times (allocation
+ * failed) leaves the mean of total as the only figure available.
+ */
 static double gemm_duration(double* times, int nrepeat, double total)
 {
   double result;
