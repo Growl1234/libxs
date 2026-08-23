@@ -24,13 +24,13 @@
  * 32 was chosen by measurement, not taste. Entries exceeding it are 1.1% on the
  * tales and 2.9% on Wikipedia prose, and only 9 and 181 respectively ever reached
  * 48 at all. Cutting to 32 takes the corpus file down 13% while the QA gates stay
- * at 19/19 and 14/14 and EVERY recombination figure is byte-identical -- made,
+ * at 19/19 and 14/14 and EVERY recombination figure is byte-identical - made,
  * pivot, ceiling, floor, coherence, penalty and the pivot index alike. 24 was also
  * measured (-19%) and declined: it truncates 10% of entries for six more points.
  *
- * Changing this changes the STORED LAYOUT. There is no compatibility burden --
+ * Changing this changes the STORED LAYOUT. There is no compatibility burden -
  * corpus_fixup detects a file written by another layout and discards it so the
- * next run re-ingests -- but a sweep still costs a full re-ingest each step:
+ * next run re-ingests - but a sweep still costs a full re-ingest each step:
  * make ECFLAGS="-DENTRY_TOKEN_MAX=48".
  */
 #ifndef ENTRY_TOKEN_MAX
@@ -84,8 +84,8 @@ enum { SCALE_PHRASE = 0, SCALE_SENTENCE = 1, SCALE_PARAGRAPH = 2 };
 /**
  * text is LAST so an entry can be stored at its actual length
  * (corpus_entry_size) instead of the full COMPOSE_MAXTEXT. The corpus dominates
- * memory -- 1512 B per entry for a mean 34 B of enwik8 sentence text, which is
- * what made 90 MB exhaust RAM -- and every field before text keeps a fixed
+ * memory - 1512 B per entry for a mean 34 B of enwik8 sentence text, which is
+ * what made 90 MB exhaust RAM - and every field before text keeps a fixed
  * offset, so readers are unaffected. The registry stores variable-size values
  * and readers already consult libxs_registry_value_size, which is why the
  * section helpers take an entry_size.
@@ -144,7 +144,7 @@ LIBXS_INLINE void corpus_fprint_unpack(libxs_fprint_t* dst,
 /**
  * What a stored corpus value IS. The tag is FIRST in every record kind and at the
  * same offset in all of them, so a reader can classify a value before it knows
- * how large the value is -- which is the whole point: a span is sixteen bytes and
+ * how large the value is - which is the whole point: a span is sixteen bytes and
  * a full entry is at least 464, and reading `scale` out of the former would be
  * out of bounds. Zero is deliberately not a valid kind, so a record written by a
  * layout that predates the tag (where these bytes were fprint.l2[0]) or one left
@@ -230,8 +230,8 @@ LIBXS_INLINE unsigned int corpus_value_scale(const void* value)
 /**
  * A clause window that is LOCATED rather than stored: which parent text it was cut
  * from, and where. Sixteen bytes instead of the 464 of metadata plus text an entry
- * spends, which matters because the windows are the bulk of the corpus -- 11466 of
- * 16092 entries on the tales -- and every one of them is a byte range of a
+ * spends, which matters because the windows are the bulk of the corpus - 11466 of
+ * 16092 entries on the tales - and every one of them is a byte range of a
  * paragraph that is already being kept.
  *
  * A span is keyed exactly as the entry it replaces was, by the content hash of its
@@ -261,7 +261,7 @@ typedef struct corpus_span_t {
 /**
  * The parent text of a set of spans, with the section and source they inherit.
  * Section and source live here rather than in each span because a window cannot
- * span two paragraphs, so all windows of one parent agree on both -- and the
+ * span two paragraphs, so all windows of one parent agree on both - and the
  * section alone is 66 of the bytes a span would otherwise have to carry.
  */
 typedef struct corpus_blob_t {
@@ -296,7 +296,7 @@ LIBXS_INLINE void corpus_blob_key(unsigned int id, unsigned char key[],
  * materialized window if it is a span, and nothing if it is a parent text.
  *
  * A span has to become a real entry because its readers compare token ids and
- * fingerprints, not text -- so "span" means REBUILT ON DEMAND, not referenced in
+ * fingerprints, not text - so "span" means REBUILT ON DEMAND, not referenced in
  * place. This flavour CACHES the rebuild, because the pivot index keeps entry
  * pointers for the length of a run; it therefore costs what the stored windows used
  * to, and only the reader that needs stable pointers should use it.
@@ -306,8 +306,8 @@ const corpus_entry_t* corpus_entry_view(const void* value);
 /**
  * The same entry, materialized into the caller's scratch and forgotten again.
  *
- * This is the flavour that pays for itself: the passes that TRAIN on the windows --
- * the successor embedding, the byte-pair vocabulary, the byte model -- read each one
+ * This is the flavour that pays for itself: the passes that TRAIN on the windows -
+ * the successor embedding, the byte-pair vocabulary, the byte model - read each one
  * once and never look back, so they need no more memory than a single entry. Which
  * of the two a reader wants is decided by whether it keeps the pointer, and getting
  * that wrong is not silent: a cached walk grows to the size of the pool.
@@ -332,7 +332,7 @@ void corpus_view_free(void);
  * Every reader that walks the corpus wants entries, and all but one of them wants
  * only the entries that carry their own metadata. Filtering in the ITERATOR rather
  * than at the cast is what makes the other kinds safe to introduce: a reader keeps
- * dereferencing what it is handed, and there is one place -- not forty -- where a
+ * dereferencing what it is handed, and there is one place - not forty - where a
  * value is classified. The one reader that does want the derived records
  * (recombination, whose donor pool they are) asks for them explicitly.
  */
@@ -474,8 +474,8 @@ enum { RELATION_RULE_ALIAS = 1, RELATION_RULE_PERSON, RELATION_RULE_SKIP,
  * The other two come from rule learning, above and below its acceptance bar.
  *
  * Both learned levels are labelled in replies, not just the margin. The margin
- * cannot be promoted by moving the threshold -- wrong terms score between right
- * ones -- and the ACCEPTED band is not trustworthy either: at the default bar
+ * cannot be promoted by moving the threshold - wrong terms score between right
+ * ones - and the ACCEPTED band is not trustworthy either: at the default bar
  * adjectives and interjections enter the person class, and one adjective is
  * enough to turn a correct reply into a confident false assertion. Labelling
  * only the margin would say the accepted band is safe, which it is not.

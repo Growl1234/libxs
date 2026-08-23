@@ -212,7 +212,7 @@ static int cycle_period(const double* series, int n)
  * Months since the most recent minimum of the smoothed series, evaluated
  * causally: every value reads only samples at or before its own index, so the
  * feature is available at eval time and cannot leak the future.  Two windows
- * are derived from the period rather than tuned -- a tenth of a cycle
+ * are derived from the period rather than tuned - a tenth of a cycle
  * smooths the monthly noise, half a cycle bounds the search for the minimum.
  */
 static int cycle_phase(const double* series, int n, int period, double* phase)

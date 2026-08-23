@@ -45,7 +45,7 @@ LIBXS_API_INLINE int internal_libxs_predict_load_var(
 /**
  * Rebuild the global entry set from the per-cluster data.  A loaded model
  * otherwise has no entries, which silently disables libxs_predict_inverse (it
- * abstains), the refinement loop, and the local-error diagnostic -- so a saved
+ * abstains), the refinement loop, and the local-error diagnostic - so a saved
  * model answered differently from the model it was saved from.  kd_pts holds
  * normalized inputs, so they are mapped back through input_min/input_rng;
  * sorted_idx supplies the global position of each cluster-local entry.
@@ -132,7 +132,7 @@ LIBXS_API_INLINE int internal_libxs_predict_load_entries(libxs_predict_t* model)
 /**
  * Outputs served by one per-output partition.  A per-output cluster stores its
  * outputs strided by this, so the writer, the reader, and eval must agree on it
- * or the payload is truncated and then read past its end -- the clamp mirrors
+ * or the payload is truncated and then read past its end - the clamp mirrors
  * what eval applies (see libxs_predict_eval).
  */
 LIBXS_API_INLINE int internal_libxs_predict_gsize(const int* po_groups,
@@ -556,8 +556,8 @@ LIBXS_API_INLINE int internal_libxs_predict_avail(const unsigned char* src,
 
 /**
  * Optional trailing escape-weight block, shared by both container formats.
- * Absence is normal -- an older file, or a model that never scored a
- * probability -- so a missing or mismatched block leaves the bank at its
+ * Absence is normal - an older file, or a model that never scored a
+ * probability - so a missing or mismatched block leaves the bank at its
  * uniform prior rather than failing the load.  A different expert count means
  * the grid changed, in which case the stored weights describe experts that no
  * longer exist and must be ignored.
@@ -700,7 +700,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     /**
      * out_rms arrived with version 2.  A version-1 file carries no fit residual,
      * and every consumer reads it as "no calibration" when it is zero and falls
-     * back to out_var, which is derived below -- what version 1 itself did.
+     * back to out_var, which is derived below - what version 1 itself did.
      */
     if (EXIT_SUCCESS == ok) {
       if (1 < version) {
@@ -1165,7 +1165,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
          * A version-1 flat file has no sorted_idx, and so has no global order to
          * recover.  It is left NULL: eval already treats that as "no recency
          * weighting" and the entry set stays unrecoverable, which is what such a
-         * model did before -- an invented order would be worse than none.
+         * model did before - an invented order would be worse than none.
          */
         if (EXIT_SUCCESS == ok && 0 != has_sidx) {
           ok = internal_libxs_predict_avail(src, end,

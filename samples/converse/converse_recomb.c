@@ -38,7 +38,7 @@ static int recomb_have_judge(void)
  * instead: given A ending "...the girl called X ..." and B containing "... X went
  * into the forest.", emit prefix(A up to and including X) + suffix(B after X).
  * Both halves are verbatim corpus text and the shared term is the licence for the
- * join, so every word remains attributable -- which is the property that
+ * join, so every word remains attributable - which is the property that
  * distinguishes this from generating text.
  *
  * A pivot must be a CONTENT word (not a stop word) appearing in both sentences,
@@ -63,7 +63,7 @@ typedef struct recomb_word_t {
  * only HIER_PPM_ORDER_MAX, so a wide window is dominated by the suffix's own
  * predictability and stops measuring the junction at all. On the reference
  * corpus the gap between a real junction and an arbitrary splice is 0.709 bits at 4
- * bytes, 0.252 at 8, 0.008 at 24, and inverts at 48 -- so a wide window does not
+ * bytes, 0.252 at 8, 0.008 at 24, and inverts at 48 - so a wide window does not
  * merely dilute the signal, it destroys it.
  */
 /**
@@ -107,7 +107,7 @@ static int recomb_balance_on(void)
  *
  * The byte-level seam judge cannot see grammar: "the guards would not to go
  * away" costs little per byte because every byte pair is common. The fault is at
- * WORD scale, and the corpus already knows it -- the ungrammatical continuation
+ * WORD scale, and the corpus already knows it - the ungrammatical continuation
  * occurs zero times while its grammatical alternatives all occur. So the gate asks the
  * n-gram, not a rule file: no English syntax is declared anywhere, and the same
  * test works unchanged on another language.
@@ -293,7 +293,7 @@ static int recomb_words(libxs_lexicon_t* lexicon, const char* text,
  * Six seam signals have now been refuted, the last of them by 50x in the WRONG
  * direction, and they share a form: each measures PREDICTABILITY. At a seam
  * predictability and correctness are anti-correlated, because the fluent generic
- * continuation is the likely-wrong one -- which is why the byte model rates
+ * continuation is the likely-wrong one - which is why the byte model rates
  * splices as better than real corpus text. So stop scoring the seam and constrain
  * it: if the donor's tail starts at a clause boundary, the graft joins two
  * complete constituents and grammaticality holds BY CONSTRUCTION rather than by a
@@ -342,7 +342,7 @@ static int recomb_clause_start(const char* text, int len, int at)
  *
  * The clause constraint cannot see this defect: a loop's seam IS at a clause
  * boundary, so the join is grammatical and still says the same thing twice.
- * Worse, the coherence gate PREFERS it -- content overlap is what MINOVL rewards
+ * Worse, the coherence gate PREFERS it - content overlap is what MINOVL rewards
  * and a duplicated half is overlap at its maximum, which is why the two loops in
  * the reference sample scored ovl=0.89 and ovl=0.74, near the top of the run. So
  * repetition is not a fluency question to be scored; it is decidable, and it is
@@ -368,7 +368,7 @@ static int recomb_repeat_words(void)
  * MIDDLE of the tail rather than at the junction, so checking the junction alone
  * would pass it. Only
  * prefix-versus-tail is compared, so a source sentence that repeats itself is
- * left alone -- that is attested text, and rejecting it would cost candidates
+ * left alone - that is attested text, and rejecting it would cost candidates
  * without removing a defect the splice introduced.
  */
 static int recomb_repeats(const char* text, int seam, int len)
@@ -539,7 +539,7 @@ static int recomb_is_verbatim(const libxs_registry_t* corpus,
  * Postings used to be CAPPED, because the registry copies a value and the value
  * was the whole list: a fixed array per key, paid in full for every key however
  * few donors it had. The cap bought that back and cost a silent truncation of the
- * frequent pivots -- exactly the ones a scan would have reached. Now the value is
+ * frequent pivots - exactly the ones a scan would have reached. Now the value is
  * a HEADER and the list hangs off it, so memory is proportional to the postings
  * that exist and no pivot is cut short.
  */
@@ -578,7 +578,7 @@ static long recomb_index_nposts = 0;
  * ideas were measured and none separates those two cases: both seam trigrams occur
  * exactly ONCE, 79% of content bigrams occur once, and clause-scale recurrence only
  * reaches 6.6% at 27x the corpus. So there is no attestation to test against, and a
- * gate that cannot be built can still be avoided -- by not generating the failure.
+ * gate that cannot be built can still be avoided - by not generating the failure.
  *
  * The proxy is derived from counts, not from a word list, so no language vocabulary
  * enters the sample: a lexeme is predicate-like when it frequently FOLLOWS one of
@@ -693,7 +693,7 @@ static void recomb_index_free(void)
 
 /**
  * Build the pivot index over sentence-scale entries. Entry pointers are stored, so
- * the index is only valid while the corpus registry is alive and unmodified --
+ * the index is only valid while the corpus registry is alive and unmodified -
  * which holds for the probe, whose corpus is complete before it runs.
  */
 static int recomb_index_build(const libxs_registry_t* corpus,
@@ -768,7 +768,7 @@ static int recomb_index_build(const libxs_registry_t* corpus,
  * (seam bits against content overlap correlate 0.006), so combining them is worth
  * doing rather than redundant. But they are only the signals that happened to be
  * printed; several more are free at the moment of splicing and expensive or
- * impossible afterwards -- above all WHICH occurrence of the pivot was used, which
+ * impossible afterwards - above all WHICH occurrence of the pivot was used, which
  * is the raw material for the referent question and is lost once the sentence is a
  * flat string.
  *
@@ -827,7 +827,7 @@ typedef struct recomb_signal_t {
  * crossings: the proper-noun detector found four positives in 137 joins, which
  * cannot separate anything, and this file's own warning is not to tune a threshold
  * against an unmeasured rate. So the classes are built the way the fluency ceiling
- * and floor already are -- by construction:
+ * and floor already are - by construction:
  *
  *  - CROSSING (y=1): host and donor come from different sources AND each carries a
  *    proper noun exclusive to its own source. Different casts, so the referents
@@ -836,8 +836,8 @@ typedef struct recomb_signal_t {
  *    cast behind it.
  *
  * Neither class is a quality label and neither is the signal being tested. That
- * matters because the oracle is available as a signal already -- cross_source is
- * in the vector -- and it is a poor test on its own: 40-42% of accepted joins are
+ * matters because the oracle is available as a signal already - cross_source is
+ * in the vector - and it is a poor test on its own: 40-42% of accepted joins are
  * cross-source while crossings are a few percent, so rejecting on it alone would
  * discard two fifths of the output at very low precision. The probe therefore
  * prints that baseline next to the measured signal; a signal that cannot beat it
@@ -861,7 +861,7 @@ static long recomb_pair_total = 0;
  * Sentences scanned. The marginals count sentences containing a term while the
  * joint counts sentences containing both, so both probabilities must be taken over
  * this same base. Normalizing the marginals by the number of PAIRS instead is off
- * by the mean pairs-per-sentence -- a constant, but a large one, and it shifts
+ * by the mean pairs-per-sentence - a constant, but a large one, and it shifts
  * every PMI positive by log2 of it.
  */
 static long recomb_nsentences = 0;
@@ -898,7 +898,7 @@ static int ref_capped = 0;
  * The contrast class that makes the test non-trivial: joins that ARE cross-source
  * but carry no exclusive cast on both sides, so they are not crossings.
  *
- * Comparing crossings against SAME-source joins would be circular -- the y=0 class
+ * Comparing crossings against SAME-source joins would be circular - the y=0 class
  * is same-source by construction, so cross_source separates it perfectly for free
  * and any signal correlated with source difference inherits that. Within
  * cross-source joins, cross_source is constant and therefore worthless, so a
@@ -1168,7 +1168,7 @@ static int recomb_is_cast(unsigned int id, unsigned short source)
  * the crossing rate: it sees only crossings marked by a source-exclusive proper
  * noun on BOTH sides of the seam, so pronouns and shared common nouns ("the
  * inspector") are invisible to it. That is acceptable here precisely because it is
- * used as a label rather than as a gate -- a class that is small but certain is
+ * used as a label rather than as a gate - a class that is small but certain is
  * what a separation test needs, whereas a gate would need the true rate.
  */
 static int recomb_referent_label(const corpus_entry_t* a,
@@ -1203,7 +1203,7 @@ static int recomb_referent_label(const corpus_entry_t* a,
  * join made the span LESS corpus-like than what it displaced. The same reasoning
  * applies here: most content pairs never co-occur, so a zero-co-occurrence test
  * would reject almost everything. What distinguishes a crossing is co-occurrence
- * far BELOW what the two terms' own frequencies predict -- which is negative PMI.
+ * far BELOW what the two terms' own frequencies predict - which is negative PMI.
  *
  * The statistic is available because the exact sparse co-occurrence pass already
  * exists for the embedding; the difference is that PPMI clamps at max(pmi,0) and
@@ -1264,7 +1264,7 @@ static double recomb_referent_pmi(const recomb_word_t awords[], int nawords,
  * one.
  *
  * The composer stops at its first acceptance, so its yield answers "does some
- * acceptable donor exist" and is already 98% on one book -- ceiling-limited by
+ * acceptable donor exist" and is already 98% on one book - ceiling-limited by
  * construction, and therefore blind to what a larger corpus actually supplies. A
  * corpus with more sources does not make a host more likely to have a donor; it
  * gives that host more donors, each producing a different sentence. Those donors
@@ -1413,7 +1413,7 @@ static void recomb_signal_print(const recomb_signal_t* sig, const char* text,
 {
   /**
    * The label is provenance, not a quality judgement: 1 marks a pivot join and 0 a
-   * FLOOR join -- the same host prefix spliced to an arbitrary entry sharing no
+   * FLOOR join - the same host prefix spliced to an arbitrary entry sharing no
    * content word, which is the control this paper already uses to establish that a
    * seam score means anything. Feature selection needs classes and no ground-truth
    * ranking of joins exists, so the honest label is the one whose two sides are
@@ -1434,7 +1434,7 @@ static void recomb_signal_print(const recomb_signal_t* sig, const char* text,
 /**
  * Floor counterpart of an accepted join: same host prefix, a suffix taken from an
  * entry that shares no content word with the host, cut at an arbitrary position.
- * Returns the composed length or 0. This is deliberately NOT gated -- its purpose
+ * Returns the composed length or 0. This is deliberately NOT gated - its purpose
  * is to be a negative example, so passing it through the gates would defeat it.
  */
 static int recomb_floor_join(const libxs_registry_t* corpus,
@@ -1520,7 +1520,7 @@ static long recomb_capacity(const libxs_registry_t* corpus,
   /**
    * Probe: print every accepted join with the scores a selection rule would rank
    * it by. Selection needs the ranking to be monotone in quality, which is a
-   * stronger property than the gates were validated for -- they are thresholds,
+   * stronger property than the gates were validated for - they are thresholds,
    * and the same byte model used as a ranker elsewhere in this sample picked the
    * most ordinary candidate rather than the best one. Ranking is therefore
    * measured before anything is built on top of it.
@@ -1607,7 +1607,7 @@ static long recomb_capacity(const libxs_registry_t* corpus,
             /**
              * Depth 2: treat the accepted join as a host and compose again. The
              * question is not only how large the reachable set becomes but whether
-             * a second hop is coherent at all -- the syntax gate compares the seam
+             * a second hop is coherent at all - the syntax gate compares the seam
              * against the span it displaced in the host, and once the host is
              * itself composite that baseline is no longer corpus text.
              */
@@ -1698,7 +1698,7 @@ static int recomb_compose(const libxs_registry_t* corpus,
    * but the WINNER must not change: donor selection is defined as the earliest
    * entry in corpus order that yields an accepted join, so the search is still
    * ordered by entry and the first acceptance for a given entry wins. Ordering by
-   * pivot instead -- the natural loop shape once an index exists -- silently picks
+   * pivot instead - the natural loop shape once an index exists - silently picks
    * a different donor and moves every reported number.
    *
    * Gate order, by contrast, is free to change: the gates are a conjunction, so
@@ -1770,7 +1770,7 @@ static int recomb_compose(const libxs_registry_t* corpus,
 /**
  * Measure grounded recombination against two controls that bound the scale.
  *
- * The seam score alone means nothing -- it has to be read against what fluent and
+ * The seam score alone means nothing - it has to be read against what fluent and
  * broken junctions cost on the same model. CEILING: verbatim corpus sentences,
  * scored at the same offset (a junction the corpus itself made). FLOOR: splices
  * at an arbitrary word position with no shared pivot. If pivot seams do not land
@@ -1796,7 +1796,7 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
   long cap_distinct = 0, cap_hop2 = 0, cap_hop2_distinct = 0;
   /**
    * The referent probe reads every accepted candidate, which only the capacity walk
-   * enumerates -- the composer itself stops at its first acceptance per host. So it
+   * enumerates - the composer itself stops at its first acceptance per host. So it
    * turns that walk on rather than reporting empty classes: a probe whose classes
    * are silently empty is indistinguishable from a probe that measured no effect,
    * which is the same trap the paragraph-scale ingest produced ("made=0 of 0").
@@ -1873,7 +1873,7 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
         }
         /**
          * With a judge present this is exactly the historical condition, so the
-         * figures stay bit-identical. Without one the candidate still COUNTS --
+         * figures stay bit-identical. Without one the candidate still COUNTS -
          * folding the accounting into the diagnostic's success is how a run
          * reports made=0 and reads as "no result" when it means "no instrument".
          */
@@ -1890,7 +1890,7 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
            * documentation the two disagree: "Usage" and "Example" head many
            * different pages, so equal section text does not mean one document.
            * A cross-source join is the one that combines two sources about one
-           * subject -- the interesting case -- so it is reported separately
+           * subject - the interesting case - so it is reported separately
            * rather than folded into the section count.
            */
           const int same_src = (NULL != donor && 0 != a->source
@@ -1962,7 +1962,7 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
    * Coherence, reported separately because it is a different claim from fluency
    * and the two can disagree: same-section says the halves come from one tale,
    * overlap says they share content words beyond the pivot. A high fluency score
-   * with low coherence is the failure mode this measures -- a well-formed
+   * with low coherence is the failure mode this measures - a well-formed
    * sentence about two unrelated things.
    */
   fprintf(stdout, "  coherence: same-section=%.1f%% same-source=%.1f%%"
@@ -2000,7 +2000,7 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
      * The separation, and the baseline it has to beat. Class means alone would
      * overstate the case, so the overlap is reported too: a signal whose classes
      * differ in mean but interleave cannot gate anything. `xsrc` is printed
-     * because it is the oracle already in the vector -- if PMI does not separate
+     * because it is the oracle already in the vector - if PMI does not separate
      * better than "reject every cross-source join", it has bought nothing.
      */
     fprintf(stdout, "  referent: cast-keys=%ld pair-keys=%ld pairs=%ld"
@@ -2021,7 +2021,7 @@ void converse_recomb_probe_run(const libxs_registry_t* corpus,
        * What a gate would actually do is threshold, so that is what is measured:
        * sweep the crossing values as candidate cutoffs and keep the best AUC-style
        * trade-off. Both rates are expressed WITHIN their own class, which is what
-       * makes them readable under a 50:1 imbalance -- raw precision cannot be, and
+       * makes them readable under a 50:1 imbalance - raw precision cannot be, and
        * would report 2% for a signal that ranks perfectly.
        */
       double cut = 0.0, tpr = 0.0, fpr = 0.0;
@@ -2102,7 +2102,7 @@ void converse_recomb_close(void)
  * Compared over ids rather than bytes because the host is the retrieved answer,
  * which for a fact reply is a normalized quotation of its source: capitalized,
  * terminated with a period, and with the source's line breaks removed. A literal
- * substring test therefore cannot fire -- it was tried and did not. Ids are already
+ * substring test therefore cannot fire - it was tried and did not. Ids are already
  * case-folded and carry no punctuation, so they compare the words themselves.
  */
 static int recomb_contains_words(const recomb_word_t hay[], int nhay,
@@ -2112,7 +2112,7 @@ static int recomb_contains_words(const recomb_word_t hay[], int nhay,
   int at, from = 0;
   /**
    * Leading unknown words are skipped rather than compared. libxs_lexicon_id does
-   * NOT case-fold, so a sentence-initial capitalized word yields id 0 -- and the
+   * NOT case-fold, so a sentence-initial capitalized word yields id 0 - and the
    * host here is a normalized quotation, which capitalizes its first word. Matching
    * on that 0 is what made an earlier version of this guard never fire, and 81% of
    * corpus sentences start with a capital, so this is the common case.
@@ -2198,7 +2198,7 @@ int converse_recomb_compose_best(const libxs_registry_t* corpus,
       /**
        * The host cannot donate to itself, and equality is not a strong enough
        * test. The host here is the retrieved ANSWER, which for a fact reply is a
-       * rewritten prefix of the sentence it came from -- so a donor that CONTAINS
+       * rewritten prefix of the sentence it came from - so a donor that CONTAINS
        * the host produces a splice that merely restores the original text. That
        * happened and was reported as a successful composition: the two halves
        * rejoined one corpus sentence which the source file had split across two

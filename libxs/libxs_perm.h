@@ -227,7 +227,7 @@ LIBXS_API int libxs_kdtree_nearest(
  *
  * The result is EXACT: the same k points a linear scan would pick, in the same
  * order. The tree only avoids visiting subtrees that cannot contain a closer
- * point, so this replaces a scan without changing what the scan would answer --
+ * point, so this replaces a scan without changing what the scan would answer -
  * the distinction that matters when the neighbours feed an estimate rather than
  * only a ranking.
  *
@@ -237,7 +237,7 @@ LIBXS_API int libxs_kdtree_nearest(
  *
  * Requires a tree built by libxs_kdtree_build with config == NULL (or a config
  * whose split is NULL), because the query recomputes the split dimension as
- * depth % ndims -- as libxs_kdtree_nearest does. A tree built with a custom
+ * depth % ndims - as libxs_kdtree_nearest does. A tree built with a custom
  * split function does not record its choices and cannot be searched this way.
  */
 LIBXS_API int libxs_kdtree_knearest(

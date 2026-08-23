@@ -24,7 +24,7 @@ typedef double (*converse_recomb_prob_t)(const unsigned int hist[], int hlen,
  * the last ranking a false continuation 50x above the true one, so grammaticality
  * is enforced by the clause constraint and this only fills the reported bpc
  * columns. Passing it as a function rather than naming the model's type is what
- * lets recombination compile without the byte model at all -- NULL simply drops
+ * lets recombination compile without the byte model at all - NULL simply drops
  * those columns.
  */
 typedef int (*converse_recomb_seam_t)(const char* prefix, int prefix_length,
@@ -91,7 +91,7 @@ void converse_recomb_close(void);
  * all of them. So candidates are enumerated, screened by prerequisites, and the
  * winner is taken from the Pareto front over the remaining trade-offs.
  *
- * Returns the composed length, or 0 when nothing is admissible -- which is a
+ * Returns the composed length, or 0 when nothing is admissible - which is a
  * legitimate and frequent outcome, and must stay distinguishable from an error.
  * `out_nfront` receives the front size when non-NULL: a front of one is a real
  * choice, a large front means the objective is indifferent and the pick within it

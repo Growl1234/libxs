@@ -284,7 +284,7 @@
  * attributes (see libxs_utils.h).
  * LIBXS_FMA(a,b,c) computes a*b+c: a single fused instruction when enabled,
  * otherwise a plain (rounded-twice) expression. It is NOT error-free in the
- * fallback -- code needing an exact product (libxs_two_product) must branch on
+ * fallback - code needing an exact product (libxs_two_product) must branch on
  * LIBXS_FMA_ENABLED and use Dekker's split when it is not defined.
  */
 #if !defined(LIBXS_FMA_ENABLED)

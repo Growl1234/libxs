@@ -16,7 +16,7 @@
  * Enumerates the target architectures and instruction set extensions.
  * x86 levels use thermometer ordering: higher numeric value implies all
  * features of lower levels.  AVX10/256 sits below AVX512 because it lacks
- * 512-bit vectors -- existing LIBXS_X86_AVX512 <= arch guards remain safe.
+ * 512-bit vectors - existing LIBXS_X86_AVX512 <= arch guards remain safe.
  * AVX10_512 (1200) implies AVX512_INT8 (1110); CPUs with AVX10.1/512 but
  * without AVX-VNNI-INT8 (e.g. Granite Rapids P-core) report as AVX512.
  */

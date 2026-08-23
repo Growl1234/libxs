@@ -169,7 +169,7 @@ static void decode_hilbert_bits(
 
 /**
  * Linear-scan oracle: the k nearest by brute force, sorted ascending. The kd-tree
- * search must agree with this exactly -- it is meant to avoid visiting subtrees
+ * search must agree with this exactly - it is meant to avoid visiting subtrees
  * that cannot hold a closer point, not to approximate the answer, and only a
  * reference computed a different way can show the pruning has not cut too much.
  */
@@ -202,7 +202,7 @@ static int knn_oracle(const double* pts, int n, int ndims, int stride,
 /**
  * Compare the tree against the oracle. Distances are compared rather than
  * indices, because ties at equal distance may legitimately resolve to different
- * points -- with duplicate coordinates several points ARE the same answer, and
+ * points - with duplicate coordinates several points ARE the same answer, and
  * demanding one particular index would fail the test for a correct result.
  */
 static int knn_check(const double* pts, int* idx, int n, int ndims,

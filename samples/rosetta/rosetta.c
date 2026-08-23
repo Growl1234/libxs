@@ -13,7 +13,7 @@
  *
  * Encodes a table of harmonic-series data as a flat binary blob,
  * then applies the LIBXS hierarchical analysis to rediscover the
- * element type, record stride, and structural content -- starting
+ * element type, record stride, and structural content - starting
  * from the raw bytes with no metadata.
  *
  * The flat 1-D probe deliberately fails (interleaved fields of
@@ -76,7 +76,7 @@ static int field_image_handler(void* dst,
   const void* src, const void* src_min, const void* src_max,
   size_t index, void* context);
 static void generate_table(double table[NROWS][NFIELDS]);
-/* Level 0: flat 1-D probe -- expected to be inconclusive. */
+/* Level 0: flat 1-D probe - expected to be inconclusive. */
 static libxs_data_t flat_probe(const void* blob, size_t nbytes);
 /**
  * Stride sweep: for each candidate element width and record stride,
@@ -88,7 +88,7 @@ static int stride_sweep(const void* blob, size_t nbytes,
 /* Shuffle stability on the discovered column structure. */
 static void shuffle_test(const void* blob, size_t nbytes,
   libxs_data_t dtype, int stride);
-/* Per-field decay analysis -- the payoff. */
+/* Per-field decay analysis - the payoff. */
 static void field_analysis(const void* blob, size_t nbytes,
   libxs_data_t dtype, int stride);
 /* GREEDY sort test. */
@@ -305,7 +305,7 @@ static void generate_table(double table[NROWS][NFIELDS])
 }
 
 
-/* Level 0: flat 1-D probe -- expected to be inconclusive. */
+/* Level 0: flat 1-D probe - expected to be inconclusive. */
 static libxs_data_t flat_probe(const void* blob, size_t nbytes)
 {
   libxs_fprint_t fp;
@@ -465,7 +465,7 @@ static void shuffle_test(const void* blob, size_t nbytes,
 }
 
 
-/* Per-field decay analysis -- the payoff. */
+/* Per-field decay analysis - the payoff. */
 static void field_analysis(const void* blob, size_t nbytes,
   libxs_data_t dtype, int stride)
 {

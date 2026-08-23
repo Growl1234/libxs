@@ -59,7 +59,7 @@ static libxs_predict_t* build_model(void)
 /**
  * The frozen point query computes the mass in closed form instead of
  * enumerating the support, so it must agree with the distribution the observing
- * entry point reports for the same value -- to the last bit, since it is the
+ * entry point reports for the same value - to the last bit, since it is the
  * same quantity and not an approximation of it.
  *
  * A wrong tail term is exactly what this catches: it would still produce a
@@ -102,7 +102,7 @@ static int check_point_matches_dist(const libxs_predict_t* model)
 /**
  * nscan must report the candidates a neighbour query actually walks. The model
  * here is built with one cluster, so every entry lands in it and scoring is
- * linear in the corpus -- precisely the configuration whose cost was invisible
+ * linear in the corpus - precisely the configuration whose cost was invisible
  * from the API until this field existed.
  */
 static int check_scan_cost_reported(const libxs_predict_t* model)
@@ -129,7 +129,7 @@ static int check_scan_cost_reported(const libxs_predict_t* model)
 
 /**
  * The direct support accessor must report exactly what the scoring path reports:
- * same size, same values, same order. That is the whole point of having it -- a
+ * same size, same values, same order. That is the whole point of having it - a
  * second source of truth for the support would be worse than none.
  */
 static int check_support_matches_scoring(const libxs_predict_t* model)
@@ -183,7 +183,7 @@ static int check_support_matches_scoring(const libxs_predict_t* model)
 /**
  * Score the stream frozen (context == NULL) and return the total code length.
  * Frozen scoring reads the model's weights and writes nothing, so this is a
- * pure function of the model -- which is the property under test.
+ * pure function of the model - which is the property under test.
  */
 static double frozen_bits(const libxs_predict_t* model, int nstep)
 {
@@ -285,7 +285,7 @@ static int check_sparse_learn_matches_dense(void)
 /**
  * The defect this test exists for: adaptation writes only into the context, so
  * without a commit the model keeps its uniform prior and frozen scoring is
- * frozen at that prior -- not at what the stream learned. The round-trip
+ * frozen at that prior - not at what the stream learned. The round-trip
  * through save/load passes either way, because uniform weights serialize
  * perfectly well, so only a BEHAVIOURAL check catches it.
  */

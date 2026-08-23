@@ -34,9 +34,9 @@
  *
  * A weight of zero means the slot is DISABLED, permanently: a bank sized for the
  * widest configuration holds the slots it does not use at zero, and share mass
- * must not resurrect them. A bank that instead wants every slot revivable --
+ * must not resurrect them. A bank that instead wants every slot revivable -
  * libxs_predict's escape-rate bank is one, because its slots are a fixed ladder
- * rather than an optional set -- is not a client of this primitive, and saying so
+ * rather than an optional set - is not a client of this primitive, and saying so
  * is cheaper than a flag that makes one contract mean two things.
  */
 LIBXS_EXTERN_C typedef struct libxs_mix_t {
@@ -65,7 +65,7 @@ LIBXS_EXTERN_C typedef struct libxs_mix_t {
  * failure. The caller owns the struct; libxs_mix_destroy releases the weights.
  *
  * The struct is plain data, so a caller that already owns a weight array may
- * instead fill the fields directly and point weight at it -- useful for a bank
+ * instead fill the fields directly and point weight at it - useful for a bank
  * that lives on the stack or inside a larger record. Such a view must NOT be
  * passed to libxs_mix_destroy, which would free memory it does not own.
  */
@@ -87,7 +87,7 @@ LIBXS_API void libxs_mix_reset(libxs_mix_t* mix, const int active[]);
  * Pooled probability without touching the weights, for reporting or for ranking
  * candidates at one position. prob[] holds each expert's probability for the
  * outcome under consideration; active[] may be NULL (all experts speak).
- * Returns 0 when no expert speaks -- callers that take a logarithm must floor
+ * Returns 0 when no expert speaks - callers that take a logarithm must floor
  * the result themselves, because the right floor is theirs to choose.
  */
 LIBXS_API double libxs_mix_pool(const libxs_mix_t* mix, const double prob[],
@@ -97,7 +97,7 @@ LIBXS_API double libxs_mix_pool(const libxs_mix_t* mix, const double prob[],
  * Advance the weights toward the experts that beat a mixture the CALLER
  * computed. Use this when the pool is not libxs_mix_pool's: a caller may mix in
  * experts this bank does not carry, or floor the pooled value before taking its
- * logarithm, and the update must then be relative to the value actually used --
+ * logarithm, and the update must then be relative to the value actually used -
  * not to a recomputed one that differs in the last bits or in the slot set.
  *
  * Passing libxs_mix_pool's own result here is exactly libxs_mix_observe.
@@ -107,7 +107,7 @@ LIBXS_API void libxs_mix_update(libxs_mix_t* mix, const double prob[],
 
 /**
  * Pool, then advance the weights toward the experts that beat the pool.
- * Returns the pooled probability computed BEFORE the update -- the value that
+ * Returns the pooled probability computed BEFORE the update - the value that
  * may be reported or accumulated into a code length. Preferred for new code:
  * the ordering that keeps a stream figure honest cannot be got wrong.
  */

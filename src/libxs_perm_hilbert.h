@@ -5,7 +5,7 @@ LIBXS_API_INLINE uint64_t internal_libxs_hilbert_bits(
   uint64_t code = 0;
   int i, level;
   for (i = 0; i < ndims; ++i) x[i] = coords[i];
-  /* Skilling: AxestoTranspose -- convert coordinates to transposed form */
+  /* Skilling: AxestoTranspose - convert coordinates to transposed form */
   { const unsigned int m = 1u << (bits_per_dim - 1);
     unsigned int p, q, t;
     for (q = m; q > 1; q >>= 1) {

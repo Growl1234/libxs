@@ -112,7 +112,7 @@ unsigned int internal_libxs_lexicon_id(libxs_lexicon_t* lexicon,
  * reason is measurable: an English corpus written with typographic quotes carries
  * 5133 apostrophes encoded E2 80 99, so that rule silently glues "don" and "t"
  * into one lexeme and moves every English figure. Conversely ctype alone rejects
- * both bytes of an umlaut, cutting a German word into pieces -- and the middle
+ * both bytes of an umlaut, cutting a German word into pieces - and the middle
  * piece was classed as punctuation and hence read as a SENTENCE BOUNDARY, which
  * corrupts segmentation rather than merely word identity. 9.1% of word tokens in a
  * German fairy-tale corpus carry an umlaut or sharp s.

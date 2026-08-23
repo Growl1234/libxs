@@ -149,7 +149,7 @@ typedef struct libxs_gemm_shape_t {
  * Configuration supplying GEMM kernels. Kernel selection priority:
  *   1. JIT kernel (dgemm_jit/sgemm_jit + jitter) if non-NULL,
  *   2. XGEMM kernel (xgemm) if non-NULL,
- *   3. BLAS kernel (dgemm_blas/sgemm_blas) -- always non-NULL after
+ *   3. BLAS kernel (dgemm_blas/sgemm_blas) - always non-NULL after
  *      dispatch (falls back to built-in auto-vectorized C code).
  * Only the function pointers matching the datatype need to be set.
  * By default (flags=0), _task variants synchronize C-matrix updates.

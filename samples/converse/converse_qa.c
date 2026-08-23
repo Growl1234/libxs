@@ -109,8 +109,8 @@ typedef struct answer_identity_fact_t {
 /**
  * WHERE something happened, as a proposition rather than as a sentence.
  *
- * The phrase is VERBATIM -- the bytes from just after the actor through the place
- * noun, exactly as the source has them -- so a reply is a name followed by a span
+ * The phrase is VERBATIM - the bytes from just after the actor through the place
+ * noun, exactly as the source has them - so a reply is a name followed by a span
  * of that name's own sentence. It is therefore grammatical whenever the source was
  * and cannot state anything the corpus does not, which is the same reason the
  * relation layer renders a proposition instead of generating one.
@@ -138,7 +138,7 @@ typedef struct answer_location_fact_t {
  * What an entity IS, from the two shapes prose states a type in: the copular
  * ("Aristotle was a Greek philosopher") and the appositive ("Aristotle, a Greek
  * philosopher, wrote"). These are the definitional shapes, which is why they are
- * the two E4 starts with -- encyclopaedic prose states nearly every type this way,
+ * the two E4 starts with - encyclopaedic prose states nearly every type this way,
  * and the entity census already supplies the names to hang them on.
  *
  * The phrase is VERBATIM apart from one word: an appositive omits the copula, and
@@ -165,7 +165,7 @@ typedef struct answer_type_fact_t {
 /**
  * WHAT BELONGS TO WHOM, from the one shape English marks possession with
  * unambiguously: the possessive apostrophe. "Hector's father" states a relation
- * between Hector and a father in a way "the father of Hector" does not -- "of"
+ * between Hector and a father in a way "the father of Hector" does not - "of"
  * carries partition, origin, material and authorship as well, so it is a different
  * shape and not this one.
  *
@@ -239,8 +239,8 @@ static char answer_fact_section[4 * ENTRY_SECTION_MAX];
 /**
  * Where the reply came from in the FILES, beside the titles it came from.
  *
- * A title is only as good as the corpus's own structure -- a corpus with no
- * headings has none to give -- while a file and a line always exist, so this is the
+ * A title is only as good as the corpus's own structure - a corpus with no
+ * headings has none to give - while a file and a line always exist, so this is the
  * part of a citation that cannot be wrong. One entry per source, because a reply
  * resting on two files should name a range in each rather than one range spanning
  * both, and the range collapses to a single line when it is one line.
@@ -275,7 +275,7 @@ static int answer_query_nrules = 0;
  * WORD_INITIAL_UPPER), and the lexicon interns the LOWER-CASED form, so both
  * surface forms of a word share one id. Aggregating the flag by id is therefore
  * what separates a name from a common word: a name is never written lower-case
- * and a common noun is -- and the test needs no threshold, because one
+ * and a common noun is - and the test needs no threshold, because one
  * lower-case occurrence is enough to settle it.
  */
 static unsigned int* answer_case_upper = NULL;
@@ -288,7 +288,7 @@ static unsigned int answer_case_size = 0;
 static answer_relation_fact_t* answer_relation_facts = NULL;
 static size_t answer_relation_facts_size = 0;
 /**
- * The relation a fact states, as a word id, mapped to the facts stating it --
+ * The relation a fact states, as a word id, mapped to the facts stating it -
  * with the ALIAS CLOSURE baked in, so a question naming any alias of a relation
  * is one lookup rather than a scan crossed with the rule file. Built after the
  * facts are, because a fact reached through an alias is stored under the
@@ -955,8 +955,8 @@ static int answer_query_type_text(const char* query_text, size_t query_len)
 /**
  * The question KIND a declared `ask|` tag names, or QUERY_GENERIC for an unknown tag.
  *
- * The tags are identifiers rather than English -- the same status `poss|apostrophe-s`
- * has -- so a rule file names the kind in this fixed vocabulary and supplies its own
+ * The tags are identifiers rather than English - the same status `poss|apostrophe-s`
+ * has - so a rule file names the kind in this fixed vocabulary and supplies its own
  * word for it: `ask|who|wer`.
  */
 static int query_type_of_tag(const char* tag)
@@ -984,7 +984,7 @@ static int query_type_of_tag(const char* tag)
  * question; `ask|` declares the words that make a QUERY ask one, which is the other
  * half and had never been written down.
  *
- * QUERY_GENERIC now means the RULE FILE does not recognize the question -- a fact
+ * QUERY_GENERIC now means the RULE FILE does not recognize the question - a fact
  * about the rules rather than about the corpus, and the signal that lets a reply say
  * it did not understand instead of guessing.
  */
@@ -1032,8 +1032,8 @@ static int query_type_prefers_sentence(int query_type)
 
 /**
  * Build the similarity index from the entries' own fingerprints. The registry key
- * is now a content hash, so libxs_spatial_build -- which reads the first 8 Bytes
- * of each key as the code -- would index hash values and destroy locality. The
+ * is now a content hash, so libxs_spatial_build - which reads the first 8 Bytes
+ * of each key as the code - would index hash values and destroy locality. The
  * code is recomputed here from the fingerprint, which is where it belongs.
  *
  * Iteration uses the _length flavor because this registry deliberately holds keys
@@ -1400,7 +1400,7 @@ static void answer_case_report(FILE* stream)
  * threshold: a single lower-case occurrence makes the word a common one.
  *
  * The word arrives as the questioner typed it, so it is lower-cased before the
- * lookup -- libxs_lexicon_id matches the stored bytes, and the lexicon stores the
+ * lookup - libxs_lexicon_id matches the stored bytes, and the lexicon stores the
  * normalized (lower-case) form, so passing a capitalized word would simply
  * miss.
  */
@@ -1433,7 +1433,7 @@ static unsigned int answer_word_id(const char* word, int word_len)
  *
  * An id is 0 for any word the corpus never attested, and a fact's relation is
  * the CANONICAL name from the rule file, which the corpus need not use even
- * where its aliases are everywhere -- so keying on ids would drop exactly those
+ * where its aliases are everywhere - so keying on ids would drop exactly those
  * facts out of the index, silently. Every word has a hash. A collision costs a
  * candidate that the predicates then reject; it cannot cost an answer.
  */
@@ -1462,7 +1462,7 @@ static int answer_word_is_name(const char* word, int word_len)
   {
     /**
      * Two conditions, both counts of positions. Never written lower-case, as
-     * before -- and capitalized at least once where the POSITION did not force
+     * before - and capitalized at least once where the POSITION did not force
      * it. The second is what the first was standing in for: a word that only
      * ever opens a sentence, a heading or a quoted utterance is capitalized by
      * typesetting, and reading that as a name is the same mistake as reading a
@@ -1478,7 +1478,7 @@ static int answer_word_is_name(const char* word, int word_len)
 /**
  * The word a "who/what is X" question asks about, skipping any leading skip|
  * term. Capitalization is NOT reported: it used to be, and the three resolvers
- * routed on it -- identity required an upper-case initial, the relation paths
+ * routed on it - identity required an upper-case initial, the relation paths
  * required a lower-case one. That made the user's typing decide which layer
  * answered, and it was wrong in both directions: a name typed lower-case was
  * refused an answer its capitalized spelling gets, while a capitalized role word
@@ -1722,7 +1722,7 @@ static int answer_relation_find_person_before(const char* text, int text_len,
  * and the relation layer serves QUERY_WHO only.
  *
  * Capitalization decides because this is CORPUS text, where a capital mid-
- * sentence is the author saying "name" -- the same signal the entity lexrule
+ * sentence is the author saying "name" - the same signal the entity lexrule
  * reads. That is the opposite of the query-side defect fixed earlier, where
  * capitalization of the QUERY routed an answer: a reader's shift key is not
  * evidence about the world, and an author's is. The object always follows a
@@ -1795,7 +1795,7 @@ static int answer_relation_match_query(const char* query_text,
     /**
      * The actor must be ATTESTED IN THIS SENTENCE. There used to be an escape
      * hatch here: if the actor was absent but the word "he" stood before the
-     * verb, the actor counted as seen -- treating a pronoun as an anaphor for
+     * verb, the actor counted as seen - treating a pronoun as an anaphor for
      * whatever the reader happened to ask about. It left the actor
      * unconstrained, so the reply asserted a relation to an actor the corpus
      * never mentions AND attached a citation to it. Resolving the pronoun would
@@ -2092,7 +2092,7 @@ static void answer_fact_index_free(answer_fact_index_t* index)
  * hangs off it: registering the list itself would copy the whole thing on every
  * append, which is what forces a fixed cap and a truncation count elsewhere in
  * the sample. Here the list simply grows, and the facts are referred to by
- * position rather than by pointer because the fact array is grown by realloc --
+ * position rather than by pointer because the fact array is grown by realloc -
  * a stored pointer would dangle at the next append.
  */
 static int answer_fact_index_add(answer_fact_index_t* index, unsigned int id,
@@ -2182,7 +2182,7 @@ static int answer_relation_fact_append(const corpus_entry_t* entry,
    * The section title stands in for the answer of a PASSIVE fact, whose patient
    * names the thing the section is about. An ACTIVE fact's object is a phrase of
    * its own clause, so substituting the title replaces it with something the clause
-   * never said -- on the wiki fixture that is how a caption read as a heading
+   * never said - on the wiki fixture that is how a caption read as a heading
    * ("Thumb|300px|A Farmer In ...") became the object of a fact.
    */
   if (match->actor_len > 0 && 0 == match->active) {
@@ -2267,7 +2267,7 @@ static int answer_relation_fact_extract_actor(const char* text, int text_len,
      * Neither test alone works here: an alias actor is often a common noun ("the
      * wolf"), which no census knows, and often a name ("Gretel"), which the article
      * frame never sees. Requiring one OR the other is what stops a sentence-initial
-     * function word from becoming an entity -- "Then eaten Grandmother" and "Do
+     * function word from becoming an entity - "Then eaten Grandmother" and "Do
      * eaten Grandmother" were edges of the fact graph, and a multi-hop walk over
      * that graph would state paths through a node named "Then".
      */
@@ -2304,7 +2304,7 @@ static int answer_relation_fact_extract_made(const corpus_entry_t* entry,
    * would be made.' 'Very true: but how" yielded the relation "Very", and the
    * matcher then supplied an answer from the entry, asserting "Hans is to be made
    * Very." A count of 84 facts showed nothing; the attribute collection printed it.
-   * One bound, no threshold -- the same one the location layer needed.
+   * One bound, no threshold - the same one the location layer needed.
    */
   rel_begin = made_pos + 4;
   while (rel_begin < entry->text_len
@@ -2349,8 +2349,8 @@ static int answer_relation_fact_extract_made(const corpus_entry_t* entry,
  *
  * The alias rules already read passives whose verb the rule file DECLARES
  * ("alias|eaten|devoured"), which is what makes them askable. This reads the shape
- * itself, so any verb the corpus uses gives an entity-to-entity edge -- "Achilles
- * was visited by Odysseus" -- without a rule per verb. The frame is the evidence:
+ * itself, so any verb the corpus uses gives an entity-to-entity edge - "Achilles
+ * was visited by Odysseus" - without a rule per verb. The frame is the evidence:
  * a copula, one word, and a declared "by" followed by a NAME is a passive in
  * English, and no morphology or verb class is consulted to see it.
  *
@@ -2424,8 +2424,8 @@ static int answer_relation_fact_extract_passive(const corpus_entry_t* entry,
        * The patient is the NOUN PHRASE before the copula, not the clause.
        *
        * Taking the clause read the conjunction, the subordinator and the auxiliary
-       * chain into the patient -- "and | used | NASA", "Algeria has | inhabited |
-       * Berbers", "tossed away after | invented | Athena" -- so the edge was right
+       * chain into the patient - "and | used | NASA", "Algeria has | inhabited |
+       * Berbers", "tossed away after | invented | Athena" - so the edge was right
        * and the thing it pointed at was a fragment. Walking backwards instead: over
        * the auxiliaries, which belong to the verb rather than to the patient, then
        * word by word while the word can belong to a noun phrase, stopping AT an
@@ -2532,14 +2532,14 @@ static int answer_word_is_function(const char* word, int word_len)
  * Extract the ACTIVE transitive shape: a name, a verb, and what it acted on.
  *
  * The frame is a maximal name run, ONE word, and either another name run or an
- * article-headed noun phrase -- "Etruscans brought the Greek alphabet", "Achilles
+ * article-headed noun phrase - "Etruscans brought the Greek alphabet", "Achilles
  * defeated Memnon". Only the DERIVED verb class says the middle word is a verb,
  * which is the point: that class comes from the auxiliary frame
  * (answer_verbs_build), so no verb is written in the C and no morphology is read.
  *
  * THE SAME CLASS IS USED IN BOTH POLARITIES HERE, and both are safe for the same
- * reason. As a REQUIREMENT on the middle word, what the class lacks -- English
- * irregular past simple, which no auxiliary governs -- costs a fact never extracted
+ * reason. As a REQUIREMENT on the middle word, what the class lacks - English
+ * irregular past simple, which no auxiliary governs - costs a fact never extracted
  * rather than a fact that is wrong ("took", "gave", "wrote" are lost this way, and
  * "became" belongs to the type shape anyway). As a REJECTION on the word before the
  * subject, a name the corpus puts after a verb is that verb's OBJECT and not the
@@ -2680,7 +2680,7 @@ static int answer_relation_fact_extract_active(const corpus_entry_t* entry)
                * at the mark, so "Lincoln represented the Alton" asserted something the
                * corpus does not say. The ARTICLE is what licenses the join: it says the
                * whole is one noun phrase, so the joined parts cannot be two entities.
-               * Without that mark the join is REFUTED -- 36 `&` pairs on 2 MB and many
+               * Without that mark the join is REFUTED - 36 `&` pairs on 2 MB and many
                * join two entities ("Milius & Francis Ford Coppola"), with nothing in the
                * text to tell the readings apart. Article-headed: 2 of 2 correct.
                */
@@ -2714,14 +2714,14 @@ static int answer_relation_fact_extract_active(const corpus_entry_t* entry)
              * THE TAIL CANNOT BE GATED BY EITHER DERIVED CLASS, and three variants
              * were REFUTED by reading the facts. Cutting BACK to the last attested
              * phrase head truncated "the history books" to "the history", because head
-             * attestation is sparse for plurals -- the error being removed,
+             * attestation is sparse for plurals - the error being removed,
              * reintroduced. Requiring the tail to appear in the article frame at all
              * cost 26 truths for 6 rejections, since that frame sees a fraction of the
              * nouns a corpus uses. Rejecting a tail in the DERIVED VERB class cost 19
              * truths for 2, because English nouns are verb-homographous exactly where
              * they are frequent ("the Australian Open", "a spectacular run", "the
-             * claim", "the use"). What remains -- a participle or an undeclared adverb
-             * taken into the phrase -- is a gap in a DECLARED class, and belongs in
+             * claim", "the use"). What remains - a participle or an undeclared adverb
+             * taken into the phrase - is a gap in a DECLARED class, and belongs in
              * the rule file rather than in a test here.
              */
             if (0 < taken) object_len = (int)(object_end - object);
@@ -2734,7 +2734,7 @@ static int answer_relation_fact_extract_active(const corpus_entry_t* entry)
            * the nightingale was gone" is not Jorindel seeing a nightingale, and
            * "Catherine thought the door was open" is not Catherine thinking a door.
            * Verbs of perception and cognition take a clause, and nothing else about
-           * the frame distinguishes one -- this mark does, and it is declared.
+           * the frame distinguishes one - this mark does, and it is declared.
            */
           const char* after = object_end;
           int after_len = 0;
@@ -2800,8 +2800,8 @@ static size_t answer_relation_facts_build(const libxs_registry_t* corpus)
      * as a heading, and the same mark answers the question this layer was asking
      * wrongly: "thumb|300px|Alexander the Great fighting Persian king Darius III"
      * yielded "BC | original | Greek" and a photo credit yielded "Hale Bopp | using
-     * | a standard". The text STAYS in the corpus -- it is words a reader wrote and
-     * the language models count it -- and only the fact layers decline to state a
+     * | a standard". The text STAYS in the corpus - it is words a reader wrote and
+     * the language models count it - and only the fact layers decline to state a
      * proposition on its behalf.
      */
     if (0 != corpus_line_markup(entry->text, entry->text_len)) {
@@ -2877,8 +2877,8 @@ static size_t answer_relation_facts_build(const libxs_registry_t* corpus)
  * Baking the alias closure in here is what makes the query side ONE lookup: a
  * question naming an aliased verb finds the facts stored under the canonical
  * one, without the scan having to consult the rule file per fact. The index only
- * ever proposes CANDIDATES -- answer_relation_fact_relation_match still decides
- * -- so the reply cannot depend on the index being exactly right, only on its
+ * ever proposes CANDIDATES - answer_relation_fact_relation_match still decides
+ * - so the reply cannot depend on the index being exactly right, only on its
  * being complete.
  */
 static void answer_relation_facts_index(void)
@@ -2949,8 +2949,8 @@ static void answer_identity_facts_free(void)
  * query's meaning from its capitalization: the first word of a sentence and a
  * heading in capitals both pass it, so the extractor bound them to roles and the
  * fact table filled with pairs no reader would recognise. The corpus already
- * answers the question -- a name is a word never attested in lower case, which
- * the case census counts at ingest -- so the census decides and the capital is
+ * answers the question - a name is a word never attested in lower case, which
+ * the case census counts at ingest - so the census decides and the capital is
  * only a cheap pre-filter for it.
  */
 static int answer_identity_word_is_name(const char* word, int word_len)
@@ -3019,7 +3019,7 @@ static int answer_identity_fact_append(const char* name, int name_len,
        * score is a similarity: with rule learning on, a term the learner added
        * to the person class can outscore an asserted one and silently rebind the
        * name to it, turning a correct reply into a confident false assertion.
-       * Preferring the asserted role is a total order over three known values --
+       * Preferring the asserted role is a total order over three known values -
        * no statistic, no threshold, and nothing fitted to a corpus. Scores still
        * decide WITHIN a provenance, which is the comparison they can support.
        */
@@ -3121,7 +3121,7 @@ static size_t answer_identity_facts_build(const libxs_registry_t* corpus)
       /**
        * A role is a WORD, so the quotation marks around it are not part of it.
        * The delimiter list is ASCII and the corpus is typeset, so a token can
-       * arrive as a quote character followed by the word -- and the class test
+       * arrive as a quote character followed by the word - and the class test
        * matches on word containment, so it accepted the pair and then stored the
        * punctuation as the role.
        */
@@ -3262,7 +3262,7 @@ static int answer_location_fact_append(const char* actor, int actor_len,
   fact.provenance = answer_relation_rule_provenance(RELATION_RULE_PLACE,
     fact.place, fact.place_len);
   /**
-   * An actor may be in several places -- unlike a role, which binds once -- so
+   * An actor may be in several places - unlike a role, which binds once - so
    * only the SAME pair collapses, and then the tighter binding wins. Provenance
    * outranks the score for the same reason it does for an identity: a place term
    * the learner proposed must not displace one the rule file asserts.
@@ -3303,8 +3303,8 @@ static int answer_location_fact_append(const char* actor, int actor_len,
 /**
  * Bind an actor to a place within ONE clause: a name, then a location MARKER
  * declared by the rule file (`where|in`), then a member of the place class
- * (`place|forest`). All three come from data -- the name from the case census, the
- * marker and the class from the rules -- so no English enters this file.
+ * (`place|forest`). All three come from data - the name from the case census, the
+ * marker and the class from the rules - so no English enters this file.
  *
  * The clause bound is what keeps it honest, and it must include the COMMA. A
  * sentence names several actors and several places, and any pair of them is a
@@ -3312,7 +3312,7 @@ static int answer_location_fact_append(const char* actor, int actor_len,
  * the marker, is one the sentence states. Measured on the tales: with sentence
  * punctuation alone as the boundary, 8 of 25 facts were clearly true and 8 clearly
  * false, and EVERY false one crossed a comma into a coordinated clause with a
- * different subject -- "Roland went away, and the girl stood ... in the field"
+ * different subject - "Roland went away, and the girl stood ... in the field"
  * became a claim about Roland. Coordination is exactly where the subject changes,
  * and the comma is punctuation rather than vocabulary, so the fix costs no English
  * in this file.
@@ -3559,7 +3559,7 @@ static void answer_type_facts_free(void)
  * too: "Aegeus is the father of Theseus", "Python was a child of Gaia".
  *
  * The possessive appositive ("Lincoln's father Thomas") already names its possessor in
- * a field, and this is the SAME relation written the other way round -- so the field is
+ * a field, and this is the SAME relation written the other way round - so the field is
  * the same and only the frame differs. Everything the frame rests on is declared: the
  * role is a `person|` term, so "the Royal Governor of Virginia" is not kinship, and the
  * marker is the declared `genitive|` word, so a corpus that marks a possessor
@@ -3567,7 +3567,7 @@ static void answer_type_facts_free(void)
  *
  * The possessor may carry ONE article and ONE modifier ("the son of the mortal
  * Peleus"), the same single hop the possessive shape allows, and the run stops at the
- * first word that is not a name -- which takes the first conjunct of "of Priam and
+ * first word that is not a name - which takes the first conjunct of "of Priam and
  * Hecuba", and that is a true edge because coordination distributes.
  */
 static int answer_type_partner_of(const char* phrase, int phrase_len,
@@ -3722,10 +3722,10 @@ static int answer_type_fact_append(const char* name, int name_len,
  * Extract what each named entity IS, from the copular and appositive shapes.
  *
  * COPULAR: the name must be IMMEDIATELY before the copula, with only whitespace
- * between them. That single bound is what keeps the subject right -- "the daughter
+ * between them. That single bound is what keeps the subject right - "the daughter
  * of the king was a queen" names a queen, and reading the nearest earlier name as
  * the subject would have attributed it to the king.
- * APPOSITIVE: name, comma, gloss, comma -- and the gloss must OPEN WITH AN ARTICLE.
+ * APPOSITIVE: name, comma, gloss, comma - and the gloss must OPEN WITH AN ARTICLE.
  * Prose separates a great many things with commas, and requiring the determiner is
  * what distinguishes a noun phrase in apposition from the next clause. The articles
  * are their own declared class: using the skip class for this admitted "Hansel, and
@@ -3735,12 +3735,12 @@ static int answer_type_fact_append(const char* name, int name_len,
  */
 /**
  * The POSSESSIVE KINSHIP appositive: a possessed role word standing directly before a
- * name relates the two -- "Lincoln's father Thomas", "Alexander's mother Olympias".
+ * name relates the two - "Lincoln's father Thomas", "Alexander's mother Olympias".
  *
  * Unlike the other shapes here this one is triggered by the ROLE, which is why both
  * sides can be read by pointer and no state has to be carried across tokens: the role
  * class is DECLARED (`person|`), so a match is evidence before either flank is seen.
- * Declared is what makes the shape trustworthy -- the same frame with a derived noun
+ * Declared is what makes the shape trustworthy - the same frame with a derived noun
  * class admits "the 4th century Amsterdam" and asserts nonsense.
  *
  * The possessor is the second argument, so this is a relation and not a type, and it
@@ -3762,7 +3762,7 @@ static int answer_type_kin_append(const corpus_entry_t* entry, int heading_len,
   if (role <= limit + 1 || ' ' != role[-1]
     || 0 != isupper((unsigned char)*role)) return 0;
   owner_end = role - 1;
-  /* At most one modifier between the two -- "Lincoln's oldest son Robert". */
+  /* At most one modifier between the two - "Lincoln's oldest son Robert". */
   for (hop = 0; hop < 2; ++hop) {
     owner = owner_end;
     while (owner > limit && 0 == isspace((unsigned char)owner[-1])
@@ -3910,8 +3910,8 @@ static size_t answer_type_facts_build(const libxs_registry_t* corpus)
               /**
                * The complement must open with an ARTICLE, which is what makes it a
                * noun phrase and so a TYPE. Without that test the shape captured
-               * every predicate the copula introduces -- "Snowdrop was dead", "Tom
-               * was calling out" -- true spans, but not statements of what
+               * every predicate the copula introduces - "Snowdrop was dead", "Tom
+               * was calling out" - true spans, but not statements of what
                * something IS, and answering "What is X?" with one is wrong.
                */
               if (art_len > 0 && end > comp + art_len
@@ -3939,7 +3939,7 @@ static size_t answer_type_facts_build(const libxs_registry_t* corpus)
             /**
              * A NAME IS A MAXIMAL RUN of name tokens, not its last one. Taking one
              * token made "Atlas Shrugged" into "Shrugged" and "Thomas Lincoln" into
-             * "Thomas", so the fact was keyed and rendered under half a name -- and
+             * "Thomas", so the fact was keyed and rendered under half a name - and
              * the subject test then examined the wrong left edge, since what
              * precedes the RUN is what says whether the run is the subject.
              */
@@ -4169,9 +4169,9 @@ static int answer_type_kin_reply(const char* query_text, size_t query_len,
 /**
  * The KNOWLEDGE GRAPH: what the fact layers say about how two entities relate.
  *
- * No index and no new storage. The edges are the facts that already exist -- a
+ * No index and no new storage. The edges are the facts that already exist - a
  * relation fact whose actor and answer are both entities, and a kinship fact, which
- * names its partner in a field for exactly this reason -- so an edge VIEW over them
+ * names its partner in a field for exactly this reason - so an edge VIEW over them
  * is all a walk needs. An index was priced and declined (C2): at these fact counts a
  * scan per query is cheaper than a structure that has to be kept true.
  */
@@ -4313,13 +4313,13 @@ static int answer_edge_next(const char* name, int name_len, size_t* cursor,
 
 /**
  * GRAPH REACH: the edges, the entities they touch, the pairs one middle joins, and the
- * largest degree -- reported so the connectivity table can be RE-RUN instead of
+ * largest degree - reported so the connectivity table can be RE-RUN instead of
  * quoted from memory. It existed only as a hand-count, which is why it went stale
  * three times while the fact counts beneath it moved (E24, E16 STEP 3, E26).
  *
  * The pair count is EXACTLY what a two-hop reply can answer: two entities with no edge
  * of their own, joined by a common middle, counted once per unordered pair. That is a
- * bound on REACH and never on correctness -- a path's precision is the PRODUCT of its
+ * bound on REACH and never on correctness - a path's precision is the PRODUCT of its
  * hops, so only reading a sample can report it, which is what the wiki track does.
  */
 static void answer_graph_report(FILE* stream)
@@ -4478,7 +4478,7 @@ static int answer_edge_render(const answer_edge_t* edge, char* output,
  * The two entities a graph question asks about.
  *
  * A declared `link|` term is what says the question is about the graph at all, and
- * the two entities are the census names it mentions -- exactly two, or the question
+ * the two entities are the census names it mentions - exactly two, or the question
  * is not about a pair and this resolver has nothing to say.
  */
 static int answer_link_query(const char* query_text, size_t query_len,
@@ -4644,7 +4644,7 @@ static void answer_nouns_free(void)
  * without morphology: an AUXILIARY governs a verb.
  *
  * The frame is `aux`, then any number of declared function words, then the word
- * itself -- "would not GO", "had never SEEN", "will soon COME" -- so the adverbs and
+ * itself - "would not GO", "had never SEEN", "will soon COME" - so the adverbs and
  * negators between the two are stepped over rather than mistaken for the verb. Both
  * the auxiliaries and the function words are declared, so no English is written
  * here, and the class is a fact about the CORPUS rather than about English.
@@ -4652,7 +4652,7 @@ static void answer_nouns_free(void)
  * IT IS INCOMPLETE BY CONSTRUCTION, and that decides how it may be used. English
  * narrative is written in the past simple, which no auxiliary governs: "went",
  * "stood" and "looked" never appear in this frame and so are never derived. A
- * requirement built on it would therefore reject true facts wholesale -- measured on
+ * requirement built on it would therefore reject true facts wholesale - measured on
  * the tales, "Hans went into the stable" would have been the first casualty. It is
  * used only to REJECT: a name the corpus puts AFTER a verb is that verb's object,
  * and a missing verb then costs a missed rejection rather than a lost truth.
@@ -4825,7 +4825,7 @@ static answer_noun_t* answer_noun_record(const char* word, int word_len,
  * Derive the words this corpus uses as NOUNS from the frame that says so without
  * morphology: an ARTICLE heads a noun phrase.
  *
- * The naive reading of that frame -- the word after an article is a noun -- is
+ * The naive reading of that frame - the word after an article is a noun - is
  * REFUTED by measurement, because a participle modifies from exactly that position:
  * "the married couple", "the published work", "the defeated army" would take
  * `married`, `published` and `defeated` out of the verb class, and on Wikipedia that
@@ -4833,11 +4833,11 @@ static answer_noun_t* answer_noun_record(const char* word, int word_len,
  * Lee). So the frame is read STRICTLY: the word must END the phrase, which is what a
  * HEAD does and what a modifier never does. The phrase ends where the text does, at
  * anything that is not a letter, or at a declared preposition, auxiliary or copula.
- * Measured on wiki8m, that separates cleanly -- `god` 65 heads, `king` 109, `name`
+ * Measured on wiki8m, that separates cleanly - `god` 65 heads, `king` 109, `name`
  * 294, `work` 89, against 0 for `defeated`, `signed`, `won`, `held`, `killed`.
  *
  * The counts, not a flag, are the point: a caller asks which of the two derived
- * frames attests a word MORE OFTEN, so there is no threshold to pick -- the corpus
+ * frames attests a word MORE OFTEN, so there is no threshold to pick - the corpus
  * decides, and a word both frames attest equally is read as the noun, since the verb
  * frame is the one known to be incomplete.
  */
@@ -4899,7 +4899,7 @@ static size_t answer_nouns_build(const libxs_registry_t* corpus)
              * that, every article-led noun followed by an ordinary word counted as
              * modifier evidence and the dominance test rejected `girl` itself. The
              * class is incomplete, so what it misses costs evidence rather than
-             * inventing it -- the same trade as everywhere else it is read.
+             * inventing it - the same trade as everywhere else it is read.
              */
             ends = ((0 == after_len
                 && (after >= text_end || '.' == *after || '!' == *after
@@ -5087,7 +5087,7 @@ static int answer_own_fact_append(const char* owner, int owner_len,
     fact.section_len = entry->section_len;
   }
   /**
-   * An owner may own many things, so only the same item collapses -- and one item
+   * An owner may own many things, so only the same item collapses - and one item
    * being a PREFIX of another is the same item read to different lengths. Without
    * that, "Curdken's hat go" stood beside "Curdken's hat" and the enumeration
    * listed one possession twice, once ungrammatically. The shorter survives, since
@@ -5127,7 +5127,7 @@ static int answer_own_fact_append(const char* owner, int owner_len,
  * possessive apostrophe.
  *
  * THE APOSTROPHE IS INSIDE THE TOKEN. The tokenizer's delimiters are punctuation
- * that separates words, and an apostrophe joins one -- so "Curdken's" arrives whole,
+ * that separates words, and an apostrophe joins one - so "Curdken's" arrives whole,
  * the name test fails on it, and a first version of this found ZERO possessions in
  * a corpus holding twenty-nine. The mark is therefore looked for within the token:
  * an apostrophe, ASCII or the typographic U+2019 the corpus is typeset with, ending
@@ -5176,7 +5176,7 @@ static size_t answer_own_facts_build(const libxs_registry_t* corpus)
                * not the first word: "Ashputtel's two little birds" possesses birds
                * and taking one word claimed a "two", while "Snowdrop's old ..."
                * claimed an "old". The run ends at the first declared function word
-               * -- article, preposition, copula or skip -- which is where an English
+               * - article, preposition, copula or skip - which is where an English
                * noun phrase ends, and at any punctuation, which the tokenizer's
                * delimiters already mark.
                */
@@ -5425,7 +5425,7 @@ static int answer_topic_query_name(const char* query_text, size_t query_len,
  * This is navigation rather than retrieval: the facts are already extracted and
  * already grammatical, so collecting them is a walk over what is attested, and the
  * reply cites every source it rests on. Nothing is inferred and nothing is joined
- * across facts -- a proposition that needed two facts to be true would be a hop,
+ * across facts - a proposition that needed two facts to be true would be a hop,
  * and a hop is only sound where every step of it is attested.
  *
  * The reply is labelled with the WEAKEST term it rests on, not the strongest: an
@@ -5482,7 +5482,7 @@ static int answer_topic_reply(const char* query_text, size_t query_len,
    * "X was eaten by the wolf" is a fact about X and about the wolf alike.
    *
    * WHICH of them, when a Wikipedia entity has thirty, was the last arbitrary choice
-   * in a reply -- the first four in fact order, which is registry hash order and so
+   * in a reply - the first four in fact order, which is registry hash order and so
    * means nothing to a reader. The corpus supplies the order itself: the EARLIEST
    * cited facts are the ones its lead states, and a lead states what defines its
    * subject. So this selects and shows the earliest, which is a relevance order the
@@ -5582,7 +5582,7 @@ static int answer_topic_reply(const char* query_text, size_t query_len,
    * SPECULATION LAST, and only when there is nothing else to say.
    *
    * The `made` template takes whatever word follows "made" as the predicate, and on
-   * the tales only 2 of its 16 facts are true -- the rest are idioms ("made use
+   * the tales only 2 of its 16 facts are true - the rest are idioms ("made use
    * of", "made her way", "made room"). No score separates them (E5 measured that),
    * so such a fact is labelled rather than trusted. But labelling the COLLECTION by
    * its weakest member made the whole thing lose to ranked evidence, and a reader
@@ -5778,7 +5778,7 @@ static size_t answer_describe_facts_build(const libxs_registry_t* corpus)
                 /**
                  * CUT OFF by a line break rather than closed by punctuation or by
                  * the end of the entry: the clause is incomplete ("A young fox,
-                 * who said:" -- the speech was on the next line) and describes
+                 * who said:" - the speech was on the next line) and describes
                  * nothing, so it is not a description. Rejected the same way a
                  * clause-less role is, by never becoming a fact.
                  */
@@ -5793,7 +5793,7 @@ static size_t answer_describe_facts_build(const libxs_registry_t* corpus)
              * `end` still points at the role itself, so the fact would be the
              * article plus the queried word and the reply would restate the
              * question: "Who is the wife?" -> "A wife." Such a fact cannot inform
-             * any answer, so it is never stored, and the query abstains -- which
+             * any answer, so it is never stored, and the query abstains - which
              * is the truth, since the corpus describes no wife.
              */
             if (end > clause
@@ -5982,7 +5982,7 @@ static size_t answer_docdef_facts_build(const libxs_registry_t* corpus)
             fact->title_len = entry->section_len;
             fact->source = entry->source;
             /* The header prefix is STRIPPED from what this fact states, so its line
-               is the entry's plus whatever the strip skipped over -- otherwise a
+               is the entry's plus whatever the strip skipped over - otherwise a
                definition is cited to the line its "Header:" line sits on. */
             fact->line = entry->line;
             { int at;
@@ -6029,7 +6029,7 @@ static void answer_docdef_facts_report(FILE* stream)
  *
  * What the stamp does not catch is a corpus edited to exactly the same entry
  * count under exactly the same rules. Catching that needs a scan of the corpus,
- * which is the work the cache exists to avoid -- so it is stated here rather
+ * which is the work the cache exists to avoid - so it is stated here rather
  * than papered over. Deleting the file is always safe.
  */
 static unsigned int answer_facts_stamp(const libxs_registry_t* corpus,
@@ -6112,7 +6112,7 @@ static void answer_facts_save(const libxs_registry_t* corpus,
     /**
      * All four census arrays, not the two the Hilbert-era cache wrote. A reply
      * asks answer_word_is_name whether a word is a name, and that reads the
-     * UNFORCED counts -- so a cache holding only upper and total restored a
+     * UNFORCED counts - so a cache holding only upper and total restored a
      * census that every query then dereferenced through a NULL pointer. It was a
      * SEGFAULT on the first question of any run that hit the cache, which is why
      * a third consecutive warm run appeared to "stop evaluating".
@@ -6353,7 +6353,7 @@ static void conv_remember(const char* query_text, size_t query_len)
 
 
 /**
- * Is this a BACK-REFERENCE pronoun -- a word a follow-up points at the topic with?
+ * Is this a BACK-REFERENCE pronoun - a word a follow-up points at the topic with?
  *
  * Declared (`pron|it`), which retires the last eight English literals the C held. The
  * class is deliberately third-person only: "me" and "you" name a participant in the
@@ -6380,14 +6380,14 @@ static int conv_word_is_pronoun(const char* word, int len)
  * and wrong for everything else. `answer_docdef_term` was the only test, and it reads
  * a DEFINITION term, so "Tell me about the wolf?" looked subjectless: asked alone it
  * abstained correctly, asked after a question about Gretel it answered ABOUT GRETEL,
- * cited -- a confident wrong answer, and the same defect E16 STEP 3 fixed at a
+ * cited - a confident wrong answer, and the same defect E16 STEP 3 fixed at a
  * different trigger.
  *
  * The test is DECLARATIVE and deliberately not the derived noun class, which was tried
  * first and is too weak on narrative prose: "wolf" is not a noun by that class on the
  * tales, because the phrase-end rule needs a derived VERB after it and the tales are
  * past simple, which no auxiliary governs. So a subject is any word the rule file does
- * NOT account for -- not a function word, not a question word, not the topic marker,
+ * NOT account for - not a function word, not a question word, not the topic marker,
  * not a back-reference pronoun. A genuine follow-up ("What does it do?") is made
  * entirely of declared words and still rewrites.
  */
@@ -6486,8 +6486,8 @@ static int conv_rewrite(const char* query_text, size_t query_len,
  *
  * It used to be a substring test, which is the same defect the actor matching
  * carried: a longer word containing the relation borrowed the fact, so a
- * question about a different verb -- including one built by negating this verb
- * with a prefix -- was answered by it, asserted, and cited. A relation that
+ * question about a different verb - including one built by negating this verb
+ * with a prefix - was answered by it, asserted, and cited. A relation that
  * merely CONTAINS another relation is a different relation.
  */
 static int answer_relation_fact_relation_match(const char* query_relation,
@@ -7289,7 +7289,7 @@ static double lexical_score(const libxs_lexeme_stream_t* query,
  * more than one scale, so one sentence can exist as several entries: a stock
  * phrase recurs across sources, and every sentence short enough to be a
  * paragraph of its own is stored twice. The answer list is what the reader sees,
- * so the same sentence must not occupy two of its slots -- which is what returned
+ * so the same sentence must not occupy two of its slots - which is what returned
  * one reply twice at `-n 2`. Rejected here rather than at print time, so the
  * reply path, the evaluation and the recomb host all see one answer list.
  */
@@ -7360,7 +7360,7 @@ static int answer_select(const libxs_registry_t* corpus,
   /**
    * Evidence selection scores term overlap, which is blind to polarity: a
    * negated question overlaps the affirmative sentence on every content word
-   * and would rank it first. Abstain instead -- the corpus states positives,
+   * and would rank it first. Abstain instead - the corpus states positives,
    * so a complement is not answerable from it by selection either.
    *
    * A GRAPH QUESTION is refused here for a related reason: a sentence about one
@@ -7955,7 +7955,7 @@ static int answer_evidence_sentence(const char* query_text, size_t query_len,
  * rules. The extractors answer affirmative questions only: they find what the
  * corpus asserts, never what it denies, and a complement ("who is NOT the
  * <role>") is not groundable from evidence that states only positives. The
- * vocabulary stays in the rule file -- no negation words in the source -- and
+ * vocabulary stays in the rule file - no negation words in the source - and
  * with no rules loaded the check is inert, exactly like the other rule kinds.
  */
 static int answer_query_is_negated(const char* query_text, size_t query_len)
@@ -8008,7 +8008,7 @@ static int answer_query_is_negated(const char* query_text, size_t query_len)
  * resolver spoke. That is fine while every resolver rests on asserted knowledge
  * and wrong as soon as one does not: a resolver holding only a LEARNED binding
  * pre-empted a later one that could have answered from an ASSERTED term, and no
- * amount of ordering WITHIN a resolver can reach that -- the competition is
+ * amount of ordering WITHIN a resolver can reach that - the competition is
  * between resolvers. Provenance orders them for the same reason it orders the
  * facts inside one, and by the same total order over three known values.
  *
@@ -8017,7 +8017,7 @@ static int answer_query_is_negated(const char* query_text, size_t query_len)
  */
 /**
  * Is this a question about the GRAPH? A DECLARED link term says so, and nothing else
- * does -- not the endpoints resolving to census names, and not the failure of every
+ * does - not the endpoints resolving to census names, and not the failure of every
  * other resolver. Consulted by the fact chain and by evidence selection alike, so the
  * invariant "a graph question is answered by a path or not at all" cannot hold on one
  * path and lapse on another. Two definitions of one rule is the defect E16 STEP 3
@@ -8035,7 +8035,7 @@ static int answer_graph_asked(const char* query_text, size_t query_len)
  * Does the RULE FILE recognize this as a question it knows how to ask?
  *
  * A declared `ask|` word is the whole test, so this reports a fact about the RULES and
- * never about the corpus -- which is exactly the distinction a reply has to draw. Two
+ * never about the corpus - which is exactly the distinction a reply has to draw. Two
  * failures were being rendered identically and only one of them is the project's
  * result:
  *
@@ -8172,7 +8172,7 @@ static int answer_fact_reply(const libxs_registry_t* corpus,
 /**
  * Print the section an answer came from, when the corpus supplies one. Sections
  * are the story titles or Markdown headings recorded per entry at ingest, so a
- * citation is only emitted when the corpus actually carries that structure --
+ * citation is only emitted when the corpus actually carries that structure -
  * never invented, and silently omitted for flat text.
  */
 /**
@@ -8211,8 +8211,8 @@ static void answer_print_learned(void)
  * A citation names a TITLE, and prose that the heading rule read as one is not a
  * title: a corpus whose extract dropped its titles offers lead sentences instead,
  * and crediting an answer to "For the region in northwest Iran, see ..." says
- * nothing about where it came from. Two marks refuse those without reading words --
- * a comma, and a clause-ending mark at the end -- and the cost of refusing is now
+ * nothing about where it came from. Two marks refuse those without reading words -
+ * a comma, and a clause-ending mark at the end - and the cost of refusing is now
  * bearable, because the FILE and LINE are cited whether a title exists or not. A
  * title that ends in a period loses its half of the citation and keeps the half
  * that cannot be wrong.
@@ -8242,12 +8242,12 @@ static int answer_citation_len(const char* section, int section_len)
 /**
  * Print the citation: the titles when the corpus has any, and always the files and
  * lines. One range per file, and a single line rather than a range when the reply
- * rests on one line of it -- "grimm.txt:2104-2110" against "grimm.txt:2104".
+ * rests on one line of it - "grimm.txt:2104-2110" against "grimm.txt:2104".
  */
 /**
  * Format the citation: the title when the corpus has one, and always the files and
  * lines. One range per file, and a single line rather than a range when the reply
- * rests on one line of it -- "grimm.txt:2104-2110" against "grimm.txt:2104".
+ * rests on one line of it - "grimm.txt:2104-2110" against "grimm.txt:2104".
  *
  * One formatter, because the EVALUATION has to check the same string a reader sees.
  * Checking the title alone left the file and line ungated, which is the half that
@@ -8396,7 +8396,7 @@ static void answer_fact_section_add(const char* section, int section_len)
  * Reorder the selected candidates by the hierarchical model's conditional code
  * length, -log2 P(candidate | query), normalized per byte so a long sentence is
  * not penalized for its length. Selection stays in charge of WHICH sentences are
- * admitted -- this only reorders them -- so the abstention discipline is
+ * admitted - this only reorders them - so the abstention discipline is
  * untouched: a candidate promoted here was already attested and already cleared
  * the selection threshold. Returns the (unchanged) candidate count.
  *
@@ -8485,8 +8485,8 @@ static size_t answer_visible_append(char* output, size_t output_size,
 /**
  * Render an answer list the way a reader sees it; print it unless asked not to.
  *
- * ONE renderer, because the evaluation used to check `answer_reply` -- which
- * FAILS for most retrieved answers, those being shown as evidence instead -- so
+ * ONE renderer, because the evaluation used to check `answer_reply` - which
+ * FAILS for most retrieved answers, those being shown as evidence instead - so
  * everything the reply path does after that was ungated, and a reply that began
  * mid-word passed. What the reader is shown and what the fixture scores are now
  * the same bytes by construction.
@@ -8514,7 +8514,7 @@ static int answer_render(const char* query_text, size_t query_len,
     pos = answer_visible_append(output, output_size, pos, reply,
       (int)strlen(reply));
     /* Ranked evidence cites the entry it came from, so the origin is the entry's
-       own rather than a fact's -- registered whether or not this run prints, since
+       own rather than a fact's - registered whether or not this run prints, since
        the evaluation reads the same citation without printing it. */
     answer_fact_section_set(entries[0]->section, entries[0]->section_len);
     answer_origin_add(entries[0]->source, entries[0]->line);
@@ -8597,19 +8597,19 @@ static int answer_query(const libxs_registry_t* corpus,
    *
    * Asking how two entities relate is not answered by a sentence about one of them,
    * and the fall-through answered "How are Achilles and Lincoln connected?" with an
-   * unrelated paragraph about Achilles -- a confident non-answer, which is the failure
+   * unrelated paragraph about Achilles - a confident non-answer, which is the failure
    * the abstention discipline exists to prevent.
    *
    * THE FIRST VERSION OF THIS GUARD WAS TOO WEAK: it asked only when no other layer
    * had spoken, so a graph question that some other layer could answer was never
-   * tested, and the same question in two phrasings behaved differently -- "What
+   * tested, and the same question in two phrasings behaved differently - "What
    * connects Hansel and Gretel?" abstained while "How are Hansel and Gretel
    * connected?" replied "Hansel is the boy." (the identity layer answering a question
    * nobody asked, because that phrasing puts a copula next to a name). It also asked
    * whether BOTH endpoints resolve to census names, which let "What connects Hansel
    * and the witch?" fall through to a raw quotation.
    *
-   * A DECLARED link term is what makes it a graph question -- not the endpoints
+   * A DECLARED link term is what makes it a graph question - not the endpoints
    * resolving, and not the failure of everything else. So the test is the declared
    * term, and the only admissible answer is the path the graph states.
    */
@@ -8621,7 +8621,7 @@ static int answer_query(const libxs_registry_t* corpus,
   fact_section_len = answer_fact_section_len;
   /**
    * A fact answer resting on ASSERTED knowledge is final, exactly as it always
-   * was -- so with no rules learned nothing below this line ever runs, and the
+   * was - so with no rules learned nothing below this line ever runs, and the
    * cost and the output are unchanged.
    */
   if (0 != fact_ok && RELATION_RULE_ASSERTED == fact_prov) {
@@ -8644,7 +8644,7 @@ static int answer_query(const libxs_registry_t* corpus,
    * The FACT layer pre-empted the RANKED layer unconditionally, which is wrong
    * as soon as the fact rests on a learned term and the ranked answer does not:
    * the reader was handed a guess while an asserted answer went unasked for.
-   * Rendered quietly first, because deciding needs the text -- the class term a
+   * Rendered quietly first, because deciding needs the text - the class term a
    * reply rests on is read out of the reply, the same way its label is.
    */
   rendered = answer_render(query_text, query_len, entries, answer_count,
@@ -8986,8 +8986,8 @@ static int eval_converse(const libxs_registry_t* corpus,
        * A lone EVAL_RULE_GOVERNED marker in the fact field means the expected
        * abstention depends on loaded rules (negation, for instance, is a rule
        * kind): check it when rules are present, skip it when they are not.
-       * This keeps one fixture valid in both configurations -- the property
-       * that proves no language vocabulary is compiled into the source --
+       * This keeps one fixture valid in both configurations - the property
+       * that proves no language vocabulary is compiled into the source -
        * without pretending a rule-driven capability works without rules.
        */
       else if (NULL != fields[3]
@@ -9122,7 +9122,7 @@ static double gen_relevance_min(void)
  * neither of which is a corpus entry.
  *
  * The grounding gate already in place verifies that a continuation is deeply
- * ATTESTED, which is not the same as being about the same thing -- a deep context
+ * ATTESTED, which is not the same as being about the same thing - a deep context
  * match on a common word leads wherever that phrasing went in training, so a
  * fluent continuation can drift to an unrelated scene. Shared content beyond stop
  * words is the cheapest evidence of aboutness, and it needs no new machinery.
@@ -9243,7 +9243,7 @@ static void complete_respond(const libxs_registry_t* corpus,
          * would decide it lies at clause scale, where only 2% of four-word content
          * spans recur even at 27x this corpus. So the honest output is a caveat
          * rather than a confidence, and it is worded as the specific thing left
-         * unverified -- "sense of the shared term" -- because a generic disclaimer
+         * unverified - "sense of the shared term" - because a generic disclaimer
          * on every line is quickly ignored.
          *
          * The front size carries the rest: when the objective is indifferent among
@@ -9480,8 +9480,8 @@ static int respond(const libxs_spatial_t* spatial,
 /**
  * Recombination over the corpus. The byte model and the word probability are
  * DIAGNOSTICS here, not prerequisites: both only produce seam scores, and a seam
- * score has never separated a true join from a fluent false one -- the last
- * attempt ranked the false continuation 50x above the true one -- so
+ * score has never separated a true join from a fluent false one - the last
+ * attempt ranked the false continuation 50x above the true one - so
  * grammaticality is enforced by the clause constraint instead. Running without
  * them drops the bpc and penalty columns and nothing else, which is also what
  * lets this half link without the byte model at all.
@@ -9608,8 +9608,8 @@ int converse_qa_run(converse_run_t* run)
   answer_bridge_report(stderr);
   /* Before the facts and before any query: the resolvers ask it which words the
      corpus uses as names, which is what decides who answers. */
-  /* The derived layer is most of a warm start -- the census and the four fact
-     builds each walk the whole corpus -- so it is cached under a stamp of what
+  /* The derived layer is most of a warm start - the census and the four fact
+     builds each walk the whole corpus - so it is cached under a stamp of what
      it was built from, and rebuilt whenever that differs. */
   if (EXIT_SUCCESS != answer_facts_load(run->corpus, run->lexicon)) {
     answer_case_build(run->corpus, run->lexicon, run->rules, run->nrules);

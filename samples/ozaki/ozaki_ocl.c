@@ -36,7 +36,7 @@ void* ozaki_ocl_create(int use_double, int kind, int verbosity, int tm, int tn, 
    *
    * Classified as a warning rather than an error: the GEMM still computes a
    * correct result on the CPU, so nothing failed from the caller's point of
-   * view -- only the requested resource was unavailable. Reported at the
+   * view - only the requested resource was unavailable. Reported at the
    * warning level (verbosity 2+, or any negative value) because this is
    * library code and must stay silent unless asked, whereas the successful
    * case is mere confirmation and belongs at the info level (3+).

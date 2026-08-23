@@ -33,15 +33,10 @@ static void gemm_host_free(void* ptr, int hostmem);
 int main(int argc, char* argv[])
 {
   const char* const nrepeat_env = getenv("NREPEAT");
-  /**
-   * GEMM_HOSTMEM=1 allocates the matrices with the offload library's host
-   * allocator, which returns page-locked pages, instead of malloc. It exists to
-   * separate two costs an intercepted BLAS call pays together: reaching the
-   * device at all, and reaching it from memory the driver never registered.
-   * The default is 0 on purpose -- an application that calls dgemm cannot
-   * choose its allocator, so 0 is the only arm that describes a drop-in
-   * replacement, and 1 is the ceiling it could reach.
-   */
+  /* GEMM_HOSTMEM=1 uses the offload library's page-locked allocator instead
+   * of malloc, separating the device-reach cost from the pinned-memory cost.
+   * Default is 0: a real dgemm caller cannot choose the allocator, so 0
+   * matches a drop-in replacement and 1 is the achievable ceiling. */
   const char* const env_hostmem = getenv("GEMM_HOSTMEM");
   const int hostmem = (NULL != env_hostmem && 0 != *env_hostmem) ? atoi(env_hostmem) : 0;
   const char* const env_check = getenv("CHECK");
@@ -336,13 +331,19 @@ static void* gemm_host_malloc(size_t nbytes, int hostmem)
       if (EXIT_SUCCESS != libxstream_mem_host_allocate(&result, nbytes, NULL)) result = NULL;
     }
   }
-  else result = malloc(nbytes);
+  else {
+    result = malloc(nbytes);
+    /* Declare the operand: the library cannot discover a caller's pointer on
+     * its own, so pinning is the caller's contract (LIBXSTREAM_PIN decides
+     * what happens with the range; doing nothing is a valid answer). */
+    if (NULL != result && EXIT_SUCCESS == libxstream_init()) {
+      LIBXS_EXPECT(EXIT_SUCCESS == libxstream_mem_host_pin(result, nbytes));
+    }
+  }
 #else
-  /**
-   * Requested but unavailable is an error and not a fallback: a run that
-   * silently used malloc would be recorded as the page-locked arm, and the two
-   * differ by an order of magnitude on a PCIe part.
-   */
+  /* Requested but unavailable is an error, not a fallback: silently using
+   * malloc here would be recorded as page-locked when it is not, and the two
+   * differ by an order of magnitude on a PCIe part. */
   if (0 != hostmem) {
     fprintf(stderr, "ERROR: GEMM_HOSTMEM=%i needs a LIBXSTREAM-enabled build.\n", hostmem);
   }
@@ -356,7 +357,10 @@ static void gemm_host_free(void* ptr, int hostmem)
 {
 #if defined(__LIBXSTREAM)
   if (0 != hostmem) { if (NULL != ptr) LIBXS_EXPECT(EXIT_SUCCESS == libxstream_mem_host_deallocate(ptr, NULL)); }
-  else free(ptr);
+  else {
+    if (NULL != ptr) LIBXS_EXPECT(EXIT_SUCCESS == libxstream_mem_host_unpin(ptr));
+    free(ptr);
+  }
 #else
   LIBXS_UNUSED(hostmem);
   free(ptr);

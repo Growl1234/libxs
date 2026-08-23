@@ -119,7 +119,7 @@ LIBXS_API int libxs_predict_load_csv(libxs_predict_t* model,
         tokbuf + sizeof(tokbuf) / 2, output_tokens, 64);
     }
     /**
-     * A spec that yields no tokens -- an empty or all-blank string -- is the
+     * A spec that yields no tokens - an empty or all-blank string - is the
      * same request as no spec at all, and must fall back to sequential columns
      * rather than leave the token pointers unread.  The count is otherwise only
      * checked by an assert, so a release build would index uninitialized

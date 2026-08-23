@@ -270,7 +270,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
       /**
        * Forward-difference decay diagnostic (first K-group, verbose only).
        * Uses libxs_fprint (1D) on int8 slice buffers to report per-axis Linf
-       * at each derivative order -- characterizes exploitable smoothness.
+       * at each derivative order - characterizes exploitable smoothness.
        */
 #if defined(_OPENMP)
 # pragma omp single nowait
@@ -374,7 +374,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
       /**
        * Phase 4: tile-first GEMM + accumulate for this K-group.
        * Tiles outermost (single omp for): C stays in a local buffer
-       * across all slice pairs -- one load + one store per tile instead
+       * across all slice pairs - one load + one store per tile instead
        * of a read-modify-write per pair.  Also eliminates per-pair
        * omp-for barriers (implicit barrier at end of tile loop suffices).
        */

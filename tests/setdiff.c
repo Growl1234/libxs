@@ -89,14 +89,14 @@ int main(void)
       exit(EXIT_FAILURE);
     }
   }
-  /* multiset: greedy order matters -- sort ensures optimal 1-to-1 */
+  /* multiset: greedy order matters - sort ensures optimal 1-to-1 */
   { double a[] = {1.0, 2.0}, b[] = {1.5, 1.0};
     if (0 != libxs_setdiff(LIBXS_DATATYPE_F64, a, 2, b, 2, 0.6)) {
       FPRINTF(stderr, "ERROR line #%i: F64 multiset greedy order\n", __LINE__);
       exit(EXIT_FAILURE);
     }
   }
-  /* multiset: three duplicates vs two -- only two can match */
+  /* multiset: three duplicates vs two - only two can match */
   { double a[] = {5.0, 5.0, 5.0}, b[] = {5.0, 5.0, 9.0};
     if (1 != libxs_setdiff(LIBXS_DATATYPE_F64, a, 3, b, 3, 0.0)) {
       FPRINTF(stderr, "ERROR line #%i: F64 multiset dup count\n", __LINE__);

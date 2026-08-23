@@ -64,7 +64,7 @@ typedef libxs_ngram_entry_t ngram_entry_t;
  * retrieval store without neighbours) must be left out of the pool and out of
  * the weight update entirely. Folding abstention in as zero drives the slot's
  * weight to exactly zero through the multiplicative update, and the uniform
- * recovery share only reaches slots that still hold mass -- so one abstention
+ * recovery share only reaches slots that still hold mass - so one abstention
  * would retire the expert permanently.
  */
 typedef struct ngram_expert_t {
@@ -76,7 +76,7 @@ typedef struct ngram_expert_t {
  * Coverage probe for slot abstraction (does NOT predict anything).
  *
  * The question it answers: on positions whose exact context did NOT recur in
- * training -- the only positions that measure generalization -- would a context
+ * training - the only positions that measure generalization - would a context
  * with ONE content word replaced by a typed hole have recurred? If yes for a
  * large share, then patterns-with-holes are a funded mechanism: they let a novel
  * context match training evidence, which is the type-level sharing that a
@@ -93,7 +93,7 @@ typedef struct ngram_expert_t {
  * "Novel" here matches the definition already used by ngram_eval's attested
  * split: the full-order CONTEXT did not recur, independently of the successor.
  * Coverage, by contrast, requires the abstracted context to have been seen with
- * the SAME successor -- the abstraction has to predict the actual next token, not
+ * the SAME successor - the abstraction has to predict the actual next token, not
  * merely exist. The asymmetry is deliberate: it makes coverage a claim about
  * useful evidence rather than about pattern frequency.
  */
@@ -162,8 +162,8 @@ static int knnlm_ann_size = 0;
  * and bit-exact). Retrieval wants contexts that share a next token close and
  * contexts with different next tokens far, which is Fisher's criterion: weight
  * each dimension by sqrt(between-class / within-class scatter) over next-token
- * classes. Regression onto token ids would be meaningless -- ids carry no metric
- * -- so the objective is discriminative, not least-squares. Fitted from the
+ * classes. Regression onto token ids would be meaningless - ids carry no metric
+ * - so the objective is discriminative, not least-squares. Fitted from the
  * TRAINING entries only (the datastore already excludes held-out text) and
  * applied to BOTH the query and the stored keys, since a distance is only
  * meaningful when both sides live in one space.
@@ -365,8 +365,8 @@ static const ngram_entry_t* ngramk_lookup(libxs_registry_t* model,
  *
  * THE TRAP THIS AVOIDS: a candidate split invents pieces the training text never
  * contained, and an unknown piece has NO id. Scoring only the pieces that happen
- * to be known would make exotic splits look free -- fewer scored positions, less
- * accumulated cost -- and the oracle would "win" by producing garbage. So a
+ * to be known would make exotic splits look free - fewer scored positions, less
+ * accumulated cost - and the oracle would "win" by producing garbage. So a
  * piece with no id is charged the unigram floor rather than skipped, which is the
  * honest price of a unit the model cannot represent.
  *
@@ -411,7 +411,7 @@ static double ngram_syllable_cost(libxs_registry_t* model,
 
 /**
  * Per-word split ORACLE: the cheapest cut set over all candidates, which bounds
- * what ANY cut rule -- hand-written or learned -- can achieve on this corpus.
+ * what ANY cut rule - hand-written or learned - can achieve on this corpus.
  *
  * The decision rule was pre-committed before this was written (and is the reason
  * to write it): if the oracle is not materially better than the maximal-onset
@@ -581,7 +581,7 @@ static double ngram_bank_share(void)
  * matches a pair whose successor list omits it). pow(0, rate) is exactly zero,
  * so such a slot would lose all its mass in one step and the uniform recovery
  * term, which only reaches slots that still hold mass, could never revive it.
- * A merely tiny ratio needs no floor -- it decays steeply but stays positive,
+ * A merely tiny ratio needs no floor - it decays steeply but stays positive,
  * and clamping it would perturb the order-only weights that are otherwise
  * bit-exact to the pre-slot bank.
  */
@@ -681,9 +681,9 @@ static const char* ngram_bank_slotname(int slot)
  * holds every existing configuration bit-exact.
  *
  * An expert that cannot speak is left inactive rather than given probability
- * zero -- see ngram_expert_t. Order expert k needs k words of history; the skip
+ * zero - see ngram_expert_t. Order expert k needs k words of history; the skip
  * slot needs three and a pair that was actually observed. The unigram slot is
- * TOTAL: it always speaks, which is the point of carrying it -- the pool then
+ * TOTAL: it always speaks, which is the point of carrying it - the pool then
  * has a floor at every position, including those where counts have nothing.
  */
 static void ngram_bank_experts(const unsigned int hist[], int hlen,
@@ -728,7 +728,7 @@ static void ngram_bank_experts(const unsigned int hist[], int hlen,
   {
     /**
      * The store is keyed on the last two tokens, so it speaks wherever one token
-     * of history exists -- including positions no count context attested, which
+     * of history exists - including positions no count context attested, which
      * is the reason to carry it. The escape mass covers the unattested
      * remainder, so it is TOTAL: active whenever the output is scoreable.
      *
@@ -777,7 +777,7 @@ static void ngram_bank_experts(const unsigned int hist[], int hlen,
        * Frozen: the weights the warm-up committed are read and never written, so
        * the score does not depend on how many positions preceded this one. info
        * aliases the context, so the distribution cannot be reported here and the
-       * point query is what is available -- which is also cheaper, since it
+       * point query is what is available - which is also cheaper, since it
        * answers P(y|x) without enumerating the support. The mass-mode check
        * moves to the reported probability being a usable number.
        */
@@ -798,7 +798,7 @@ static void ngram_bank_experts(const unsigned int hist[], int hlen,
      * that one is total because its escape mass covers an unattested remainder,
      * this one because a low-rank completion of PPMI assigns a score to pairs
      * that were never observed at all. It reads ONE token of history, so it is
-     * the weakest possible context -- carried anyway because the measured wall is
+     * the weakest possible context - carried anyway because the measured wall is
      * that 78% of novel-context positions have no attested successor to rank, and
      * coverage there is worth more than context depth here.
      */
@@ -833,7 +833,7 @@ static int ngram_bank_geometric(void)
  * only part of the vocabulary where the experts differ from a scaled prior.
  * Every expert is the same interpolated backoff over suffixes of one history,
  * so the union over all of them is the union of the successor lists at suffix
- * lengths 1..maxorder -- at most maxorder * SUCC_MAX ids.
+ * lengths 1..maxorder - at most maxorder * SUCC_MAX ids.
  */
 static int ngram_bank_support(libxs_registry_t* model, const unsigned int hist[],
   int hlen, int maxorder, unsigned int ids[], int max)
@@ -862,7 +862,7 @@ static int ngram_bank_support(libxs_registry_t* model, const unsigned int hist[]
 /**
  * Geometric (log-linear) pool, normalized EXACTLY rather than approximately.
  * An unnormalized log-linear score is not a code length, so a BPC taken from
- * one would be meaningless -- the whole point of the measurement.
+ * one would be meaningless - the whole point of the measurement.
  *
  * The normalizer is exact at bounded cost because of the backoff structure: for
  * an id outside every successor list along the chain, each expert reduces to
@@ -1294,13 +1294,13 @@ static void ngram_last_context(libxs_lexicon_t* lexicon,
  *
  * Off is the historical definition and stays bit-exact: mean-reproduced is the
  * length of the verbatim prefix, so the scan stops at the first miss. That
- * definition has almost no dynamic range on novel seeds -- divergence is at the
+ * definition has almost no dynamic range on novel seeds - divergence is at the
  * very first position, so the bucket reads the same 0.06 for every configuration
  * measured so far, which is a property of the metric and not of the mechanism.
  * With this on, every lookahead position is visited with the TRUTH token fed
  * back as history, and the per-position accuracy and rank statistics are
  * computed over all of them. The prefix metrics keep their old definition
- * either way, so one run reports both readings -- exactly so while the bank is
+ * either way, so one run reports both readings - exactly so while the bank is
  * off. With the bank on, the extra positions also feed ngram_bank_update, so
  * the weights differ from a prefix-mode run and the prefix metrics are then
  * comparable in meaning but not to the digit.
@@ -1322,7 +1322,7 @@ static int ngram_gen_full(void)
  * This is the probe that decides the directed representation BEFORE any of it is
  * wired into a predictor. The count model carries the truth in its proposal on
  * only 22% of novel-context positions, so the question that matters is not
- * whether the embedding reranks better -- it is whether a TOTAL scorer can rank
+ * whether the embedding reranks better - it is whether a TOTAL scorer can rank
  * the truth at all where the partial one had nothing to offer. Costs one
  * vocabulary scan per position, which is why it is a knob and not always on.
  */
@@ -1395,7 +1395,7 @@ static int ngram_gen_join(libxs_lexicon_t* lexicon,
  * change the argmax has not changed what the system produces.
  *
  * Weights are carried across positions exactly as in scoring, but the update is
- * driven by the CHOSEN token, not the true one -- no target information may
+ * driven by the CHOSEN token, not the true one - no target information may
  * enter generation. The bank therefore adapts to its own trajectory here, which
  * is the honest online setting.
  */
@@ -1481,7 +1481,7 @@ static int ngram_gen_eval(libxs_registry_t* model,
   /**
    * Candidate budget is FIXED at GEN_CAND_MAX, so proposals take slots from the
    * counts rather than enlarging the list. Two reasons. Without it the counts can
-   * fill the list at exactly the positions proposals are for -- a match at order
+   * fill the list at exactly the positions proposals are for - a match at order
    * 1 still returns a full set while failing the grounding floor, so there was no
    * room left and 53249 positions kept abstaining. And a longer list would raise
    * inlist for free, which would make the comparison against the attested-only
@@ -1704,7 +1704,7 @@ static int ngram_gen_eval(libxs_registry_t* model,
             else ++ctx_abst_nov;
             /**
              * The prefix definition ends the run here, so the prefix metrics
-             * must stop accumulating even when the scan continues -- otherwise
+             * must stop accumulating even when the scan continues - otherwise
              * positions past an abstention extend mean-reproduced and the two
              * readings stop being comparable (measured: 7.48 -> 7.68 bpc).
              */
@@ -1725,7 +1725,7 @@ static int ngram_gen_eval(libxs_registry_t* model,
             }
             if (0 != cdecl) ++pos_resc;
             /* Whether what generation actually EMITTED is a successor no count
-               context attested here -- the share of output that is synthesized
+               context attested here - the share of output that is synthesized
                rather than selected, which is the cost side of this mode. */
             { int fromemb = 0, k;
               for (k = 0; k < nemb && 0 == fromemb; ++k) {
@@ -1924,7 +1924,7 @@ static void slot_scan(const libxs_registry_t* corpus,
     libxs_lexeme_stream_init(&stream);
     /**
      * Sentence scale only. The corpus holds each text at BOTH sentence and
-     * paragraph scale, so scanning every entry sees each sentence twice -- and a
+     * paragraph scale, so scanning every entry sees each sentence twice - and a
      * paragraph copy of a training sentence would then make that sentence's own
      * contexts look attested, inflating the exact-match share far above what the
      * n-gram model actually holds.
@@ -2088,7 +2088,7 @@ static void slot_probe_run(const libxs_registry_t* corpus,
  *
  * Adaptive scoring carries one context across the run, so the escape bank
  * converges but the figure becomes a function of the order entries are
- * iterated -- reproducible here, not comparable across shuffles, and the
+ * iterated - reproducible here, not comparable across shuffles, and the
  * content-hash key already changed that order once. Frozen scoring is
  * order-independent by construction, but only says something once the weights
  * it freezes have converged, which is what the warm-up pass is for.
@@ -2103,8 +2103,8 @@ static int ngram_bank_frozen(void)
  * Converge the escape bank on the TRAINING data, then publish the weights so
  * frozen scoring has something converged to freeze.
  *
- * The entries pushed into the store are the training split already -- pushing
- * is gated on predict_is_test in token_predict_build -- so replaying them
+ * The entries pushed into the store are the training split already - pushing
+ * is gated on predict_is_test in token_predict_build - so replaying them
  * reads no held-out data and needs none of the tokenization the eval loop does.
  * Passing NULL for values/probs/info still advances the bank: prob_observe
  * learns from the candidate, and the distribution is only reported if asked
@@ -2127,7 +2127,7 @@ static int ngram_bank_warmup(libxs_predict_t* store, int vocabulary)
     /**
      * How many entries the warm-up observes. The escape bank needs hundreds of
      * observations to settle, not hundreds of thousands, but each observation
-     * costs a scan of every entry in the cluster -- so observing the whole store
+     * costs a scan of every entry in the cluster - so observing the whole store
      * is quadratic in the store size while buying convergence that a prefix
      * already reached. A bound makes that trade measurable rather than assumed;
      * 0 keeps the full pass.
@@ -2153,7 +2153,7 @@ static int ngram_bank_warmup(libxs_predict_t* store, int vocabulary)
     }
     result = libxs_predict_prob_commit(store, context);
     /* nscan is the candidates ONE observation walks, so the product is the real
-       cost of this pass -- printed because a bound that looks small can still be
+       cost of this pass - printed because a bound that looks small can still be
        quadratic against a large cluster. */
     fprintf(stderr, "predict slot: warm-up observed %ld of %i entries"
       " (bound %i, %i clusters, scan max=%i avg=%.0f mean=%.0f"
@@ -2224,7 +2224,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
    * Each slot's STANDALONE cost, over exactly the positions where it spoke.
    * Without this a collapsed weight is uninterpretable: it cannot be told apart
    * from a plumbing fault. Same per-expert denominator discipline as the order
-   * experts -- an abstaining slot must not be charged for positions it never
+   * experts - an abstaining slot must not be charged for positions it never
    * scored, nor credited with them.
    */
   double bank_slot_bits[NGRAM_BANK_MAX];
@@ -2240,7 +2240,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
    * One scoring context for the whole run. The escape bank needs hundreds of
    * observations to commit, so a per-entry stream would be all transient and no
    * convergence; a per-run stream converges but makes the figure a function of
-   * ENTRY ORDER -- reproducible for a fixed corpus and iteration, not comparable
+   * ENTRY ORDER - reproducible for a fixed corpus and iteration, not comparable
    * across shuffles. A size of 0 means the model cannot be scored, in which case
    * the slot abstains rather than silently falling back to frozen weights.
    */
@@ -2310,7 +2310,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
       const int want = (2 == ds) ? SCALE_PARAGRAPH : SCALE_SENTENCE;
       /**
        * Each source byte must be counted once, or BPC is not comparable across
-       * granularities -- which is the one job the metric exists to do. Clause
+       * granularities - which is the one job the metric exists to do. Clause
        * fragments are stored at sentence scale ALONGSIDE their parent sentence,
        * so keeping both scored ~3x the real text.
        */
@@ -2337,7 +2337,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
       int hlen = 0;
       int maxorder = ngram_maxorder();
       /* Source bytes this entry contributes, whether or not every token in it
-         is scored -- the ceiling the denominator should approach. */
+         is scored - the ceiling the denominator should approach. */
       entry_bytes += (double)entry->text_len;
       for (ti = 0; ti < ntok; ++ti) {
         unsigned int cur;
@@ -2408,7 +2408,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
                * carried across positions and updated causally (score first,
                * then update), so no target information enters the score. The
                * slots are the fixed orders plus, when enabled, experts of a
-               * different KIND -- the 2.018 oracle below says order selection
+               * different KIND - the 2.018 oracle below says order selection
                * alone cannot reach the target, so mixing kinds is the only
                * direction with measured room.
                */
@@ -2441,8 +2441,8 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
                  * Extend the bound to the WHOLE pool, not just the fixed orders.
                  * Any per-position reweighting can at best put all its mass on
                  * the cheapest member available at that position, so taking the
-                 * minimum over every active slot -- including the ones that
-                 * differ in kind -- bounds what ANY mixing rule over this
+                 * minimum over every active slot - including the ones that
+                 * differ in kind - bounds what ANY mixing rule over this
                  * evidence could reach. Without the extra slots the bound would
                  * flatter a pool it does not cover.
                  */
@@ -2555,7 +2555,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
               /**
                * The distinction that decides how to read the short-context mass.
                * SATURATED means the model matched ALL the history that existed,
-               * so nothing was unattested and the only remedy is more history --
+               * so nothing was unattested and the only remedy is more history -
                * an early sentence position. TRUNCATED means history was
                * available and the longer context was not in the store, which is
                * the genuinely unattested case. Lumping them reads a young
@@ -2723,7 +2723,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
           }
           /**
            * How much of the slot is the kNN vote. Bits are per position, not per
-           * byte, so they compare only with each other -- the question is
+           * byte, so they compare only with each other - the question is
            * whether the positions the vote reached are cheaper than the rest and
            * how many there are.
            */

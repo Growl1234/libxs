@@ -146,7 +146,7 @@ static const answer_predict_profile_t answer_predict_profiles[] = {
   /**
    * k-means with the cluster count raised rather than auto-selected, kept as the
    * record of a REFUTED hypothesis: raising it does not buy the scan back for
-   * free. Measured at 2 MB, 40000 entries -- auto (200 clusters) scans 3819 on
+   * free. Measured at 2 MB, 40000 entries - auto (200 clusters) scans 3819 on
    * average for bpc 2.176; 1000 clusters scans 1594 for 2.184; the kd-tree
    * partition scans 155 for 2.180. So more clusters is dominated on BOTH axes,
    * and across all three the bits track the scan: a smaller cluster is less
@@ -249,7 +249,7 @@ static double* token_emb_work = NULL;
 static unsigned int token_emb_size = 0;
 /**
  * Memo for the successor normalizer. Z depends on the CONTEXT only, so scoring k
- * candidates at one position recomputed the same vocabulary pass k times -- which
+ * candidates at one position recomputed the same vocabulary pass k times - which
  * is invisible in the BPC path (one candidate per position) and made generation,
  * where the bank ranks up to GEN_CAND_MAX candidates, cost k vocabulary scans per
  * token. A pure memo: identical values, not an approximation.
@@ -270,12 +270,12 @@ static libxs_lexrule_t converse_lexrules[96];
  * probe sequence of colliding keys and PERMUTE the iteration. Donor selection is
  * defined over corpus order ("a donor is an entry later than the host"), so 393
  * parents mixed into the entry table were enough to move one join in fifty and with
- * it every seam average -- while every count stayed identical, which is what made it
+ * it every seam average - while every count stayed identical, which is what made it
  * look like a materialization bug. One registry, one kind of record.
  *
  * Parents are numbered rather than hashed, so a span costs four bytes to point at
  * one. The counter resumes from the highest id the loaded file holds, recovered
- * while the load is visiting every record anyway -- otherwise a warm ingest would
+ * while the load is visiting every record anyway - otherwise a warm ingest would
  * hand out ids that are already taken.
  */
 static libxs_registry_t* corpus_parents = NULL;
@@ -290,7 +290,7 @@ static long corpus_view_count = 0;
 /**
  * Whether to store clause fragments cut from a long PARAGRAPH. They are 99.7% of
  * all fragments and 71% of all entries, and unlike the fragments of an over-long
- * SENTENCE their bytes are already covered by the paragraph entry -- so the
+ * SENTENCE their bytes are already covered by the paragraph entry - so the
  * question of whether they earn their metadata is answerable by measurement.
  */
 /**
@@ -329,7 +329,7 @@ static int corpus_fragments_para(void)
  * half because both may consult it and neither may name its type: the QA half
  * rescores answers with it, generation chooses among successors with it, and the
  * recombination probe fills its bpc columns from it. NULL is a supported state
- * throughout -- "no instrument", not "no result".
+ * throughout - "no instrument", not "no result".
  */
 static const converse_judge_t* converse_judge_vtable = NULL;
 static void* converse_judge_opened = NULL;
@@ -492,8 +492,8 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
  * the registry to COPY its values.
  *
  * A stored record occupies exactly what its KIND says it does, so that identity is
- * a stamp on the layout that wrote it. Any change to a fixed field -- the token
- * arrays are 288 of those bytes and now tunable -- moves the metadata size, and a
+ * a stamp on the layout that wrote it. Any change to a fixed field - the token
+ * arrays are 288 of those bytes and now tunable - moves the metadata size, and a
  * corpus written by the other layout would be read as garbage: `text_len` still
  * parses whatever bytes land under it, which is exactly what makes the misreading
  * silent. The kind tag catches what the size alone cannot, namely a layout that
@@ -627,20 +627,20 @@ static int answer_relation_rule_kind(const char* text)
      * fact about the orthography and so cannot be derived from the corpus: a
      * corpus cannot tell you whether it is written in such a language, only what
      * its capitals do. With it, the same case census that identifies NAMES in
-     * English identifies NOUNS instead -- the signal is unchanged, the question
+     * English identifies NOUNS instead - the signal is unchanged, the question
      * the orthography answers is not.
      */
     else if (0 == strcmp(text, "caps")) result = RELATION_RULE_CAPS;
     /**
      * `where|in`, `why|because`, `how|by` are the MARKERS that make a sentence
-     * answer that question, and they were English string literals in this file --
+     * answer that question, and they were English string literals in this file -
      * the one thing the rule layer exists to prevent. They are function words, so
      * they are language facts and not corpus facts, which is why they belong in the
      * shared language file rather than in a per-corpus one. A corpus whose rules
      * REPLACE that file (a corpus in another language) must state its own, and
      * until it does its entries carry no such flag: absent rather than English.
      *
-     * `place|forest` is different in kind -- a place NOUN, i.e. a class seed of
+     * `place|forest` is different in kind - a place NOUN, i.e. a class seed of
      * exactly the shape `person|term` has, which the class learner then grows.
      */
     else if (0 == strcmp(text, "where")) result = RELATION_RULE_WHERE;
@@ -664,7 +664,7 @@ static int answer_relation_rule_kind(const char* text)
     /**
      * `article|a` is a closed class of its own and not a subset of `skip`. The
      * type extractor first used the skip class to recognize "X is A Y", and skip
-     * declares every function word -- "and", "would", "he" -- so it admitted
+     * declares every function word - "and", "would", "he" - so it admitted
      * "Hansel, and thrust into his pockets ..." as an apposition. An article is
      * what makes the phrase after a copula or a comma a NOUN phrase, which is
      * exactly the distinction being drawn.
@@ -688,7 +688,7 @@ static int answer_relation_rule_kind(const char* text)
     else if (0 == strcmp(text, "own")) result = RELATION_RULE_OWN;
     /**
      * `poss|apostrophe-s` names the ORTHOGRAPHY of possession, which differs by
-     * language and cannot be derived from a corpus -- the same kind of assertion
+     * language and cannot be derived from a corpus - the same kind of assertion
      * `caps|nouns` is, and stated the same way: the term names a shape rather than
      * a word, so no vocabulary enters the C. English marks it with an apostrophe
      * and an s ("Hansel's finger") and with a bare apostrophe after an s-final
@@ -704,26 +704,26 @@ static int answer_relation_rule_kind(const char* text)
      * word an auxiliary governs is a VERB. That frame is the cheapest verb detector
      * a corpus offers and it needs no morphology, so the class of verbs can be
      * DERIVED from the corpus instead of listed here. It is deliberately used only
-     * to REJECT -- see answer_verbs_build -- because the frame is incomplete by
+     * to REJECT - see answer_verbs_build - because the frame is incomplete by
      * construction.
      */
     else if (0 == strcmp(text, "aux")) result = RELATION_RULE_AUX;
     /**
      * `agent|by` is the word a PASSIVE names its agent with, and it is one word per
      * language rather than a class: English "by", German "von". Declaring it apart
-     * from the prepositions is what lets the passive shape be recognized at all --
+     * from the prepositions is what lets the passive shape be recognized at all -
      * "was visited by Odysseus" is an edge, "was visited in Athens" is not.
      */
     else if (0 == strcmp(text, "agent")) result = RELATION_RULE_AGENT;
     /**
-     * `link|connected` marks a question about the KNOWLEDGE GRAPH -- how two entities
-     * relate -- which is a different question from any single shape's: it is answered
+     * `link|connected` marks a question about the KNOWLEDGE GRAPH - how two entities
+     * relate - which is a different question from any single shape's: it is answered
      * by a PATH through facts rather than by one of them.
      */
     else if (0 == strcmp(text, "link")) result = RELATION_RULE_LINK;
     /**
      * `genitive|of` is the word that marks a possessor AFTER the thing possessed, and
-     * it is one word per language like the agent marker -- English "of", German "von".
+     * it is one word per language like the agent marker - English "of", German "von".
      * Declared apart from the prepositions for the same reason `agent|by` is: "the
      * father of Theseus" relates two entities and "the father in Athens" does not, and
      * only this one preposition of the thirty tells them apart. The `poss|` class
@@ -735,7 +735,7 @@ static int answer_relation_rule_kind(const char* text)
      * `join|ampersand` names an ORTHOGRAPHIC joiner, the way `poss|apostrophe-s` names
      * an orthographic possessive: the term names a SHAPE so no vocabulary enters the C.
      * It is read in ONE place only, inside an article-headed phrase, and the reason is
-     * measured rather than chosen -- see E17.
+     * measured rather than chosen - see E17.
      */
     else if (0 == strcmp(text, "join")) result = RELATION_RULE_JOIN;
     /**
@@ -744,7 +744,7 @@ static int answer_relation_rule_kind(const char* text)
      * is the word the language uses for it. German writes `ask|who|wer`.
      *
      * It exists because the query classifier was the LAST place English survived in
-     * the C -- it tested for "who", "what", "where" as literals while `where|`, `why|`
+     * the C - it tested for "who", "what", "where" as literals while `where|`, `why|`
      * and `how|` sat declared in the rule file two screens away. Those declare the
      * markers that make a SENTENCE answer a question; this declares the words that make
      * a QUERY ask one, which is the other half and was never written down.
@@ -754,7 +754,7 @@ static int answer_relation_rule_kind(const char* text)
      * `pron|it` declares the BACK-REFERENCE pronouns, the words a follow-up uses to
      * point at what was just discussed. The multi-turn rewrite substitutes the
      * remembered topic for one, so which words those are is a fact about the language
-     * and belongs here -- the last eight English literals the C still held.
+     * and belongs here - the last eight English literals the C still held.
      *
      * Only the third-person back-references belong: a first- or second-person pronoun
      * refers to a participant in the conversation and never to the topic, so
@@ -762,8 +762,8 @@ static int answer_relation_rule_kind(const char* text)
      */
     else if (0 == strcmp(text, "pron")) result = RELATION_RULE_PRON;
     /**
-     * `result|made` is the light verb that introduces a RESULTING STATE -- "Hansel is
-     * to be made fat" -- and the shape reads whatever word follows it as the predicate.
+     * `result|made` is the light verb that introduces a RESULTING STATE - "Hansel is
+     * to be made fat" - and the shape reads whatever word follows it as the predicate.
      * One word per language, declared for the same reason `agent|by` is, and it was the
      * last English literal left in a fact layer.
      *
@@ -897,7 +897,7 @@ static void answer_relation_rules_report(FILE* stream)
  * attestation has nothing to compare and the seam gate cannot separate them.
  * Sparse PMI was already retired here for a related reason: with zero observed
  * co-occurrence both sides collapse onto the smoothing floor. A LOW-RANK
- * COMPLETION is a different instrument -- it interpolates from the whole matrix,
+ * COMPLETION is a different instrument - it interpolates from the whole matrix,
  * so it assigns a graded score to a pair it never saw, which is the only way a
  * continuous signal can exist where the counts are flat. Whether that score
  * ORDERS good before bad is the question; this prints it rather than assuming it.
@@ -992,7 +992,7 @@ static double answer_rules_cosine(const double* lhs, const double* rhs)
  * How much a word looks like the class described by the two centroids. A member
  * must look like one in BOTH directions: followed by what persons are followed
  * by, AND preceded by what persons are preceded by. Scoring the weaker side is
- * what excludes a function word -- one can take person-like continuations while
+ * what excludes a function word - one can take person-like continuations while
  * nothing puts a determiner in front of it, and nsrc cannot see that because a
  * function word occurs in EVERY source (it held the highest nsrc of any
  * candidate, 58).
@@ -1019,7 +1019,7 @@ static double answer_rules_score(const double* cfwd, const double* cbwd,
  * Add one member to the two class accumulators. The forward rows are already
  * unit-length (they are the row-normalized projection), but token_semb is raw V,
  * so without normalizing here the member with the largest magnitude would set the
- * successor direction on its own -- and magnitude in V is not membership.
+ * successor direction on its own - and magnitude in V is not membership.
  */
 static void answer_rules_member(double* csum, double* ssum, unsigned int id)
 {
@@ -1059,7 +1059,7 @@ static double answer_rules_tail(long k, long n, double p)
 
 /**
  * Non-zero if a candidate shows a behaviour IMPLAUSIBLY far below the weakest
- * rate any ASSERTED member shows -- k of n where the seeds manage pmin.
+ * rate any ASSERTED member shows - k of n where the seeds manage pmin.
  *
  * This is not a cut on the rate. A rate ignores how much evidence stands behind
  * it, so a hapax with an unlucky context looks exactly like a word that truly
@@ -1076,7 +1076,7 @@ static int answer_rules_implausible(long k, long n, double pmin)
 
 /**
  * The highest rate at which this member's counts would still NOT look
- * implausible -- the point where the very test the candidates face would begin
+ * implausible - the point where the very test the candidates face would begin
  * to flag the member itself.
  *
  * This is what an asserted member is ENTITLED TO CLAIM about the class, and it
@@ -1105,9 +1105,9 @@ static double answer_rules_ceiling(long k, long n)
  * ASSERTED members manage. `pmin` holds their weakest rate for each, in the
  * order the test index uses.
  *
- *  0 HEADS   -- a word that MODIFIES where a member HEADS is an attribute of one,
+ *  0 HEADS   - a word that MODIFIES where a member HEADS is an attribute of one,
  *               not one of them.
- *  1 INTRODUCED -- one of the words that actually INTRODUCE a member introduces
+ *  1 INTRODUCED - one of the words that actually INTRODUCE a member introduces
  *               it. A verb passes the wider "some function word precedes it"
  *               reading easily, because a pronoun is a function word too.
  */
@@ -1129,8 +1129,8 @@ static int answer_rules_excluded(int test, unsigned int id, const long* freq,
 /**
  * Count, for every word, how often one of the LEARNED INTRODUCERS precedes it.
  *
- * The set cannot be known before the corpus has been read once -- it is the
- * function words that actually stand in front of an asserted member -- so this
+ * The set cannot be known before the corpus has been read once - it is the
+ * function words that actually stand in front of an asserted member - so this
  * is a second pass rather than another counter in the first one.
  */
 static void answer_rules_count_intro(const libxs_registry_t* corpus,
@@ -1174,7 +1174,7 @@ static void answer_rules_count_intro(const libxs_registry_t* corpus,
  *
  * WHY THIS IS THE PIECE THAT WAS MISSING. The fact layer is the one path in this
  * system that produces unseen, grammatical, attributed sentences without
- * diverging, because what it renders is a PROPOSITION rather than a token path --
+ * diverging, because what it renders is a PROPOSITION rather than a token path -
  * there is nowhere for it to divert to. But its reach is set by `person|...`
  * rules written by hand, so the capability was a demonstration and not learning.
  * Every consumer already goes through answer_relation_rule_has_term, so widening
@@ -1183,7 +1183,7 @@ static void answer_rules_count_intro(const libxs_registry_t* corpus,
  * The geometry is the directed successor embedding: two words sit together when
  * they are FOLLOWED by similar things, and a class like "person" is exactly a set
  * of words that take the same continuations ("the girl said", "the boy said").
- * That is also why this is not circular with the seed list -- the similarity is
+ * That is also why this is not circular with the seed list - the similarity is
  * computed from corpus succession, never from the rule file.
  *
  * SIDE-SIGNALS decide acceptance, not similarity alone:
@@ -1203,7 +1203,7 @@ static void answer_rules_count_intro(const libxs_registry_t* corpus,
  * becomes part of what the next round compares against, which is what turns that
  * band from a label into a guard. Mode 1 scores against the grown centroid alone
  * and mode 2 against the weaker of the grown and the seed one; 0 is seeds only.
- * Drift -- the cosine between the current centroid and the seed centroid -- is
+ * Drift - the cosine between the current centroid and the seed centroid - is
  * REPORTED per round and gates nothing, because no measurement yet says what a
  * poisoned round looks like.
  */
@@ -1231,9 +1231,9 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
     long* freq = (long*)calloc((size_t)vocab + 1, sizeof(long));
     /**
      * How often each word is the HEAD of its phrase rather than a MODIFIER in
-     * it. The distributional score cannot tell those apart -- an adjective is
+     * it. The distributional score cannot tell those apart - an adjective is
      * preceded and followed by what the noun it modifies is preceded and
-     * followed by -- so this is a positional count, not a similarity: a head is
+     * followed by - so this is a positional count, not a similarity: a head is
      * followed by a boundary or a function word, a modifier by another content
      * word. Measured here before anything is allowed to depend on it.
      */
@@ -1242,7 +1242,7 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
     /**
      * The mirror count: how often the word is preceded by a FUNCTION word. A
      * noun and the adjective before it are both introduced by a determiner,
-     * whereas an interjection stands on its own -- so the two positional counts
+     * whereas an interjection stands on its own - so the two positional counts
      * fail on different things, which is the whole reason for measuring both
      * before either is allowed to gate anything.
      */
@@ -1255,8 +1255,8 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
       * 473-section corpus `nsrc` was not merely capped, it was BIASED toward words
       * appearing early. It also cost a linear scan of that table per entry.
       *
-      * A bitmap answers the only question asked of it -- "at least minsrc distinct
-      * sources" -- in bounded memory and with no positional bias. Two collisions
+      * A bitmap answers the only question asked of it - "at least minsrc distinct
+      * sources" - in bounded memory and with no positional bias. Two collisions
       * can hide one source, so it UNDERCOUNTS a word occurring in many sections;
       * that direction is safe, because the test admits on a lower bound.
       */
@@ -1278,7 +1278,7 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
      * The NOUN test, live only where the language file asserts `caps|nouns`.
      * Where an orthography capitalizes every noun, "never lower-case AND
      * capitalized where position did not force it" identifies nouns at nearly
-     * perfect precision -- the same rule that identifies NAMES in English, whose
+     * perfect precision - the same rule that identifies NAMES in English, whose
      * orthography reserves capitals for them instead. It is asserted rather than
      * measured because no corpus can say which language it is written in.
      */
@@ -1338,7 +1338,7 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
          * frequency, and a long sentence is stored again as OVERLAPPING clause
          * fragments whose bytes the sentence entry already covers. Those weight a
          * word by how many fragments happen to span it, which is heaviest at a
-         * clause boundary -- exactly where the positional counts below are read.
+         * clause boundary - exactly where the positional counts below are read.
          */
         if (SCALE_SENTENCE == entry->scale && entry->text_len > 0
           && 0 == (entry->lexical_flags & ENTRY_LEX_FRAGMENT)
@@ -1403,7 +1403,7 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
                 const libxs_lexeme_t* prev = stream.data + pos - 1;
                 /**
                  * What stands in front of an ASSERTED member is what an
-                 * introducer is -- ANY word, not one the library already calls a
+                 * introducer is - ANY word, not one the library already calls a
                  * function word. That flag is language-specific, and a test built
                  * on it went silently inert on a corpus whose language it does
                  * not cover; the learned set has its own evidence test, so the
@@ -1472,7 +1472,7 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
          * front of a member. Taken that way the set fills up with conjunctions,
          * which stand in front of everything, and the test it feeds then passes
          * the verbs it exists to catch. A word earns the label by preceding a
-         * member MORE OFTEN THAN ITS OWN FREQUENCY EXPLAINS -- the same tail, now
+         * member MORE OFTEN THAN ITS OWN FREQUENCY EXPLAINS - the same tail, now
          * read from the other end.
          */
         { long ntoken = 0, nslot = 0;
@@ -1493,7 +1493,7 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
           nintro, vocab);
         /**
          * The null for each test is the weakest rate an asserted member shows,
-         * which makes it an EXTREMUM -- and an extremum is set by whichever
+         * which makes it an EXTREMUM - and an extremum is set by whichever
          * member is most unusual rather than by the population. Two ways that
          * bites were measured here: a member whose spelling collides with an
          * unrelated word in another language, and a member carrying two senses.
@@ -1558,9 +1558,9 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
               else {
                 /**
                  * MEASURED AND NOT ADOPTED (CONVERSE_RULES_CEILING=1 restores it).
-                 * The ceiling fixes the stated defect -- a member with ten
+                 * The ceiling fixes the stated defect - a member with ten
                  * observations can no longer drag the bar down to what is really
-                 * sampling noise -- but it OVERSHOOTS for a well-evidenced member
+                 * sampling noise - but it OVERSHOOTS for a well-evidenced member
                  * too, raising the bar above rates that members demonstrably do
                  * show. On the two corpora the two effects cancel: German gains
                  * one class noun of 25, English loses one error of 40. A minimum
@@ -1690,8 +1690,8 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
             }
             /**
              * The margin is ADMITTED, not discarded. Its terms cannot be
-             * promoted by moving the threshold -- wrong terms score
-             * between right ones -- so the choice is to waste
+             * promoted by moving the threshold - wrong terms score
+             * between right ones - so the choice is to waste
              * the band or to carry the uncertainty forward. Carrying it forward
              * is only honest if it reaches the reader, which is what the
              * speculative flag is for: every reply resting on one says so.
@@ -1891,7 +1891,7 @@ int answer_relation_rule_has_term(int kind, const char* text,
  * Separate from answer_relation_rule_has_term rather than folded into it: every
  * consumer needs membership, only the ones that can end up in a reply need the
  * provenance, and returning both from one call would burden all of them. The
- * STRONGEST provenance wins -- an asserted term that matches would have admitted
+ * STRONGEST provenance wins - an asserted term that matches would have admitted
  * the text on its own, so a learned one alongside it changes nothing.
  */
 int answer_relation_rule_provenance(int kind, const char* text, int text_len)
@@ -2295,7 +2295,7 @@ int lexeme_text_is(const libxs_lexicon_t* lexicon,
  * (CONVERSE_SHUFFLE=1). A language model must degrade sharply; a model that is
  * really counting unigrams and local collocations will barely notice. Applied
  * at ingest so training and evaluation see the identical transformed text.
- * The permutation is a coprime affine map of the word index -- reproducible,
+ * The permutation is a coprime affine map of the word index - reproducible,
  * and derived from the sentence length so different sentences permute
  * differently.
  */
@@ -2440,7 +2440,7 @@ static void corpus_entry_set_section(corpus_entry_t* entry,
  * nothing: an umlaut-initial noun was invisible to the noun test. Transliterating
  * the corpus (ae for a-umlaut) would also work and the `norm` rules could do it,
  * but that changes what citations and replies PRINT, and the lexeme path already
- * handles these bytes -- only this pass did not.
+ * handles these bytes - only this pass did not.
  *
  * The Latin-1 supplement in UTF-8 is 0xC3 followed by 0x80-0xBE, upper case below
  * 0x9F and lower case above, differing by 0x20 exactly as ASCII does. That is all
@@ -2504,7 +2504,7 @@ static unsigned int corpus_word_id(libxs_lexicon_t* lexicon, const char* word,
  *
  * Three positions force one, and all three are structural: the start of the
  * text, anything after a sentence or clause terminator, and the first word
- * inside an opening quotation mark -- an utterance begins there, which is why
+ * inside an opening quotation mark - an utterance begins there, which is why
  * interjections look like names. A heading forces every capital in it, and the
  * heading map already says where one is.
  *
@@ -2546,7 +2546,7 @@ int corpus_case_forced(const char* text, int at, int heading_len)
  * ordinary sentence looks identical), truncated any title containing internal
  * punctuation at the first mark, and ran a title into a second heading below it.
  * Prose cannot be a line without a lower-case letter, so the line boundary
- * decides what the word count was standing in for -- and a title that stands
+ * decides what the word count was standing in for - and a title that stands
  * alone as a paragraph, which the run scan could only recognise when the title
  * happened to contain punctuation, is recognised by the same rule.
  *
@@ -2560,8 +2560,8 @@ int corpus_title_len(const char* text, int len)
   int result = 0;
   /**
    * A heading starts with a letter. Requiring that rejects all-caps text which
-   * merely opens with punctuation -- a quoted letter signature in dialogue, for
-   * instance -- that otherwise looks exactly like a title here.
+   * merely opens with punctuation - a quoted letter signature in dialogue, for
+   * instance - that otherwise looks exactly like a title here.
    */
   if (NULL != text && 0 < len && 0 != isalpha((unsigned char)text[0])) {
     int end = 0, nupper = 0, lower = 0;
@@ -2587,7 +2587,7 @@ int corpus_title_len(const char* text, int len)
  * field separator no prose uses.
  *
  * The heading rule reads a line's SHAPE and never its letters, which is what makes
- * it work across editions -- and a caption is shaped exactly like a heading: short,
+ * it work across editions - and a caption is shaped exactly like a heading: short,
  * alone, and set off by blank lines. So captions became sections and answers were
  * credited to them. A vertical bar is the one mark that separates the two without
  * reading any words, since it is field syntax in every markup that has it and
@@ -2630,8 +2630,8 @@ int corpus_line_markup(const char* text, int len)
  * The 1-based line of the source file an offset belongs to.
  *
  * Two things make this exact rather than approximate. The offset is into the text
- * ingest works on, which for prose is the REFLOWED text -- a line there is not a
- * line of the file a reader opens -- so the reflow map is consulted when there is
+ * ingest works on, which for prose is the REFLOWED text - a line there is not a
+ * line of the file a reader opens - so the reflow map is consulted when there is
  * one. And the map is monotone, so the answer is the last input line whose output
  * offset does not exceed the position asked about.
  */
@@ -2895,7 +2895,7 @@ static void corpus_sections_build(const unsigned char* text, size_t size)
           /**
            * And a candidate that does not FIT the section field is prose, not a
            * title. The median test alone is toothless on a corpus written one
-           * PARAGRAPH per line -- the median is then a paragraph, so every lead
+           * PARAGRAPH per line - the median is then a paragraph, so every lead
            * sentence is "shorter than the median" and became a section, which is
            * how answers came to be credited to "Anisotropy (the opposite of
            * isotropy) is the property of being ". A title that cannot be stored
@@ -2904,7 +2904,7 @@ static void corpus_sections_build(const unsigned char* text, size_t size)
            */
           /**
            * And the line must hold NO LOWER-CASE LETTER, which is the definition
-           * corpus_title_len already used for a heading inside an entry -- so there
+           * corpus_title_len already used for a heading inside an entry - so there
            * is one definition of "heading" in this file instead of two that
            * disagree. It is what finally separates a title from prose on a corpus
            * whose titles were dropped: every remaining false section on the wiki
@@ -2988,7 +2988,7 @@ static unsigned int corpus_chain_max(void)
  * jobs were conflated: a Hilbert code of the fingerprint is locality-preserving
  * ON PURPOSE, so similar texts share a cell, and using it as a unique key forced
  * a linear probe over every colliding entry with a full text compare per step.
- * On collision-heavy corpora (wiki markup, code) that made ingest quadratic --
+ * On collision-heavy corpora (wiki markup, code) that made ingest quadratic -
  * 2x the enwik8 text cost 10.8x the ingest CPU.
  *
  * A content hash collides only by accident, so insertion and duplicate detection
@@ -3042,7 +3042,7 @@ static const corpus_blob_t* corpus_blob_get(unsigned int id)
  * entry is stored at its actual text length, so a size test against sizeof would
  * be true of essentially every entry and would collapse the comparison to "equal
  * only if the new record has no section". With sections that is never true, so
- * re-ingesting a text stored a SECOND COPY of every sentence in it -- the corpus
+ * re-ingesting a text stored a SECOND COPY of every sentence in it - the corpus
  * doubled on each warm run, which is the mechanism behind the standing warm-start
  * warning.
  */
@@ -3083,7 +3083,7 @@ static int corpus_record_text(const void* value, size_t value_size,
  * Store the parent text a set of windows will be cut from, and return its id.
  * Nothing de-duplicates parents: two identical paragraphs are rare, and the windows
  * they yield collapse in the content key space anyway, which leaves at worst an
- * unreferenced parent -- and the caller removes that one, because on a warm
+ * unreferenced parent - and the caller removes that one, because on a warm
  * re-ingest EVERY parent is that one.
  */
 static unsigned int corpus_store_blob(const unsigned char* text, int len,
@@ -3137,8 +3137,8 @@ void corpus_view_bind(libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules,
 /**
  * Release every materialized window.
  *
- * A view is OWNED here and its pointer is handed out, so whoever kept one --
- * recombination's pivot index is the only such reader -- must release its own
+ * A view is OWNED here and its pointer is handed out, so whoever kept one -
+ * recombination's pivot index is the only such reader - must release its own
  * structures FIRST. That order is not incidental: the two live in different
  * translation units, and freeing this side first would leave the index holding
  * pointers into freed memory with every count still looking correct.
@@ -3163,7 +3163,7 @@ void corpus_view_free(void)
 /**
  * Rebuild a window into the entry it stood for. Everything the stored entry carried
  * is recovered here: the tokens and the fingerprint from the same bytes through the
- * same builder, the section and the SOURCE from the parent -- the source because the
+ * same builder, the section and the SOURCE from the parent - the source because the
  * builder stamps whichever file ingest is currently reading, which by materialization
  * time has moved on, and recombination reports same-source agreement.
  */
@@ -3223,7 +3223,7 @@ const corpus_entry_t* corpus_entry_scan(const void* value,
  *
  * Keying on the span record's address would make one registry's storage part of
  * another registry's keys, and then any reallocation, removal or teardown on the
- * corpus side silently redefines what a cached view stands for -- a stale entry
+ * corpus side silently redefines what a cached view stands for - a stale entry
  * returned for a different window, with nothing to notice it. The parent id and
  * the offset identify the window itself, so the cache survives the corpus moving
  * its records and cannot outlive its meaning.
@@ -3673,7 +3673,7 @@ static void ngramk_observe(libxs_registry_t* model, const unsigned int hist[],
 /**
  * The pure count-based estimate: interpolated backoff with NO skip tier folded
  * in. The bank needs this because it carries skip as its own slot, and an order
- * expert that already contained skip at a fixed weight would double-count it --
+ * expert that already contained skip at a fixed weight would double-count it -
  * making the learned skip weight meaningless.
  */
 double ngramk_prob_exact(const unsigned int hist[], int hlen,
@@ -3781,7 +3781,7 @@ static unsigned long ngram_utf8_decode(const char* text, int len, int* width)
 /**
  * Vowel test over CODE POINTS rather than bytes.  The byte test cannot see an
  * encoded letter at all, so every accented vowel read as a consonant and the
- * splitter cut German and French words at the wrong places -- a defect, not a
+ * splitter cut German and French words at the wrong places - a defect, not a
  * tuning choice.  Latin-1 Supplement and Latin Extended-A cover the vowels of
  * the languages this corpus set contains; anything outside is not claimed as a
  * vowel rather than guessed at.
@@ -4067,8 +4067,8 @@ static int bpe_encode_run(const char* text, int len, libxs_lexeme_t tokens[],
  * than hidden: syllabification is strongly language-dependent (German compounds,
  * sch/tsch; Italian near-perfect CV), which is exactly the per-language cost
  * this project has refused to pay by hand. It is here to make the unit
- * measurable at all -- the current output is wrong on words a speaker of any of
- * these languages reads correctly -- not as the final rule.
+ * measurable at all - the current output is wrong on words a speaker of any of
+ * these languages reads correctly - not as the final rule.
  */
 static int ngram_onset_legal(const char* text, int a, int b)
 {
@@ -4329,7 +4329,7 @@ int ngram_native_tokens(libxs_lexicon_t* lexicon, const char* text,
        * An unknown chunk must be EMITTED with id 0, not abort the entry. When
        * scoring held-out text (create=0) a chunk absent from training is the
        * normal case, and breaking here silently truncated the entry at its first
-       * novel chunk -- dropping ~95% of the held-out bytes and making the BPC
+       * novel chunk - dropping ~95% of the held-out bytes and making the BPC
        * denominator, hence BPC itself, incomparable with the other units. Id 0
        * is the reserved unknown, which the scoring loop skips as non-content,
        * so the bytes are still counted where the caller counts source bytes.
@@ -4429,7 +4429,7 @@ int ngram_maxorder(void)
  * Score (and train on) each text at ONE scale only. The corpus holds every text
  * at both sentence and paragraph scale, so the default loops see each sentence
  * TWICE: once standalone and once inside its paragraph. That is multiplicity,
- * not two observations -- the second copy is the same source bytes. It inflates
+ * not two observations - the second copy is the same source bytes. It inflates
  * training counts and, worse, lets a paragraph copy make a sentence's own
  * contexts look attested, which is exactly the confound the slot probe already
  * filters against (it takes SCALE_SENTENCE only).
@@ -4458,7 +4458,7 @@ int ngram_dedup_scale(void)
 /**
  * The answer ranker trains OFF by default. Measured: it is 40% of wall time on a
  * 2 MB corpus, leaves BPC identical to three decimals, and leaves QA at 9/9 and
- * 14/14 -- its only consumer (answer_predict_score) degrades to the unmodified
+ * 14/14 - its only consumer (answer_predict_score) degrades to the unmodified
  * base score when the model is absent. A stage that costs 40% and moves nothing
  * measurable should be opt-in. CONVERSE_NO_PREDICT is still honoured so existing
  * scripts keep working.
@@ -4815,8 +4815,8 @@ static void token_emb_free(void)
  * historical symmetric window.
  *
  * The nine flat axes all varied how the SYMMETRIC PPMI factorization is built or
- * searched -- radius, rank, iterations, hashing, weighting, temperature, heads,
- * projections -- and never which matrix is factorized. So the objective itself
+ * searched - radius, rank, iterations, hashing, weighting, temperature, heads,
+ * projections - and never which matrix is factorized. So the objective itself
  * was never a variable: the representation is fitted to "what appears near
  * what" and then asked "what comes next here". At 1 the matrix becomes
  * PPMI(next=j | cur=i), whose row space places two tokens together when they are
@@ -4847,7 +4847,7 @@ int token_emb_directed(void)
  * principled repair is a SEPARATE factorization per distance, so distance k's
  * evidence is about position k. That costs k SVDs and k vocabulary-sized tables,
  * so it should only be built if a distance-k-only model carries real information
- * about the successor at all -- which is what this measures.
+ * about the successor at all - which is what this measures.
  */
 static int token_emb_distonly(void)
 {
@@ -5065,7 +5065,7 @@ int token_emb_succ_append(const unsigned int ctx[], int nctx,
 /**
  * Rank of cand among all vocabulary ids by the successor score, 0 = best. No
  * sort: the rank is the number of ids that strictly outscore it, which is one
- * pass and needs no candidate list at all -- the point being that this scorer is
+ * pass and needs no candidate list at all - the point being that this scorer is
  * TOTAL where the count model is partial.
  */
 int token_emb_succ_rank(const unsigned int ctx[], int nctx,
@@ -5266,7 +5266,7 @@ static int token_emb_reduce(const size_t* rowptr, const unsigned int* colidx,
      * free: it was already computed and then thrown away with the scratch. With
      * the directed matrix <token_emb[p], token_semb[c]> is the rank-DIM
      * reconstruction of PPMI(c follows p), and a low-rank completion is nonzero
-     * on pairs NEVER OBSERVED -- the one property a count model cannot have.
+     * on pairs NEVER OBSERVED - the one property a count model cannot have.
      *
      * Kept UNNORMALIZED while token_emb rows are unit-normalized, so the product
      * is not calibrated as a probability: within one context the row scale is a
@@ -5818,7 +5818,7 @@ static int corpus_profile_for_path(const char* path)
  *
  * The windows OVERLAP by construction: each starts at a clause boundary and runs
  * to the LAST boundary within 240 bytes, so a clause belongs to every window that
- * reaches it. They are recombination's donor pool -- measured, not assumed:
+ * reaches it. They are recombination's donor pool - measured, not assumed:
  * withholding the paragraph ones costs a third of the splice yield and twenty
  * points of same-section coherence while every eval stays green.
  *
@@ -5907,7 +5907,7 @@ static int corpus_store_clauses(libxs_registry_t* corpus,
    * A parent whose every window turned out to be a duplicate is unreferenced, and
    * a warm re-ingest makes that the NORM: the windows collapse in the key space
    * while the parent, keyed by a fresh number, does not. Left alone it grows the
-   * parent file by the whole corpus on every warm run -- the same shape as the
+   * parent file by the whole corpus on every warm run - the same shape as the
    * warm-start doubling the section comparison once caused.
    */
   if (0 != parent && 0 == result && NULL != corpus_parents) {
@@ -6487,7 +6487,7 @@ const char* converse_facts_path(void)
 
 /**
  * The fixture to score against. Rule learning changes what the system asserts,
- * so it needs its OWN expectations -- scoring a learned run against the asserted
+ * so it needs its OWN expectations - scoring a learned run against the asserted
  * fixture would either fail on answers that are correct for that mode or, worse,
  * pass because the modes happen to agree on the cases nobody re-checked. The
  * asserted fixture is used when no learn-mode file exists, which keeps every
@@ -6863,7 +6863,7 @@ int converse_setup(int argc, char* argv[], int role, converse_run_t* run)
      *
      * `<prefix>.rules` REPLACES the shared file rather than extending it, because
      * a corpus that brings its own language rules is not in the shared file's
-     * language, and the shared file's assertions are then not merely unhelpful --
+     * language, and the shared file's assertions are then not merely unhelpful -
      * they are claims about a vocabulary this corpus does not have. Extending is
      * still what `<prefix>.relations` does, for a corpus in the same language.
      */
@@ -6960,8 +6960,8 @@ int converse_setup(int argc, char* argv[], int role, converse_run_t* run)
     /**
      * Where the corpus file's bytes actually go, and how many records STAND FOR an
      * entry. Worth reporting because the shape is counter-intuitive: an entry
-     * carries FIXED metadata -- the token id and flag arrays at ENTRY_TOKEN_MAX,
-     * and the section NAME -- whether or not it uses them, so a corpus of short
+     * carries FIXED metadata - the token id and flag arrays at ENTRY_TOKEN_MAX,
+     * and the section NAME - whether or not it uses them, so a corpus of short
      * entries is mostly metadata. Any work on the corpus size should read this
      * first rather than assume.
      *

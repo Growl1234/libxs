@@ -146,7 +146,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree(
        * process it.  Its label must be initialized here: when sp saturates the
        * node is never popped, and eval reads label unconditionally at a leaf.
        * Left uninitialized it takes whatever the scratch allocator returned,
-       * which varies with allocation history and thread count -- the cause of
+       * which varies with allocation history and thread count - the cause of
        * run-to-run differences in RF results.  The parent's majority label is
        * the correct fallback, being what a leaf at this point would predict.
        */

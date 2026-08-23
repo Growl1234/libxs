@@ -396,7 +396,7 @@ LIBXS_API int libxs_lexrule_defaults(libxs_lexrule_t* rules, int max_rules);
  * input: *line_offsets is allocated with *nlines entries, where entry k is the
  * offset in *out at which input line k+1 begins. Reflow drops characters but never
  * reorders them, so the map is monotone and a position in the result belongs to the
- * last input line whose offset does not exceed it -- which is what lets a caller
+ * last input line whose offset does not exceed it - which is what lets a caller
  * cite a line of the ORIGINAL text after working on the reflowed one. Both
  * out-parameters may be NULL, in which case no map is built.
  */

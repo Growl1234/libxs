@@ -30,7 +30,7 @@
  * Byte-context order for the local PPM models, independent of
  * LIBXS_NGRAM_ORDER_MAX (which bounds the libxs_ngram token store). HARD LIMIT:
  * hier_ppm_key_t is a registry KEY, and libxs_registry_get/set silently reject
- * keys larger than LIBXS_REGKEY_MAXSIZE (64) by returning NULL -- every lookup
+ * keys larger than LIBXS_REGKEY_MAXSIZE (64) by returning NULL - every lookup
  * would miss and the model would collapse to its unigram. sizeof(key) is
  * 4 + 4*order, so order 15 is the maximum that fits.
  */
@@ -807,8 +807,8 @@ static double hier_expert_logit_mix(const converse_hier_t* model,
  * symbol repeats the identical chain 256 times. Here the chain is walked ONCE:
  * start from the unigram, then for each order from low to high overwrite the
  * symbols attested at that order and scale the remaining (excluded) mass by the
- * escape probability. The result matches hier_ppm_prob_order per symbol -- same
- * estimator, same exclusion via backoff_norm -- at one pass instead of 256.
+ * escape probability. The result matches hier_ppm_prob_order per symbol - same
+ * estimator, same exclusion via backoff_norm - at one pass instead of 256.
  */
 static void hier_ppm_dist_order(const hier_ppm_t* model,
   const unsigned int history[], int history_length, int maxorder,
@@ -1790,8 +1790,8 @@ static int hier_score_conditional(const converse_hier_t* model,
     /**
      * The candidate is always kept whole; an over-long prefix is trimmed from
      * the LEFT so the bytes nearest the candidate survive. Those are the only
-     * ones the model can see anyway -- the byte context reaches back at most
-     * HIER_PPM_ORDER_MAX -- so trimming the head costs nothing and lets a
+     * ones the model can see anyway - the byte context reaches back at most
+     * HIER_PPM_ORDER_MAX - so trimming the head costs nothing and lets a
      * growing generation context be scored without failing.
      */
     int keep = prefix_length;
@@ -1960,7 +1960,7 @@ int converse_hier_rescore(const converse_hier_t* model,
  * This is the seam-fluency measure: with a short window it asks only "how
  * surprising is the text immediately after this join", which is what makes it a
  * judgement about the junction rather than about either side's content. Note the
- * inversion relative to converse_hier_rescore -- there, ranking by conditional
+ * inversion relative to converse_hier_rescore - there, ranking by conditional
  * length was wrong because it ranked by how ordinary a candidate is; here that is
  * exactly the quantity wanted.
  */

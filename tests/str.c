@@ -54,7 +54,7 @@ static int check_wellformed(void)
 /**
  * The strict contract: a truncated or corrupt sequence yields the LEAD BYTE and
  * width 1. Returning a code point assembled from bytes that do not belong to it
- * would hand a caller a value it then tests properties of -- and width 1 is what
+ * would hand a caller a value it then tests properties of - and width 1 is what
  * keeps a scan advancing instead of standing still on the bad byte.
  */
 static int check_malformed(void)
@@ -89,7 +89,7 @@ static int check_malformed(void)
 /**
  * libxs_utf8_size is the LENIENT form: it reports the width the lead byte claims,
  * clamped to what remains. It deliberately differs from decode on malformed input
- * -- asserted here so the difference cannot drift into an accident.
+ * - asserted here so the difference cannot drift into an accident.
  */
 static int check_size_is_lenient(void)
 {
@@ -120,7 +120,7 @@ static int check_size_is_lenient(void)
 
 /**
  * On WELL-FORMED text the two entry points must agree, and a scan by either must
- * cover the string exactly once -- the property every caller iterating text
+ * cover the string exactly once - the property every caller iterating text
  * depends on.
  */
 static int check_agreement_and_coverage(void)

@@ -15,7 +15,7 @@
  * Byte-wise ASCII case folding. The cast is not cosmetic: tolower accepts EOF or
  * a value representable as unsigned char, so passing a negative char is
  * undefined, which is what any byte above 0x7F is on a platform with signed
- * char -- and text carrying UTF-8 punctuation or accents is full of them.
+ * char - and text carrying UTF-8 punctuation or accents is full of them.
  */
 LIBXS_API_INLINE int internal_libxs_strilower(char c)
 {

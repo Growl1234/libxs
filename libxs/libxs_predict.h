@@ -104,7 +104,7 @@ LIBXS_EXTERN_C typedef struct libxs_predict_query_t {
    * walking a cluster, so scoring cost grows with this and not with nentries.
    *
    * Read it to know what a query costs before paying for it. A model built with
-   * one cluster puts every entry here, so scoring is linear in the corpus -- easy
+   * one cluster puts every entry here, so scoring is linear in the corpus - easy
    * to miss until a run that was affordable at one scale is not at the next, and
    * the reason this is reported rather than left to be discovered.
    */
@@ -183,7 +183,7 @@ LIBXS_API libxs_lock_t* libxs_predict_lock(libxs_predict_t* model);
  * LIBXS_PREDICT_AUTO (0): fingerprint decides per output (default).
  * LIBXS_PREDICT_INTERPOLATE: force polynomial for all outputs.
  * LIBXS_PREDICT_CLASSIFY: force kNN vote for all outputs.
- * LIBXS_PREDICT_TEMPORAL: timeseries mode -- recency weighting,
+ * LIBXS_PREDICT_TEMPORAL: timeseries mode - recency weighting,
  *   continuous output (no snap), and horizon smoothing.
  */
 LIBXS_API void libxs_predict_set_mode(libxs_predict_t* model, int mode);
@@ -284,7 +284,7 @@ LIBXS_API void libxs_predict_set_central(libxs_predict_t* model, int mode);
  *
  * Expect roughly an order of magnitude more build time (0.9 s to 6.3 s on the
  * monthly sunspot series), and read the selected window from query.window as
- * usual. Worth requesting where the window is a strong lever -- a series whose
+ * usual. Worth requesting where the window is a strong lever - a series whose
  * structure spans a good part of it, forecast a few steps ahead. Not worth it
  * on a large corpus with a long horizon: on ETTh1 at 96 steps the best window
  * beats the default one by 0.7% and costs minutes to find.
@@ -325,15 +325,15 @@ LIBXS_API void libxs_predict_set_series_aux(libxs_predict_t* model,
  * different amount of history: the first view uses the whole window, and
  * each subsequent one halves the lags of the one before it, keeping the
  * most recent. Short and long views fail on different queries, so
- * averaging them removes error neither removes alone -- measured on the
+ * averaging them removes error neither removes alone - measured on the
  * monthly sunspot series, two views lower the six-month-ahead error 21.8
  * to 20.2 and the one-month-ahead error 17.5 to 16.9.
  *
  * The views share one corpus, one partition and one neighbor index: they
  * differ only in which lags the distance reads, so a second view costs a
  * weight vector rather than a second model. That the partition can be
- * shared is measured, not assumed -- independently partitioned views
- * scored within 0.5% of shared ones -- because the gain comes from the
+ * shared is measured, not assumed - independently partitioned views
+ * scored within 0.5% of shared ones - because the gain comes from the
  * views seeing different amounts of history and not from their
  * disagreeing about which entries are neighbors.
  *
@@ -477,8 +477,8 @@ LIBXS_API void libxs_predict_inverse(libxs_lock_t* lock,
  * model that is fine.
  *
  * The context is bound to this model and this build. Rebuilding the model
- * invalidates it -- the size depends on the largest support, which grows as
- * entries are pushed -- and a scoring call given a stale context returns no
+ * invalidates it - the size depends on the largest support, which grows as
+ * entries are pushed - and a scoring call given a stale context returns no
  * result rather than using a buffer that is too small. Create a new one after
  * any build.
  *
@@ -492,7 +492,7 @@ LIBXS_API void libxs_predict_inverse(libxs_lock_t* lock,
  * but not comparable across shuffles, and should not be reported as if it
  * were. For a figure that is both converged and order-independent, score once
  * with a context over a warm-up split, libxs_predict_prob_commit the converged
- * weights to the model, then score the reported split with context == NULL --
+ * weights to the model, then score the reported split with context == NULL -
  * frozen at converged weights, with no transient. The commit step is required:
  * adaptation writes only into the context, so without it the model still holds
  * its uniform prior and frozen scoring is frozen at that prior, not at what the
@@ -528,7 +528,7 @@ LIBXS_API int libxs_predict_prob_commit(libxs_predict_t* model,
  * Probability of a supplied candidate output given the inputs.
  *
  * Unlike libxs_predict_eval, which reports what the model would pick, this
- * scores a value the caller supplies -- including one the model would never
+ * scores a value the caller supplies - including one the model would never
  * have picked. The same local evidence the kNN vote uses is read at the
  * candidate instead of at its argmax.
  *
@@ -562,10 +562,10 @@ LIBXS_API int libxs_predict_prob_commit(libxs_predict_t* model,
  *   For scoring a stream, prefer libxs_predict_prob_observe: it reports the
  *   distribution and observes the outcome in one call, so the ordering that
  *   keeps the two honest cannot be got wrong. This entry point is for point
- *   queries -- P(y|x) with no distribution -- which it answers without
+ *   queries - P(y|x) with no distribution - which it answers without
  *   enumerating the support.
  * context == NULL: frozen. The model's stored weights are used and not
- *   updated -- for a model loaded with converged weights this skips the
+ *   updated - for a model loaded with converged weights this skips the
  *   adaptation transient entirely. The model is strictly read-only, so
  *   concurrent calls are safe and the result does not depend on call order.
  *   info must be NULL in this mode; prob[] receives the values.
@@ -579,7 +579,7 @@ LIBXS_API int libxs_predict_prob_commit(libxs_predict_t* model,
  *
  * For a discrete output the result is a mass and the masses over the support
  * sum to exactly 1.0. For a continuous output it is a density, which
- * integrates to one over the reals but must not be summed with masses --
+ * integrates to one over the reals but must not be summed with masses -
  * check info->kind before combining outputs.
  */
 LIBXS_API void libxs_predict_prob(libxs_lock_t* lock,

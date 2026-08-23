@@ -58,7 +58,7 @@ LIBXS_API void libxs_mix_reset(libxs_mix_t* mix, const int active[])
 /**
  * The pool renormalizes over the slots that both hold weight and spoke. A slot
  * that abstains is excluded from the numerator AND the denominator, so it does
- * not dilute the mixture toward zero -- which it would if its zero contribution
+ * not dilute the mixture toward zero - which it would if its zero contribution
  * were divided by the full weight mass.
  */
 LIBXS_API double libxs_mix_pool(const libxs_mix_t* mix, const double prob[],

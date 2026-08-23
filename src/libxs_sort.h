@@ -29,7 +29,7 @@
   for (ii = 0; ii < m; ++ii) perm[ii] = ii;
 
   if (LIBXS_SORT_IDENTITY == method) {
-    /* identity permutation -- done */
+    /* identity permutation - done */
   }
   else if (LIBXS_SORT_NORM == method) {
     for (ii = 0; ii < m; ++ii) {

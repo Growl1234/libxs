@@ -72,7 +72,7 @@ static int check_pool_is_pure(void)
 
 /**
  * The expert that is consistently right must gain weight, and the total must
- * stay normalized over many steps -- the property the whole mechanism rests on.
+ * stay normalized over many steps - the property the whole mechanism rests on.
  */
 static int check_learning(void)
 {
@@ -128,7 +128,7 @@ static int check_abstention(void)
  * The ratio floor: an expert that gives the outcome no mass at all must not be
  * multiplied by exactly zero, or the share term can never revive it (the share
  * only reaches slots that still hold mass). With relmin disabled the expert is
- * expected to die -- asserting BOTH directions is what makes the floor's purpose
+ * expected to die - asserting BOTH directions is what makes the floor's purpose
  * explicit rather than incidental.
  */
 static int check_relmin(void)
