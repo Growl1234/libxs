@@ -1364,8 +1364,8 @@ static void answer_case_free(void)
 static void answer_case_report(FILE* stream)
 {
   unsigned int id, nname = 0, nforced = 0;
-  libxs_hist_t* hist_name = libxs_hist_create(8, 2, NULL);
-  libxs_hist_t* hist_other = libxs_hist_create(8, 2, NULL);
+  libxs_hist_t* hist_name = libxs_hist_create(8, 2, NULL, NULL, 0);
+  libxs_hist_t* hist_other = libxs_hist_create(8, 2, NULL, NULL, 0);
   if (NULL == stream || NULL == answer_case_total) return;
   for (id = 1; id < answer_case_size; ++id) {
     if (0 != answer_case_total[id]

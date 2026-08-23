@@ -1262,8 +1262,8 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
       */
     unsigned int* srcmask = (unsigned int*)calloc(2 * ((size_t)vocab + 1),
       sizeof(unsigned int));
-    libxs_hist_t* hist_seed = libxs_hist_create(10, 2, NULL);
-    libxs_hist_t* hist_cand = libxs_hist_create(10, 2, NULL);
+    libxs_hist_t* hist_seed = libxs_hist_create(10, 2, NULL, NULL, 0);
+    libxs_hist_t* hist_cand = libxs_hist_create(10, 2, NULL, NULL, 0);
     unsigned char* pushed = (unsigned char*)calloc((size_t)vocab + 1, 1);
     /**
      * The three arrays behind the LEARNED INTRODUCER test. `isseed` marks the

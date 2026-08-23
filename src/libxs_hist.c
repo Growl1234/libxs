@@ -12,23 +12,35 @@
 #include <stdarg.h>
 
 
+/**
+ * One allocation, three regions that never overlap: the per-bucket summary, the
+ * queue of raw samples behind it, and the running totals. Sharing an allocation
+ * is deliberate; sharing storage is not - a fold that aggregates into a slot the
+ * queue still occupies has to displace whatever sits there, and a displaced
+ * entry is one the scan can no longer reach.
+ *
+ * nbuckets may shrink at the first fold, so the region pointers are taken once
+ * at creation and never recomputed from it.
+ */
 LIBXS_EXTERN_C struct libxs_hist_t {
   libxs_hist_update_t* update;
-  double *vals, min, max;
-  int *buckets, nbuckets, nqueue, nvals, n;
+  libxs_hist_fold_t fold;
+  double *vals, *queue, *sum, *state, min, max;
+  int *buckets, nbuckets, nqueue, nq, nvals, n, nfold, nstate;
 };
 
 
 LIBXS_API libxs_hist_t* libxs_hist_create(int nbuckets, int nvals,
-  const libxs_hist_update_t update[])
+  const libxs_hist_update_t update[], libxs_hist_fold_t fold, int nstate)
 {
   libxs_hist_t* h = (libxs_hist_t*)malloc(sizeof(libxs_hist_t));
   LIBXS_ASSERT(0 < nbuckets && 0 < nvals);
   if (NULL != h) {
     const int nqueue = 16 * nbuckets;
-    h->vals = (double*)malloc(sizeof(double) * LIBXS_MAX(nbuckets, nqueue) * nvals);
+    if (NULL == fold || 0 > nstate) nstate = 0;
+    h->vals = (double*)malloc(sizeof(double) * ((nbuckets + nqueue + 1) * nvals + nstate));
     h->update = (libxs_hist_update_t*)malloc(sizeof(libxs_hist_update_t) * nvals);
-    h->buckets = (int*)calloc(LIBXS_MAX(nbuckets, nqueue), sizeof(int));
+    h->buckets = (int*)calloc(nbuckets, sizeof(int));
     if (NULL != h->vals && NULL != h->buckets && NULL != h->update) {
       const union { uint32_t raw; float value; } inf = { 0x7F800000U };
       h->min = +inf.value;
@@ -36,8 +48,17 @@ LIBXS_API libxs_hist_t* libxs_hist_create(int nbuckets, int nvals,
       h->nbuckets = nbuckets;
       h->nqueue = nqueue;
       h->nvals = nvals;
+      h->nq = 0;
+      h->nfold = 0;
+      h->fold = fold;
+      h->nstate = nstate;
+      h->queue = h->vals + (nbuckets * nvals);
+      h->sum = h->queue + (nqueue * nvals);
+      h->state = (0 < nstate ? (h->sum + nvals) : NULL);
+      for (h->n = 0; h->n < nstate; ++h->n) h->state[h->n] = 0;
       for (h->n = 0; h->n < nvals; ++h->n) {
         h->update[h->n] = (NULL != update) ? update[h->n] : NULL;
+        h->sum[h->n] = 0;
       }
       h->n = 0;
     }
@@ -50,6 +71,90 @@ LIBXS_API libxs_hist_t* libxs_hist_create(int nbuckets, int nvals,
     }
   }
   return h;
+}
+
+
+/**
+ * State layout: [0] union already retired, [1] the watermark it was retired up
+ * to, [2] how many segments are still open, [3] intervals that could not be
+ * merged exactly, then that many (begin, end) pairs kept in ascending order and
+ * disjoint. Only the open segments are kept, so memory is fixed while the
+ * result stays exact for anything still inside that window.
+ */
+LIBXS_API void libxs_hist_fold_union(double* state, int nstate,
+  double* queue, int nvals, int nsamples)
+{
+  const int k = (6 <= nstate ? (nstate - 4) / 2 : 0);
+  if (0 < k && 2 <= nvals && 0 < nsamples && NULL != state && NULL != queue) {
+    const int ib = nvals - 2, ie = nvals - 1;
+    double* const seg = state + 4;
+    int nseg = (int)state[2], m, i, j, n;
+    /* Sorted by begin so the sweep below is linear. In place, because the queue
+       is discarded as soon as this returns. */
+    for (m = 1; m < nsamples; ++m) {
+      for (j = m; 0 < j && queue[j * nvals + ib] < queue[(j - 1) * nvals + ib]; --j) {
+        for (n = 0; n < nvals; ++n) {
+          const double t = queue[j * nvals + n];
+          queue[j * nvals + n] = queue[(j - 1) * nvals + n];
+          queue[(j - 1) * nvals + n] = t;
+        }
+      }
+    }
+    for (m = 0; m < nsamples; ++m) {
+      double b = queue[m * nvals + ib], e = queue[m * nvals + ie];
+      if (e < b) { /* tolerate a reversed pair rather than accumulating nonsense */
+        const double t = b;
+        b = e;
+        e = t;
+      }
+      /* below the watermark it may overlap what was already retired, and that
+         cannot be undone - counted, so the result is never quietly wrong */
+      if (b < state[1]) state[3] += 1;
+      for (i = 0; i < nseg && seg[2 * i + 1] < b; ++i);
+      for (j = i; j < nseg && seg[2 * j] <= e; ++j) {
+        if (seg[2 * j] < b) b = seg[2 * j];
+        if (seg[2 * j + 1] > e) e = seg[2 * j + 1];
+      }
+      if (i == j) { /* disjoint from every open segment: insert it */
+        if (k <= nseg) { /* no room, so the earliest segment is retired */
+          state[0] += seg[1] - seg[0];
+          if (seg[1] > state[1]) state[1] = seg[1];
+          for (n = 0; n < 2 * (nseg - 1); ++n) seg[n] = seg[n + 2];
+          --nseg;
+          if (0 < i) --i;
+        }
+        for (n = 2 * nseg - 1; n >= 2 * i; --n) seg[n + 2] = seg[n];
+        ++nseg;
+      }
+      else if (i + 1 < j) { /* it bridged several segments, now one */
+        const int d = 2 * (j - i - 1);
+        for (n = 2 * (i + 1); n < 2 * nseg - d; ++n) seg[n] = seg[n + d];
+        nseg -= (j - i - 1);
+      }
+      seg[2 * i] = b;
+      seg[2 * i + 1] = e;
+    }
+    state[2] = nseg;
+  }
+}
+
+
+LIBXS_API double libxs_hist_union(const libxs_hist_info_t* info, int* inexact)
+{
+  double result = 0;
+  int n = 0;
+  if (NULL != info && NULL != info->state && 6 <= info->nstate) {
+    const int k = (info->nstate - 4) / 2;
+    int nseg = (int)info->state[2], i;
+    if (nseg > k) nseg = k;
+    result = info->state[0];
+    for (i = 0; i < nseg; ++i) { /* the segments still open */
+      result += info->state[5 + 2 * i] - info->state[4 + 2 * i];
+    }
+    n = (int)info->state[3];
+  }
+  if (NULL != inexact) *inexact = n;
+  return result;
 }
 
 
@@ -117,49 +222,77 @@ LIBXS_API_INTERN void internal_libxs_hist_rebin(libxs_hist_t* h, double new_min,
 }
 
 
-LIBXS_API void libxs_hist_push(libxs_lock_t* lock, libxs_hist_t* hist, const double vals[])
+/**
+ * Fold the queued batch into the buckets and empty the queue. Called when the
+ * queue wraps and whenever a query needs a summary of what is pending, so a
+ * histogram is exact while the batch fits and approximates only once there is
+ * no more space to stay accurate.
+ *
+ * The axis comes from the first batch; a later one that reaches outside it
+ * rebins first, which is the only step that loses information - it relocates a
+ * bucket's aggregate by the bucket's midpoint rather than by the samples that
+ * formed it. Everything else here is exact.
+ */
+LIBXS_API_INTERN void internal_libxs_hist_fold(libxs_hist_t* h);
+LIBXS_API_INTERN void internal_libxs_hist_fold(libxs_hist_t* h)
 {
-  if (NULL != hist) {
-    int i, j, k;
-    if (NULL != lock) LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
-    if (hist->nqueue <= hist->n) {
-      double w;
-      if (hist->nqueue == hist->n) {
-        libxs_hist_info_t info;
-        libxs_hist_query(NULL /*lock*/, hist, &info);
-      }
-      if (vals[0] < hist->min || vals[0] > hist->max) {
-        internal_libxs_hist_rebin(hist,
-          vals[0] < hist->min ? vals[0] : hist->min,
-          vals[0] > hist->max ? vals[0] : hist->max);
-      }
-      w = hist->max - hist->min;
-      for (i = 1; i <= hist->nbuckets; ++i) {
-        const double q = hist->min + i * w / hist->nbuckets;
-        if (vals[0] <= q || hist->nbuckets == i) {
-          ++hist->buckets[i - 1];
-          for (k = 0, j = (i - 1) * hist->nvals; k < hist->nvals; ++k) {
-            if (1 < hist->buckets[i - 1]) {
-              if (NULL != hist->update[k]) {
-                const libxs_hist_update_t update = hist->update[k];
-                update(hist->vals + (j + k), vals + k, hist->buckets[i - 1]);
-              }
-              else libxs_hist_update_avg(hist->vals + (j + k), vals + k, hist->buckets[i - 1]);
+  if (0 < h->nq) {
+    double lo = h->queue[0], hi = h->queue[0], w;
+    int i, j, k, m;
+    for (i = 1; i < h->nq; ++i) {
+      const double v = h->queue[i * h->nvals];
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    if (0 == h->nfold) { /* the first batch defines the axis */
+      if (h->nq < h->nbuckets) h->nbuckets = h->nq;
+      h->min = lo;
+      h->max = hi;
+    }
+    else if (lo < h->min || hi > h->max) {
+      internal_libxs_hist_rebin(h, lo < h->min ? lo : h->min, hi > h->max ? hi : h->max);
+    }
+    w = h->max - h->min;
+    for (m = 0; m < h->nq; ++m) {
+      const int mj = m * h->nvals;
+      for (i = 1; i <= h->nbuckets; ++i) {
+        const double q = h->min + i * w / h->nbuckets;
+        if (h->queue[mj] <= q || h->nbuckets == i) {
+          const int c = ++h->buckets[i - 1];
+          j = (i - 1) * h->nvals;
+          for (k = 0; k < h->nvals; ++k) {
+            if (1 < c) {
+              const libxs_hist_update_t update = h->update[k];
+              if (NULL != update) update(h->vals + (j + k), h->queue + (mj + k), c);
+              else libxs_hist_update_avg(h->vals + (j + k), h->queue + (mj + k), c);
             }
-            else hist->vals[j + k] = vals[k];
+            else h->vals[j + k] = h->queue[mj + k];
           }
           break;
         }
       }
     }
-    else { /* fill-phase */
-      if (hist->min > vals[0]) hist->min = vals[0];
-      if (hist->max < vals[0]) hist->max = vals[0];
-      for (k = 0, j = hist->nvals * hist->n; k < hist->nvals; ++k) {
-        hist->vals[j + k] = vals[k];
-      }
+    /* after the buckets have taken the batch, so the queue may be reordered */
+    if (NULL != h->fold) h->fold(h->state, h->nstate, h->queue, h->nvals, h->nq);
+    h->nq = 0;
+    ++h->nfold;
+  }
+}
+
+
+LIBXS_API void libxs_hist_push(libxs_lock_t* lock, libxs_hist_t* hist, const double vals[])
+{
+  if (NULL != hist) {
+    int k;
+    if (NULL != lock) LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
+    for (k = 0; k < hist->nvals; ++k) {
+      hist->queue[hist->nq * hist->nvals + k] = vals[k];
+      /* accumulated here rather than derived from the buckets: a running total
+         is independent of the update function, and rebinning cannot touch it */
+      hist->sum[k] += vals[k];
     }
     if (hist->n < INT_MAX) ++hist->n;
+    if (hist->nqueue <= ++hist->nq) internal_libxs_hist_fold(hist);
     if (NULL != lock) LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
   }
 }
@@ -168,54 +301,31 @@ LIBXS_API void libxs_hist_push(libxs_lock_t* lock, libxs_hist_t* hist, const dou
 LIBXS_API void libxs_hist_query(libxs_lock_t* lock, const libxs_hist_t* hist,
   libxs_hist_info_t* info)
 {
-  /* C "mutable": lazy commit mutates internal state via cast (safe: always heap-allocated) */
+  /* C "mutable": the pending batch is folded here (internal mutation) via cast,
+     which is safe because a histogram is always heap-allocated */
   libxs_hist_t* const h = (libxs_hist_t*)(uintptr_t)hist;
-  int i, j, k, n, m;
   LIBXS_ASSERT(NULL != info);
   info->buckets = NULL;
   info->vals = NULL;
+  info->sum = NULL;
+  info->state = NULL;
   info->range[0] = 0;
   info->range[1] = 0;
   info->nbuckets = 0;
   info->nvals = 0;
   info->nsamples = 0;
+  info->nstate = 0;
   if (NULL != h) {
     if (NULL != lock) LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
-    if (0 < h->n && h->n <= h->nqueue) {
-      const double w = h->max - h->min;
-      if (h->n < h->nbuckets) h->nbuckets = h->n;
-      /**
-       * buckets[0..nbuckets-1] are bucket counts; buckets[nbuckets..nqueue-1]
-       * are zero-initialized flags consumed left-to-right per queued sample.
-       * Swap-on-first-assign relocates displaced values to flagged positions.
-       */
-      for (i = 1, j = 0; i <= h->nbuckets; j = h->nvals * i++) {
-        const double p = h->min + (i - 1) * w / h->nbuckets, q = h->min + i * w / h->nbuckets;
-        for (n = 0, m = 0; n < h->n; m = ++n * h->nvals) {
-          if (0 == h->buckets[n] && (p < h->vals[m] || 1 == i) && (h->vals[m] <= q || h->nbuckets == i)) {
-            ++h->buckets[i - 1];
-            if (j != m) {
-              if (1 < h->buckets[i - 1]) {
-                for (k = 0; k < h->nvals; ++k) {
-                  const libxs_hist_update_t update = h->update[k];
-                  if (NULL != update) update(h->vals + (j + k), h->vals + (m + k), h->buckets[i - 1]);
-                  else libxs_hist_update_avg(h->vals + (j + k), h->vals + (m + k), h->buckets[i - 1]);
-                }
-              }
-              else {
-                for (k = 0; k < h->nvals; ++k) {
-                  LIBXS_VALUE_SWAP(h->vals[m + k], h->vals[j + k]);
-                }
-              }
-            }
-          }
-        }
-      }
-      h->nqueue = 0;
-    }
+    /* folding empties the queue, so querying twice reports the same thing
+       rather than folding the same samples again */
+    internal_libxs_hist_fold(h);
     if (0 < h->n) {
       info->buckets = h->buckets;
       info->vals = h->vals;
+      info->sum = h->sum;
+      info->state = h->state;
+      info->nstate = h->nstate;
       info->range[0] = h->min;
       info->range[1] = h->max;
       info->nbuckets = h->nbuckets;
@@ -235,7 +345,6 @@ LIBXS_API void libxs_hist_query_percentile(libxs_lock_t* lock, const libxs_hist_
   LIBXS_ASSERT(NULL != vals);
   libxs_hist_query(lock, hist, &info);
   if (NULL != info.buckets && 0 < info.nbuckets) {
-    const double w = info.range[1] - info.range[0];
     int total = 0, cumulative = 0;
     if (0 > percentile) percentile = 0;
     if (1 < percentile) percentile = 1;
@@ -261,10 +370,19 @@ LIBXS_API void libxs_hist_query_percentile(libxs_lock_t* lock, const libxs_hist_
           const int ib = (fraction < 0.5 && 0 < i && 0 < info.buckets[i - 1])
             ? (i - 1) * info.nvals : ((fraction >= 0.5 && i + 1 < info.nbuckets && 0 < info.buckets[i + 1])
             ? (i + 1) * info.nvals : ia);
-          int k = 1;
+          /**
+           * From index 0 like every other value, rather than from the bucket's
+           * position on the axis. The axis is where the bucket sits, not what
+           * landed in it: a distribution with one far outlier - a first launch
+           * paying a one-time cost, say - stretches the range so far that the
+           * interpolated coordinate names a value no sample took, while the
+           * bucket holding almost every sample carries their mean. This slot is
+           * the binning key, but it is also aggregated on push like the rest,
+           * so the information is there and only had to be used.
+           */
+          int k = 0;
           const double t = (ia != ib
             ? (fraction < 0.5 ? 0.5 + fraction : fraction - 0.5) : 0);
-          vals[0] = info.range[0] + (i + fraction) * w / info.nbuckets;
 #if defined(__GNUC__) && !defined(__clang__)
           LIBXS_PRAGMA_DIAG_PUSH()
           LIBXS_PRAGMA_DIAG_OFF("-Warray-bounds")

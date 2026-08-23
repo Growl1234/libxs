@@ -190,7 +190,7 @@ int main(int argc, char* argv[])
           {
             const int nloo = LIBXS_MIN(PROB_LOO, ntrain);
             const size_t loco = libxs_coprime2((size_t)ntrain);
-            libxs_hist_t* hist = libxs_hist_create(PROB_NBUCKET, 2, NULL);
+            libxs_hist_t* hist = libxs_hist_create(PROB_NBUCKET, 2, NULL, NULL, 0);
             prob_calib_t cal;
             double lambda, dscale_sum = 0;
             int nnovel_loo = 0;
