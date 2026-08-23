@@ -552,10 +552,17 @@ LIBXS_API_CTOR void libxs_init(void)
           libxs_timer_scale = internal_libxs_timer_duration_rtc(s0, s1) / (t1 - t0);
         }
 #endif
-        internal_libxs_sigentries[0].signal = signal(SIGABRT, internal_libxs_signal);
-        internal_libxs_sigentries[0].signum = SIGABRT;
-        internal_libxs_sigentries[1].signal = signal(SIGSEGV, internal_libxs_signal);
-        internal_libxs_sigentries[1].signum = SIGSEGV;
+        { /* default: only intercept if diagnostics were requested (avoids masking host runtime handlers) */
+          const char *const env_signal = getenv("LIBXS_SIGNAL");
+          const int enable_signal = (NULL != env_signal && '\0' != *env_signal)
+            ? atoi(env_signal) : (0 != libxs_verbosity);
+          if (0 != enable_signal) {
+            internal_libxs_sigentries[0].signal = signal(SIGABRT, internal_libxs_signal);
+            internal_libxs_sigentries[0].signum = SIGABRT;
+            internal_libxs_sigentries[1].signal = signal(SIGSEGV, internal_libxs_signal);
+            internal_libxs_sigentries[1].signum = SIGSEGV;
+          }
+        }
         result_atexit = atexit(internal_libxs_finalize);
         s1 = internal_libxs_timer_tick_rtc(); t1 = internal_libxs_timer_tick_tsc(); /* final timing */
         /* set timer-scale */
