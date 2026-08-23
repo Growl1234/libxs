@@ -2,24 +2,24 @@
 
 Nine executables demonstrating fingerprint-guided prediction:
 
-- **predict_params** -- Parameter prediction from structured CSV
+- **predict_params** — Parameter prediction from structured CSV
   (GPU kernel tuning, configuration databases).
-- **predict_sunspots** -- Timeseries forecasting via sliding-window kNN
+- **predict_sunspots** — Timeseries forecasting via sliding-window kNN
   (monthly sunspot numbers, 1749-present).
-- **predict_earthquakes** -- Spatial prediction of earthquake magnitude
+- **predict_earthquakes** — Spatial prediction of earthquake magnitude
   from location and depth (USGS catalog).
-- **predict_discharge** -- River discharge forecasting via sliding-window
+- **predict_discharge** — River discharge forecasting via sliding-window
   kNN with day-of-year seasonality (USGS NWIS daily streamflow).
-- **predict_soi** -- Southern Oscillation Index prediction from
+- **predict_soi** — Southern Oscillation Index prediction from
   anti-correlated Tahiti/Darwin sea level pressure using SPREAD
   decomposition (sum/diff modes).
-- **predict_stock** -- Paired-stock timeseries prediction from CSV
+- **predict_stock** — Paired-stock timeseries prediction from CSV
   using SPREAD decomposition on two correlated price series.
-- **predict_crystal** -- Crystal system classification from composition
+- **predict_crystal** — Crystal system classification from composition
   features (AFLOW ICSD, 7 classes, 60K entries).
-- **predict_bits** -- Held-out code length under the model against the
+- **predict_bits** — Held-out code length under the model against the
   training distribution: whether the inputs inform the output at all.
-- **predict_ett** -- ETT (Electricity Transformer Temperature) hourly
+- **predict_ett** — ETT (Electricity Transformer Temperature) hourly
   forecasting with univariate, multivariate, PCA, and local-attention
   modes (ETTh1, standard benchmark for timeseries LLMs).
 

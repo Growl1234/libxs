@@ -25,7 +25,7 @@ ORable flags controlling prediction behavior:
 - AUTO (0): fingerprint decides per-output (default).
 - INTERPOLATE: force polynomial for all outputs.
 - CLASSIFY: force kNN vote for all outputs.
-- TEMPORAL: timeseries mode -- enables recency weighting
+- TEMPORAL: timeseries mode — enables recency weighting
   (recent neighbors preferred), continuous output (no
   snap-to-nearest), and local coherence smoothing across
   horizon steps. Only effective when set_series was called
@@ -326,7 +326,7 @@ confidence scaling:
     Penalizes underpopulated clusters.
   - intra-cluster: 1/(1 + query_dist/cluster_dmax).
     Penalizes queries far from the cluster center.
-  The quality value acts as a confidence floor -- predictions
+  The quality value acts as a confidence floor — predictions
   in sparse regions approach quality but never go below it.
   The quality is persisted in save/load.
 
@@ -395,7 +395,7 @@ get retrieves the i-th pushed entry (0-based).
 a neighbour query walks in the worst case: local evidence is
 gathered by scanning a cluster, so scoring cost grows with `nscan`
 rather than with `nentries`. Read it to know what a query costs
-before paying for it -- a model whose partition is skewed, or built
+before paying for it — a model whose partition is skewed, or built
 with a single cluster, puts most or all entries on that path.
 
 ## Probability
@@ -420,7 +420,7 @@ int libxs_predict_prob_support(const libxs_predict_t* model,
 ```
 
 Where eval reports what the model would pick, these score a value
-the caller supplies -- including one the model would never pick.
+the caller supplies — including one the model would never pick.
 `prob` is a point query for P(y|x); `prob_observe` reports the
 distribution over one discrete output and optionally observes the
 outcome, in that order, so weights cannot be advanced before the
@@ -430,9 +430,9 @@ The escape weight mixing local evidence with the fallback prior is
 learned per output from realized log loss, and that learning is
 stream state rather than model state, so it lives in a context:
 
-- `context != NULL` -- adaptive; the weights adapt over the stream
+- `context != NULL` — adaptive; the weights adapt over the stream
   and the model is not modified.
-- `context == NULL` -- frozen; the model's stored weights are used
+- `context == NULL` — frozen; the model's stored weights are used
   and never written, so results do not depend on call order.
 
 `prob_commit` copies a context's converged weights into the model.

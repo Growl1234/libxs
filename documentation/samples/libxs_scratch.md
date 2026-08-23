@@ -78,8 +78,8 @@ all buffers, optionally touches them (CHECK), then frees them.
 Both paths use the same randomized sequence. An untimed warm-up cycle
 runs before the measured loops. Reported metrics:
 
-- calls/s (kHz) -- allocation+free throughput for each allocator
-- Scratch size -- high-water mark of the pool (MB)
-- Malloc size -- peak aggregate allocation per cycle (MB)
-- Scratch Speedup -- ratio of pool throughput to stdlib throughput
-- Fair -- size-adjusted speedup: (malloc_size / scratch_size) * speedup
+- calls/s (kHz) — allocation+free throughput for each allocator
+- Scratch size — high-water mark of the pool (MB)
+- Malloc size — peak aggregate allocation per cycle (MB)
+- Scratch Speedup — ratio of pool throughput to stdlib throughput
+- Fair — size-adjusted speedup: (malloc_size / scratch_size) * speedup

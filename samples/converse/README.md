@@ -47,9 +47,9 @@ Run any binary without arguments to print its full option and environment list.
 Put files anywhere; `texts/` is the conventional place and is ignored by git. Two
 structures are understood:
 
-- **prose** -- paragraphs of running text, blank-line separated. Uppercase lines are
+- **prose** — paragraphs of running text, blank-line separated. Uppercase lines are
   read as section headings and become the citation for everything under them.
-- **Markdown** -- headings, paragraphs and code blocks; `#` headings become the
+- **Markdown** — headings, paragraphs and code blocks; `#` headings become the
   citation.
 
 The structure is chosen by file extension (`.md` is Markdown, everything else is
@@ -87,11 +87,11 @@ delete the state files for that prefix:
 rm -f grimm.dat grimm.par grimm.src grimm.lex grimm.prd grimm.facts
 ```
 
-Do this before comparing two runs -- a warm run answers from state built by the
+Do this before comparing two runs — a warm run answers from state built by the
 previous one.
 
-To build the state without asking anything -- useful before a batch of runs, or to
-time ingestion on its own -- use `-L`:
+To build the state without asking anything — useful before a batch of runs, or to
+time ingestion on its own — use `-L`:
 
 ```bash
 ./converse.x -L -b texts/grimm
@@ -128,19 +128,19 @@ I do not know from the corpus.
 What is answerable depends on the rule files (next section). With the shipped rules
 the sample answers:
 
-- `Who is X?` -- an identity or a definition ("X is a Y", "X, a Y, ...").
-- `Where did X go?` / `Where is X?` -- a place, as a proposition from X's own sentence.
-- `Who was V by X?` -- a relation, including passives it was never told about.
-- `What belongs to X?` -- an enumeration, each item cited.
-- `What do we know about X?` -- several cited propositions collected about one name.
-- `How are X and Y connected?` / `What connects X and Y?` -- the path between two
+- `Who is X?` — an identity or a definition ("X is a Y", "X, a Y, ...").
+- `Where did X go?` / `Where is X?` — a place, as a proposition from X's own sentence.
+- `Who was V by X?` — a relation, including passives it was never told about.
+- `What belongs to X?` — an enumeration, each item cited.
+- `What do we know about X?` — several cited propositions collected about one name.
+- `How are X and Y connected?` / `What connects X and Y?` — the path between two
   entities, stated as the propositions it is made of.
-- anything else question-shaped -- the best matching sentence, ranked and cited.
+- anything else question-shaped — the best matching sentence, ranked and cited.
 
 Every answer is followed by a citation naming where it came from: the section title
 when the corpus has headings, and always the file and the line. An answer assembled from several propositions cites the range of lines it rests on
 (`texts/grimm.txt:2544-2579`), one range per file, and a single line when it is one
-line. Titles are only printed when the text really carries them -- a corpus of flat
+line. Titles are only printed when the text really carries them — a corpus of flat
 prose is cited by file and line alone rather than by a sentence that happened to look
 like a heading.
 
@@ -160,8 +160,8 @@ Three behaviours to expect:
 
 - The sample **abstains** (`I do not know from the corpus.`) rather than guessing when
   the corpus does not support an answer.
-- A question whose KIND it does not recognize -- one using none of the declared `ask|`
-  words -- still gets an answer, introduced by `I did not recognize the question. The
+- A question whose KIND it does not recognize — one using none of the declared `ask|`
+  words — still gets an answer, introduced by `I did not recognize the question. The
   closest the corpus comes:` so a relevant sentence is never mistaken for a direct
   answer. That is different from abstaining: the question was not read, rather than
   read and unsupported.
@@ -189,8 +189,8 @@ otherwise). Each non-comment line has three required fields and two optional one
 question|evidence-terms|reply-terms|fact-terms|citation-terms
 ```
 
-The fifth field checks the citation, and it is matched against the whole citation --
-title, file and line -- so a fixture can assert `texts/grimm.txt:2544`.
+The fifth field checks the citation, and it is matched against the whole citation —
+title, file and line — so a fixture can assert `texts/grimm.txt:2544`.
 
 Terms are comma-separated and matched case-insensitively. An empty evidence field
 marks an abstention case (the question SHOULD go unanswered); an empty reply field
@@ -216,7 +216,7 @@ printf 'First sentence. Second one.' | ./summarize.x -
 ```
 
 - default: summarize one file by repeatedly fusing adjacent sentences.
-- `-g`: compose mode -- ingest all files, take the first as the target, and emit a
+- `-g`: compose mode — ingest all files, take the first as the target, and emit a
   short assembled text (`-n` is the phrase budget).
 - `-r`: reflow text first, joining cosmetic line breaks (useful for Gutenberg files).
 
@@ -268,9 +268,9 @@ Everything corpus- and language-specific lives in local rule files rather than i
 source, and they are what decide which questions can be answered. Two files, both
 optional and both ignored by git:
 
-- `converse.rules` -- the LANGUAGE: function words and syntactic classes. A
+- `converse.rules` — the LANGUAGE: function words and syntactic classes. A
   `<prefix>.rules` file REPLACES it (for a corpus in another language).
-- `<prefix>.relations` -- this CORPUS: aliases, role words, place names. It EXTENDS
+- `<prefix>.relations` — this CORPUS: aliases, role words, place names. It EXTENDS
   the language file, so it need not restate function words.
 
 Each non-comment line is `kind|term`:
@@ -299,16 +299,16 @@ A few notes that matter in use:
 
 - `where|in` plus `place|forest` is what makes `Where ...?` answerable; declaring only
   one of the two answers nothing.
-- `aux|had` and `agent|by` are enough to read passives and active clauses generally --
+- `aux|had` and `agent|by` are enough to read passives and active clauses generally —
   the sample derives which words the corpus uses as verbs and as nouns from those
   frames and reports `verbs derived: N` and `nouns derived: N`. No verb list is needed.
 - `poss|apostrophe-s` (English) against `poss|apostrophe` (German): declare the wrong
   one and possession answers go silent rather than wrong.
 - `ask|` is how the sample knows a question's KIND. The first field is the kind (`who`,
-  `what`, `where`, `when`, `why`, `how`, `yesno`), the second is the word -- so a German
+  `what`, `where`, `when`, `why`, `how`, `yesno`), the second is the word — so a German
   rule file writes `ask|who|wer`. A question using none of the declared words still gets
   an answer, prefixed with a note that the question was not recognized.
-- `person|father` plus `genitive|of` is what makes kinship answerable in BOTH forms --
+- `person|father` plus `genitive|of` is what makes kinship answerable in BOTH forms —
   "Lincoln's father Thomas" and "Aegeus, the father of Theseus". A role word you do not
   declare is simply not read, so extend the `person|` class for the kinds of relation
   your text states.
@@ -320,14 +320,14 @@ so it is reported separately and, if a `<prefix>.learn.eval` fixture exists, tha
 fixture is used for `-e` while learning is on.
 
 With `CONVERSE_FACTS_LIST=1` the sample also prints the FACTS themselves, plus a
-`graph reach:` line (edges, entities, pairs joined by one middle, largest degree) --
+`graph reach:` line (edges, entities, pairs joined by one middle, largest degree) —
 useful for judging whether a corpus is big enough to ask connection questions of. Prose
 of a few MB gives tens of edges; the tales give none, because a story names few entities
 that act on each other.
 
 After ingestion the sample reports what it learned (`relation facts: N learned`,
 `identity facts`, `location facts`, `type facts`). Set `CONVERSE_FACTS_LIST=1` to
-print the facts themselves -- reading them is the only way to tell whether they are
+print the facts themselves — reading them is the only way to tell whether they are
 true.
 
 Optional `converse.bridges` adds evidence-backed answer frames, five fields per line:

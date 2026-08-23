@@ -20,9 +20,9 @@ compiled in (see OZAKI_OCL below).
 
 Two link-time variants are built per precision:
 
-- `dgemm-blas.x` / `sgemm-blas.x` -- dynamically linked against BLAS
-- `dgemm-wrap.x` / `sgemm-wrap.x` -- linked with `--wrap=` (GNU ld)
-- `zgemm-wrap.x` / `cgemm-wrap.x` -- complex GEMM wrappers
+- `dgemm-blas.x` / `sgemm-blas.x` — dynamically linked against BLAS
+- `dgemm-wrap.x` / `sgemm-wrap.x` — linked with `--wrap=` (GNU ld)
+- `zgemm-wrap.x` / `cgemm-wrap.x` — complex GEMM wrappers
 
 Static (`libwrap.a`) and shared (`libwrap.so`) wrapper libraries are
 built by default. The shared library can intercept any application:
@@ -129,7 +129,7 @@ the distribution:
   EVIL=-N (N>0)   Per-element.  Each element gets a pseudorandom
                   exponent in [0,N] via coprime shuffle, with
                   opposite sign for B.  Every row of A spans the
-                  full exponent range -- worst case for row-wise
+                  full exponent range — worst case for row-wise
                   alignment and adaptive cutoff.
 
   EVIL=0          Default shuffle mode (no exponent structure).
@@ -155,7 +155,7 @@ forward-difference decay diagnostic.  Values map to libxs_sort_t:
 Values 2-4 compute a K-permutation from B (via libxs_sort_smooth)
 before Ozaki-1 slicing.  Both A and B are sliced using the
 permuted K-order.  Since C = A\*B = (A\*P^T)\*(P\*B) for any
-permutation matrix P, the result is mathematically identical --
+permutation matrix P, the result is mathematically identical —
 only the int8 digit structure along K changes.
 
 When nonzero, reports the forward-difference decay of int8 slice
@@ -183,7 +183,7 @@ PROF ACC/OpenCL: ID=171071 gemm_crt_fused=2.987 ms 5751.0 GFLOPS/s
 There is no separate host-side profile: on the CPU the intercepted call
 and the kernel it spends its time in agree to within a few percent, so
 the `OZAKI GEMM` line already reports the kernel. It is a mean over the
-whole timed loop, so use `NREPEAT` to average several calls -- host
+whole timed loop, so use `NREPEAT` to average several calls — host
 timings vary between runs, the more so on a many-core part.
 
 ## Example

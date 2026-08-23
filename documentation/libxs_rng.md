@@ -38,7 +38,7 @@ ESPAN (exponent span) selects the initialization mode:
                that A\*B remains well-conditioned while each operand
                individually has adversarial exponent range.
 
-Example -- adversarial DGEMM test with exponent span 512:
+Example — adversarial DGEMM test with exponent span 512:
 
 ```C
 int espan = 512;

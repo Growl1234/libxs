@@ -236,7 +236,7 @@ following descriptions:
 
 ---
 
-## Pair Counting (paircnt\_\*) -- planned
+## Pair Counting (paircnt\_\*) — planned
 
 Spatial pair counting inspired by Corrfunc: given a point catalog, bin all
 pairs by separation distance to compute correlation functions. The approach

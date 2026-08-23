@@ -95,7 +95,7 @@ int libxs_ngram_stats(const libxs_ngram_t* model,
 
 `prob` is interpolated backoff: it blends orders `1..min(maxorder,hlen)` with
 weight `total/(total+1)` per order over an additive-smoothed unigram prior. After
-`finalize`, probabilities over ids `1..vocab` sum to one for every history --
+`finalize`, probabilities over ids `1..vocab` sum to one for every history —
 which makes the model usable as a code-length model and not only as a ranker.
 
 `predict` uses hard backoff instead: the top-k successors of the longest context

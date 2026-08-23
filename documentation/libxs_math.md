@@ -163,7 +163,7 @@ cannot distinguish (negation, reflection).
 
 The `order` field records how many derivative orders were used;
 `n` is the extent of the fingerprinted dimension. The `datatype`
-field records the element type -- either the type passed by the
+field records the element type — either the type passed by the
 caller, or the type discovered by probing when the caller passes
 LIBXS_DATATYPE_UNKNOWN (see "Type Discovery" below).
 
@@ -256,7 +256,7 @@ the 2*smooth+1 nearest input samples (clamped at boundaries).
 For 1-D data without LIBXS_FPRINT_PERAXIS, axis is ignored.
 
 Supported types: F64, F32, and all integer libxs_data_t types
-(I64, I32, U32, I16, U16, I8, U8 -- promoted to double internally).
+(I64, I32, U32, I16, U16, I8, U8 — promoted to double internally).
 
 When datatype is LIBXS_DATATYPE_UNKNOWN, the function performs
 automatic type discovery (Level 0 of the hierarchical analysis
@@ -336,12 +336,12 @@ to a different axis of structure while being invariant to others.
     matdiff           (positional)         magnitude, spread,
                                            extrema
     sort_smooth       row order            row-to-row proximity
-    shuffle           --                   provides controlled
+    shuffle           —                   provides controlled
                                            reordering
 
 The hierarchical procedure:
 
-    Level 0 -- Decay Screening (libxs_fprint + libxs_fprint_decay)
+    Level 0 — Decay Screening (libxs_fprint + libxs_fprint_decay)
 
       Interpret the byte stream under every candidate type whose
       element width divides the stream length. Compute the decay
@@ -352,7 +352,7 @@ The hierarchical procedure:
       LIBXS_DATATYPE_UNKNOWN. The discovered type is reported in
       the datatype field of the returned libxs_fprint_t.
 
-    Level 1 -- Self-Consistency via Setdiff (libxs_setdiff_min)
+    Level 1 — Self-Consistency via Setdiff (libxs_setdiff_min)
 
       Split the stream into two halves (A, B) under each surviving
       candidate type. Compute d* = libxs_setdiff_min(A, B). The
@@ -366,7 +366,7 @@ The hierarchical procedure:
       candidate that passes both has independent evidence on two
       orthogonal axes.
 
-    Level 2 -- Smoothness-Sort Separability (libxs_sort_smooth)
+    Level 2 — Smoothness-Sort Separability (libxs_sort_smooth)
 
       Reshape the stream as a matrix under each surviving candidate.
       Compute a GREEDY row permutation that minimizes row-to-row
@@ -378,12 +378,12 @@ The hierarchical procedure:
       The candidate with the largest delta has the most exploitable
       row structure.
 
-      Synergy: the GREEDY sort is O(m^2 n) -- too expensive for the
+      Synergy: the GREEDY sort is O(m^2 n) — too expensive for the
       initial sweep but affordable for 2-3 survivors. Its sensitivity
       (row-to-row proximity) is orthogonal to 1-D decay and to
       order-independent setdiff.
 
-    Level 3 -- Shuffle Stability (libxs_shuffle + libxs_fprint_decay)
+    Level 3 — Shuffle Stability (libxs_shuffle + libxs_fprint_decay)
 
       Shuffle the interpreted elements via libxs_shuffle (coprime
       permutation). Fingerprint the shuffled data. If the decay
@@ -397,7 +397,7 @@ The hierarchical procedure:
       (Level 1) is explicitly order-invariant. The shuffle test
       closes this gap.
 
-    Level 4 -- Statistical Plausibility (libxs_matdiff)
+    Level 4 — Statistical Plausibility (libxs_matdiff)
 
       Compute single-matrix statistics (ref=NULL) for each surviving
       candidate: mean, variance, min, max, diagonal range. Reject
@@ -406,7 +406,7 @@ The hierarchical procedure:
       1% of the type range. Compare two candidates via
       libxs_matdiff_combine (mean-shift and variance bound).
 
-    Stride Sweep -- Record Layout Discovery
+    Stride Sweep — Record Layout Discovery
 
       After discovering the atomic element width w, sweep candidate
       strides s that are multiples of w. Reshape the stream as an
@@ -419,7 +419,7 @@ Why the composition is stronger than any single tool:
 
   - Decay alone is fooled by reinterpretation artifacts (e.g.,
     integer data producing subnormal floats that look smooth).
-  - Setdiff alone cannot detect structure -- it only counts
+  - Setdiff alone cannot detect structure — it only counts
     matches, and with large enough tolerance any data matches.
   - Sort-smooth alone is too expensive for a brute-force sweep
     and cannot discriminate types without a baseline decay.

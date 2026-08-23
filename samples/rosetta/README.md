@@ -3,7 +3,7 @@
 Demonstrates hierarchical type discovery on opaque binary data.
 A table of harmonic-series values is encoded as a flat byte blob
 with no metadata. The analysis rediscovers the element type,
-record stride, and per-field structure -- recovering mathematical
+record stride, and per-field structure — recovering mathematical
 content from anonymous bytes.
 
 ## What It Shows
@@ -31,10 +31,10 @@ Key observations from the output:
 - Shuffle stability confirms that the record order carries genuine
   structure (decay increases ~4x after coprime permutation).
 - Per-field analysis reveals:
-    - `[0]` decay=0 -- perfect ramp (sequential index)
-    - `[1]` decay~0.63 -- 1/n (decaying but not ultra-smooth)
-    - `[2]` decay~0.20 -- H_n (partial sums, very smooth)
-    - `[5]` decay~0.29 -- converges to Euler-Mascheroni gamma
+    - `[0]` decay=0 — perfect ramp (sequential index)
+    - `[1]` decay~0.63 — 1/n (decaying but not ultra-smooth)
+    - `[2]` decay~0.20 — H_n (partial sums, very smooth)
+    - `[5]` decay~0.29 — converges to Euler-Mascheroni gamma
 - GREEDY sort confirms the data is already optimally ordered
   (the natural 1..64 sequence is the smoothest permutation).
 
@@ -136,15 +136,15 @@ Verification: setdiff(original, blob)
 
 From 3072 anonymous bytes the framework discovers:
 
-1. The element type (f64) -- not i32, not f32, not i64.
+1. The element type (f64) — not i32, not f32, not i64.
 2. The record structure (6-field records of 48 bytes each).
 3. A sequential index column (field [0], decay = 0).
 4. A column converging to Euler-Mascheroni gamma (field [5]).
 5. That the natural ordering is already optimal (no resorting).
 
 No metadata, no format knowledge, no human guidance. The hierarchical
-composition -- stride sweep with all-columns-must-pass filtering,
-shuffle stability, per-field decay ranking -- is what makes this
+composition — stride sweep with all-columns-must-pass filtering,
+shuffle stability, per-field decay ranking — is what makes this
 possible. Any single tool alone would either fail (flat probe) or
 produce ambiguous results (stride sweep without the all-columns
 requirement accepts wrong strides).

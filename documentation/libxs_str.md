@@ -57,13 +57,13 @@ can be consumed at most once.
 
 Parameters:
 
-- `a`, `b` -- input strings (NULL returns -1)
-- `delims` -- word separator characters (NULL uses default:
+- `a`, `b` — input strings (NULL returns -1)
+- `delims` — word separator characters (NULL uses default:
   space, tab, semicolon, comma, colon, dash)
-- `tolerance` -- maximum Levenshtein distance for two words to
+- `tolerance` — maximum Levenshtein distance for two words to
   be considered a match (0 = exact match only, 1 = allows one
   edit such as plural/tense inflection)
-- `count` -- optional output, receives the word count of the
+- `count` — optional output, receives the word count of the
   larger string
 
 Returns the number of unmatched words from the smaller string.
@@ -79,7 +79,7 @@ Properties:
 - Tolerance=1 handles common morphological variation (plurals,
   verb tenses, e.g., "thread" matches "threads").
 
-Example -- measuring sentence redundancy:
+Example — measuring sentence redundancy:
 
 ```C
 int defect, total;
@@ -116,8 +116,8 @@ contribute their full length.
 
 The matching strategy is selected by `kind`:
 
-- `GREEDY` -- picks the globally cheapest pair first.
-- `TWOOPT` -- refines the greedy result by iteratively swapping
+- `GREEDY` — picks the globally cheapest pair first.
+- `TWOOPT` — refines the greedy result by iteratively swapping
   pairs whenever a swap reduces total cost.
 
 The optional `order` output receives the number of pairwise
@@ -178,7 +178,7 @@ one byte:
 | `C3` (alone) | 1 (clamped) | U+00C3, width 1   |
 
 The strict rule exists because a caller that tests a property of
-the value -- is this a vowel, is this punctuation -- must not be
+the value — is this a vowel, is this punctuation — must not be
 handed a code point assembled from bytes that do not belong to it.
 
 ## Value Formatting

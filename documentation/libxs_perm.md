@@ -225,7 +225,7 @@ bounds it).
 
 The result is exact: the same k points a linear scan would pick,
 in the same order. The tree only skips subtrees that cannot hold a
-closer point, so it replaces a scan without changing the answer --
+closer point, so it replaces a scan without changing the answer —
 which matters when the neighbours feed an estimate rather than
 only a ranking.
 

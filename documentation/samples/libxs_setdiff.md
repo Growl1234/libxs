@@ -27,11 +27,11 @@ make
 
 ## Output
 
-- `summary.csv` -- order-independence and duplicate-consumption cases
-- `landscape.csv` -- sampled tolerance landscape
-- `tolerance.csv` -- `libxs_setdiff_min` compared with bisection
-- `scaling.csv` -- fixed-tolerance and automatic-tolerance timings
-- `complex.csv` -- complex-valued validation case
+- `summary.csv` — order-independence and duplicate-consumption cases
+- `landscape.csv` — sampled tolerance landscape
+- `tolerance.csv` — `libxs_setdiff_min` compared with bisection
+- `scaling.csv` — fixed-tolerance and automatic-tolerance timings
+- `complex.csv` — complex-valued validation case
 
 The sample uses a fixed pseudo-random seed and writes into a deterministic
 output directory by default.

@@ -5,8 +5,8 @@ Benchmarks three shuffling strategies and compares their throughput:
 | Label       | Method                                                            |
 |-------------|-------------------------------------------------------------------|
 | RNG-shuffle | Fisher-Yates via `libxs_rng_u32` (reference baseline)             |
-| DS1-shuffle | `libxs_shuffle` -- deterministic in-place (coprime stride)        |
-| DS2-shuffle | `libxs_shuffle2` -- deterministic out-of-place (src to dst)       |
+| DS1-shuffle | `libxs_shuffle` — deterministic in-place (coprime stride)        |
+| DS2-shuffle | `libxs_shuffle2` — deterministic out-of-place (src to dst)       |
 
 Each iteration works on an array of unsigned integers initialized to
 0..n-1. On the final iteration the shuffled result can optionally be
@@ -64,12 +64,12 @@ The first iteration is excluded from the average.
 
 Optional quality metrics:
 
-- rand -- Enabled by RANDOM=1. Inversions are counted via merge-sort
+- rand — Enabled by RANDOM=1. Inversions are counted via merge-sort
   and compared against the expected count for a random permutation
   (n*(n-1)/4) to give a percentage.
-- dst -- Manhattan distance of the element sum from the expected
+- dst — Manhattan distance of the element sum from the expected
   uniform value, split into hierarchical partitions (SPLIT).
-- imb -- Partition imbalance, measuring how unevenly element sums
+- imb — Partition imbalance, measuring how unevenly element sums
   are distributed across sub-partitions (SPLIT).
 
 ### MHD Image Output

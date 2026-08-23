@@ -62,7 +62,7 @@ MISMATCH=3 OFFSET=3 ./memcmp.x 32 0 0 5
 
 Environment variables and compile-time macros apply only to `memcmp.x`.
 
-## Usage (Fortran -- memcmpf)
+## Usage (Fortran — memcmpf)
 
 ```bash
 ./memcmpf.x [nelements [nrepeat]]
@@ -71,7 +71,7 @@ Environment variables and compile-time macros apply only to `memcmp.x`.
 Element type is hard-coded as INTEGER(4). Compares ~2 GB by default.
 Reports per-iteration times (ms) and average throughput (MB/s).
 
-## Usage (Fortran -- matcpyf)
+## Usage (Fortran — matcpyf)
 
 ```bash
 ./matcpyf.x [m [n [ldi [ldo [nrepeat [nmb]]]]]]
@@ -94,11 +94,11 @@ and zeroing. When the matrix is square and ldi==ldo, also benchmarks
 
 Three comparison implementations are benchmarked:
 
-- `libxs_diff` -- SIMD-dispatched short-buffer comparison
+- `libxs_diff` — SIMD-dispatched short-buffer comparison
   (SSE/AVX2/AVX-512). Limited to elsize < 256 bytes, per-element.
-- `libxs_memcmp` -- SIMD-dispatched memcmp replacement. Single call
+- `libxs_memcmp` — SIMD-dispatched memcmp replacement. Single call
   for contiguous buffers, or per-element for strided access.
-- stdlib `memcmp` -- C library implementation under the same pattern.
+- stdlib `memcmp` — C library implementation under the same pattern.
 
 Each kernel gets freshly initialized data before its timed section.
 An untimed warm-up pass runs before the first measured iteration.

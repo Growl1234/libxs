@@ -58,7 +58,7 @@ the pooled value taken *before* the update.
 
 Prefer `observe`: the pooled value must be committed before the weights move, or
 a reported code length is better than the truth with no symptom to notice. Use
-`update` only when the caller's mixture is genuinely not `pool`'s -- because it
+`update` only when the caller's mixture is genuinely not `pool`'s — because it
 mixes in experts this bank does not carry, or because it was floored before a
 logarithm was taken.
 
