@@ -34,6 +34,13 @@ if [ $# -gt 0 ]; then shift; fi
 TMPF=$(mktemp)
 trap 'rm ${TMPF}' EXIT
 
+# What tells an intercepted run from a plain one.  Not "GEMM:": the driver labels
+# its own timed block "OZAKI GEMM:" whether or not anything wrapped the call, so
+# that pattern matches both and cannot decide anything.  The bracketed form is the
+# wrapper's own verification line, which only the wrapper prints -- measured 0 for
+# a plain *-blas.x against 2 for both the static wrap and the LD_PRELOAD path.
+WRAPPED="GEMM\["
+
 # set verbosity to check for generated kernels
 export OZAKI_VERBOSE=${OZAKI_VERBOSE:-1}
 
@@ -45,12 +52,12 @@ for TEST in ${TESTS}; do
     echo "${NAME} (ORIGINAL BLAS)"
     if [ "$*" ]; then echo "args    $*"; fi
     RESULT=0
-    { time eval "${HERE}/${TEST}-blas.x $*" 2>"${TMPF}"; } 2>&1 \
+    { time eval "${HERE}/${TEST}-blas.x $* >${TMPF} 2>&1"; } 2>&1 \
       | ${GREP} real || RESULT=$?
     if [ "0" != "${RESULT}" ]; then
       echo "FAILED[${RESULT}] $(${CAT} "${TMPF}")"
       exit ${RESULT}
-    elif ! ${GREP} -q "GEMM:" "${TMPF}"; then
+    elif ! ${GREP} -q "${WRAPPED}" "${TMPF}"; then
       echo "OK"
     else
       echo "FAILED"
@@ -66,12 +73,12 @@ for TEST in ${TESTS}; do
     echo "${NAME} (STATIC WRAP)"
     if [ "$*" ]; then echo "args    $*"; fi
     RESULT=0
-    { time eval "${HERE}/${TEST}-wrap.x $*" 2>"${TMPF}"; } 2>&1 \
+    { time eval "${HERE}/${TEST}-wrap.x $* >${TMPF} 2>&1"; } 2>&1 \
       | ${GREP} real || RESULT=$?
     if [ "0" != "${RESULT}" ]; then
       echo "FAILED[${RESULT}] $(${CAT} "${TMPF}")"
       exit ${RESULT}
-    elif ${GREP} -q "GEMM:" "${TMPF}"; then
+    elif ${GREP} -q "${WRAPPED}" "${TMPF}"; then
       echo "OK"
     else
       echo "FAILED"
@@ -90,11 +97,11 @@ for TEST in ${TESTS}; do
     { time eval " \
       LD_LIBRARY_PATH=${DEPDIR}/lib:${LD_LIBRARY_PATH} LD_PRELOAD=${HERE}/libwrap.${LIBEXT} \
       DYLD_LIBRARY_PATH=${DEPDIR}/lib:${DYLD_LIBRARY_PATH} DYLD_INSERT_LIBRARIES=${DEPDIR}/lib/libxs.${LIBEXT} \
-      ${HERE}/${TEST}-blas.x $*" 2>"${TMPF}"; } 2>&1 | ${GREP} real || RESULT=$?
+      ${HERE}/${TEST}-blas.x $* >${TMPF} 2>&1"; } 2>&1 | ${GREP} real || RESULT=$?
     if [ "0" != "${RESULT}" ]; then
       echo "FAILED[${RESULT}] $(${CAT} "${TMPF}")"
       exit ${RESULT}
-    elif ${GREP} -q "GEMM:" "${TMPF}"; then
+    elif ${GREP} -q "${WRAPPED}" "${TMPF}"; then
       echo "OK"
     else
       echo "FAILED"
