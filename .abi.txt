@@ -90,7 +90,6 @@ libxs_hist_query
 libxs_hist_query_median
 libxs_hist_query_mode
 libxs_hist_query_percentile
-libxs_hist_union
 libxs_hist_update_add
 libxs_hist_update_avg
 libxs_hist_update_max
@@ -252,6 +251,10 @@ libxs_shuffle
 libxs_shuffle2
 libxs_sort
 libxs_sort_smooth
+libxs_span_create
+libxs_span_destroy
+libxs_span_push
+libxs_span_total
 libxs_spatial_build
 libxs_spatial_build_codes
 libxs_spatial_destroy

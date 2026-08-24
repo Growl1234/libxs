@@ -28,7 +28,7 @@ static int test_create_destroy(void)
   libxs_hist_t* hist = NULL;
   const libxs_hist_update_t update[] = { libxs_hist_update_avg };
   int result = EXIT_SUCCESS;
-  hist = libxs_hist_create(4/*nbuckets*/, 1/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(4/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) {
     FPRINTF(stderr, "ERROR line #%i: hist_create failed\n", __LINE__);
     result = EXIT_FAILURE;
@@ -46,7 +46,7 @@ static int test_single_value(void)
   libxs_hist_info_t info;
   int result = EXIT_SUCCESS;
   const double value[] = { 42.0 };
-  hist = libxs_hist_create(1/*nbuckets*/, 1/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(1/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   libxs_hist_push(NULL, hist, value);
   libxs_hist_query(NULL, hist, &info);
@@ -78,7 +78,7 @@ static int test_fill_phase_range(void)
   libxs_hist_info_t info;
   int result = EXIT_SUCCESS;
   const double v1[] = { 10.0 }, v2[] = { 20.0 }, v3[] = { 15.0 };
-  hist = libxs_hist_create(4/*nbuckets*/, 1/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(4/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   libxs_hist_push(NULL, hist, v1);
   libxs_hist_push(NULL, hist, v2);
@@ -105,7 +105,7 @@ static int test_bucket_distribution(void)
   int i, total;
   int result = EXIT_SUCCESS;
   const double vmin[] = { 0.0 }, vmax[] = { 100.0 };
-  hist = libxs_hist_create(4/*nbuckets*/, 1/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(4/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   libxs_hist_push(NULL, hist, vmin);
   libxs_hist_push(NULL, hist, vmax);
@@ -148,7 +148,7 @@ static int test_update_add(void)
   const libxs_hist_update_t update[] = { libxs_hist_update_add };
   libxs_hist_info_t info;
   int result = EXIT_SUCCESS;
-  hist = libxs_hist_create(1/*nbuckets*/, 1/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(1/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   {
     const double v[] = { 5.0 };
@@ -255,7 +255,7 @@ static int test_multiple_values(void)
   const libxs_hist_update_t update[] = { libxs_hist_update_avg, libxs_hist_update_add };
   libxs_hist_info_t info;
   int result = EXIT_SUCCESS;
-  hist = libxs_hist_create(2/*nbuckets*/, 2/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(2/*nbuckets*/, 2/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   {
     const double e1[] = { 0.0, 100.0 }, e2[] = { 10.0, 200.0 };
@@ -284,7 +284,7 @@ static int test_print(void)
   libxs_hist_t* hist = NULL;
   const libxs_hist_update_t update[] = { libxs_hist_update_avg };
   int result = EXIT_SUCCESS;
-  hist = libxs_hist_create(3/*nbuckets*/, 1/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(3/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   {
     const double v1[] = { 1.0 }, v2[] = { 2.0 }, v3[] = { 3.0 };
@@ -351,7 +351,7 @@ static int test_many_values_bucketing(void)
   libxs_hist_info_t info;
   int i, total;
   int result = EXIT_SUCCESS;
-  hist = libxs_hist_create(10/*nbuckets*/, 1/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(10/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   {
     for (i = 0; i < 10; ++i) {
@@ -393,7 +393,7 @@ static int test_underpopulated(void)
   libxs_hist_info_t info;
   int i, total;
   int result = EXIT_SUCCESS;
-  hist = libxs_hist_create(8/*nbuckets*/, 1/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(8/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   {
     const double v1[] = { 10.0 }, v2[] = { 50.0 }, v3[] = { 90.0 };
@@ -449,7 +449,7 @@ static int test_commit_arithmetic_avg(void)
    * 1 bucket, nqueue=4: all 4 values land in the same bucket at commit.
    * Arithmetic mean of {10, 20, 30, 40} = 25.0
    */
-  hist = libxs_hist_create(1/*nbuckets*/, 1/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(1/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   {
     const double v1[] = { 10.0 }, v2[] = { 20.0 }, v3[] = { 30.0 }, v4[] = { 40.0 };
@@ -488,7 +488,7 @@ static int test_hybrid_avg_then_welford(void)
    * Queue: {10, 30} -> commit: mean=20.0
    * Welford with 40.0 (count=3): 20 + (40-20)/3 = 26.667
    */
-  hist = libxs_hist_create(1/*nbuckets*/, 1/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(1/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   {
     const double v1[] = { 10.0 }, v2[] = { 30.0 };
@@ -521,7 +521,7 @@ static int test_nsamples(void)
   libxs_hist_info_t info;
   int i;
   int result = EXIT_SUCCESS;
-  hist = libxs_hist_create(4/*nbuckets*/, 1/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(4/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   for (i = 0; i < 20; ++i) {
     const double v[] = { (double)i };
@@ -544,7 +544,7 @@ static int test_median_uniform(void)
   int result = EXIT_SUCCESS;
   double vals[1];
   int i;
-  hist = libxs_hist_create(10/*nbuckets*/, 1/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(10/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   for (i = 0; i <= 100; ++i) {
     const double v[] = { (double)i };
@@ -579,7 +579,7 @@ static int test_median_single(void)
   const libxs_hist_update_t update[] = { libxs_hist_update_avg };
   int result = EXIT_SUCCESS;
   double vals[1];
-  hist = libxs_hist_create(4/*nbuckets*/, 1/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(4/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   {
     const double v[] = { 42.0 };
@@ -621,7 +621,7 @@ static int test_query_bimodal(void)
   int result = EXIT_SUCCESS;
   int nbuckets;
   for (nbuckets = 2; nbuckets <= 12 && EXIT_SUCCESS == result; ++nbuckets) {
-    libxs_hist_t* const hist = libxs_hist_create(nbuckets, 3/*nvals*/, update, NULL, 0);
+    libxs_hist_t* const hist = libxs_hist_create(nbuckets, 3/*nvals*/, update, NULL, NULL);
     double med[3] = { 0 }, mod[3] = { 0 };
     int i;
     if (NULL == hist) return EXIT_FAILURE;
@@ -663,7 +663,7 @@ static int test_mode_skewed(void)
   int result = EXIT_SUCCESS;
   double vals[2] = { 0 };
   int i;
-  hist = libxs_hist_create(4/*nbuckets*/, 2/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(4/*nbuckets*/, 2/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   for (i = 0; i < 40; ++i) { /* 36 samples at 10.0, 4 at 100.0 */
     const double lo[] = { 10.0, 7.0 }, hi[] = { 100.0, 70.0 };
@@ -687,7 +687,7 @@ static int test_mode_uniform(void)
   int result = EXIT_SUCCESS;
   double med[2] = { 0 }, mod[2] = { 0 };
   int i;
-  hist = libxs_hist_create(4/*nbuckets*/, 2/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(4/*nbuckets*/, 2/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   for (i = 0; i < 20; ++i) {
     const double v[] = { 42.0, 13.0 };
@@ -716,7 +716,7 @@ static int test_mode_empty_null(void)
     FPRINTF(stderr, "ERROR line #%i: NULL hist must leave vals untouched\n", __LINE__);
     result = EXIT_FAILURE;
   }
-  hist = libxs_hist_create(4/*nbuckets*/, 2/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(4/*nbuckets*/, 2/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   libxs_hist_query_mode(NULL, hist, vals);
   if (EXIT_SUCCESS == result && (fabs(vals[0] - (-1.0)) > TOLERANCE || fabs(vals[1] - (-1.0)) > TOLERANCE)) {
@@ -735,7 +735,7 @@ static int test_percentile_vals(void)
   int result = EXIT_SUCCESS;
   double vals[2];
   int i;
-  hist = libxs_hist_create(4/*nbuckets*/, 2/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(4/*nbuckets*/, 2/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   for (i = 0; i <= 40; ++i) {
     const double v[] = { (double)i, 100.0 + i };
@@ -770,7 +770,7 @@ static int test_commit_out_of_order(void)
   libxs_hist_info_t info;
   int i, total = 0;
   int result = EXIT_SUCCESS;
-  hist = libxs_hist_create(3/*nbuckets*/, 1/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(3/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   for (i = 0; i < 3; ++i) {
     const double v[] = { sample[i] };
@@ -807,7 +807,7 @@ static int test_commit_counts_every_sample(void)
   for (nbuckets = 1; nbuckets <= 8 && EXIT_SUCCESS == result; ++nbuckets) {
     for (n = 1; n <= 24 && EXIT_SUCCESS == result; ++n) {
       for (trial = 0; trial < 8 && EXIT_SUCCESS == result; ++trial) {
-        libxs_hist_t* const hist = libxs_hist_create(nbuckets, 1/*nvals*/, update, NULL, 0);
+        libxs_hist_t* const hist = libxs_hist_create(nbuckets, 1/*nvals*/, update, NULL, NULL);
         libxs_hist_info_t info;
         int i, total = 0;
         if (NULL != hist) {
@@ -848,7 +848,7 @@ static int test_running_sum(void)
   double expect = 0;
   int i, k;
   int result = EXIT_SUCCESS;
-  hist = libxs_hist_create(3/*nbuckets*/, 4/*nvals*/, update, NULL, 0);
+  hist = libxs_hist_create(3/*nbuckets*/, 4/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   for (i = 0; i < nsample; ++i) {
     const double v[] = { sample[i], sample[i], sample[i], sample[i] };
@@ -903,7 +903,7 @@ static int test_median_outlier(void)
   int nbuckets;
   int result = EXIT_SUCCESS;
   for (nbuckets = 3; nbuckets <= 12 && EXIT_SUCCESS == result; ++nbuckets) {
-    libxs_hist_t* const hist = libxs_hist_create(nbuckets, 1/*nvals*/, update, NULL, 0);
+    libxs_hist_t* const hist = libxs_hist_create(nbuckets, 1/*nvals*/, update, NULL, NULL);
     double med[1];
     int i;
     if (NULL != hist) {
@@ -987,7 +987,7 @@ static int test_oracle_exact(void)
     const int maxn = LIBXS_MIN(MAXN, 16 * nbuckets);
     for (nsample = 1; nsample <= maxn && EXIT_SUCCESS == result; ++nsample) {
       for (trial = 0; trial < 20 && EXIT_SUCCESS == result; ++trial) {
-        libxs_hist_t* const hist = libxs_hist_create(nbuckets, 1/*nvals*/, update, NULL, 0);
+        libxs_hist_t* const hist = libxs_hist_create(nbuckets, 1/*nvals*/, update, NULL, NULL);
         libxs_hist_info_t info;
         if (NULL == hist) {
           result = EXIT_FAILURE;
@@ -1050,7 +1050,7 @@ static int test_invariants_random(void)
   for (nbuckets = 1; nbuckets <= 8 && EXIT_SUCCESS == result; ++nbuckets) {
     for (nsample = 1; nsample <= 400 && EXIT_SUCCESS == result; nsample += 37) {
       for (trial = 0; trial < 10 && EXIT_SUCCESS == result; ++trial) {
-        libxs_hist_t* const hist = libxs_hist_create(nbuckets, 1/*nvals*/, update, NULL, 0);
+        libxs_hist_t* const hist = libxs_hist_create(nbuckets, 1/*nvals*/, update, NULL, NULL);
         libxs_hist_info_t info;
         double expect = 0, product = 0;
         int total = 0;
@@ -1117,7 +1117,7 @@ static int test_oracle_multifold(void)
   for (nbuckets = 1; nbuckets <= 8 && EXIT_SUCCESS == result; ++nbuckets) {
     for (nsample = 2; nsample <= MAXN && EXIT_SUCCESS == result; nsample += 31) {
       for (trial = 0; trial < 10 && EXIT_SUCCESS == result; ++trial) {
-        libxs_hist_t* const hist = libxs_hist_create(nbuckets, 1/*nvals*/, update, NULL, 0);
+        libxs_hist_t* const hist = libxs_hist_create(nbuckets, 1/*nvals*/, update, NULL, NULL);
         libxs_hist_info_t info;
         if (NULL == hist) {
           result = EXIT_FAILURE;
@@ -1173,7 +1173,7 @@ static int test_query_interleaved(void)
   libxs_rng_set_seed(13579u); /* reproducible */
   for (nbuckets = 1; nbuckets <= 6 && EXIT_SUCCESS == result; ++nbuckets) {
     for (period = 1; period <= 20 && EXIT_SUCCESS == result; period += 3) {
-      libxs_hist_t* const hist = libxs_hist_create(nbuckets, 1/*nvals*/, update, NULL, 0);
+      libxs_hist_t* const hist = libxs_hist_create(nbuckets, 1/*nvals*/, update, NULL, NULL);
       libxs_hist_info_t info, again;
       double expect = 0, product = 0;
       int total = 0;
@@ -1280,12 +1280,15 @@ static int test_union_fold(void)
   libxs_rng_set_seed(777u); /* reproducible */
   for (shape = 0; shape < 6 && EXIT_SUCCESS == result; ++shape) {
     for (nsample = 1; nsample <= MAXN && EXIT_SUCCESS == result; nsample += 47) {
+      libxs_span_t* const span = libxs_span_create(NSEG);
       libxs_hist_t* const hist = libxs_hist_create(4/*nbuckets*/, 3/*nvals*/, update,
-        libxs_hist_fold_union, LIBXS_HIST_UNION_NSTATE(NSEG));
+        libxs_hist_fold_union, span);
       libxs_hist_info_t info;
       double got, want;
       int inexact = 0;
-      if (NULL == hist) {
+      if (NULL == hist || NULL == span) {
+        libxs_hist_destroy(hist);
+        libxs_span_destroy(span);
         result = EXIT_FAILURE;
         break;
       }
@@ -1323,7 +1326,7 @@ static int test_union_fold(void)
         libxs_hist_push(NULL, hist, v);
       }
       libxs_hist_query(NULL, hist, &info);
-      got = libxs_hist_union(&info, &inexact);
+      got = libxs_span_total(span, &inexact);
       want = union_ref(begin, end, nsample);
       /**
        * Exact while nothing reached back past what the fold had to retire, and
@@ -1354,6 +1357,7 @@ static int test_union_fold(void)
         result = EXIT_FAILURE;
       }
       libxs_hist_destroy(hist);
+      libxs_span_destroy(span);
     }
   }
   return result;

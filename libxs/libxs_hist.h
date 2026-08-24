@@ -22,15 +22,27 @@ LIBXS_EXTERN_C typedef void (*libxs_hist_update_t)(double* /*dst*/, const double
 /**
  * Secondary fold, run over the raw batch each time the queue is folded, after
  * the per-bucket update has consumed it. It exists for what a bucket cannot
- * express: an update function reduces one value pairwise into one bucket,
- * whereas this sees the whole batch at once and keeps state of its own.
+ * express: an update function reduces one value pairwise into one bucket, in an
+ * order that must not matter, whereas this sees the whole batch at once and
+ * keeps state of its own across folds.
  *
- * The queue may be reordered in place - it is discarded immediately after - and
- * the state persists across folds, which is what lets a batch relate to the one
- * before it. Normally NULL, which is the identity.
+ * The batch rather than one sample at a time, deliberately: relating a sample to
+ * its neighbours is the point, and having them together is what allows an exact
+ * answer instead of an incremental approximation. The queue may be reordered in
+ * place - it is discarded immediately after.
+ *
+ * ctx is whatever was handed to libxs_hist_create, opaque to the histogram.
+ * Normally NULL, which is the identity.
  */
-LIBXS_EXTERN_C typedef void (*libxs_hist_fold_t)(double* /*state*/, int /*nstate*/,
+LIBXS_EXTERN_C typedef void (*libxs_hist_fold_t)(void* /*ctx*/,
   double* /*queue*/, int /*nvals*/, int /*nsamples*/);
+
+/**
+ * Union of intervals: the time they cover, as opposed to the sum of their
+ * lengths, which counts overlapping intervals more than once. Opaque, because
+ * only the total is meaningful outside - how it is retained is not.
+ */
+LIBXS_EXTERN_C typedef struct libxs_span_t libxs_span_t;
 
 /** Histogram query result. */
 LIBXS_EXTERN_C typedef struct libxs_hist_info_t {
@@ -43,13 +55,10 @@ LIBXS_EXTERN_C typedef struct libxs_hist_info_t {
    * entry only yields one through count times mean. NULL if nothing was pushed.
    */
   const double* sum;
-  /** State of the secondary fold, NULL if none was requested. */
-  const double* state;
   double range[2];
   int nbuckets;
   int nvals;
   int nsamples;
-  int nstate;
 } libxs_hist_info_t;
 
 
@@ -59,41 +68,46 @@ LIBXS_EXTERN_C typedef struct libxs_hist_info_t {
  * entries may be NULL to select that default per value.
  */
 LIBXS_API libxs_hist_t* libxs_hist_create(int nbuckets, int nvals,
-  const libxs_hist_update_t update[], libxs_hist_fold_t fold, int nstate);
+  const libxs_hist_update_t update[], libxs_hist_fold_t fold, void* ctx);
 
 /**
- * Secondary fold computing the union of intervals: the time actually covered,
- * as opposed to the sum of the durations, which counts overlapping intervals
- * twice. The last two values of a sample are read as (begin, end).
- *
- * Exact while a batch fits in the queue, which is the common case. Across a
- * fold only the most recent segments are retained, so an interval arriving
- * after the fold that begins before what has already been retired cannot be
- * merged: those are counted rather than silently absorbed (see
- * libxs_hist_union). Retaining more segments widens that tolerance -
- * LIBXS_HIST_UNION_NSTATE(k) sizes the state for k of them.
+ * Create an interval union retaining nsegments open segments. Only the segments
+ * a later interval could still merge with are kept, so memory is fixed and the
+ * result stays exact for anything inside that window; nsegments therefore bounds
+ * how far out of order intervals may arrive, not how many there may be.
+ */
+LIBXS_API libxs_span_t* libxs_span_create(int nsegments);
+
+/** Destroy an interval union (NULL is accepted). */
+LIBXS_API void libxs_span_destroy(libxs_span_t* span);
+
+/**
+ * Merge one interval into the union. An interval beginning before what has
+ * already been retired is added whole, because its overlap with that time can no
+ * longer be subtracted; such intervals are counted (see libxs_span_total).
  *
  * The values must share an origin small enough for a double to hold exactly.
  * Wall-clock nanoseconds do not: they are far above 2^53, where the spacing
  * between representable values is hundreds of nanoseconds, enough to make
  * adjacent intervals appear to touch. Subtract an epoch before pushing.
  */
-LIBXS_API void libxs_hist_fold_union(double* state, int nstate,
-  double* queue, int nvals, int nsamples);
-
-/** State size for libxs_hist_fold_union retaining k open segments (k >= 1). */
-#define LIBXS_HIST_UNION_NSTATE(K) (4 + 2 * (K))
+LIBXS_API void libxs_span_push(libxs_span_t* span, double begin, double end);
 
 /**
- * Union accumulated by libxs_hist_fold_union, including the segments still open.
- * Returns 0 if the histogram carries no such state. Optionally reports how many
- * intervals could not be merged exactly: each of those was added whole, since
- * its overlap with time already retired can no longer be subtracted, so a
- * non-zero count makes the result an upper bound on the union. It never
- * understates, which is what keeps a ratio of sum over union a lower bound on
- * concurrency whether or not the count is zero.
+ * Time covered by the union, including the segments still open. Optionally
+ * reports how many intervals could not be merged exactly; because each of those
+ * was added whole, a non-zero count makes the result an upper bound. It never
+ * understates, which is what keeps a ratio of summed length over covered time a
+ * lower bound on how many intervals overlapped.
  */
-LIBXS_API double libxs_hist_union(const libxs_hist_info_t* info, int* inexact);
+LIBXS_API double libxs_span_total(const libxs_span_t* span, int* inexact);
+
+/**
+ * Secondary fold (libxs_hist_fold_t) merging each sample's interval into a
+ * libxs_span_t passed as ctx. The last two values of a sample are read as
+ * (begin, end).
+ */
+LIBXS_API void libxs_hist_fold_union(void* ctx, double* queue, int nvals, int nsamples);
 
 /** Destroy histogram (NULL is accepted). */
 LIBXS_API void libxs_hist_destroy(libxs_hist_t* hist);
