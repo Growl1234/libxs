@@ -83,12 +83,14 @@ libxs_hilbert_decode
 libxs_hilbert_decode_bits
 libxs_hist_create
 libxs_hist_destroy
+libxs_hist_fold_union
 libxs_hist_print
 libxs_hist_push
 libxs_hist_query
 libxs_hist_query_median
 libxs_hist_query_mode
 libxs_hist_query_percentile
+libxs_hist_union
 libxs_hist_update_add
 libxs_hist_update_avg
 libxs_hist_update_max
