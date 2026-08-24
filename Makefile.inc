@@ -405,7 +405,7 @@ endif
 # Intel-specific flags are only valid for an Intel compiler (GNU=0 or CC=icx)
 ifneq (0,$(INTEL))
   ifeq (0,$(INTEL_AUTO))
-    $(info WARNING: INTEL=$(INTEL) ignored since $(CC) is not an Intel compiler (use GNU=0)!)
+    $(info WARNING: INTEL=$(INTEL) ignored, please use GNU=0!)
     override INTEL := 0
   endif
 endif
