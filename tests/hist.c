@@ -8,6 +8,8 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 #include <libxs/libxs_hist.h>
+#include <libxs/libxs_perm.h>
+#include <libxs/libxs_rng.h>
 #include <math.h>
 
 #if defined(_DEBUG)
@@ -794,9 +796,11 @@ static int test_commit_out_of_order(void)
 
 static int test_commit_counts_every_sample(void)
 {
-  /* Sum of the bucket counts is the number of pushes, for any shape of input:
-     below the queue capacity (one commit) and above it (commit plus direct
-     binning). Deterministic, so a failure names the case that produced it. */
+  /**
+   * Sum of the bucket counts is the number of pushes, for any shape of input:
+   * below the queue capacity (one fold) and above it (fold plus direct binning).
+   * Deterministic, so a failure names the case that produced it.
+   */
   const libxs_hist_update_t update[] = { libxs_hist_update_avg };
   int nbuckets, n, trial;
   int result = EXIT_SUCCESS;
@@ -830,9 +834,11 @@ static int test_commit_counts_every_sample(void)
 
 static int test_running_sum(void)
 {
-  /* The running total is accumulated on push, so it holds for every update
-     function - including min and max, whose buckets discard what a total would
-     have to be reconstructed from. */
+  /**
+   * The running total is accumulated on push, so it holds for every update
+   * function - including min and max, whose buckets discard what a total would
+   * have to be reconstructed from.
+   */
   const libxs_hist_update_t update[] = { libxs_hist_update_avg, libxs_hist_update_add,
     libxs_hist_update_min, libxs_hist_update_max };
   const double sample[] = { 3.0, 17.0, 5.0, 11.0, 2.0, 29.0, 7.0 };
@@ -934,7 +940,7 @@ static void oracle(const double sample[], int nsample, int nbuckets,
     if (sample[i] < lo) lo = sample[i];
     if (sample[i] > hi) hi = sample[i];
   }
-  if (nsample < nbuckets) nbuckets = nsample;
+  nbuckets = LIBXS_MIN(nbuckets, nsample);
   w = hi - lo;
   for (i = 0; i < nbuckets; ++i) {
     counts[i] = 0;
@@ -958,14 +964,6 @@ static void oracle(const double sample[], int nsample, int nbuckets,
 }
 
 
-/* Reproducible without depending on the quality or the seeding of rand(). */
-static double lcg(unsigned int* state)
-{
-  *state = *state * 1103515245u + 12345u;
-  return (double)((*state >> 8) & 0xFFFF) / 65536.0;
-}
-
-
 static int test_oracle_exact(void)
 {
   /**
@@ -983,10 +981,10 @@ static int test_oracle_exact(void)
   int counts[MAXN];
   int nbuckets, nsample, trial, i;
   int result = EXIT_SUCCESS;
-  unsigned int seed = 12345u;
+  libxs_rng_set_seed(12345u); /* reproducible */
   for (nbuckets = 1; nbuckets <= 8 && EXIT_SUCCESS == result; ++nbuckets) {
 
-    const int maxn = (MAXN < 16 * nbuckets ? MAXN : 16 * nbuckets);
+    const int maxn = LIBXS_MIN(MAXN, 16 * nbuckets);
     for (nsample = 1; nsample <= maxn && EXIT_SUCCESS == result; ++nsample) {
       for (trial = 0; trial < 20 && EXIT_SUCCESS == result; ++trial) {
         libxs_hist_t* const hist = libxs_hist_create(nbuckets, 1/*nvals*/, update, NULL, 0);
@@ -996,7 +994,7 @@ static int test_oracle_exact(void)
           break;
         }
         for (i = 0; i < nsample; ++i) {
-          const double v[] = { 100.0 * lcg(&seed) };
+          const double v[] = { 100.0 * libxs_rng_f64() };
           sample[i] = v[0];
           libxs_hist_push(NULL, hist, v);
         }
@@ -1048,7 +1046,7 @@ static int test_invariants_random(void)
   const libxs_hist_update_t update[] = { libxs_hist_update_avg };
   int nbuckets, nsample, trial, i;
   int result = EXIT_SUCCESS;
-  unsigned int seed = 987654321u;
+  libxs_rng_set_seed(987654321u); /* reproducible */
   for (nbuckets = 1; nbuckets <= 8 && EXIT_SUCCESS == result; ++nbuckets) {
     for (nsample = 1; nsample <= 400 && EXIT_SUCCESS == result; nsample += 37) {
       for (trial = 0; trial < 10 && EXIT_SUCCESS == result; ++trial) {
@@ -1061,9 +1059,11 @@ static int test_invariants_random(void)
           break;
         }
         for (i = 0; i < nsample; ++i) {
-          /* a heavy tail every so often, which is what a first launch paying a
-             one-time cost looks like and what forces a rebin */
-          const double v[] = { (0 == (i % 29)) ? (1E4 * lcg(&seed)) : lcg(&seed) };
+          /**
+           * A heavy tail every so often, which is what a first launch paying a
+           * one-time cost looks like and what forces a rebin.
+           */
+          const double v[] = { (0 == (i % 29)) ? (1E4 * libxs_rng_f64()) : libxs_rng_f64() };
           expect += v[0];
           libxs_hist_push(NULL, hist, v);
         }
@@ -1113,7 +1113,7 @@ static int test_oracle_multifold(void)
   int counts[16];
   int nbuckets, nsample, trial, i;
   int result = EXIT_SUCCESS;
-  unsigned int seed = 24680u;
+  libxs_rng_set_seed(24680u); /* reproducible */
   for (nbuckets = 1; nbuckets <= 8 && EXIT_SUCCESS == result; ++nbuckets) {
     for (nsample = 2; nsample <= MAXN && EXIT_SUCCESS == result; nsample += 31) {
       for (trial = 0; trial < 10 && EXIT_SUCCESS == result; ++trial) {
@@ -1128,7 +1128,7 @@ static int test_oracle_multifold(void)
           /* the extremes first, so the first fold sees the whole range */
           if (0 == i) v[0] = 0.0;
           else if (1 == i) v[0] = 100.0;
-          else v[0] = 100.0 * lcg(&seed);
+          else v[0] = 100.0 * libxs_rng_f64();
           sample[i] = v[0];
           libxs_hist_push(NULL, hist, v);
         }
@@ -1170,7 +1170,7 @@ static int test_query_interleaved(void)
   const libxs_hist_update_t update[] = { libxs_hist_update_avg };
   int nbuckets, period, i;
   int result = EXIT_SUCCESS;
-  unsigned int seed = 13579u;
+  libxs_rng_set_seed(13579u); /* reproducible */
   for (nbuckets = 1; nbuckets <= 6 && EXIT_SUCCESS == result; ++nbuckets) {
     for (period = 1; period <= 20 && EXIT_SUCCESS == result; period += 3) {
       libxs_hist_t* const hist = libxs_hist_create(nbuckets, 1/*nvals*/, update, NULL, 0);
@@ -1182,7 +1182,7 @@ static int test_query_interleaved(void)
         break;
       }
       for (i = 0; i < 200; ++i) {
-        const double v[] = { 100.0 * lcg(&seed) };
+        const double v[] = { 100.0 * libxs_rng_f64() };
         expect += v[0];
         libxs_hist_push(NULL, hist, v);
         if (0 == (i % period)) libxs_hist_query(NULL, hist, &info);
@@ -1217,35 +1217,48 @@ static int test_query_interleaved(void)
 }
 
 
-/** Union of intervals, computed the obvious way over every retained sample. */
+/** One interval, ordered by where it begins. */
+typedef struct span_t {
+  double begin, end;
+} span_t;
+
+
+static int span_cmp(const void* a, const void* b, void* ctx)
+{
+  const double x = ((const span_t*)a)->begin, y = ((const span_t*)b)->begin;
+  LIBXS_UNUSED(ctx);
+  return (x < y) ? -1 : ((y < x) ? 1 : 0);
+}
+
+
+/**
+ * Union of intervals, computed the obvious way over every retained sample. The
+ * sort is the library's own rather than a hand-rolled one: it is not what this
+ * checks, it is covered by its own tests, and it is one less loop for a compiler
+ * to get wrong - icx 2026.1.1 at -O2 miscompiled the insertion sort that stood
+ * here, returning one interval's length instead of the union.
+ */
 static double union_ref(const double begin[], const double end[], int n)
 {
-  double order[512 * 2], total = 0, cb = 0, ce = 0;
-  int i, j, open = 0;
+  span_t span[512];
+  double total = 0, cb, ce;
+  int i;
   for (i = 0; i < n; ++i) {
-    order[2 * i] = begin[i];
-    order[2 * i + 1] = end[i];
+    span[i].begin = begin[i];
+    span[i].end = end[i];
   }
-  for (i = 1; i < n; ++i) { /* by begin */
-    for (j = i; 0 < j && order[2 * j] < order[2 * (j - 1)]; --j) {
-      const double b = order[2 * j], e = order[2 * j + 1];
-      order[2 * j] = order[2 * (j - 1)];
-      order[2 * j + 1] = order[2 * (j - 1) + 1];
-      order[2 * (j - 1)] = b;
-      order[2 * (j - 1) + 1] = e;
+  libxs_sort(span, n, sizeof(span_t), span_cmp, NULL /*ctx*/);
+  cb = span[0].begin;
+  ce = span[0].end;
+  for (i = 1; i < n; ++i) {
+    if (span[i].begin > ce) { /* a gap: the open segment is complete */
+      total += ce - cb;
+      cb = span[i].begin;
+      ce = span[i].end;
     }
+    else if (span[i].end > ce) ce = span[i].end;
   }
-  for (i = 0; i < n; ++i) {
-    if (0 == open || order[2 * i] > ce) {
-      if (0 != open) total += ce - cb;
-      cb = order[2 * i];
-      ce = order[2 * i + 1];
-      open = 1;
-    }
-    else if (order[2 * i + 1] > ce) ce = order[2 * i + 1];
-  }
-  if (0 != open) total += ce - cb;
-  return total;
+  return total + (ce - cb);
 }
 
 
@@ -1264,7 +1277,7 @@ static int test_union_fold(void)
   double begin[MAXN], end[MAXN];
   int shape, nsample, i;
   int result = EXIT_SUCCESS;
-  unsigned int seed = 777u;
+  libxs_rng_set_seed(777u); /* reproducible */
   for (shape = 0; shape < 6 && EXIT_SUCCESS == result; ++shape) {
     for (nsample = 1; nsample <= MAXN && EXIT_SUCCESS == result; nsample += 47) {
       libxs_hist_t* const hist = libxs_hist_create(4/*nbuckets*/, 3/*nvals*/, update,
@@ -1296,12 +1309,12 @@ static int test_union_fold(void)
             end[i] = 10.0 * (i / 2) + 10.0;
             break;
           case 4: /* advancing with jitter and overlap, as completions arrive */
-            begin[i] = 5.0 * i + 2.0 * lcg(&seed);
-            end[i] = begin[i] + 12.0 * lcg(&seed);
+            begin[i] = 5.0 * i + 2.0 * libxs_rng_f64();
+            end[i] = begin[i] + 12.0 * libxs_rng_f64();
             break;
           default: /* uniformly random, which reaches back arbitrarily far */
-            begin[i] = 1000.0 * lcg(&seed);
-            end[i] = begin[i] + 20.0 * lcg(&seed);
+            begin[i] = 1000.0 * libxs_rng_f64();
+            end[i] = begin[i] + 20.0 * libxs_rng_f64();
             break;
         }
         v[0] = end[i] - begin[i];
@@ -1320,19 +1333,21 @@ static int test_union_fold(void)
        * over it a lower bound on concurrency in either case.
        */
       if (0 == inexact) {
-        if (fabs(got - want) > 1E-6 * (want > 1.0 ? want : 1.0)) {
+        if (fabs(got - want) > 1E-6 * LIBXS_MAX(want, 1.0)) {
           FPRINTF(stderr, "ERROR line #%i: shape=%i n=%i: union=%f (expected %f)\n",
             __LINE__, shape, nsample, got, want);
           result = EXIT_FAILURE;
         }
       }
-      else if (got < want - 1E-6 * (want > 1.0 ? want : 1.0)) {
+      else if (got < want - 1E-6 * LIBXS_MAX(want, 1.0)) {
         FPRINTF(stderr, "ERROR line #%i: shape=%i n=%i: union %f below %f with %i inexact\n",
           __LINE__, shape, nsample, got, want, inexact);
         result = EXIT_FAILURE;
       }
-      /* the arrival order a completion callback produces must not be the
-         inexact case: if it is, the retained window is too small to be useful */
+      /**
+       * The arrival order a completion callback produces must not be the
+       * inexact case: if it is, the retained window is too small to be useful.
+       */
       if (EXIT_SUCCESS == result && 4 == shape && 0 != inexact) {
         FPRINTF(stderr, "ERROR line #%i: n=%i: %i inexact on in-order arrivals\n",
           __LINE__, nsample, inexact);

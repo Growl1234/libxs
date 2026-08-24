@@ -9,6 +9,7 @@
 ******************************************************************************/
 #include <libxs/libxs_hist.h>
 #include <libxs/libxs_mem.h>
+#include <libxs/libxs_perm.h>
 #include <stdarg.h>
 
 
@@ -81,58 +82,62 @@ LIBXS_API libxs_hist_t* libxs_hist_create(int nbuckets, int nvals,
  * disjoint. Only the open segments are kept, so memory is fixed while the
  * result stays exact for anything still inside that window.
  */
+LIBXS_API_INTERN int internal_libxs_hist_cmp_begin(const void* a, const void* b, void* ctx);
+LIBXS_API_INTERN int internal_libxs_hist_cmp_begin(const void* a, const void* b, void* ctx)
+{
+  const int ib = *(const int*)ctx;
+  const double x = ((const double*)a)[ib], y = ((const double*)b)[ib];
+  return (x < y) ? -1 : ((y < x) ? 1 : 0);
+}
+
+
 LIBXS_API void libxs_hist_fold_union(double* state, int nstate,
   double* queue, int nvals, int nsamples)
 {
   const int k = (6 <= nstate ? (nstate - 4) / 2 : 0);
   if (0 < k && 2 <= nvals && 0 < nsamples && NULL != state && NULL != queue) {
-    const int ib = nvals - 2, ie = nvals - 1;
+    const int ie = nvals - 1;
     double* const seg = state + 4;
-    int nseg = (int)state[2], m, i, j, n;
-    /* Sorted by begin so the sweep below is linear. In place, because the queue
-       is discarded as soon as this returns. */
-    for (m = 1; m < nsamples; ++m) {
-      for (j = m; 0 < j && queue[j * nvals + ib] < queue[(j - 1) * nvals + ib]; --j) {
-        for (n = 0; n < nvals; ++n) {
-          const double t = queue[j * nvals + n];
-          queue[j * nvals + n] = queue[(j - 1) * nvals + n];
-          queue[(j - 1) * nvals + n] = t;
-        }
-      }
-    }
+    int ib = nvals - 2, nseg = (int)state[2], m, i, j;
+    /**
+     * Sorted by begin so the sweep below is linear, in place because the queue
+     * is discarded as soon as this returns. The library's own sort rather than
+     * another hand-rolled one: a custom comparator takes its in-place path and
+     * allocates nothing, which a fold inside a completion callback needs.
+     */
+    libxs_sort(queue, nsamples, sizeof(double) * nvals, internal_libxs_hist_cmp_begin, &ib);
     for (m = 0; m < nsamples; ++m) {
       double b = queue[m * nvals + ib], e = queue[m * nvals + ie];
-      if (e < b) { /* tolerate a reversed pair rather than accumulating nonsense */
-        const double t = b;
-        b = e;
-        e = t;
-      }
-      /* below the watermark it may overlap what was already retired, and that
-         cannot be undone - counted, so the result is never quietly wrong */
+      /* tolerate a reversed pair rather than accumulating nonsense */
+      if (e < b) LIBXS_VALUE_SWAP(b, e);
+      /**
+       * Below the watermark it may overlap what was already retired, and that
+       * cannot be undone - counted, so the result is never quietly wrong.
+       */
       if (b < state[1]) state[3] += 1;
       for (i = 0; i < nseg && seg[2 * i + 1] < b; ++i);
       for (j = i; j < nseg && seg[2 * j] <= e; ++j) {
-        if (seg[2 * j] < b) b = seg[2 * j];
-        if (seg[2 * j + 1] > e) e = seg[2 * j + 1];
+        b = LIBXS_MIN(b, seg[2 * j]);
+        e = LIBXS_MAX(e, seg[2 * j + 1]);
       }
       if (i == j) { /* disjoint from every open segment: insert it */
         if (k <= nseg) { /* no room, so the earliest segment is retired */
           state[0] += seg[1] - seg[0];
-          if (seg[1] > state[1]) state[1] = seg[1];
-          for (n = 0; n < 2 * (nseg - 1); ++n) seg[n] = seg[n + 2];
+          state[1] = LIBXS_MAX(state[1], seg[1]);
+          memmove(seg, seg + 2, sizeof(double) * 2 * (nseg - 1));
           --nseg;
           if (0 < i) --i;
         }
-        for (n = 2 * nseg - 1; n >= 2 * i; --n) seg[n + 2] = seg[n];
+        memmove(seg + 2 * (i + 1), seg + 2 * i, sizeof(double) * 2 * (nseg - i));
         ++nseg;
       }
       else if (i + 1 < j) { /* it bridged several segments, now one */
-        const int d = 2 * (j - i - 1);
-        for (n = 2 * (i + 1); n < 2 * nseg - d; ++n) seg[n] = seg[n + d];
+        memmove(seg + 2 * (i + 1), seg + 2 * j, sizeof(double) * 2 * (nseg - j));
         nseg -= (j - i - 1);
       }
       seg[2 * i] = b;
       seg[2 * i + 1] = e;
+      LIBXS_ASSERT(0 < nseg && nseg <= k && i < nseg);
     }
     state[2] = nseg;
   }
@@ -145,8 +150,7 @@ LIBXS_API double libxs_hist_union(const libxs_hist_info_t* info, int* inexact)
   int n = 0;
   if (NULL != info && NULL != info->state && 6 <= info->nstate) {
     const int k = (info->nstate - 4) / 2;
-    int nseg = (int)info->state[2], i;
-    if (nseg > k) nseg = k;
+    int nseg = LIBXS_MIN((int)info->state[2], k), i;
     result = info->state[0];
     for (i = 0; i < nseg; ++i) { /* the segments still open */
       result += info->state[5 + 2 * i] - info->state[4 + 2 * i];
@@ -241,16 +245,16 @@ LIBXS_API_INTERN void internal_libxs_hist_fold(libxs_hist_t* h)
     int i, j, k, m;
     for (i = 1; i < h->nq; ++i) {
       const double v = h->queue[i * h->nvals];
-      if (v < lo) lo = v;
-      if (v > hi) hi = v;
+      lo = LIBXS_MIN(lo, v);
+      hi = LIBXS_MAX(hi, v);
     }
     if (0 == h->nfold) { /* the first batch defines the axis */
-      if (h->nq < h->nbuckets) h->nbuckets = h->nq;
+      h->nbuckets = LIBXS_MIN(h->nbuckets, h->nq);
       h->min = lo;
       h->max = hi;
     }
     else if (lo < h->min || hi > h->max) {
-      internal_libxs_hist_rebin(h, lo < h->min ? lo : h->min, hi > h->max ? hi : h->max);
+      internal_libxs_hist_rebin(h, LIBXS_MIN(lo, h->min), LIBXS_MAX(hi, h->max));
     }
     w = h->max - h->min;
     for (m = 0; m < h->nq; ++m) {
@@ -287,8 +291,10 @@ LIBXS_API void libxs_hist_push(libxs_lock_t* lock, libxs_hist_t* hist, const dou
     if (NULL != lock) LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
     for (k = 0; k < hist->nvals; ++k) {
       hist->queue[hist->nq * hist->nvals + k] = vals[k];
-      /* accumulated here rather than derived from the buckets: a running total
-         is independent of the update function, and rebinning cannot touch it */
+      /**
+       * Accumulated here rather than derived from the buckets: a running total
+       * is independent of the update function, and rebinning cannot touch it.
+       */
       hist->sum[k] += vals[k];
     }
     if (hist->n < INT_MAX) ++hist->n;
@@ -301,8 +307,10 @@ LIBXS_API void libxs_hist_push(libxs_lock_t* lock, libxs_hist_t* hist, const dou
 LIBXS_API void libxs_hist_query(libxs_lock_t* lock, const libxs_hist_t* hist,
   libxs_hist_info_t* info)
 {
-  /* C "mutable": the pending batch is folded here (internal mutation) via cast,
-     which is safe because a histogram is always heap-allocated */
+  /**
+   * C "mutable": the pending batch is folded here (internal mutation) via cast,
+   * which is safe because a histogram is always heap-allocated.
+   */
   libxs_hist_t* const h = (libxs_hist_t*)(uintptr_t)hist;
   LIBXS_ASSERT(NULL != info);
   info->buckets = NULL;
@@ -317,8 +325,10 @@ LIBXS_API void libxs_hist_query(libxs_lock_t* lock, const libxs_hist_t* hist,
   info->nstate = 0;
   if (NULL != h) {
     if (NULL != lock) LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
-    /* folding empties the queue, so querying twice reports the same thing
-       rather than folding the same samples again */
+    /**
+     * Folding empties the queue, so querying twice reports the same thing
+     * rather than folding the same samples again.
+     */
     internal_libxs_hist_fold(h);
     if (0 < h->n) {
       info->buckets = h->buckets;
