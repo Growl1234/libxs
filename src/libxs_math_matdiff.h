@@ -244,6 +244,7 @@ LIBXS_API int libxs_matdiff(libxs_matdiff_t* info,
         info->norm1_abs = info->norm1_rel = info->normi_abs = info->normi_rel = info->normf_rel
                         = info->linf_abs = info->linf_rel = info->l2_abs = info->l2_rel
                         = pos_inf;
+        info->rsq = 0.0;
         if (1 == result_nan) {
           info->l1_tst = info->var_tst = pos_inf;
           info->avg_tst = /*NaN*/info->v_tst;

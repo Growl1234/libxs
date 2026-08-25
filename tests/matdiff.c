@@ -311,8 +311,8 @@ int main(void)
         else result = EXIT_FAILURE;
       }
       else result = EXIT_FAILURE;
-      /* R-squared: must be zero (not +inf as before the fix) */
-      if (0 < d.rsq - 1.0) result = EXIT_FAILURE;
+      /* R-squared: must be zero */
+      if (0 < d.rsq - 0.0) result = EXIT_FAILURE;
       /* NaN detected at position of the NaN element */
       if (1 != d.m || 0 != d.n) result = EXIT_FAILURE;
     }
@@ -340,8 +340,8 @@ int main(void)
         else result = EXIT_FAILURE;
       }
       else result = EXIT_FAILURE;
-      /* R-squared: must be zero */
-      if (0 < d.rsq - 1.0) result = EXIT_FAILURE;
+      /* R-squared: must be zero (see above on comparing against 0.0). */
+      if (0 < d.rsq - 0.0) result = EXIT_FAILURE;
       /* NaN detected at position 0 */
       if (0 != d.m || 0 != d.n) result = EXIT_FAILURE;
     }
