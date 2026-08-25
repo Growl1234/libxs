@@ -68,6 +68,7 @@ int main(int argc, char* argv[])
   GEMM_REAL_TYPE complex_alpha[2] = { 0 }, complex_beta[2] = { 0 };
   GEMM_REAL_TYPE *a = NULL, *b = NULL, *c = NULL, *c_ref = NULL;
   GEMM_INT_TYPE a_rows, a_cols, b_rows, b_cols;
+  size_t nc = 1;
   libxs_matdiff_t diff;
 
   libxs_init();
@@ -157,15 +158,18 @@ int main(int argc, char* argv[])
     result = EXIT_FAILURE;
   }
 
+  /* Reals per element: the generators below must cover the whole buffer */
+  nc = (0 != complex_input ? 2 : 1);
+
   if (EXIT_SUCCESS == result) { /* Allocate matrices */
-    const size_t nc = (0 != complex_input ? 2 : 1);
     a = (GEMM_REAL_TYPE*)gemm_host_malloc(sizeof(GEMM_REAL_TYPE) * nc * lda * a_cols, hostmem);
     b = (GEMM_REAL_TYPE*)gemm_host_malloc(sizeof(GEMM_REAL_TYPE) * nc * ldb * b_cols, hostmem);
     c = (GEMM_REAL_TYPE*)gemm_host_malloc(sizeof(GEMM_REAL_TYPE) * nc * ldc * n, hostmem);
     c_ref = (GEMM_REAL_TYPE*)gemm_host_malloc(sizeof(GEMM_REAL_TYPE) * nc * ldc * n, hostmem);
     if (NULL != a && NULL != b && NULL != c && NULL != c_ref) {
       if (0 == file_input || 0 == beta) {
-        LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, 0, c, m, n, ldc, scale);
+        LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, 0, c,
+          (GEMM_INT_TYPE)(nc * m), n, (GEMM_INT_TYPE)(nc * ldc), scale);
       }
       else memset(c, 0, sizeof(GEMM_REAL_TYPE) * nc * ldc * n);
       memcpy(c_ref, c, sizeof(GEMM_REAL_TYPE) * nc * ldc * n);
@@ -186,7 +190,8 @@ int main(int argc, char* argv[])
       const size_t nelem = (size_t)lda * (size_t)a_cols;
       const size_t coprime = libxs_coprime2(nelem);
       GEMM_INT_TYPE ci, ri;
-      LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, 0, a, a_rows, a_cols, lda, scale);
+      LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, 0, a,
+        (GEMM_INT_TYPE)(nc * a_rows), a_cols, (GEMM_INT_TYPE)(nc * lda), scale);
       for (ci = 0; ci < a_cols; ++ci) {
         for (ri = 0; ri < a_rows; ++ri) {
           const size_t idx = (size_t)ci * lda + ri;
@@ -196,7 +201,8 @@ int main(int argc, char* argv[])
       }
     }
     else {
-      LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, evil, a, a_rows, a_cols, lda, scale);
+      LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, evil, a,
+        (GEMM_INT_TYPE)(nc * a_rows), a_cols, (GEMM_INT_TYPE)(nc * lda), scale);
     }
   }
 
@@ -210,7 +216,8 @@ int main(int argc, char* argv[])
       const size_t nelem = (size_t)ldb * (size_t)b_cols;
       const size_t coprime = libxs_coprime2(nelem);
       GEMM_INT_TYPE ci, ri;
-      LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, 0, b, b_rows, b_cols, ldb, scale);
+      LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, 0, b,
+        (GEMM_INT_TYPE)(nc * b_rows), b_cols, (GEMM_INT_TYPE)(nc * ldb), scale);
       for (ci = 0; ci < b_cols; ++ci) {
         for (ri = 0; ri < b_rows; ++ri) {
           const size_t idx = (size_t)ci * ldb + ri;
@@ -220,7 +227,8 @@ int main(int argc, char* argv[])
       }
     }
     else {
-      LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, -evil, b, b_rows, b_cols, ldb, scale);
+      LIBXS_MATRNG(GEMM_INT_TYPE, GEMM_REAL_TYPE, -evil, b,
+        (GEMM_INT_TYPE)(nc * b_rows), b_cols, (GEMM_INT_TYPE)(nc * ldb), scale);
     }
   }
 
