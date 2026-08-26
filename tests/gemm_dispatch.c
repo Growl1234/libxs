@@ -312,6 +312,72 @@ static int test_release_ownership(void)
 }
 
 
+static int test_config_cpy(void)
+{
+  libxs_gemm_config_t src, dst;
+  const libxs_gemm_config_t* cfg;
+  libxs_registry_t* registry;
+
+  LIBXS_MEMZERO(&src);
+  src.dgemm_jit = test_dgemm_jit;
+  src.jitter = &jit_handle;
+  src.flags = (libxs_gemm_flags_t)
+    (LIBXS_GEMM_FLAG_OWNJIT | LIBXS_GEMM_FLAG_NOLOCK);
+  src.shape.datatype = LIBXS_DATATYPE_F64;
+  src.shape.m = 8; src.shape.n = 8; src.shape.k = 8;
+  LIBXS_MEMZERO(&dst);
+  TEST_CHECK(0 != libxs_gemm_config_cpy(&dst, &src));
+  /* the copy shares the kernel but never owns the handle */
+  TEST_CHECK(test_dgemm_jit == dst.dgemm_jit);
+  TEST_CHECK(&jit_handle == dst.jitter);
+  TEST_CHECK(0 == (LIBXS_GEMM_FLAG_OWNJIT & dst.flags));
+  TEST_CHECK(0 != (LIBXS_GEMM_FLAG_NOLOCK & dst.flags));
+  TEST_CHECK(LIBXS_DATATYPE_F64 == dst.shape.datatype);
+  TEST_CHECK(8 == dst.shape.m && 8 == dst.shape.n && 8 == dst.shape.k);
+  TEST_CHECK(0 != (LIBXS_GEMM_FLAG_OWNJIT & src.flags));
+  libxs_gemm_release(&dst); /* not owned: must not release the handle */
+  TEST_CHECK(&jit_handle == src.jitter);
+
+  /* an unpopulated copy leaves the caller's config untouched */
+  LIBXS_MEMZERO(&dst);
+  dst.shape.m = 23;
+  TEST_CHECK(0 == libxs_gemm_config_cpy(&dst, NULL));
+  TEST_CHECK(23 == dst.shape.m);
+
+  registry = libxs_registry_create();
+  TEST_CHECK(NULL != registry);
+  LIBXS_MEMZERO(&dst);
+  TEST_CHECK(0 != libxs_syrk_dispatch_cpy(&dst, LIBXS_DATATYPE_F64,
+    32, 8, 32, 32, registry));
+  cfg = libxs_syrk_dispatch(LIBXS_DATATYPE_F64, 32, 8, 32, 32, registry);
+  TEST_CHECK(NULL != cfg);
+  /* the copy carries the same shape as the registry-owned config */
+  TEST_CHECK(cfg->shape.datatype == dst.shape.datatype);
+  TEST_CHECK(cfg->shape.transa == dst.shape.transa);
+  TEST_CHECK(cfg->shape.transb == dst.shape.transb);
+  TEST_CHECK(cfg->shape.m == dst.shape.m);
+  TEST_CHECK(cfg->shape.n == dst.shape.n);
+  TEST_CHECK(cfg->shape.k == dst.shape.k);
+  TEST_CHECK(cfg->shape.lda == dst.shape.lda);
+  TEST_CHECK(cfg->shape.ldb == dst.shape.ldb);
+  TEST_CHECK(cfg->shape.ldc == dst.shape.ldc);
+  TEST_CHECK(cfg->dgemm_blas == dst.dgemm_blas);
+  TEST_CHECK(0 == (LIBXS_GEMM_FLAG_OWNJIT & dst.flags));
+
+  LIBXS_MEMZERO(&dst);
+  TEST_CHECK(0 != libxs_gemm_dispatch_cpy(&dst, LIBXS_DATATYPE_F64,
+    'N', 'N', 8, 8, 8, 8, 8, 8, NULL, NULL, registry));
+  TEST_CHECK(LIBXS_DATATYPE_F64 == dst.shape.datatype);
+  TEST_CHECK(8 == dst.shape.m && 8 == dst.shape.n && 8 == dst.shape.k);
+  TEST_CHECK(1.0 == dst.shape.alpha && 0.0 == dst.shape.beta);
+  TEST_CHECK(NULL != dst.dgemm_blas);
+  TEST_CHECK(0 == (LIBXS_GEMM_FLAG_OWNJIT & dst.flags));
+
+  libxs_gemm_release_registry(registry);
+  return EXIT_SUCCESS;
+}
+
+
 int main(void)
 {
   int result = test_missing_jit_handle();
@@ -319,5 +385,6 @@ int main(void)
   if (EXIT_SUCCESS == result) result = test_complete_jit_config();
   if (EXIT_SUCCESS == result) result = test_double_dispatch();
   if (EXIT_SUCCESS == result) result = test_release_ownership();
+  if (EXIT_SUCCESS == result) result = test_config_cpy();
   return result;
 }

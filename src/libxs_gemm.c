@@ -929,7 +929,7 @@ LIBXS_API_INTERN void internal_libxs_gemm_blas(
 }
 
 
-LIBXS_API libxs_gemm_config_t* libxs_syr2k_dispatch(
+LIBXS_API libxs_gemm_config_t* libxs_syr2k_dispatch_rt(
   libxs_data_t datatype, int n, int k, int lda, int ldb, int ldc,
   const libxs_gemm_backend_t* backend, void* registry)
 {
@@ -953,11 +953,11 @@ LIBXS_API libxs_gemm_config_t* libxs_syr2k_dispatch(
 }
 
 
-LIBXS_API libxs_gemm_config_t* libxs_syrk_dispatch(
+LIBXS_API libxs_gemm_config_t* libxs_syrk_dispatch_rt(
   libxs_data_t datatype, int n, int k, int lda, int ldc,
   const libxs_gemm_backend_t* backend, void* registry)
 {
-  return libxs_syr2k_dispatch(datatype, n, k, lda, lda, ldc,
+  return libxs_syr2k_dispatch_rt(datatype, n, k, lda, lda, ldc,
     backend, registry);
 }
 

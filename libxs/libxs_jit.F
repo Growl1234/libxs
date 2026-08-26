@@ -90,24 +90,24 @@
           END SUBROUTINE
         END INTERFACE
 
-        PUBLIC :: libxs_gemm_dispatch
-        PUBLIC :: libxs_syrk_dispatch
-        PUBLIC :: libxs_syr2k_dispatch
+        PUBLIC :: libxs_gemm_dispatch, libxs_gemm_dispatch_ptr
+        PUBLIC :: libxs_syrk_dispatch, libxs_syrk_dispatch_cpy
+        PUBLIC :: libxs_syr2k_dispatch, libxs_syr2k_dispatch_cpy
 
       CONTAINS
         INCLUDE 'libxs_procs.fi'
 
-        !> Dispatch a GEMM kernel with auto-detected backends.
-        FUNCTION libxs_gemm_dispatch(config,                            &
+        !> Dispatch a GEMM kernel with auto-detected backends and
+        !> return the registry-owned config.
+        FUNCTION libxs_gemm_dispatch_ptr(                               &
      &  datatype, transa, transb,                                       &
      &  m, n, k, lda, ldb, ldc, alpha, beta, registry)
-          TYPE(libxs_gemm_config_t), INTENT(INOUT) :: config
           INTEGER(C_INT), INTENT(IN) :: datatype
           CHARACTER(C_CHAR), INTENT(IN), VALUE :: transa, transb
           INTEGER(C_INT), INTENT(IN) :: m, n, k, lda, ldb, ldc
           REAL(C_DOUBLE), INTENT(IN) :: alpha, beta
           TYPE(C_PTR), INTENT(IN), OPTIONAL :: registry
-          INTEGER(C_INT) :: libxs_gemm_dispatch
+          TYPE(C_PTR) :: libxs_gemm_dispatch_ptr
           TYPE(C_FUNPTR) :: dgemm_fp, sgemm_fp
 #if defined(__MKL)
           TYPE(C_FUNPTR) :: jcd_fp, jgd_fp, jcs_fp, jgs_fp
@@ -126,7 +126,7 @@
 #if defined(__LIBXSMM)
           xdisp_fp = C_FUNLOC(libxsmm_dispatch_gemm)
 #endif
-          libxs_gemm_dispatch = libxs_gemm_dispatch_base(config,        &
+          libxs_gemm_dispatch_ptr = libxs_gemm_dispatch_ptr_base(       &
      &      datatype, transa, transb,                                   &
      &      m, n, k, lda, ldb, ldc, alpha, beta,                        &
 #if defined(__MKL)
@@ -141,6 +141,23 @@
      &      dgemm_blas=dgemm_fp,                                        &
      &      sgemm_blas=sgemm_fp,                                        &
      &      registry=registry)
+        END FUNCTION
+
+
+        !> Dispatch a GEMM kernel with auto-detected backends.
+        FUNCTION libxs_gemm_dispatch(config,                            &
+     &  datatype, transa, transb,                                       &
+     &  m, n, k, lda, ldb, ldc, alpha, beta, registry)
+          TYPE(libxs_gemm_config_t), INTENT(INOUT) :: config
+          INTEGER(C_INT), INTENT(IN) :: datatype
+          CHARACTER(C_CHAR), INTENT(IN), VALUE :: transa, transb
+          INTEGER(C_INT), INTENT(IN) :: m, n, k, lda, ldb, ldc
+          REAL(C_DOUBLE), INTENT(IN) :: alpha, beta
+          TYPE(C_PTR), INTENT(IN), OPTIONAL :: registry
+          INTEGER(C_INT) :: libxs_gemm_dispatch
+          libxs_gemm_dispatch = libxs_gemm_config_cpy(config,           &
+     &      libxs_gemm_dispatch_ptr(datatype, transa, transb,           &
+     &      m, n, k, lda, ldb, ldc, alpha, beta, registry))
         END FUNCTION
 
 
@@ -195,6 +212,35 @@
           TYPE(C_PTR) :: libxs_syrk_dispatch
           libxs_syrk_dispatch = libxs_syr2k_dispatch(datatype,          &
      &      n, k, lda, lda, ldc, registry)
+        END FUNCTION
+
+
+        !> Dispatch a SYR2K config with auto-detected backends into a
+        !> caller-owned config.
+        FUNCTION libxs_syr2k_dispatch_cpy(config, datatype,             &
+     &  n, k, lda, ldb, ldc, registry)
+          TYPE(libxs_gemm_config_t), INTENT(INOUT) :: config
+          INTEGER(C_INT), INTENT(IN) :: datatype, n, k
+          INTEGER(C_INT), INTENT(IN) :: lda, ldb, ldc
+          TYPE(C_PTR), INTENT(IN), OPTIONAL :: registry
+          INTEGER(C_INT) :: libxs_syr2k_dispatch_cpy
+          libxs_syr2k_dispatch_cpy = libxs_gemm_config_cpy(config,      &
+     &      libxs_syr2k_dispatch(datatype, n, k, lda, ldb, ldc,         &
+     &      registry))
+        END FUNCTION
+
+
+        !> Dispatch a SYRK config with auto-detected backends into a
+        !> caller-owned config.
+        FUNCTION libxs_syrk_dispatch_cpy(config, datatype,              &
+     &  n, k, lda, ldc, registry)
+          TYPE(libxs_gemm_config_t), INTENT(INOUT) :: config
+          INTEGER(C_INT), INTENT(IN) :: datatype, n, k
+          INTEGER(C_INT), INTENT(IN) :: lda, ldc
+          TYPE(C_PTR), INTENT(IN), OPTIONAL :: registry
+          INTEGER(C_INT) :: libxs_syrk_dispatch_cpy
+          libxs_syrk_dispatch_cpy = libxs_syr2k_dispatch_cpy(config,    &
+     &      datatype, n, k, lda, lda, ldc, registry)
         END FUNCTION
 
 #else

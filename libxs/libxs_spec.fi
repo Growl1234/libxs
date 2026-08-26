@@ -75,6 +75,7 @@
         PUBLIC :: LIBXS_GEMM_FLAG_OWNJIT
         PUBLIC :: libxs_gemm_call
         PUBLIC :: libxs_gemm_release
+        PUBLIC :: libxs_gemm_config_cpy
         PUBLIC :: libxs_gemm_batch, libxs_gemm_batch_task
         PUBLIC :: libxs_gemm_index, libxs_gemm_index_task
         PUBLIC :: libxs_syr2k, libxs_syrk
@@ -869,7 +870,7 @@
 
           FUNCTION internal_syr2k_dispatch(datatype,                    &
      &    n, k, lda, ldb, ldc, backend, registry)                       &
-     &    BIND(C, NAME="libxs_syr2k_dispatch")
+     &    BIND(C, NAME="libxs_syr2k_dispatch_rt")
             IMPORT :: libxs_gemm_backend_t, C_PTR, C_INT
             INTEGER(C_INT), INTENT(IN), VALUE ::                        &
      &        datatype, n, k, lda, ldb, ldc

@@ -249,6 +249,37 @@ LIBXS_EXTERN void LIBXS_FSYMBOL(sgemm)(
 #endif
 
 /**
+ * Populate backend with the pointers available at the caller's
+ * compile time (this is a header-inline, hence LIBXS stays decoupled):
+ * MKL JIT if mkl.h was included before libxs_gemm.h, LIBXSMM if
+ * libxsmm.h was included, BLAS if __BLAS, __MKL, or MKL_H is defined.
+ * Unavailable backends are left NULL, i.e., dispatch falls through to
+ * the built-in default kernel.
+ */
+LIBXS_API_INLINE void libxs_gemm_backend_init(libxs_gemm_backend_t* backend)
+{
+  if (NULL != backend) {
+    LIBXS_MEMZERO(backend);
+#if defined(mkl_jit_create_dgemm)
+    LIBXS_FPTR_ASSIGN(libxs_jit_create_dgemm_t, backend->jit_create_dgemm, mkl_jit_create_dgemm);
+    LIBXS_FPTR_ASSIGN(libxs_jit_get_dgemm_t, backend->jit_get_dgemm, mkl_jit_get_dgemm_ptr);
+    LIBXS_FPTR_ASSIGN(libxs_jit_create_sgemm_t, backend->jit_create_sgemm, mkl_jit_create_sgemm);
+    LIBXS_FPTR_ASSIGN(libxs_jit_get_sgemm_t, backend->jit_get_sgemm, mkl_jit_get_sgemm_ptr);
+#endif
+#if defined(LIBXSMM_H)
+    LIBXS_FPTR_ASSIGN(libxs_xgemm_dispatch_t, backend->xgemm_dispatch, libxsmm_dispatch_gemm);
+#endif
+#if defined(__MKL) || defined(MKL_H)
+    LIBXS_FPTR_ASSIGN(libxs_gemm_dblas_t, backend->dgemm_blas, dgemm);
+    LIBXS_FPTR_ASSIGN(libxs_gemm_sblas_t, backend->sgemm_blas, sgemm);
+#elif defined(__BLAS)
+    backend->dgemm_blas = LIBXS_FSYMBOL(dgemm);
+    backend->sgemm_blas = LIBXS_FSYMBOL(sgemm);
+#endif
+  }
+}
+
+/**
  * Dispatch a GEMM kernel and return a pointer to the configuration.
  * On registry hit, returns pointer to cached config (zero-cost).
  * On miss, JIT-compiles (MKL JIT > LIBXSMM > fallthrough), stores
@@ -279,24 +310,48 @@ LIBXS_API_INLINE libxs_gemm_config_t* libxs_gemm_dispatch(
     shape.alpha = (NULL != alpha ? (double)*(const float*)alpha : 1.0);
     shape.beta  = (NULL != beta  ? (double)*(const float*)beta  : 0.0);
   }
-  LIBXS_MEMZERO(&be);
-#if defined(mkl_jit_create_dgemm)
-  LIBXS_FPTR_ASSIGN(libxs_jit_create_dgemm_t, be.jit_create_dgemm, mkl_jit_create_dgemm);
-  LIBXS_FPTR_ASSIGN(libxs_jit_get_dgemm_t, be.jit_get_dgemm, mkl_jit_get_dgemm_ptr);
-  LIBXS_FPTR_ASSIGN(libxs_jit_create_sgemm_t, be.jit_create_sgemm, mkl_jit_create_sgemm);
-  LIBXS_FPTR_ASSIGN(libxs_jit_get_sgemm_t, be.jit_get_sgemm, mkl_jit_get_sgemm_ptr);
-#endif
-#if defined(LIBXSMM_H)
-  LIBXS_FPTR_ASSIGN(libxs_xgemm_dispatch_t, be.xgemm_dispatch, libxsmm_dispatch_gemm);
-#endif
-#if defined(__MKL) || defined(MKL_H)
-  LIBXS_FPTR_ASSIGN(libxs_gemm_dblas_t, be.dgemm_blas, dgemm);
-  LIBXS_FPTR_ASSIGN(libxs_gemm_sblas_t, be.sgemm_blas, sgemm);
-#elif defined(__BLAS)
-  be.dgemm_blas = LIBXS_FSYMBOL(dgemm);
-  be.sgemm_blas = LIBXS_FSYMBOL(sgemm);
-#endif
+  libxs_gemm_backend_init(&be);
   return libxs_gemm_dispatch_rt(&shape, NULL, &be, registry);
+}
+
+/**
+ * Take a caller-owned copy of a (registry-owned) config, e.g., to set
+ * flags without affecting other users of the same shape.
+ * LIBXS_GEMM_FLAG_OWNJIT is cleared in the copy, i.e., the JIT handle
+ * stays owned by the registry and libxs_gemm_release is a no-op for the
+ * copy (release the registry, or the config the registry returned).
+ * A copy is a snapshot: unlike a registry-owned config it does not pick
+ * up a kernel that a later JIT warm-up completes.
+ * Returns non-zero if config was populated, zero otherwise.
+ */
+LIBXS_API_INLINE int libxs_gemm_config_cpy(
+  libxs_gemm_config_t* config, const libxs_gemm_config_t* cached)
+{
+  int result = 0;
+  if (NULL != config && NULL != cached) {
+    *config = *cached;
+    config->flags = (libxs_gemm_flags_t)
+      (config->flags & ~LIBXS_GEMM_FLAG_OWNJIT);
+    result = 1;
+  }
+  return result;
+}
+
+/**
+ * Like libxs_gemm_dispatch, but populates a caller-owned config.
+ * Returns non-zero if config was populated, zero otherwise (config is
+ * left untouched, hence zero-initialize it before the call).
+ */
+LIBXS_API_INLINE int libxs_gemm_dispatch_cpy(
+  libxs_gemm_config_t* config,
+  libxs_data_t datatype, char transa, char transb,
+  int m, int n, int k, int lda, int ldb, int ldc,
+  const void* alpha, const void* beta,
+  void* LIBXS_ARGDEF(registry, NULL))
+{
+  return libxs_gemm_config_cpy(config, libxs_gemm_dispatch(
+    datatype, transa, transb, m, n, k, lda, ldb, ldc,
+    alpha, beta, registry));
 }
 
 /**
@@ -391,23 +446,78 @@ LIBXS_API_INLINE void libxs_gemm_release(libxs_gemm_config_t* config) {
 LIBXS_API void libxs_gemm_release_registry(libxs_registry_t* registry);
 
 /**
- * Dispatch a GEMM config suitable for libxs_syr2k.
+ * Dispatch a GEMM config suitable for libxs_syr2k (runtime, explicit
+ * backend selection). The kernel shape is the SYRK tile, hence the
+ * blocking (LIBXS_GEMM_BM/BN/BK) is applied inside.
  * backend: optional backend pointers (NULL = built-in only).
  * Returns pointer to cached config (registry-owned), or NULL.
  */
-LIBXS_API libxs_gemm_config_t* libxs_syr2k_dispatch(
+LIBXS_API libxs_gemm_config_t* libxs_syr2k_dispatch_rt(
   libxs_data_t datatype, int n, int k, int lda, int ldb, int ldc,
   const libxs_gemm_backend_t* LIBXS_ARGDEF(backend, NULL),
   void* LIBXS_ARGDEF(registry, NULL));
 
 /**
- * Dispatch a GEMM config suitable for libxs_syrk.
- * Equivalent to libxs_syr2k_dispatch with ldb=lda.
+ * Dispatch a GEMM config suitable for libxs_syrk (runtime, explicit
+ * backend selection). Equivalent to libxs_syr2k_dispatch_rt with ldb=lda.
  */
-LIBXS_API libxs_gemm_config_t* libxs_syrk_dispatch(
+LIBXS_API libxs_gemm_config_t* libxs_syrk_dispatch_rt(
   libxs_data_t datatype, int n, int k, int lda, int ldc,
   const libxs_gemm_backend_t* LIBXS_ARGDEF(backend, NULL),
   void* LIBXS_ARGDEF(registry, NULL));
+
+/**
+ * Dispatch a GEMM config suitable for libxs_syr2k, with the backend
+ * detected at the caller's compile time (libxs_gemm_backend_init).
+ * Returns pointer to cached config (registry-owned), or NULL.
+ */
+LIBXS_API_INLINE libxs_gemm_config_t* libxs_syr2k_dispatch(
+  libxs_data_t datatype, int n, int k, int lda, int ldb, int ldc,
+  void* LIBXS_ARGDEF(registry, NULL))
+{
+  libxs_gemm_backend_t be;
+  libxs_gemm_backend_init(&be);
+  return libxs_syr2k_dispatch_rt(datatype, n, k, lda, ldb, ldc,
+    &be, registry);
+}
+
+/**
+ * Dispatch a GEMM config suitable for libxs_syrk, with the backend
+ * detected at the caller's compile time (libxs_gemm_backend_init).
+ * Returns pointer to cached config (registry-owned), or NULL.
+ */
+LIBXS_API_INLINE libxs_gemm_config_t* libxs_syrk_dispatch(
+  libxs_data_t datatype, int n, int k, int lda, int ldc,
+  void* LIBXS_ARGDEF(registry, NULL))
+{
+  return libxs_syr2k_dispatch(datatype, n, k, lda, lda, ldc, registry);
+}
+
+/**
+ * Like libxs_syr2k_dispatch, but populates a caller-owned config.
+ * Returns non-zero if config was populated, zero otherwise.
+ */
+LIBXS_API_INLINE int libxs_syr2k_dispatch_cpy(
+  libxs_gemm_config_t* config,
+  libxs_data_t datatype, int n, int k, int lda, int ldb, int ldc,
+  void* LIBXS_ARGDEF(registry, NULL))
+{
+  return libxs_gemm_config_cpy(config, libxs_syr2k_dispatch(
+    datatype, n, k, lda, ldb, ldc, registry));
+}
+
+/**
+ * Like libxs_syrk_dispatch, but populates a caller-owned config.
+ * Returns non-zero if config was populated, zero otherwise.
+ */
+LIBXS_API_INLINE int libxs_syrk_dispatch_cpy(
+  libxs_gemm_config_t* config,
+  libxs_data_t datatype, int n, int k, int lda, int ldc,
+  void* LIBXS_ARGDEF(registry, NULL))
+{
+  return libxs_gemm_config_cpy(config, libxs_syrk_dispatch(
+    datatype, n, k, lda, ldc, registry));
+}
 
 /**
  * Symmetric rank-2k update: C := alpha*(A*B^T + B*A^T) + beta*C.
