@@ -25,7 +25,7 @@
  *                         [ Im(A*B) ]
  *
  * A single real GEMM of size (2M) x N x (2K) produces both real and
- * imaginary parts.  When the Ozaki wrapper intercepts this GEMM, the
+ * imaginary parts. When the Ozaki wrapper intercepts this GEMM, the
  * block structure guarantees that Re and Im contributions from the same
  * complex row/column share a common Ozaki exponent base, eliminating
  * the catastrophic cancellation that plagued the 3M (Karatsuba) method.
@@ -34,6 +34,28 @@
  */
 
 OZAKI_APIVAR_PRIVATE_DEF(zgemm_function_t zgemm_original);
+
+
+/**
+ * Complex BLAS reached past our own wrapper, which is what a reference has to
+ * do: calling ZGEMM runs the block embedding a second time and compares it
+ * against itself. gemm_nozaki additionally keeps the real GEMMs a complex BLAS
+ * may issue internally out of Ozaki, so the reference is BLAS throughout.
+ *
+ * Exported because the driver needs the same reference for its own validation,
+ * and zgemm_original is private to this translation unit.
+ */
+OZAKI_API void zgemm_reference(GEMM_ARGDECL)
+{
+  gemm_nozaki = 1;
+  if (NULL != zgemm_original) { /* dlsym (LD_PRELOAD) */
+    zgemm_original(GEMM_ARGPASS);
+  }
+  else { /* static --wrap */
+    ZGEMM_REAL(GEMM_ARGPASS);
+  }
+  gemm_nozaki = 0;
+}
 
 
 /**
@@ -273,21 +295,9 @@ LIBXS_API_INLINE void gemm_complex_diff(GEMM_ARGDECL, libxs_matdiff_t* diff)
     if (0 != ozaki_exit) exit(EXIT_SUCCESS == result ? EXIT_FAILURE : result);
   }
   gemm_dump_inhibit = 0;
-  /**
-   * Reference complex BLAS and diff.
-   * Set gemm_nozaki so that any sgemm_ calls BLAS CGEMM makes
-   * internally bypass Ozaki (--wrap redirects them to GEMM_WRAP).
-   */
-  if (NULL != c_ref) {
+  if (NULL != c_ref) { /* reference complex BLAS and diff */
     const libxs_data_t dt = (GEMM_IS_DOUBLE ? LIBXS_DATATYPE_C64 : LIBXS_DATATYPE_C32);
-    gemm_nozaki = 1;
-    if (NULL != zgemm_original) {
-      zgemm_original(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c_ref, ldc);
-    }
-    else {
-      ZGEMM_REAL(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c_ref, ldc);
-    }
-    gemm_nozaki = 0;
+    zgemm_reference(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c_ref, ldc);
     libxs_matdiff(diff, dt, *m, *n, c_ref, c, ldc, ldc);
     if (ozaki_diff_exceeds(diff)) memcpy(c, c_ref, c_size);
     libxs_free(c_ref);
@@ -307,19 +317,8 @@ OZAKI_API_INTERN LIBXS_ATTRIBUTE_WEAK void ZGEMM_WRAP(GEMM_ARGDECL)
   gemm_init();
   if (*m > 0 && *n > 0 && *k > 0) {
     if (3 <= ozaki_complex) {
-      /**
-       * Mode 3: lock out real GEMM interception, use original ZGEMM.
-       * DGEMMs from BLAS internal ZGEMM implementation use original BLAS.
-       * On exit, real GEMM interception (Ozaki) is restored.
-       */
-      gemm_nozaki = 1;
-      if (NULL != zgemm_original) {
-        zgemm_original(GEMM_ARGPASS);
-      }
-      else {
-        ZGEMM_REAL(GEMM_ARGPASS);
-      }
-      gemm_nozaki = 0;
+      /* mode 3: original ZGEMM, and the real GEMMs it issues stay BLAS too */
+      zgemm_reference(GEMM_ARGPASS);
     }
     else if (0 != ozaki_complex) {
       OZAKI_GEMM_WRAPPER(gemm_complex_diff, ZGEMM_LABEL, 2)

@@ -70,6 +70,7 @@
 /* Precision-specific name redirects for public/driver-visible symbols */
 #define gemm_function_t LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_ftype_t)
 #define gemm_original LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_original)
+#define zgemm_reference LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm_reference)
 #define gemm_diff LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_diff)
 #define ozaki LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki)
 #define ozaki_stat LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_stat)
@@ -89,6 +90,12 @@ LIBXS_EXTERN void ZGEMM(GEMM_ARGDECL);
 /** Original (unwrapped) real GEMM. */
 #define GEMM_REAL LIBXS_CONCATENATE(__real_, GEMM)
 LIBXS_EXTERN void GEMM_REAL(GEMM_ARGDECL);
+/**
+ * Original (unwrapped) complex GEMM, whether reached by --wrap or by dlsym.
+ * A caller that wants a reference must use this rather than ZGEMM, which is
+ * intercepted and would compare the block embedding against itself.
+ */
+OZAKI_API void zgemm_reference(GEMM_ARGDECL);
 
 /** Print GEMM arguments. */
 OZAKI_API void print_gemm(FILE* ostream, int compact, GEMM_ARGDECL);
@@ -106,7 +113,7 @@ typedef struct gemm_mhd_settings_t {
  * If data is NULL, reads header/extension only (info pass).
  * If data is non-NULL, also reads the matrix data.
  * If settings is non-NULL, fills it from extension (zeros if absent).
- * All output pointers may be NULL.  Returns EXIT_SUCCESS on success.
+ * All output pointers may be NULL. Returns EXIT_SUCCESS on success.
  */
 LIBXS_API_INLINE int gemm_mhd_read(const char* filename, GEMM_INT_TYPE* rows, GEMM_INT_TYPE* cols, char* trans, GEMM_INT_TYPE* ld,
   GEMM_REAL_TYPE scalar[2], size_t* ncomp, gemm_mhd_settings_t* settings, GEMM_REAL_TYPE* data)

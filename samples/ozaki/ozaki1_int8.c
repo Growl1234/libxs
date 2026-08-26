@@ -375,7 +375,7 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
        * Phase 4: tile-first GEMM + accumulate for this K-group.
        * Tiles outermost (single omp for): C stays in a local buffer
        * across all slice pairs - one load + one store per tile instead
-       * of a read-modify-write per pair.  Also eliminates per-pair
+       * of a read-modify-write per pair. Also eliminates per-pair
        * omp-for barriers (implicit barrier at end of tile loop suffices).
        */
 #if defined(_OPENMP)

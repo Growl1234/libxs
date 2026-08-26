@@ -964,7 +964,7 @@ LIBXS_API_INLINE void ozaki_gemm_u8u8s32(char transa, char transb, GEMM_INT_TYPE
   OZAKI_GEMM_INT8_BODY(uint8_t, ozaki_dot_u8_sw)
 }
 
-/* s8*s8 -> s32 GEMM.  With __DNNL: delegates to dnnl_gemm_s8s8s32. */
+/* s8*s8 -> s32 GEMM. With __DNNL: delegates to dnnl_gemm_s8s8s32. */
 LIBXS_API_INLINE void ozaki_gemm_s8s8s32(char transa, char transb, GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const int8_t* a, GEMM_INT_TYPE lda, const int8_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
@@ -1106,7 +1106,7 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32_packed_fused(GEMM_INT_TYPE M, GEMM_INT_
 
 /**
  * Extract IEEE-754 biased exponent and full mantissa (with implicit bit)
- * into uint64_t.  Returns sign (+1 or -1); for zero/subnormal/NaN/Inf
+ * into uint64_t. Returns sign (+1 or -1); for zero/subnormal/NaN/Inf
  * sets exp_biased=0 and mantissa=0, returns +1.
  *
  * Special-value detection is done entirely via the raw exponent field

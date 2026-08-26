@@ -23,6 +23,7 @@ LIBXS_PRAGMA_WEAK(gemm_original)
 LIBXS_PRAGMA_WEAK(ozaki_verbose)
 LIBXS_PRAGMA_WEAK(gemm_diff)
 LIBXS_PRAGMA_WEAK(GEMM_REAL)
+LIBXS_PRAGMA_WEAK(zgemm_reference)
 
 
 static double gemm_duration(double* times, int nrepeat, double total);
@@ -72,6 +73,7 @@ int main(int argc, char* argv[])
   libxs_matdiff_t diff;
 
   libxs_init();
+  libxs_matdiff_clear(&diff); /* diff.r reports whether the reference ran */
 
 #if defined(GEMM_COMPLEX)
   /* Complex mode: alpha and beta are [real, imag] pairs */
@@ -265,19 +267,20 @@ int main(int argc, char* argv[])
     /* gemm_original: resolved via dlsym (LD_PRELOAD); GEMM_REAL: static --wrap */
     const gemm_function_t ref_gemm = (NULL != &gemm_original && NULL != gemm_original) ? gemm_original
                                                                                        : (NULL != &GEMM_REAL ? GEMM_REAL : NULL);
-    if (NULL != ref_gemm) {
+    /* ZGEMM is intercepted, so the complex reference has to be asked for by name */
+    const gemm_function_t ref = (0 == complex_input) ? ref_gemm
+                                                     : (NULL != &zgemm_reference ? zgemm_reference : NULL);
+    if (NULL != ref) {
       const double gflops = (0 != complex_input ? 8.0 : 2.0) * m * n * k * 1E-9;
       double* const times = (double*)malloc((size_t)nrepeat * sizeof(double));
       libxs_timer_tick_t start;
       double duration;
       /* Warmup */
-      if (0 != complex_input) ZGEMM(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c_ref, &ldc);
-      else ref_gemm(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c_ref, &ldc);
+      ref(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c_ref, &ldc);
       start = libxs_timer_tick();
       for (i = 0; i < nrepeat; ++i) {
         const libxs_timer_tick_t tick = libxs_timer_tick();
-        if (0 != complex_input) ZGEMM(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c_ref, &ldc);
-        else ref_gemm(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c_ref, &ldc);
+        ref(&transa, &transb, &m, &n, &k, ga, a, &lda, b, &ldb, gb, c_ref, &ldc);
         if (NULL != times) times[i] = libxs_timer_duration(tick, libxs_timer_tick());
       }
       /* Same statistic on both sides, or the ratio is not a comparison. */
@@ -309,9 +312,22 @@ int main(int argc, char* argv[])
   }
 
   if (EXIT_SUCCESS == result && 0 != check) { /* Accuracy validation */
-    const double epsilon = libxs_matdiff_epsilon(&gemm_diff);
+    /**
+     * The outer diff is end-to-end and costs nothing: the reference it needs is
+     * already run to time BLAS. The inner gemm_diff is per-call and finer, but
+     * exists only under OZAKI_VERBOSE, which puts a reference GEMM inside the
+     * timed loop. Whichever ran decides, and both is the stricter answer.
+     */
+    const int outer = (0 < diff.r), inner = (NULL != &gemm_diff && 0 < gemm_diff.r);
+    const double eps_outer = (0 != outer ? libxs_matdiff_epsilon(&diff) : 0);
+    const double eps_inner = (0 != inner ? libxs_matdiff_epsilon(&gemm_diff) : 0);
+    const double epsilon = LIBXS_MAX(eps_outer, eps_inner);
     const double threshold = (0 < check) ? check : (sizeof(double) == sizeof(GEMM_REAL_TYPE) ? 1.0E-10 : 1.0E-3);
-    if (threshold < epsilon) {
+    if (0 == outer && 0 == inner) { /* a check with nothing to measure is not a pass */
+      fprintf(stderr, "CHECK: no reference available\n");
+      result = EXIT_FAILURE;
+    }
+    else if (threshold < epsilon) {
       fprintf(stderr, "CHECK: eps=%g exceeds threshold=%g\n", epsilon, threshold);
       result = EXIT_FAILURE;
     }
@@ -378,12 +394,12 @@ static void gemm_host_free(void* ptr, int hostmem)
 
 /**
  * Time of one call out of nrepeat: the median of the per-call durations rather
- * than the mean of their sum.  A host GEMM's spread is dominated by thread
+ * than the mean of their sum. A host GEMM's spread is dominated by thread
  * placement, so a single migrated call moves a mean that is then read as a rate,
  * and the figure stops being comparable with the device side - which reports a
- * per-kernel median of its own.  The median needs the samples, which is why the
+ * per-kernel median of its own. The median needs the samples, which is why the
  * caller collects them; they are sorted in place, so times[0] and
- * times[nrepeat-1] are the extremes afterwards.  A NULL times (allocation
+ * times[nrepeat-1] are the extremes afterwards. A NULL times (allocation
  * failed) leaves the mean of total as the only figure available.
  */
 static double gemm_duration(double* times, int nrepeat, double total)
