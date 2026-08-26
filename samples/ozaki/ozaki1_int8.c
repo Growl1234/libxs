@@ -58,6 +58,8 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
   const GEMM_INT_TYPE M = *m, N = *n, K = *k;
   const GEMM_INT_TYPE ldcv = *ldc;
   const int nslices = LIBXS_CLMP(ozaki_n, 1, MAX_NSLICES);
+  /* once per call, not per tile: the loop below runs inside a parallel region */
+  const int oz1_flags = ozaki_flags_eff(M, N, K);
   const int trim = LIBXS_MIN(ozaki_trim, 2 * (nslices - 1));
   const int cutoff = 2 * (nslices - 1) - trim;
   int eff_cutoff = cutoff, sma = -1, smb = -1;
@@ -399,11 +401,11 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
           /* Accumulate all slice pairs into c_local */
           LIBXS_PRAGMA_LOOP_COUNT(1, MAX_NSLICES, NSLICES_DEFAULT)
           for (slice_a = 0; slice_a < nslices && slice_a <= eff_cutoff; ++slice_a) {
-            const int sb_start = (0 != (ozaki_flags & OZ1_TRIANGULAR)) ? slice_a : 0;
+            const int sb_start = (0 != (oz1_flags & OZ1_TRIANGULAR)) ? slice_a : 0;
             const int sb_end = LIBXS_MIN(nslices, eff_cutoff + 1 - slice_a);
             for (slice_b = sb_start; slice_b < sb_end; ++slice_b) {
               const double pair_scale = (*alpha) * pow2_low[slice_a] * pow2_low[slice_b];
-              const int do_mirror = (0 != (ozaki_flags & OZ1_SYMMETRIZE)) && (slice_a != slice_b);
+              const int do_mirror = (0 != (oz1_flags & OZ1_SYMMETRIZE)) && (slice_a != slice_b);
 
 
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)

@@ -28,6 +28,7 @@ OZAKI_APIVAR_PRIVATE_DEF(int ozaki_idx);
 OZAKI_APIVAR_PRIVATE_DEF(double ozaki_eps);
 OZAKI_APIVAR_PRIVATE_DEF(double ozaki_rsq);
 OZAKI_APIVAR_PRIVATE_DEF(int ozaki_flags);
+OZAKI_APIVAR_PRIVATE_DEF(int ozaki_sym_xover);
 OZAKI_APIVAR_PRIVATE_DEF(int ozaki_trim);
 OZAKI_APIVAR_PRIVATE_DEF(int ozaki_dump);
 OZAKI_APIVAR_PRIVATE_DEF(int ozaki_exit);
@@ -143,6 +144,7 @@ OZAKI_API_INTERN void gemm_init(void)
         const char* const ozaki_dump_env = getenv("OZAKI_DUMP");
         const char* const ozaki_exit_env = getenv("OZAKI_EXIT");
         const char* const ozaki_flags_env = getenv("OZAKI_FLAGS");
+        const char* const ozaki_sym_xover_env = getenv("OZAKI_SYM_XOVER");
         const char* const ozaki_trim_env = getenv("OZAKI_TRIM");
         const char* const ozaki_amx_env = getenv("OZAKI_AMX");
         const char* const ozaki_idx_env = getenv("OZAKI_IDX");
@@ -169,7 +171,23 @@ OZAKI_API_INTERN void gemm_init(void)
                             ? 0 /*default*/
 #endif
                             : atoi(threshold_env));
-        ozaki_flags = (NULL == ozaki_flags_env ? OZ1_DEFAULT : atoi(ozaki_flags_env));
+        /**
+         * -1 means auto: ozaki_flags_eff decides per call from the size. Only
+         * 0 and 3 are correct, so a bare 1 or 2 falls back to auto rather than
+         * silently computing the wrong product.
+         */
+        if (NULL == ozaki_flags_env) {
+          ozaki_flags = -1;
+        }
+        else {
+          ozaki_flags = atoi(ozaki_flags_env);
+          if (0 != ozaki_flags && OZ1_DEFAULT != ozaki_flags) {
+            fprintf(stderr, "OZAKI: OZAKI_FLAGS=%i is not a correct setting (0 or %i), ignored\n",
+              ozaki_flags, OZ1_DEFAULT);
+            ozaki_flags = -1;
+          }
+        }
+        ozaki_sym_xover = (NULL == ozaki_sym_xover_env ? OZ1_XOVER_DEFAULT : atoi(ozaki_sym_xover_env));
         ozaki_trim = (NULL == ozaki_trim_env ? 0 /*exact*/ : atoi(ozaki_trim_env));
         ozaki_exit = (NULL == ozaki_exit_env ? 1 /*default*/ : atoi(ozaki_exit_env));
         ozaki_idx = (NULL == ozaki_idx_env ? 0 : atoi(ozaki_idx_env));

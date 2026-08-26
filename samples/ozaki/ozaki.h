@@ -61,7 +61,11 @@
  * Runtime flag-set controlling the Ozaki scheme 1 (OZAKI_FLAGS env var).
  * Bit 0 (1): TRIANGULAR  - iterate upper triangle of slice-pair matrix
  * Bit 1 (2): SYMMETRIZE  - compute mirror D(sb,sa) for off-diagonal pairs
- * Default 3 = TRIANGULAR + SYMMETRIZE (correct, fewer loop iterations).
+ *
+ * Only 0 and 3 are correct. TRIANGULAR alone never visits the pairs below
+ * the diagonal and drops their contribution; SYMMETRIZE alone visits every
+ * pair and then adds the mirror, counting the off-diagonal ones twice. A
+ * value of 1 or 2 is therefore refused rather than obeyed.
  *
  * The trim parameter (OZAKI_TRIM env var) drops the T least significant
  * diagonals: pairs with sa + sb > 2*(S-1) - T are skipped. Default 0
@@ -70,6 +74,21 @@
 #define OZ1_TRIANGULAR 1
 #define OZ1_SYMMETRIZE 2
 #define OZ1_DEFAULT (OZ1_TRIANGULAR | OZ1_SYMMETRIZE)
+/**
+ * Size at or above which OZ1_DEFAULT stops paying, so the full S^2 loop is
+ * used instead. Both settings compute the same GEMMs; the triangular form
+ * halves loop iterations and accumulation traffic but pairs a swapped-index
+ * GEMM with each mirror, which disturbs the access pattern that tile-first
+ * accumulation depends on. That trade only wins where the datapath is not
+ * already compute-bound, which is small problems. Measured end-to-end, the
+ * sign of the effect flips between 1024 and 2048 on every device tried, so
+ * a size test needs no device knowledge. Override with OZAKI_SYM_XOVER.
+ *
+ * The test is strict, so this names the first size that takes the full loop:
+ * 1024 still wants the triangular form everywhere measured (1.02 on Xeon,
+ * GH200 and H100, 1.27 on PVC), and 2048 is where it stops paying.
+ */
+#define OZ1_XOVER_DEFAULT 2048
 
 #if GEMM_IS_DOUBLE
 # define OZ2_NPRIMES_MAX 20
@@ -126,6 +145,7 @@
 #define ozaki_maxk LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_maxk)
 #define ozaki_n LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_n)
 #define ozaki_flags LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_flags)
+#define ozaki_sym_xover LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_sym_xover)
 #define ozaki_trim LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_trim)
 #define ozaki_stat LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_stat)
 #define ozaki_dump LIBXS_TPREFIX(GEMM_REAL_TYPE, ozaki_dump)
@@ -270,6 +290,7 @@ OZAKI_APIVAR_PRIVATE(int ozaki_idx);
 OZAKI_APIVAR_PRIVATE(double ozaki_eps);
 OZAKI_APIVAR_PRIVATE(double ozaki_rsq);
 OZAKI_APIVAR_PRIVATE(int ozaki_flags);
+OZAKI_APIVAR_PRIVATE(int ozaki_sym_xover);
 OZAKI_APIVAR_PRIVATE(int ozaki_trim);
 OZAKI_APIVAR_PRIVATE(int ozaki_dump);
 OZAKI_APIVAR_PRIVATE(int ozaki_exit);
@@ -293,6 +314,23 @@ LIBXS_API_INLINE int ozaki_count_pairs(int nslices, int co, int flags)
   }
   return n;
 }
+
+/**
+ * Effective scheme-1 flags for one call. Decided per call and never cached:
+ * a process reached through LD_PRELOAD sees a mix of sizes, so a value fixed
+ * at the first call would follow whichever GEMM happened to arrive first.
+ * An explicit OZAKI_FLAGS wins, which is what makes the sweep measurable.
+ */
+LIBXS_API_INLINE int ozaki_flags_eff(GEMM_INT_TYPE m, GEMM_INT_TYPE n, GEMM_INT_TYPE k)
+{
+  int result = ozaki_flags;
+  if (0 > result) { /* auto: OZAKI_FLAGS unset */
+    const GEMM_INT_TYPE largest = LIBXS_MAX(LIBXS_MAX(m, n), k);
+    result = (largest < ozaki_sym_xover ? OZ1_DEFAULT : 0);
+  }
+  return result;
+}
+
 
 LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t ncomponents, libxs_matdiff_t* diff);
 
@@ -1213,7 +1251,8 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
   gemm_mhd_settings_t settings;
   settings.ozaki = ozaki;
   settings.ozn = ozaki_n;
-  settings.ozflags = ozaki_flags;
+  /* what this call used, not the "auto" sentinel: a dump has to reproduce */
+  settings.ozflags = ozaki_flags_eff(*m, *n, *k);
   settings.oztrim = ozaki_trim;
   settings.ldc = *ldc;
 
