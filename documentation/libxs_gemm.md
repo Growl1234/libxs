@@ -426,12 +426,23 @@ required. Thread-local scratch buffers are used internally.
 The block sizes used for tiled SYRK/SYR2K can be overridden at
 compile time via preprocessor defines:
 
-    LIBXS_GEMM_BLOCK_M   Row block size    (default: 32)
-    LIBXS_GEMM_BLOCK_N   Column block size (default: BLOCK_M)
-    LIBXS_GEMM_BLOCK_K   K-direction block (default: 128)
+    LIBXS_GEMM_BM        Row block size    (default: 24)
+    LIBXS_GEMM_BN        Column block size (default: 48)
+    LIBXS_GEMM_BK        K-direction block (default: 128)
 
 Problems fitting within these limits use a single specialized
-kernel call (MKL JIT or LIBXSMM when available).
+kernel call (MKL JIT or LIBXSMM when available). The same values are
+the SYRK tile dispatched as the kernel shape, hence they decide which
+kernel the arithmetic-intensity gate (LIBXS_GEMM_JIT_MAX) sees.
+
+    LIBXS_GEMM_NWARMUP   JIT warm-up counters (default: 4096)
+
+Number of slots in the table holding the per-shape reuse counters
+(must be a power of two). Shapes share slots by hash; a collision is
+detected by an identity tag stored alongside the counter, and the
+losing shape simply restarts counting rather than inheriting foreign
+progress. Sizing this below the number of distinct shapes in flight
+therefore degrades to later JIT, never to a wrong kernel.
 
 ## Environment Variables
 
@@ -457,8 +468,13 @@ kernel call (MKL JIT or LIBXSMM when available).
                             the first shape of an empty registry is
                             compiled immediately (a caller dispatching
                             only once cannot accumulate calls).
+                            Counted in a fixed-size table, not in the
+                            registry (see LIBXS_GEMM_NWARMUP); once a
+                            shape's JIT has been attempted it is never
+                            attempted again, whether it succeeded or
+                            was refused by LIBXS_GEMM_JIT_MAX.
                             Set to 0 or 1 to compile immediately
-                            on first miss (default: 8).
+                            on first miss (default: 8, clamped to 254).
     LIBXS_GEMM_PRINT=N      Print dispatch info every N-th call
                             to stderr (requires compile-time gate).
     LIBXS_SYRK_PRINT=N      Print DSYRK/DSYR2K BLAS fallback calls

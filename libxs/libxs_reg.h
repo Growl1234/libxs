@@ -100,6 +100,34 @@ LIBXS_API void* libxs_registry_get(const libxs_registry_t* registry, const void*
   libxs_lock_t* LIBXS_ARGDEF(lock, NULL));
 
 /**
+ * Hash a key the way this registry does. The seed is per-registry, hence the
+ * result is only valid for the given registry. Pass it to the _hashed flavors
+ * to hash a key once and reuse the value across several operations (and to
+ * index caller-side tables keyed by the same shape).
+ */
+LIBXS_API unsigned int libxs_registry_hash(const libxs_registry_t* registry,
+  const void* key, size_t key_size);
+
+/**
+ * libxs_registry_get with a precomputed hash (libxs_registry_hash).
+ * The thread-local lookup cache is consulted before the lock is taken, hence a
+ * repeated query of the same key costs no lock. That fast path is restricted to
+ * values too large for the registry's inline storage, whose buffer does not move
+ * when the table is rehashed. It assumes the entry is not removed, nor its value
+ * resized, while another thread queries it (true if the registry only grows).
+ * libxs_registry_get is unaffected and keeps taking the lock whenever one
+ * is given.
+ */
+LIBXS_API void* libxs_registry_get_hashed(const libxs_registry_t* registry,
+  const void* key, size_t key_size, unsigned int hash,
+  libxs_lock_t* LIBXS_ARGDEF(lock, NULL));
+
+/** libxs_registry_set with a precomputed hash (libxs_registry_hash). */
+LIBXS_API void* libxs_registry_set_hashed(libxs_registry_t* registry,
+  const void* key, size_t key_size, unsigned int hash,
+  const void* value_init, size_t value_size, libxs_lock_t* LIBXS_ARGDEF(lock, NULL));
+
+/**
  * Thread-safe query: copies up to value_size bytes of the stored value into
  * value_out under the lock. Returns non-zero if the key was found, zero
  * otherwise. Unlike libxs_registry_get, the caller never sees a raw pointer

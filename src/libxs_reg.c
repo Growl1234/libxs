@@ -62,6 +62,7 @@ struct libxs_registry_t {
   internal_libxs_regentry_t* entries;
   unsigned int capacity; /* always POT */
   unsigned int size;     /* number of USED entries */
+  unsigned int seed;     /* per-registry hash seed */
 #if (0 != LIBXS_SYNC)
   LIBXS_LOCK_TYPE(LIBXS_LOCK) lock;
 #endif
@@ -72,6 +73,7 @@ LIBXS_EXTERN_C typedef struct internal_libxs_regcache_entry_t {
   const libxs_registry_t* registry;
   unsigned int hash;
   size_t key_size;
+  size_t value_size;
   void* value;
   char key[LIBXS_REGKEY_MAXSIZE];
 } internal_libxs_regcache_entry_t;
@@ -81,6 +83,8 @@ LIBXS_EXTERN_C typedef struct internal_libxs_regcache_entry_t {
 static LIBXS_TLS internal_libxs_regcache_entry_t
   internal_libxs_regcache[(unsigned int)LIBXS_UP2POT(LIBXS_REGCACHE_NENTRIES)];
 #endif
+
+LIBXS_APIVAR_DEFINE(unsigned int internal_libxs_registry_nseed);
 
 
 #if defined(INTERNAL_REG_CACHE)
@@ -102,12 +106,12 @@ LIBXS_API_INLINE void* internal_value_ptr(internal_libxs_regentry_t* e) {
 }
 
 
-/** FNV-1a hash: self-contained, no initialization needed. */
+/** FNV-1a hash; the seed makes the mapping registry-specific. */
 LIBXS_API_INLINE unsigned int internal_libxs_regkey_hash(
-  const void* key, size_t key_size)
+  const void* key, size_t key_size, unsigned int seed)
 {
   const unsigned char* data = (const unsigned char*)key;
-  unsigned int hash = INTERNAL_REG_HASH_SEED;
+  unsigned int hash = seed;
   size_t i;
   for (i = 0; i < key_size; ++i) {
     hash ^= (unsigned int)data[i];
@@ -124,10 +128,10 @@ LIBXS_API_INLINE unsigned int internal_libxs_regkey_hash(
  */
 LIBXS_API_INLINE unsigned int internal_libxs_registry_probe(
   const internal_libxs_regentry_t* entries, unsigned int capacity,
-  const void* key, size_t key_size, int* found)
+  const void* key, size_t key_size, unsigned int hash, int* found)
 {
   const unsigned int mask = capacity - 1; /* capacity is POT */
-  unsigned int i = internal_libxs_regkey_hash(key, key_size) & mask;
+  unsigned int i = hash & mask;
   unsigned int tomb = capacity; /* sentinel: no tombstone seen yet */
   unsigned int result = 0, steps = 0;
   *found = 0;
@@ -158,6 +162,17 @@ LIBXS_API_INLINE unsigned int internal_libxs_registry_probe(
 }
 
 
+/** Probe a registry by key, hashing with the registry's own seed. */
+LIBXS_API_INLINE unsigned int internal_libxs_registry_find(
+  const libxs_registry_t* registry,
+  const void* key, size_t key_size, int* found)
+{
+  return internal_libxs_registry_probe(
+    registry->entries, registry->capacity, key, key_size,
+    internal_libxs_regkey_hash(key, key_size, registry->seed), found);
+}
+
+
 /** Grow and rehash the table. Caller must hold the lock. */
 LIBXS_API_INLINE int internal_libxs_registry_grow(libxs_registry_t* registry)
 {
@@ -173,7 +188,9 @@ LIBXS_API_INLINE int internal_libxs_registry_grow(libxs_registry_t* registry)
       if (INTERNAL_REG_USED == e->state) {
         int found = 0;
         const unsigned int j = internal_libxs_registry_probe(
-          new_entries, new_cap, e->key, e->key_size, &found);
+          new_entries, new_cap, e->key, e->key_size,
+          internal_libxs_regkey_hash(e->key, e->key_size, registry->seed),
+          &found);
         LIBXS_ASSERT(0 == found);
         new_entries[j] = *e; /* shallow copy (value pointer transfers) */
       }
@@ -198,13 +215,13 @@ LIBXS_API_INLINE int internal_libxs_registry_grow(libxs_registry_t* registry)
  */
 LIBXS_API_INLINE void* internal_libxs_registry_set_impl(
   libxs_registry_t* registry,
-  const void* key, size_t key_size,
+  const void* key, size_t key_size, unsigned int hash,
   const void* value_init, size_t value_size)
 {
   void* result = NULL;
   int found = 0;
   unsigned int idx = internal_libxs_registry_probe(
-    registry->entries, registry->capacity, key, key_size, &found);
+    registry->entries, registry->capacity, key, key_size, hash, &found);
   if (0 != found) { /* key exists: update in place */
     internal_libxs_regentry_t* e = registry->entries + idx;
     if (value_size > e->value_size || 0 != e->ext) {
@@ -235,7 +252,7 @@ LIBXS_API_INLINE void* internal_libxs_registry_set_impl(
         return result; /* NULL */
       }
       idx = internal_libxs_registry_probe(
-        registry->entries, registry->capacity, key, key_size, &found);
+        registry->entries, registry->capacity, key, key_size, hash, &found);
       LIBXS_ASSERT(0 == found);
     }
     { internal_libxs_regentry_t* e = registry->entries + idx;
@@ -275,8 +292,8 @@ LIBXS_API_INLINE void internal_libxs_registry_remove_impl(
   const void* key, size_t key_size)
 {
   int found = 0;
-  const unsigned int idx = internal_libxs_registry_probe(
-    registry->entries, registry->capacity, key, key_size, &found);
+  const unsigned int idx =
+    internal_libxs_registry_find(registry, key, key_size, &found);
   if (0 != found) {
     internal_libxs_regentry_t* e = registry->entries + idx;
     if (!INTERNAL_REG_INLINE(e) && 0 == e->ext) free(e->value);
@@ -298,8 +315,8 @@ LIBXS_API_INLINE int internal_libxs_registry_fetch_impl(
   void* value_out, size_t value_size, int remove)
 {
   int found = 0;
-  const unsigned int idx = internal_libxs_registry_probe(
-    registry->entries, registry->capacity, key, key_size, &found);
+  const unsigned int idx =
+    internal_libxs_registry_find(registry, key, key_size, &found);
   if (0 != found) {
     internal_libxs_regentry_t* e = registry->entries + idx;
     if (NULL != value_out && 0 < value_size) {
@@ -331,8 +348,12 @@ LIBXS_API libxs_registry_t* libxs_registry_create(void)
     result->entries = (internal_libxs_regentry_t*)calloc(
       nbuckets, sizeof(internal_libxs_regentry_t));
     if (NULL != result->entries) {
+      /* create-order, not the address: reproducible across runs (no ASLR) */
+      const unsigned int n = (unsigned int)LIBXS_ATOMIC_ADD_FETCH(
+        &internal_libxs_registry_nseed, 1, LIBXS_ATOMIC_RELAXED);
       result->capacity = nbuckets;
       result->size = 0;
+      result->seed = INTERNAL_REG_HASH_SEED + INTERNAL_REG_HASH_PRIME * n;
 #if (0 != LIBXS_SYNC)
       { LIBXS_LOCK_ATTR_TYPE(LIBXS_LOCK) attr;
         LIBXS_LOCK_ATTR_INIT(LIBXS_LOCK, &attr);
@@ -387,8 +408,16 @@ LIBXS_API void libxs_registry_destroy(libxs_registry_t* registry)
 }
 
 
-LIBXS_API void* libxs_registry_set(libxs_registry_t* registry,
-  const void* key, size_t key_size,
+LIBXS_API unsigned int libxs_registry_hash(const libxs_registry_t* registry,
+  const void* key, size_t key_size)
+{
+  return (NULL != registry && NULL != key && 0 < key_size)
+    ? internal_libxs_regkey_hash(key, key_size, registry->seed) : 0;
+}
+
+
+LIBXS_API void* libxs_registry_set_hashed(libxs_registry_t* registry,
+  const void* key, size_t key_size, unsigned int hash,
   const void* value_init, size_t value_size, libxs_lock_t* lock)
 {
   void* result = NULL;
@@ -399,15 +428,79 @@ LIBXS_API void* libxs_registry_set(libxs_registry_t* registry,
       LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
     }
     result = internal_libxs_registry_set_impl(
-      registry, key, key_size, value_init, value_size);
+      registry, key, key_size, hash, value_init, value_size);
     if (NULL != lock) {
       LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
     }
 #if defined(INTERNAL_REG_CACHE)
     if (NULL != result) { /* update TLS cache */
-      const unsigned int hash = internal_libxs_regkey_hash(key, key_size);
       internal_libxs_regcache_entry_t* ce =
           internal_libxs_regcache + (hash & INTERNAL_REG_CACHE_MASK);
+      ce->registry = registry;
+      ce->hash = hash;
+      ce->key_size = key_size;
+      ce->value_size = value_size;
+      ce->value = result;
+      memcpy(ce->key, key, key_size);
+    }
+#endif
+  }
+  return result;
+}
+
+
+LIBXS_API void* libxs_registry_set(libxs_registry_t* registry,
+  const void* key, size_t key_size,
+  const void* value_init, size_t value_size, libxs_lock_t* lock)
+{
+  return libxs_registry_set_hashed(registry, key, key_size,
+    libxs_registry_hash(registry, key, key_size),
+    value_init, value_size, lock);
+}
+
+
+/* cache: 0 never trusts the TLS cache, 1 heap-stored values only, 2 any hit */
+/* a rehash moves inline values but not the heap buffer, hence 1 is lock-free */
+/* level 2 asserts no concurrent mutation of the queried entry */
+LIBXS_API_INLINE void* internal_libxs_registry_get_impl(
+  const libxs_registry_t* registry, const void* key, size_t key_size,
+  unsigned int hash, libxs_lock_t* lock, int cache)
+{
+  void* result = NULL;
+#if defined(INTERNAL_REG_CACHE)
+  internal_libxs_regcache_entry_t *const ce =
+    internal_libxs_regcache + (hash & INTERNAL_REG_CACHE_MASK);
+  if (0 != cache && ce->registry == registry && ce->hash == hash
+    && ce->key_size == key_size
+    && (2 <= cache || sizeof(ce->value) < ce->value_size)
+    && 0 == memcmp(ce->key, key, key_size))
+  {
+    result = ce->value; /* TLS cache hit */
+  }
+  else
+#else
+  LIBXS_UNUSED(cache);
+#endif
+  {
+    if (NULL != lock) {
+      LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
+    }
+    { int found = 0;
+      const unsigned int idx = internal_libxs_registry_probe(
+        registry->entries, registry->capacity, key, key_size, hash, &found);
+      if (0 != found) {
+        internal_libxs_regentry_t *const e = registry->entries + idx;
+        result = internal_value_ptr(e);
+#if defined(INTERNAL_REG_CACHE)
+        ce->value_size = e->value_size;
+#endif
+      }
+    }
+    if (NULL != lock) {
+      LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
+    }
+#if defined(INTERNAL_REG_CACHE)
+    if (NULL != result) { /* populate TLS cache on miss */
       ce->registry = registry;
       ce->hash = hash;
       ce->key_size = key_size;
@@ -420,52 +513,30 @@ LIBXS_API void* libxs_registry_set(libxs_registry_t* registry,
 }
 
 
+LIBXS_API void* libxs_registry_get_hashed(const libxs_registry_t* registry,
+  const void* key, size_t key_size, unsigned int hash, libxs_lock_t* lock)
+{
+  void* result = NULL;
+  if (NULL != registry && NULL != key && 0 < key_size
+    && key_size <= LIBXS_REGKEY_MAXSIZE)
+  {
+    result = internal_libxs_registry_get_impl(registry, key, key_size,
+      hash, lock, (NULL == lock) ? 2 : 1);
+  }
+  return result;
+}
+
+
 LIBXS_API void* libxs_registry_get(const libxs_registry_t* registry,
   const void* key, size_t key_size, libxs_lock_t* lock)
 {
   void* result = NULL;
-#if defined(INTERNAL_REG_CACHE)
-  unsigned int hash = 0;
-  internal_libxs_regcache_entry_t* ce = NULL;
-#endif
   if (NULL != registry && NULL != key && 0 < key_size
     && key_size <= LIBXS_REGKEY_MAXSIZE)
   {
-#if defined(INTERNAL_REG_CACHE)
-    hash = internal_libxs_regkey_hash(key, key_size);
-    ce = internal_libxs_regcache + (hash & INTERNAL_REG_CACHE_MASK);
-    if (NULL == lock && ce->registry == registry && ce->hash == hash
-      && ce->key_size == key_size
-      && 0 == memcmp(ce->key, key, key_size))
-    {
-      result = ce->value; /* TLS cache hit */
-    }
-    else
-#endif
-    {
-      if (NULL != lock) {
-        LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
-      }
-      { int found = 0;
-        const unsigned int idx = internal_libxs_registry_probe(
-          registry->entries, registry->capacity, key, key_size, &found);
-        if (0 != found) {
-          result = internal_value_ptr(registry->entries + idx);
-        }
-      }
-      if (NULL != lock) {
-        LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
-      }
-#if defined(INTERNAL_REG_CACHE)
-      if (NULL != result) { /* populate TLS cache on miss */
-        ce->registry = registry;
-        ce->hash = hash;
-        ce->key_size = key_size;
-        ce->value = result;
-        memcpy(ce->key, key, key_size);
-      }
-#endif
-    }
+    result = internal_libxs_registry_get_impl(registry, key, key_size,
+      internal_libxs_regkey_hash(key, key_size, registry->seed),
+      lock, (NULL == lock) ? 2 : 0);
   }
   return result;
 }
@@ -485,7 +556,8 @@ LIBXS_API void libxs_registry_remove(libxs_registry_t* registry,
       LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
     }
 #if defined(INTERNAL_REG_CACHE)
-    { const unsigned int hash = internal_libxs_regkey_hash(key, key_size);
+    { const unsigned int hash =
+        internal_libxs_regkey_hash(key, key_size, registry->seed);
       internal_libxs_regcache_entry_t* ce =
           internal_libxs_regcache + (hash & INTERNAL_REG_CACHE_MASK);
       if (ce->registry == registry && ce->hash == hash
@@ -518,7 +590,8 @@ LIBXS_API int libxs_registry_extract(libxs_registry_t* registry,
     }
 #if defined(INTERNAL_REG_CACHE)
     if (0 != result) {
-      const unsigned int hash = internal_libxs_regkey_hash(key, key_size);
+      const unsigned int hash =
+        internal_libxs_regkey_hash(key, key_size, registry->seed);
       internal_libxs_regcache_entry_t* ce =
           internal_libxs_regcache + (hash & INTERNAL_REG_CACHE_MASK);
       if (ce->registry == registry && ce->hash == hash
@@ -608,8 +681,7 @@ LIBXS_API int libxs_registry_has(const libxs_registry_t* registry,
       LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
     }
     { int found = 0;
-      internal_libxs_registry_probe(
-        registry->entries, registry->capacity, key, key_size, &found);
+      internal_libxs_registry_find(registry, key, key_size, &found);
       result = found;
     }
     if (NULL != lock) {
@@ -631,8 +703,8 @@ LIBXS_API size_t libxs_registry_value_size(const libxs_registry_t* registry,
       LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
     }
     { int found = 0;
-      const unsigned int idx = internal_libxs_registry_probe(
-        registry->entries, registry->capacity, key, key_size, &found);
+      const unsigned int idx =
+        internal_libxs_registry_find(registry, key, key_size, &found);
       if (0 != found) {
         result = registry->entries[idx].value_size;
       }
@@ -822,7 +894,8 @@ LIBXS_API libxs_registry_t* libxs_registry_load(const void* buffer, size_t size,
           unsigned int idx;
           internal_libxs_regentry_t* e;
           idx = internal_libxs_registry_probe(
-            result->entries, result->capacity, key_ptr, ks, &found);
+            result->entries, result->capacity, key_ptr, ks,
+            internal_libxs_regkey_hash(key_ptr, ks, result->seed), &found);
           LIBXS_ASSERT(0 == found);
           e = result->entries + idx;
           memcpy(e->key, key_ptr, ks);

@@ -75,6 +75,36 @@ void* libxs_registry_get(const libxs_registry_t* registry,
 Look up a value by key. Returns NULL if not found.
 
 ```C
+unsigned int libxs_registry_hash(const libxs_registry_t* registry,
+  const void* key, size_t key_size);
+
+void* libxs_registry_get_hashed(const libxs_registry_t* registry,
+  const void* key, size_t key_size, unsigned int hash,
+  libxs_lock_t* lock /* = NULL */);
+
+void* libxs_registry_set_hashed(libxs_registry_t* registry,
+  const void* key, size_t key_size, unsigned int hash,
+  const void* value_init, size_t value_size,
+  libxs_lock_t* lock /* = NULL */);
+```
+
+Hash a key once and reuse the value across several operations. The seed
+is per-registry (assigned in creation order, hence reproducible across
+runs and independent of the allocator), so a hash is only valid for the
+registry that produced it. The same value can also index caller-side
+tables keyed by the same shape. `libxs_registry_get`/`_set` are
+wrappers that hash internally.
+
+`libxs_registry_get_hashed` additionally consults the thread-local
+lookup cache *before* taking the lock, so a repeated query of the same
+key costs no lock at all. That fast path is restricted to values too
+large for the registry's inline storage, whose heap buffer does not move
+when the table is rehashed, and it assumes the entry is neither removed
+nor resized while another thread queries it -- true for a registry that
+only grows. `libxs_registry_get` is unchanged and still takes the lock
+whenever one is given.
+
+```C
 int libxs_registry_get_copy(const libxs_registry_t* registry,
   const void* key, size_t key_size,
   void* value_out, size_t value_size,

@@ -378,6 +378,52 @@ static int test_config_cpy(void)
 }
 
 
+static int test_warmup_sticky(void)
+{
+  libxs_gemm_backend_t backend;
+  libxs_gemm_shape_t shape;
+  libxs_gemm_config_t* config;
+  libxs_registry_t* registry;
+  int i, calls;
+
+  LIBXS_MEMZERO(&backend);
+  backend.jit_create_dgemm = test_jit_create_dgemm; /* MKL_NO_JIT */
+  backend.jit_get_dgemm = test_jit_get_dgemm;
+
+  registry = libxs_registry_create();
+  TEST_CHECK(NULL != registry);
+  LIBXS_MEMZERO(&shape);
+  shape.datatype = LIBXS_DATATYPE_F64;
+  shape.transa = 'N'; shape.transb = 'N';
+  shape.m = 3; shape.n = 5; shape.k = 7;
+  shape.lda = 3; shape.ldb = 7; shape.ldc = 3;
+  shape.alpha = 1.0;
+  /* occupy the registry, hence the shape below must prove reuse first */
+  TEST_CHECK(NULL != libxs_gemm_dispatch_rt(&shape, NULL, &backend, registry));
+  shape.m = 4; shape.n = 6; shape.k = 8;
+  shape.lda = 4; shape.ldb = 8; shape.ldc = 4;
+  jit_create_dgemm_calls = 0;
+  config = NULL;
+  for (i = 0; i < TEST_MAXWARMUP && 0 == jit_create_dgemm_calls; ++i) {
+    config = libxs_gemm_dispatch_rt(&shape, NULL, &backend, registry);
+    TEST_CHECK(NULL != config);
+  }
+  TEST_CHECK(1 < i); /* warm-up was required */
+  TEST_CHECK(1 == jit_create_dgemm_calls);
+  TEST_CHECK(NULL == config->dgemm_jit); /* MKL_NO_JIT yields no kernel */
+
+  /* a shape whose JIT was attempted must not be attempted again */
+  calls = jit_create_dgemm_calls;
+  for (i = 0; i < TEST_MAXWARMUP; ++i) {
+    TEST_CHECK(NULL != libxs_gemm_dispatch_rt(&shape, NULL, &backend, registry));
+  }
+  TEST_CHECK(calls == jit_create_dgemm_calls);
+
+  libxs_gemm_release_registry(registry);
+  return EXIT_SUCCESS;
+}
+
+
 int main(void)
 {
   int result = test_missing_jit_handle();
@@ -386,5 +432,6 @@ int main(void)
   if (EXIT_SUCCESS == result) result = test_double_dispatch();
   if (EXIT_SUCCESS == result) result = test_release_ownership();
   if (EXIT_SUCCESS == result) result = test_config_cpy();
+  if (EXIT_SUCCESS == result) result = test_warmup_sticky();
   return result;
 }

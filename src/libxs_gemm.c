@@ -27,6 +27,23 @@
 #if !defined(INTERNAL_GEMM_NLOCKS)
 # define INTERNAL_GEMM_NLOCKS 16
 #endif
+/** Number of JIT warm-up counters (POT); shapes share slots by hash. */
+#if !defined(LIBXS_GEMM_NWARMUP)
+# define LIBXS_GEMM_NWARMUP 4096
+#endif
+#if 0 != (LIBXS_GEMM_NWARMUP & (LIBXS_GEMM_NWARMUP - 1))
+# error LIBXS_GEMM_NWARMUP must be a power of two
+#endif
+
+/* slot: 24-bit identity tag (bits 31..8) plus 8-bit state (bits 7..0) */
+/* state 0 is unseen, 1 to threshold-1 counts dispatches */
+/* DONE is terminal: the JIT was attempted, successfully or not */
+/* a tag mismatch reclaims the slot instead of inheriting foreign state */
+#define INTERNAL_GEMM_WARMUP_DONE 255
+#define INTERNAL_GEMM_WARMUP_TAG(HASH) (((HASH) >> 8) & 0xFFFFFF)
+#define INTERNAL_GEMM_WARMUP_SLOT(TAG, STATE) \
+  (((unsigned int)(TAG) << 8) | (unsigned int)(STATE))
+#define INTERNAL_GEMM_WARMUP_STATE(SLOT) ((SLOT) & 0xFF)
 
 #define INTERNAL_GEMM_BACKEND_AUTO 0
 #define INTERNAL_GEMM_BACKEND_MKL_JIT 1
@@ -35,7 +52,6 @@
 #define INTERNAL_GEMM_BACKEND_DEFAULT 4
 
 #define INTERNAL_GEMM_NOTRANS(C) ('N' == (C) || 'n' == (C))
-
 
 #define INTERNAL_SYRK_IRANGE(UPPER, JJ, IB, JB, CM, ISTART, IEND) \
   do { \
@@ -153,6 +169,8 @@ LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_bk);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_jit_max);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_jit_warmup);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_backend);
+LIBXS_APIVAR_DEFINE(unsigned int
+  internal_libxs_gemm_warmup[LIBXS_GEMM_NWARMUP]);
 
 static LIBXS_TLS void* internal_libxs_syrk_buffer;
 static LIBXS_TLS size_t internal_libxs_syrk_buffer_size;
@@ -251,6 +269,10 @@ LIBXS_API_INTERN void internal_libxs_gemm_init(void)
       ? 7 /*default: AI of ~80x80x80*/ : atoi(gemm_jit_max_env));
     internal_libxs_gemm_jit_warmup = (NULL == gemm_jit_warmup_env
       ? 8 /*default*/ : atoi(gemm_jit_warmup_env));
+    /* the slot state must stay below INTERNAL_GEMM_WARMUP_DONE */
+    if (INTERNAL_GEMM_WARMUP_DONE <= internal_libxs_gemm_jit_warmup) {
+      internal_libxs_gemm_jit_warmup = INTERNAL_GEMM_WARMUP_DONE - 1;
+    }
     internal_libxs_gemm_backend = (NULL == gemm_backend_env)
       ? INTERNAL_GEMM_BACKEND_AUTO : atoi(gemm_backend_env);
     if (INTERNAL_GEMM_BACKEND_AUTO > internal_libxs_gemm_backend
@@ -261,6 +283,45 @@ LIBXS_API_INTERN void internal_libxs_gemm_init(void)
     internal_libxs_gemm_registry = libxs_registry_create();
     internal_libxs_gemm_init_once = 1;
   }
+}
+
+
+LIBXS_API_INLINE int internal_libxs_gemm_warmup_due(
+  const libxs_registry_t* registry, unsigned int hash, unsigned int* state)
+{
+  const int threshold = internal_libxs_gemm_jit_warmup;
+  unsigned int *const slot = internal_libxs_gemm_warmup
+    + (hash & (LIBXS_GEMM_NWARMUP - 1));
+  const unsigned int tag = INTERNAL_GEMM_WARMUP_TAG(hash);
+  const unsigned int cur = LIBXS_ATOMIC_LOAD(slot, LIBXS_ATOMIC_RELAXED);
+  unsigned int s = INTERNAL_GEMM_WARMUP_STATE(cur);
+  int result = 0;
+  /* a foreign tag reclaims the slot rather than inheriting its state */
+  if (INTERNAL_GEMM_WARMUP_SLOT(tag, s) != cur) s = 0;
+  if (INTERNAL_GEMM_WARMUP_DONE != s) {
+    /* an empty registry cannot prove reuse: dispatch once, call often */
+    if (1 >= threshold || 0 == libxs_registry_size(registry)) {
+      result = 1;
+    }
+    else {
+      if ((unsigned int)threshold <= ++s) result = 1;
+      LIBXS_ATOMIC_STORE(slot,
+        INTERNAL_GEMM_WARMUP_SLOT(tag, s), LIBXS_ATOMIC_RELAXED);
+    }
+  }
+  LIBXS_ASSERT(NULL != state);
+  *state = s;
+  return result;
+}
+
+
+LIBXS_API_INLINE void internal_libxs_gemm_warmup_done(unsigned int hash)
+{
+  unsigned int *const slot = internal_libxs_gemm_warmup
+    + (hash & (LIBXS_GEMM_NWARMUP - 1));
+  LIBXS_ATOMIC_STORE(slot, INTERNAL_GEMM_WARMUP_SLOT(
+    INTERNAL_GEMM_WARMUP_TAG(hash), INTERNAL_GEMM_WARMUP_DONE),
+    LIBXS_ATOMIC_RELAXED);
 }
 
 
@@ -415,6 +476,8 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
   libxs_gemm_config_t* result = NULL;
   libxs_registry_t* reg = NULL;
   libxs_gemm_shape_t key, kkey;
+  unsigned int whash = 0, khash = 0, wstate = 0;
+  int jit_due = 0;
   LIBXS_ASSERT(NULL != shape);
   LIBXS_MEMZERO(&key);
   key.datatype = shape->datatype;
@@ -443,36 +506,36 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
     reg = (NULL != registry)
       ? (libxs_registry_t*)registry : internal_libxs_gemm_registry;
     if (NULL != reg) {
-      result = (libxs_gemm_config_t*)libxs_registry_get(
-        (const libxs_registry_t*)reg,
-        shape, sizeof(*shape), libxs_registry_lock(reg));
+      /* one hash per dispatch, shared by the registry and the warm-up table */
+      whash = libxs_registry_hash(
+        (const libxs_registry_t*)reg, shape, sizeof(*shape));
+      result = (libxs_gemm_config_t*)libxs_registry_get_hashed(
+        (const libxs_registry_t*)reg, shape, sizeof(*shape),
+        whash, libxs_registry_lock(reg));
     }
-    if (NULL != result && 0 < internal_libxs_gemm_jit_warmup
-      && result->warmup < internal_libxs_gemm_jit_warmup
-      && NULL == result->dgemm_jit && NULL == result->sgemm_jit
-      && NULL == result->xgemm)
+    /* a config without kernel is provisional: reuse decides when to JIT */
+    if (NULL != reg && (NULL == result
+      || (NULL == result->dgemm_jit && NULL == result->sgemm_jit
+        && NULL == result->xgemm)))
     {
-      if (++result->warmup >= internal_libxs_gemm_jit_warmup) {
-        result = NULL;
-      }
+      jit_due = internal_libxs_gemm_warmup_due(
+        (const libxs_registry_t*)reg, whash, &wstate);
+      if (0 != jit_due) result = NULL;
     }
     if (NULL == result && NULL != reg) {
-      /* an empty registry cannot prove reuse by counting dispatches, e.g.,
-         a caller dispatching once and calling the kernel many times */
-      const int jit_allowed = (1 >= internal_libxs_gemm_jit_warmup
-        || 0 == libxs_registry_size((const libxs_registry_t*)reg)
-        || NULL != libxs_registry_get((const libxs_registry_t*)reg,
-            shape, sizeof(*shape), libxs_registry_lock(reg)));
+      const int jit_allowed = jit_due;
       const libxs_gemm_config_t* kernel = NULL;
+      const libxs_gemm_config_t* cached = NULL;
       libxs_gemm_config_t config;
       LIBXS_MEMZERO(&config);
-      config.warmup = (0 != jit_allowed)
-        ? internal_libxs_gemm_jit_warmup : 1;
+      /* snapshot of the shared warm-up counter (introspection only) */
+      config.warmup = (int)wstate;
       if (0 != memcmp(shape, kernel_shape, sizeof(*shape))) {
-        const libxs_gemm_config_t *const cached =
-          (const libxs_gemm_config_t*)libxs_registry_get(
-            (const libxs_registry_t*)reg,
-            kernel_shape, sizeof(*kernel_shape), libxs_registry_lock(reg));
+        khash = libxs_registry_hash((const libxs_registry_t*)reg,
+          kernel_shape, sizeof(*kernel_shape));
+        cached = (const libxs_gemm_config_t*)libxs_registry_get_hashed(
+          (const libxs_registry_t*)reg, kernel_shape, sizeof(*kernel_shape),
+          khash, libxs_registry_lock(reg));
         /* a warm-up entry carries no kernel, hence it is not reused */
         if (NULL != cached && (NULL != cached->dgemm_jit
           || NULL != cached->sgemm_jit || NULL != cached->xgemm))
@@ -611,7 +674,8 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
           kconfig.dgemm_blas = config.dgemm_blas;
           kconfig.sgemm_blas = config.sgemm_blas;
           /* the kernel entry owns the handle shared with this config */
-          if (NULL != libxs_registry_set(reg, kernel_shape, sizeof(*kernel_shape),
+          if (NULL != libxs_registry_set_hashed(reg,
+            kernel_shape, sizeof(*kernel_shape), khash,
             &kconfig, sizeof(kconfig), libxs_registry_lock(reg)))
           {
             config.flags = (libxs_gemm_flags_t)
@@ -619,8 +683,11 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
           }
         }
       }
-      result = (libxs_gemm_config_t*)libxs_registry_set(
-        reg, shape, sizeof(*shape),
+      if (0 != jit_allowed) { /* attempted once, hence never again */
+        internal_libxs_gemm_warmup_done(whash);
+      }
+      result = (libxs_gemm_config_t*)libxs_registry_set_hashed(
+        reg, shape, sizeof(*shape), whash,
         &config, sizeof(config), libxs_registry_lock(reg));
       if (NULL == result) {
         static LIBXS_TLS libxs_gemm_config_t fallback;

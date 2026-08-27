@@ -497,6 +497,44 @@
      &      registry, key, key_size, libxs_registry_lock(registry))
         END FUNCTION
 
+        !> Hash a key the way the given registry does.
+        FUNCTION libxs_registry_hash(registry, key, key_size)
+          TYPE(C_PTR), INTENT(IN) :: registry
+          TYPE(C_PTR), INTENT(IN) :: key
+          INTEGER(C_SIZE_T), INTENT(IN) :: key_size
+          INTEGER(C_INT) :: libxs_registry_hash
+          libxs_registry_hash = internal_registry_hash_c(               &
+     &      registry, key, key_size)
+        END FUNCTION
+
+        !> Query a value by key using a precomputed hash.
+        FUNCTION libxs_registry_get_hashed(registry,                    &
+     &  key, key_size, hash)
+          TYPE(C_PTR), INTENT(IN) :: registry
+          TYPE(C_PTR), INTENT(IN) :: key
+          INTEGER(C_SIZE_T), INTENT(IN) :: key_size
+          INTEGER(C_INT), INTENT(IN) :: hash
+          TYPE(C_PTR) :: libxs_registry_get_hashed
+          libxs_registry_get_hashed = internal_registry_get_hashed_c(   &
+     &      registry, key, key_size, hash,                              &
+     &      libxs_registry_lock(registry))
+        END FUNCTION
+
+        !> Register a key-value pair using a precomputed hash.
+        FUNCTION libxs_registry_set_hashed(registry,                    &
+     &  key, key_size, hash, value_init, value_size)
+          TYPE(C_PTR), INTENT(IN) :: registry
+          TYPE(C_PTR), INTENT(IN) :: key
+          INTEGER(C_SIZE_T), INTENT(IN) :: key_size
+          INTEGER(C_INT), INTENT(IN) :: hash
+          TYPE(C_PTR), INTENT(IN) :: value_init
+          INTEGER(C_SIZE_T), INTENT(IN) :: value_size
+          TYPE(C_PTR) :: libxs_registry_set_hashed
+          libxs_registry_set_hashed = internal_registry_set_hashed_c(   &
+     &      registry, key, key_size, hash,                              &
+     &      value_init, value_size, libxs_registry_lock(registry))
+        END FUNCTION
+
         !> Thread-safe query: copies up to value_size bytes
         FUNCTION libxs_registry_get_copy(registry,                      &
      &  key, key_size, value_out, value_size)

@@ -49,6 +49,9 @@
         PUBLIC :: libxs_registry_lock
         PUBLIC :: libxs_registry_set
         PUBLIC :: libxs_registry_get
+        PUBLIC :: libxs_registry_hash
+        PUBLIC :: libxs_registry_get_hashed
+        PUBLIC :: libxs_registry_set_hashed
         PUBLIC :: libxs_registry_get_copy
         PUBLIC :: libxs_registry_has
         PUBLIC :: libxs_registry_remove
@@ -531,6 +534,42 @@
      &      key_size
             TYPE(C_PTR), INTENT(IN), VALUE :: lock
             TYPE(C_PTR) :: internal_registry_get_c
+          END FUNCTION
+          FUNCTION internal_registry_hash_c(registry,                   &
+     &    key, key_size) BIND(C, NAME="libxs_registry_hash")
+            IMPORT :: C_PTR, C_SIZE_T, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: registry
+            TYPE(C_PTR), INTENT(IN), VALUE :: key
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE ::                     &
+     &      key_size
+            INTEGER(C_INT) :: internal_registry_hash_c
+          END FUNCTION
+          FUNCTION internal_registry_get_hashed_c(registry,             &
+     &    key, key_size, hash, lock)                                    &
+     &    BIND(C, NAME="libxs_registry_get_hashed")
+            IMPORT :: C_PTR, C_SIZE_T, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: registry
+            TYPE(C_PTR), INTENT(IN), VALUE :: key
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE ::                     &
+     &      key_size
+            INTEGER(C_INT), INTENT(IN), VALUE :: hash
+            TYPE(C_PTR), INTENT(IN), VALUE :: lock
+            TYPE(C_PTR) :: internal_registry_get_hashed_c
+          END FUNCTION
+          FUNCTION internal_registry_set_hashed_c(registry,             &
+     &    key, key_size, hash, value_init, value_size,                  &
+     &    lock) BIND(C, NAME="libxs_registry_set_hashed")
+            IMPORT :: C_PTR, C_SIZE_T, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: registry
+            TYPE(C_PTR), INTENT(IN), VALUE :: key
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE ::                     &
+     &      key_size
+            INTEGER(C_INT), INTENT(IN), VALUE :: hash
+            TYPE(C_PTR), INTENT(IN), VALUE :: value_init
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE ::                     &
+     &      value_size
+            TYPE(C_PTR), INTENT(IN), VALUE :: lock
+            TYPE(C_PTR) :: internal_registry_set_hashed_c
           END FUNCTION
           FUNCTION internal_registry_get_copy_c(registry,               &
      &    key, key_size, value_out, value_size,                         &
