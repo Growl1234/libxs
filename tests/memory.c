@@ -111,8 +111,8 @@ int main(int argc, char* argv[])
     FPRINTF(stderr, "ERROR line #%i: striequal\n", __LINE__);
     result = EXIT_FAILURE;
   }
-  /* bytes above 0x7F reach tolower as a negative char where char is signed,
-     which is undefined; folding must be defined and must not equate them */
+  /* above 0x7F reaches tolower as a negative char where char is signed: UB */
+  /* folding must be defined and must not equate such bytes */
   if (EXIT_SUCCESS == result
     && (NULL == libxs_strimem("caf\xc3\xa9 au lait", 13, "CAF\xc3\xa9", 5)
       || 0 != libxs_striequal("\xc3\xa9", 2, "\xc3\x89", 2)))

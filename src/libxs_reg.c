@@ -41,11 +41,7 @@
     ((unsigned int)LIBXS_UP2POT(LIBXS_REGCACHE_NENTRIES) - 1)
 #endif
 
-/**
- * Small-value optimization: values <= sizeof(void*) are stored directly
- * in the 'value' field (reinterpreted as a byte buffer), avoiding heap
- * allocation.
- */
+/* small values are stored in the 'value' field itself, avoiding a malloc */
 #define INTERNAL_REG_INLINE(E) ((E)->value_size <= sizeof((E)->value))
 
 
@@ -121,11 +117,8 @@ LIBXS_API_INLINE unsigned int internal_libxs_regkey_hash(
 }
 
 
-/**
- * Find entry by key. Returns index of the matching USED entry,
- * or the index of the first available slot (EMPTY or TOMB) suitable
- * for insertion. Sets *found to 1 if an existing entry was found.
- */
+/* returns the matching USED entry, else the first EMPTY or TOMB slot */
+/* *found is 1 if an existing entry was matched, 0 if the slot is free */
 LIBXS_API_INLINE unsigned int internal_libxs_registry_probe(
   const internal_libxs_regentry_t* entries, unsigned int capacity,
   const void* key, size_t key_size, unsigned int hash, int* found)
@@ -199,8 +192,7 @@ LIBXS_API_INLINE int internal_libxs_registry_grow(libxs_registry_t* registry)
     registry->entries = new_entries;
     registry->capacity = new_cap;
 #if defined(INTERNAL_REG_CACHE)
-    /* Rehashing moved every entry and freed the old table; cached pointers to
-       inline-stored values pointed into it, so they must not be reused. */
+    /* the old table is gone: cached pointers to inline values dangle */
     internal_libxs_registry_cache_invalidate(registry);
 #endif
     result = EXIT_SUCCESS;
@@ -209,10 +201,8 @@ LIBXS_API_INLINE int internal_libxs_registry_grow(libxs_registry_t* registry)
 }
 
 
-/**
- * Core set logic (no locking). Caller must hold whatever lock is appropriate.
- * Returns the value pointer on success, NULL on failure.
- */
+/* core set logic, no locking: the caller holds whatever lock applies */
+/* returns the value pointer on success, NULL on failure */
 LIBXS_API_INLINE void* internal_libxs_registry_set_impl(
   libxs_registry_t* registry,
   const void* key, size_t key_size, unsigned int hash,

@@ -26,11 +26,9 @@ int main(int argc, char* argv[])
   const double split = (argc > 3) ? atof(argv[3]) : 0.8;
   const char* wenv = getenv("WINDOW");
   const int window_req = (NULL != wenv) ? atoi(wenv) : LIBXS_PREDICT_AUTO_WINDOW;
-  /**
-   * Multi-series models abstain to the caller's window budget; cap it at
-   * the tuned WINDOW_DEF so auto recovers the calibrated cross-series
-   * window rather than an arbitrary array bound.
-   */
+  /* multi-series models abstain to the caller's window budget */
+  /* cap it at the tuned WINDOW_DEF so auto recovers the calibrated */
+  /* cross-series window rather than an arbitrary array bound */
   const int ninputs = ((0 < window_req) ? window_req : WINDOW_DEF) * NSERIES;
   int window = window_req;
   int decompose = -1;

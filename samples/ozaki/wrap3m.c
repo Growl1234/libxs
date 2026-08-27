@@ -250,16 +250,12 @@ OZAKI_API_INTERN void gemm_complex(GEMM_ARGDECL)
       const GEMM_INT_TYPE ldb_hat = tb ? b_rows : 2 * b_rows;
       const GEMM_INT_TYPE ldc_hat = 2 * M;
 
-      /**
-       * 1. Construct A_hat from interleaved complex A.
-       * For 'C': use 'N' sign pattern (ta && !ca = 0) with transposed layout.
-       */
+      /* 1. construct A_hat from interleaved complex A */
+      /* 'C' takes the 'N' sign pattern (ta && !ca = 0), transposed layout */
       zgemm_block_construct_a(a, *lda, a_hat, a_rows, a_cols, ta && !ca);
 
-      /**
-       * 2. Construct B_hat from interleaved complex B.
-       * For 'C': negate Bi (conjugation).
-       */
+      /* 2. construct B_hat from interleaved complex B */
+      /* 'C' negates Bi (conjugation) */
       zgemm_block_construct_b(b, *ldb, b_hat, b_rows, b_cols, tb, cb);
 
       /* 3. Single real GEMM: C_hat = op(A_hat) * op(B_hat) */
@@ -274,9 +270,7 @@ OZAKI_API_INTERN void gemm_complex(GEMM_ARGDECL)
 }
 
 
-/**
- * Complex GEMM diff: save C, run block-embedding, reference ZGEMM, matdiff with C64/C32.
- */
+/* complex GEMM diff: save C, block-embed, reference ZGEMM, matdiff C64/C32 */
 LIBXS_API_INLINE void gemm_complex_diff(GEMM_ARGDECL, libxs_matdiff_t* diff)
 {
   GEMM_REAL_TYPE* c_ref = NULL;
@@ -305,13 +299,11 @@ LIBXS_API_INLINE void gemm_complex_diff(GEMM_ARGDECL, libxs_matdiff_t* diff)
 }
 
 
-/**
- * Complex GEMM wrapper: dispatches based on OZAKI_COMPLEX env var.
- *   0 = pass through to original complex BLAS,
- *   1 = CPU-based block embedding (single real GEMM),
- *   2 = GPU-native block embedding (all on device, falls back to CPU).
- * Default: follows OZAKI (0 if OZAKI=0, else 2).
- */
+/* complex GEMM wrapper, dispatched on the OZAKI_COMPLEX env var */
+/* 0 passes through to the original complex BLAS */
+/* 1 is CPU block embedding (a single real GEMM) */
+/* 2 is GPU-native block embedding, all on device, falling back to CPU */
+/* the default follows OZAKI: 0 if OZAKI=0, else 2 */
 OZAKI_API_INTERN LIBXS_ATTRIBUTE_WEAK void ZGEMM_WRAP(GEMM_ARGDECL)
 {
   gemm_init();

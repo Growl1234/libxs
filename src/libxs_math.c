@@ -39,10 +39,7 @@
 #define LIBXS_MATH_MALLOC(SIZE, POOL) internal_libxs_scratch_malloc(SIZE, &(POOL))
 #define LIBXS_MATH_FREE(PTR, POOL) internal_libxs_scratch_free(PTR, POOL)
 
-/**
- * LIBXS_MATDIFF_DIV divides the numerator by the reference-denominator
- * unless the latter is zero in which case the fallback is returned.
- */
+/* divide by the reference-denominator, or return the fallback if it is zero */
 #define LIBXS_MATDIFF_DIV_DEN(A) (0 < (A) ? (A) : 1)   /* Clang: WA for div-by-zero */
 #define LIBXS_MATDIFF_DIV(NUMERATOR, DENREF, FALLBACK) /* Clang: >= instead of < */ \
   (0 >= (DENREF) ? (FALLBACK) : ((NUMERATOR) / LIBXS_MATDIFF_DIV_DEN(DENREF)))

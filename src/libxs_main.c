@@ -542,10 +542,8 @@ LIBXS_API_CTOR void libxs_init(void)
           internal_libxs_dump(stdout, 1/*urgent*/);
         }
         s1 = internal_libxs_timer_tick_rtc(); t1 = internal_libxs_timer_tick_tsc(); /* mid-timing */
-        /**
-         * TSC calibration is Release-only: debug overhead would skew the measurement,
-         * and the RTC fallback is accurate enough for development/testing.
-         */
+        /* TSC calibration is Release-only: debug overhead skews it */
+        /* the RTC fallback is accurate enough for development */
 #if defined(NDEBUG)
         libxs_cpuid(&internal_libxs_cpuid_info);
         if (0 != internal_libxs_cpuid_info.constant_tsc && t0 < t1) {

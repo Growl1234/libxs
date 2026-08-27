@@ -251,10 +251,7 @@ LIBXS_API_INTERN int internal_libxs_cpuid_x86(libxs_cpuid_t* info)
         }
       }
       else if (LIBXS_X86_GENERIC <= feature_cpu) {
-        /**
-         * assume FXSAVE-enabled/manual state-saving OS,
-         * as it was introduced 1999 even for 32bit
-         */
+        /* assume an FXSAVE-enabled OS: introduced 1999, even for 32bit */
         feature_os = LIBXS_X86_SSE42;
       }
       else feature_os = LIBXS_TARGET_ARCH_GENERIC;
@@ -339,11 +336,7 @@ LIBXS_API int libxs_cpuid(libxs_cpuid_t* info)
 }
 
 
-/**
- * This implementation also accounts for non-x86 platforms,
- * which not only allows to resolve any given ID but to
- * fallback gracefully ("unknown").
- */
+/* resolves any ID, including non-x86, and falls back to "unknown" */
 LIBXS_API const char* libxs_cpuid_name(int id)
 {
   const char* target_arch = NULL;

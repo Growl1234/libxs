@@ -627,13 +627,13 @@ int main(int argc, char* argv[])
         exit(EXIT_FAILURE);
       }
     }
-    { /* Test 4: round-to-nearest-even — 1.5 * 2^0 exactly representable */ const libxs_bf16_t h = libxs_round_bf16(1.5);
+    { /* Test 4: round-to-nearest-even, 1.5 * 2^0 exactly representable */ const libxs_bf16_t h = libxs_round_bf16(1.5);
       if (1.5 != libxs_bf16_to_f64(h)) {
         FPRINTF(stderr, "ERROR line #%i: BF16 1.5 round-trip\n", __LINE__);
         exit(EXIT_FAILURE);
       }
     }
-    { /* Test 5: value that requires rounding (M_PI) — check relative error < 2^-7 */
+    { /* Test 5: value that requires rounding (M_PI): relative error < 2^-7 */
       const libxs_bf16_t bp = libxs_round_bf16(M_PI);
       const double back = libxs_bf16_to_f64(bp);
       const double relerr = (back - M_PI) / M_PI;
@@ -642,7 +642,7 @@ int main(int argc, char* argv[])
         exit(EXIT_FAILURE);
       }
     }
-    { /* Test 6: libxs_dekker_bf16 — sum of digits reconstructs original. */
+    { /* Test 6: libxs_dekker_bf16, sum of digits reconstructs the original */
       libxs_bf16_t digits[7];
       double recon = 0.0;
       int ns;
@@ -658,7 +658,7 @@ int main(int argc, char* argv[])
         }
       }
     }
-    /* Test 6b: libxs_dekker_bf16 with 2 digits — error within BF16^2 precision */
+    /* Test 6b: libxs_dekker_bf16 with 2 digits: error within BF16^2 precision */
     { const double test_vals[] = { 1.23456789, -42.5, 1e-5, 1e10 };
       const int nv = sizeof(test_vals) / sizeof(*test_vals);
       int tv;
@@ -728,7 +728,7 @@ int main(int argc, char* argv[])
         exit(EXIT_FAILURE);
       }
     }
-    /* Test 8: random values — verify round-trip relative error bounded by 2^-7 */
+    /* Test 8: random values, round-trip relative error bounded by 2^-7 */
     for (i = 0; i < (N); ++i) {
       const double v = 2.0 * ((double)rand() / RAND_MAX - 0.5) * 1e10;
       const libxs_bf16_t b16 = libxs_round_bf16(v);

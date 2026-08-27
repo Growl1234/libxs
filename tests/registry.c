@@ -305,8 +305,8 @@ static void test_mixed_fill_key(unsigned char* key, int key_size, int index)
 
 
 static int test_mixed_key_sizes(void)
-{ /* keys of different length coexist: a shorter key is not the prefix
-     of a longer one, and every operation is length-specific */
+{ /* keys of different length coexist: a shorter key is not the prefix of a */
+  /* longer one, and every operation is length-specific */
   unsigned char key[LIBXS_REGKEY_MAXSIZE];
   libxs_registry_info_t info;
   int i, n;
@@ -389,8 +389,8 @@ static int test_mixed_key_sizes(void)
 
 
 static int test_mixed_key_sizes_growth(void)
-{ /* rehash re-probes with the per-entry key length: no entry may be
-     lost or aliased when lengths are mixed across a growing table */
+{ /* rehash re-probes with the per-entry key length: no entry may be lost */
+  /* or aliased when lengths are mixed across a growing table */
   unsigned char key[LIBXS_REGKEY_MAXSIZE];
   libxs_registry_info_t info;
   int s, j, count = 0;
@@ -443,8 +443,8 @@ static int test_mixed_key_sizes_growth(void)
 
 
 static int test_mixed_key_sizes_tombstone(void)
-{ /* tombstones left behind by one key length must not shadow or alias
-     entries probed with a different length */
+{ /* tombstones left by one key length must not shadow or alias entries */
+  /* probed with a different length */
   unsigned char key[LIBXS_REGKEY_MAXSIZE];
   const int nsize = 32, nidx = 8;
   int s, j;
@@ -515,8 +515,8 @@ static int test_mixed_key_sizes_tombstone(void)
 
 
 static int test_mixed_key_sizes_cache(void)
-{ /* the TLS cache keys on the key length as well: a cached entry must
-     never be served for the same bytes read at a different length */
+{ /* the TLS cache keys on the key length too: a cached entry must never be */
+  /* served for the same bytes read at a different length */
   unsigned char key[LIBXS_REGKEY_MAXSIZE];
   int i, n;
   libxs_registry_t* registry = libxs_registry_create();
@@ -528,8 +528,8 @@ static int test_mixed_key_sizes_cache(void)
       &n, sizeof(n), NULL));
   }
 
-  /* hammer alternating lengths: more distinct keys than cache entries,
-     so the cache both hits and evicts throughout */
+  /* hammer alternating lengths: more distinct keys than cache entries, so */
+  /* the cache both hits and evicts throughout */
   for (i = 0; i < 100; ++i) {
     for (n = 1; n <= LIBXS_REGKEY_MAXSIZE; ++n) {
       const int* v = (const int*)libxs_registry_get(registry, key, (size_t)n, NULL);
@@ -546,8 +546,8 @@ static int test_mixed_key_sizes_cache(void)
     TEST_CHECK(a != b);
   }
 
-  /* invalidation is length-specific: removing one length must not drop
-     the cached values of the surrounding lengths */
+  /* invalidation is length-specific: removing one length must not drop the */
+  /* cached values of the surrounding lengths */
   libxs_registry_remove(registry, key, 3, NULL);
   TEST_CHECK(NULL == libxs_registry_get(registry, key, 3, NULL));
   { const int* v = (const int*)libxs_registry_get(registry, key, 2, NULL);
@@ -562,8 +562,8 @@ static int test_mixed_key_sizes_cache(void)
 
 
 static int test_mixed_key_sizes_iteration(void)
-{ /* iteration must yield each entry's own key size, so a mixed-length
-     registry can be enumerated without knowing the lengths up front */
+{ /* iteration yields each entry's own key size, so a mixed-length registry */
+  /* can be enumerated without knowing the lengths up front */
   unsigned char key[LIBXS_REGKEY_MAXSIZE];
   int visited[LIBXS_REGKEY_MAXSIZE + 1];
   int s, count = 0;
@@ -585,8 +585,8 @@ static int test_mixed_key_sizes_iteration(void)
     for (; NULL != entry;
          entry = libxs_registry_next_length(registry, &regkey, &regkey_size, &cursor))
     {
-      /* the reported size identifies the entry, and re-reading the key at
-         exactly that size must round-trip back to the very same value */
+      /* the reported size identifies the entry: re-reading the key at */
+      /* exactly that size must round-trip to the very same value */
       const int val = *(const int*)entry;
       TEST_CHECK(0 < regkey_size && regkey_size <= LIBXS_REGKEY_MAXSIZE);
       TEST_CHECK(val == (int)regkey_size);
@@ -676,8 +676,8 @@ static int test_tls_cache(void)
 
 
 static int test_tls_cache_growth(void)
-{ /* growth rehashes and frees the entry table: cached pointers to inline
-     values pointed into it, so a stale cache hit would be use-after-free */
+{ /* growth rehashes and frees the entry table: cached pointers to inline */
+  /* values pointed into it, so a stale hit would be use-after-free */
   const int hot = 999;
   double* p;
   unsigned int i;
@@ -691,9 +691,9 @@ static int test_tls_cache_growth(void)
   p = (double*)libxs_registry_get(registry, &hot, sizeof(hot), NULL);
   TEST_CHECK(NULL != p); /* seeds the TLS cache */
 
-  /* insert other keys one at a time (crossing several growth thresholds) and
-     re-read the cached key after each: the entry moves, so every get must
-     return the CURRENT location, never the freed one */
+  /* insert other keys one at a time, crossing several growth thresholds, and */
+  /* re-read the cached key after each: the entry moves, so every get must */
+  /* return the CURRENT location, never the freed one */
   for (i = 1; i < 4000; ++i) {
     const unsigned int k = 100000 + i;
     double v = 1.0;
@@ -924,8 +924,8 @@ static void test_fixup_noop(void* value, const void* key, size_t key_size,
 
 
 static int test_mixed_key_sizes_save_load(void)
-{ /* the serialized keys section has a per-entry stride (length-prefixed):
-     a fixed-stride assumption would misplace the values section */
+{ /* the serialized keys section is length-prefixed, hence a per-entry */
+  /* stride: a fixed-stride assumption would misplace the values section */
   unsigned char key[LIBXS_REGKEY_MAXSIZE];
   char payload[128];
   libxs_registry_info_t info;

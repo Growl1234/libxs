@@ -8,12 +8,10 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 
-/**
- * Bridge between LIBXS Ozaki (CPU) and LIBXSTREAM Ozaki (OpenCL).
- * Compiled once (precision-independent); wraps LIBXSTREAM types
- * behind an opaque void* handle so that ozaki.c needs no OpenCL
- * or LIBXSTREAM headers.
- */
+/* bridge between LIBXS Ozaki (CPU) and LIBXSTREAM Ozaki (OpenCL) */
+/* compiled once, precision-independent */
+/* LIBXSTREAM types hide behind an opaque void* so ozaki.c needs no */
+/* OpenCL or LIBXSTREAM headers */
 #include "ozaki_opencl.h"
 
 

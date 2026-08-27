@@ -128,11 +128,8 @@ typedef struct internal_libxs_predict_cluster_t {
   int tdim;
 } internal_libxs_predict_cluster_t;
 
-/**
- * One window view: the distance reads only the most recent w lags of each of
- * s series, out of full lags stored per series.  NULL or w == full means the
- * whole window, which is the only view a non-series model has.
- */
+/* one window view: read only the most recent w lags of each of s series */
+/* NULL or w == full is the whole window: a non-series model has only that */
 typedef struct internal_libxs_predict_view_t {
   int w, s, full;
 } internal_libxs_predict_view_t;
@@ -211,18 +208,17 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   double quality;
   double consistency;
   double quantile;
-  /** Per-output sorted distinct values and counts: the exact support the
-   *  probability normalizes over.  Derived from raw_outputs at build/load, so
-   *  the serialization format is unchanged. */
+  /* per-output sorted distinct values and counts: the probability's support */
+  /* derived from raw_outputs at build/load, so the format is unchanged */
   double** sup_vals;
   double** sup_freq;
   int* sup_n;
   int* sup_tot;
-  /** Frozen escape weights, noutputs * LIBXS_PREDICT_NESCAPE. Written by
-   *  load, read when scoring without a context. */
+  /* frozen escape weights (noutputs * NESCAPE): written by load, read when */
+  /* scoring without a context */
   double* escape_w;
-  /** Incremented by every build, so a scoring context can tell that the
-   *  model it was sized for is no longer the model in front of it. */
+  /* incremented by every build, so a context can tell it was sized for */
+  /* a model that is no longer the one in front of it */
   int nbuild;
   volatile int phase;
 };
@@ -299,11 +295,8 @@ LIBXS_API_INLINE void internal_libxs_predict_normalize(
 }
 
 
-/**
- * Inverse of internal_libxs_predict_normalize.  Kept adjacent to it so the two
- * cannot drift apart.  A zero weight is not invertible (feature selection drops
- * the coordinate), which callers must check before relying on the result.
- */
+/* inverse of internal_libxs_predict_normalize, kept adjacent so both move */
+/* a zero weight is not invertible: feature selection dropped the coordinate */
 LIBXS_API_INLINE void internal_libxs_predict_denormalize(
   const libxs_predict_t* model, const double* norm, double* inputs)
 {
@@ -658,11 +651,8 @@ LIBXS_API_INLINE double internal_libxs_predict_coverage(
  * per rule, where the tangent projection, per-output group filter and recency
  * weighting would have to be kept in step by hand.
  */
-/**
- * Squared distance restricted to a window view: the full distance less the
- * coordinates the view does not read.  Subtracting the terms is what a zero
- * weight would have done, and it needs no second copy of the points.
- */
+/* squared distance for a view: the full distance less the unread coordinates */
+/* subtracting the terms is what a zero weight does, and needs no second copy */
 LIBXS_API_INLINE double internal_libxs_predict_viewdist2(const double* a,
   const double* b, int m, const internal_libxs_predict_view_t* view)
 {
@@ -2692,11 +2682,8 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
     if (EXIT_SUCCESS == result) {
       model->built = 1;
       ++model->nbuild;
-      /**
-       * The probability support is built here rather than on first use: a lazy
-       * cache would make the first scoring call in every stream a write to
-       * shared state, which is exactly what the context exists to avoid.
-       */
+      /* built here, not on first use: a lazy cache would make the first */
+      /* scoring call in every stream a write to shared state */
       internal_libxs_predict_support_all(model);
       if (0 >= model->central) internal_libxs_predict_central_all(model);
       internal_libxs_predict_bank_all(model);
@@ -3893,8 +3880,8 @@ LIBXS_API_INLINE int internal_libxs_predict_point(
   internal_libxs_predict_evidence(cl,
     model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL, -1,
     candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL);
-  /* Accumulate evidence per DISTINCT support entry, as the dense path does by
-     indexing into local[]; a value can be returned by several neighbors. */
+  /* accumulate per DISTINCT support entry, as the dense path does in local[] */
+  /* a value can be returned by several neighbors */
   for (i = 0; i < nfound; ++i) {
     const int k = internal_libxs_predict_support_index(sv, ns, candidates[i]);
     if (0 <= k) {
@@ -4094,9 +4081,9 @@ typedef struct internal_libxs_predict_ctx_t {
   int nbuild;
   int noutputs;
   int maxsup;
-  /* followed by: escape weights [n * NESCAPE], dist p, norm scratch,
-     local evidence, the per-output reporting arrays, the int arrays, then the
-     per-call dispatch buffers */
+  /* followed by: escape weights [n * NESCAPE], dist p, norm scratch, local */
+  /* evidence, the per-output reporting arrays, the int arrays, then the */
+  /* per-call dispatch buffers */
 } internal_libxs_predict_ctx_t;
 
 #define LIBXS_PREDICT_CTX_MAGIC 0x58535043U /* "XSPC" */
@@ -4225,11 +4212,8 @@ LIBXS_API_INLINE void internal_libxs_predict_central_all(libxs_predict_t* model)
 }
 
 
-/**
- * Build the support cache for every output.  Called at build and load so that
- * scoring only reads it: a lazily-built cache would be a write to shared state
- * on the first call of every stream.
- */
+/* build the support cache for every output, at build and load time */
+/* scoring only reads it: a lazy cache would write shared state per stream */
 LIBXS_API_INLINE int internal_libxs_predict_support_all(libxs_predict_t* model)
 {
   int result = EXIT_SUCCESS;

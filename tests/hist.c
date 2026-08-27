@@ -445,10 +445,8 @@ static int test_commit_arithmetic_avg(void)
   const libxs_hist_update_t update[] = { libxs_hist_update_avg };
   libxs_hist_info_t info;
   int result = EXIT_SUCCESS;
-  /**
-   * 1 bucket, nqueue=4: all 4 values land in the same bucket at commit.
-   * Arithmetic mean of {10, 20, 30, 40} = 25.0
-   */
+  /* 1 bucket, nqueue=4: all four values land in it at commit */
+  /* arithmetic mean of {10, 20, 30, 40} = 25.0 */
   hist = libxs_hist_create(1/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   {
@@ -482,12 +480,9 @@ static int test_hybrid_avg_then_welford(void)
   const libxs_hist_update_t update[] = { libxs_hist_update_avg };
   libxs_hist_info_t info;
   int result = EXIT_SUCCESS;
-  /**
-   * 1 bucket, nqueue=2: commit produces arithmetic mean,
-   * then subsequent inserts use Welford.
-   * Queue: {10, 30} -> commit: mean=20.0
-   * Welford with 40.0 (count=3): 20 + (40-20)/3 = 26.667
-   */
+  /* 1 bucket, nqueue=2: commit is the arithmetic mean, later inserts Welford */
+  /* queue {10, 30} commits to mean=20.0 */
+  /* Welford with 40.0 at count=3: 20 + (40-20)/3 = 26.667 */
   hist = libxs_hist_create(1/*nbuckets*/, 1/*nvals*/, update, NULL, NULL);
   if (NULL == hist) return EXIT_FAILURE;
   {
@@ -636,11 +631,10 @@ static int test_query_bimodal(void)
         0 < mod[2] ? (mod[1] / mod[2]) : 0.0);
       result = EXIT_FAILURE;
     }
-    /**
-     * The median may legitimately blend when both neighbours are populated (at
-     * nbuckets=2 the two clusters are adjacent), but must never mix across an
-     * empty bucket: with a gap the ratio has to be one of the two observed.
-     */
+    /* blending is legitimate when both neighbours are populated (nbuckets=2 */
+    /* puts the clusters adjacent), but never across an empty bucket: with a */
+    /* gap the ratio has to be one of the two observed */
+    /* the ratio has to be one of the two observed */
     libxs_hist_query_median(NULL, hist, med);
     if (EXIT_SUCCESS == result && 2 < nbuckets) {
       if (0 >= med[2] || (fabs(med[1] / med[2] - 10.0) > TOLERANCE && fabs(med[1] / med[2] - 2.0) > TOLERANCE)) {
@@ -926,11 +920,8 @@ static int test_median_outlier(void)
 }
 
 
-/**
- * Reproduce the binning the histogram applies, over samples the test retains.
- * Deliberately a second implementation rather than a call back into the library:
- * an oracle that shares code with what it checks proves nothing.
- */
+/* reproduce the binning over the samples the test retains */
+/* deliberately a second implementation: a shared-code oracle proves nothing */
 static void oracle(const double sample[], int nsample, int nbuckets,
   int counts[], double means[], double range[2])
 {
@@ -1059,10 +1050,8 @@ static int test_invariants_random(void)
           break;
         }
         for (i = 0; i < nsample; ++i) {
-          /**
-           * A heavy tail every so often, which is what a first launch paying a
-           * one-time cost looks like and what forces a rebin.
-           */
+          /* a heavy tail every so often: what a first launch paying a */
+          /* one-time cost looks like, and what forces a rebin */
           const double v[] = { (0 == (i % 29)) ? (1E4 * libxs_rng_f64()) : libxs_rng_f64() };
           expect += v[0];
           libxs_hist_push(NULL, hist, v);

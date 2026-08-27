@@ -446,8 +446,8 @@ LIBXS_API int libxs_text_reflow_map(const unsigned char* text, size_t size,
   buf = (unsigned char*)malloc(size + 1);
   if (NULL == buf) return EXIT_FAILURE;
   if (NULL != line_offsets && NULL != nlines) {
-    /* One entry per input line at most, and a newline costs one byte, so the
-       input size bounds the count without a counting pass. */
+    /* one entry per line at most and a newline costs one byte, hence the */
+    /* input size bounds the count without a counting pass */
     lines = (size_t*)malloc((size + 2) * sizeof(*lines));
     if (NULL == lines) {
       free(buf);

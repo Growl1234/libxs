@@ -11,18 +11,14 @@
 #include <libxs/libxs_math.h>
 #include <libxs/libxs_mem.h>
 
-/**
- * Two equivalent constructions of the same engineered model:
- * default (DISCHARGE_USE_API): the engineered features expressed through
- *   the timeseries API (set_series + set_series_deriv + set_series_aux);
- *   the framework transforms the lags, appends the derivatives, and
- *   carries the auxiliary day-of-year feature. This path supports the
- *   auto-sized window (WINDOW=0 sentinel), the sample default.
- * DISCHARGE_MANUAL: hand-built feature vector (window + diffs +
- *   day-of-year), transforms and windowing performed in the sample
- *   (fill_inputs). Fixed window only. Both produce identical inputs
- *   at a given window.
- */
+/* two equivalent constructions of the same engineered model */
+/* DISCHARGE_USE_API (default): the features go through the timeseries API */
+/* (set_series, set_series_deriv, set_series_aux), so the framework */
+/* transforms the lags, appends the derivatives and carries day-of-year */
+/* this path supports the auto-sized window (WINDOW=0), the sample default */
+/* DISCHARGE_MANUAL: hand-built vector (window, diffs, day-of-year) with */
+/* transforms and windowing in fill_inputs, fixed window only */
+/* both produce identical inputs at a given window */
 #if !defined(DISCHARGE_MANUAL) && !defined(DISCHARGE_USE_API)
 # define DISCHARGE_USE_API
 #endif

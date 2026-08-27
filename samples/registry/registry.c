@@ -63,21 +63,17 @@ static void print_duration(const char* label, double total_ns, int count,
 }
 
 
-/**
- * This (micro-)benchmark measures the duration needed to register and
- * look up entries in the registry. Various scenarios are measured:
- *   (1) cold registration of N unique keys (write),
- *   (2) cold lookup: shuffled access pattern defeating TLS cache,
- *   (3) cached lookup: repeated sequential access (TLS-cache-friendly),
- *   (4) multi-threaded parallel reads,
- *   (5) contended parallel writes (each thread writes unique keys),
- *   (6) mixed: one writer thread, remaining threads read concurrently.
- *
- * CLI: registry [total] [nrepeat] [nthreads]
- *   total    - number of unique keys to register (default: 10000)
- *   nrepeat  - number of repeat iterations for lookup phases (default: 10)
- *   nthreads - number of OpenMP threads (default: max available)
- */
+/* micro-benchmark: time registration and lookup over several scenarios */
+/* (1) cold registration of N unique keys (write) */
+/* (2) cold lookup: shuffled access, defeating the TLS cache */
+/* (3) cached lookup: repeated sequential access, TLS-cache-friendly */
+/* (4) multi-threaded parallel reads */
+/* (5) contended parallel writes, each thread writing unique keys */
+/* (6) mixed: one writer thread, the rest reading concurrently */
+/* CLI: registry [total] [nrepeat] [nthreads] */
+/* total: unique keys to register (default 10000) */
+/* nrepeat: repeat iterations for the lookup phases (default 10) */
+/* nthreads: OpenMP threads (default max available) */
 int main(int argc, char* argv[])
 {
 #if defined(_OPENMP)

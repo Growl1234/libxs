@@ -11,12 +11,9 @@
 #include <libxs/libxs_sync.h>
 
 
-/**
- * Helper macro: define dlsym-resolved fallback function.
- * Used for both GEMM_REAL and ZGEMM_REAL to avoid code duplication.
- * The generated function resolves the original BLAS symbol via dlsym
- * on first call (LD_PRELOAD path) and caches the function pointer.
- */
+/* define a dlsym-resolved fallback, shared by GEMM_REAL and ZGEMM_REAL */
+/* the generated function resolves the original BLAS symbol on first call */
+/* (the LD_PRELOAD path) and caches the pointer */
 #define GEMM_DEFINE_DLSYM(FUNC, SYMBOL, FTYPE, ORIGPTR) \
   OZAKI_API_INTERN LIBXS_ATTRIBUTE_WEAK void FUNC(GEMM_ARGDECL) \
   { \

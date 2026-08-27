@@ -347,12 +347,10 @@ int main(void)
     }
   }
 
-  /**
-   * test NULL ref with non-NULL tst (exercises result_swap path):
-   * ref=NULL,tst=vals -> swap makes vals the new ref, tst becomes NULL.
-   * NULL tst means di=0 always -> rsq=1, epsilon=0, no location.
-   * After swap, original vals stats appear in tst-position.
-   */
+  /* NULL ref with non-NULL tst exercises the result_swap path */
+  /* ref=NULL, tst=vals: the swap makes vals the new ref and tst becomes NULL */
+  /* a NULL tst means di=0 throughout, hence rsq=1, epsilon=0, no location */
+  /* after the swap the original vals stats appear in tst-position */
   if (EXIT_SUCCESS == result) {
     const ELEMTYPE ref_only[] = { (ELEMTYPE)1.0, (ELEMTYPE)2.0, (ELEMTYPE)3.0 };
     libxs_matdiff_t d;

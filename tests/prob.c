@@ -180,11 +180,8 @@ static int check_support_matches_scoring(const libxs_predict_t* model)
 }
 
 
-/**
- * Score the stream frozen (context == NULL) and return the total code length.
- * Frozen scoring reads the model's weights and writes nothing, so this is a
- * pure function of the model - which is the property under test.
- */
+/* score the stream frozen (context == NULL) and return the code length */
+/* frozen scoring writes nothing, so this is a pure function of the model */
 static double frozen_bits(const libxs_predict_t* model, int nstep)
 {
   double bits = 0.0;
@@ -359,10 +356,8 @@ static int check_commit_rejects_foreign(libxs_predict_t* model)
 }
 
 
-/**
- * Committed weights must survive save/load, since the point of committing is a
- * figure someone else can reproduce from the saved model.
- */
+/* committed weights must survive save/load: the point of committing is a */
+/* figure someone else can reproduce from the saved model */
 static int check_commit_survives_roundtrip(const libxs_predict_t* model)
 {
   int result = EXIT_FAILURE;
