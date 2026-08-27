@@ -101,5 +101,6 @@ nav:
   - Timer: tests/timer.md
 
 - More:
+  - Contributing: libxs_contrib.md
   - Development: libxs_scripts.md
   - LIBXSTREAM: libxs_opencl.md

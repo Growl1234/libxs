@@ -2709,6 +2709,47 @@ PDF_UTF8_SED = \
 	-e 's/\xe2\x80\xaf/ /g' \
 	-e 's/\xc2\xae/\\\\textregistered{}/g' \
 	-e 's/\xe2\x84\xa2/\\\\texttrademark{}/g' \
+	-e 's/\xe2\x86\x90/<-/g' \
+	-e 's/\xe2\x86\x94/<->/g' \
+	-e 's/\xe2\x87\x92/=>/g' \
+	-e 's/\xe2\x89\x88/~=/g' \
+	-e 's/\xe2\x89\xa0/!=/g' \
+	-e 's/\xe2\x88\x88/ in /g' \
+	-e 's/\xe2\x88\x9e/inf/g' \
+	-e 's/\xe2\x88\x9a/sqrt/g' \
+	-e 's/\xe2\x88\x91/sum/g' \
+	-e 's/\xe2\x88\x8f/prod/g' \
+	-e 's/\xe2\x88\xab/int/g' \
+	-e 's/\xe2\x88\x82/d/g' \
+	-e 's/\xe2\x8c\x88/ceil(/g' \
+	-e 's/\xe2\x8c\x89/)/g' \
+	-e 's/\xe2\x8c\x8a/floor(/g' \
+	-e 's/\xe2\x8c\x8b/)/g' \
+	-e 's/\xe2\x8b\x85/*/g' \
+	-e 's/\xe1\xb5\x80/T/g' \
+	-e 's/\xce\xb1/alpha/g' \
+	-e 's/\xce\xb2/beta/g' \
+	-e 's/\xce\xb3/gamma/g' \
+	-e 's/\xce\xb4/delta/g' \
+	-e 's/\xce\xb5/epsilon/g' \
+	-e 's/\xce\xb8/theta/g' \
+	-e 's/\xce\xba/kappa/g' \
+	-e 's/\xce\xbb/lambda/g' \
+	-e 's/\xce\xbc/mu/g' \
+	-e 's/\xcf\x80/pi/g' \
+	-e 's/\xcf\x81/rho/g' \
+	-e 's/\xcf\x83/sigma/g' \
+	-e 's/\xcf\x84/tau/g' \
+	-e 's/\xcf\x86/phi/g' \
+	-e 's/\xcf\x89/omega/g' \
+	-e 's/\xce\x93/Gamma/g' \
+	-e 's/\xce\x94/Delta/g' \
+	-e 's/\xce\x98/Theta/g' \
+	-e 's/\xce\x9b/Lambda/g' \
+	-e 's/\xce\xa0/Pi/g' \
+	-e 's/\xce\xa3/Sigma/g' \
+	-e 's/\xce\xa6/Phi/g' \
+	-e 's/\xce\xa9/Omega/g' \
 	-e 's/{:[^}]*}//g' \
 	-e '/^----*$$/d'
 
@@ -2748,5 +2789,26 @@ ifneq ($(ALIAS_PREFIX),$(PREFIX))
   PPKGDIR := libdata/pkgconfig
   PMODDIR := $(PSHRDIR)
 endif
+
+# Policies are maintained in LIBXS and copied into dependent projects, i.e.,
+# the same way this Makefile.inc is shared (MAKEINC locates the origin).
+POLICYMDS := $(NULL)
+ifneq (,$(strip $(DOCDIR)))
+ifneq ($(abspath $(MAKEINC)),$(abspath $(ROOTDIR)))
+ifneq (,$(wildcard $(MAKEINC)/$(DOCDIR)/libxs_contrib.md))
+POLICYMDS += $(DOCDIR)/$(PROJECT)_contrib.md
+$(DOCDIR)/$(PROJECT)_contrib.md: $(MAKEINC)/$(DOCDIR)/libxs_contrib.md
+	@$(CP) $< $@
+endif
+ifneq (,$(wildcard $(MAKEINC)/CLAUDE.md))
+POLICYMDS += $(ROOTDIR)/CLAUDE.md
+$(ROOTDIR)/CLAUDE.md: $(MAKEINC)/CLAUDE.md
+	@$(CP) $< $@
+endif
+endif
+endif
+
+.PHONY: policies
+policies: $(POLICYMDS)
 
 .DEFAULT_GOAL := $(NULL)
