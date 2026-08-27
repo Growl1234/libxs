@@ -40,7 +40,9 @@ def load_libxs(path):
         except OSError as error:
             last_error = error
     if last_error is not None:
-        raise RuntimeError("unable to load libxs shared library: %s" % last_error)
+        raise RuntimeError(
+            "unable to load libxs shared library: %s" % last_error
+        )
     raise RuntimeError("unable to locate libxs shared library")
 
 
@@ -92,7 +94,9 @@ def shower_volume(depth, height, width):
                 dx = (x_coord - center_x) / sigma_x
                 dz = (z_coord - center_z) / sigma_z
                 core = math.exp(-0.5 * (dx * dx + dy * dy + dz * dz))
-                ripple = 1.0 + 0.08 * math.sin(0.7 * x_coord + 1.3 * y_coord + z_coord)
+                ripple = 1.0 + 0.08 * math.sin(
+                    0.7 * x_coord + 1.3 * y_coord + z_coord
+                )
                 index = (z_coord * height + y_coord) * width + x_coord
                 volume[index] = core * longitudinal * ripple
     return volume
@@ -102,7 +106,9 @@ def require_h5py():
     try:
         import h5py
     except ImportError as error:
-        raise RuntimeError("h5py is required for HDF5 input or output") from error
+        raise RuntimeError(
+            "h5py is required for HDF5 input or output"
+        ) from error
     return h5py
 
 
@@ -110,7 +116,9 @@ def require_numpy():
     try:
         import numpy as np
     except ImportError as error:
-        raise RuntimeError("numpy is required for HDF5 input or output") from error
+        raise RuntimeError(
+            "numpy is required for HDF5 input or output"
+        ) from error
     return np
 
 
@@ -149,7 +157,9 @@ def select_hdf5_volume(dataset, layout, event, channel, reshape):
         elif dataset.ndim == 2 and reshape is not None:
             array = dataset[event, :]
         else:
-            raise ValueError("unsupported HDF5 dataset rank: %d" % dataset.ndim)
+            raise ValueError(
+                "unsupported HDF5 dataset rank: %d" % dataset.ndim
+            )
     if reshape is not None:
         elements = reshape[0] * reshape[1] * reshape[2]
         if array.size != elements:
@@ -165,21 +175,34 @@ def load_hdf5_volume(path, dataset_name, layout, event, channel, reshape):
     h5py = require_h5py()
     with h5py.File(path, "r") as in_file:
         if dataset_name not in in_file:
-            raise KeyError("dataset '%s' not found in %s" % (dataset_name, path))
+            raise KeyError(
+                "dataset '%s' not found in %s" % (dataset_name, path)
+            )
         dataset = in_file[dataset_name]
-        if event < 0 or (dataset.ndim in (2, 4, 5) and event >= dataset.shape[0]):
+        if event < 0 or (
+            dataset.ndim in (2, 4, 5) and event >= dataset.shape[0]
+        ):
             raise IndexError(
-                "event index %d is outside dataset shape %s" % (event, dataset.shape)
+                "event index %d is outside dataset shape %s"
+                % (event, dataset.shape)
             )
         if channel < 0:
             raise IndexError("channel index must be non-negative")
-        if layout in ("ncdhw", "auto") and dataset.ndim == 5 and dataset.shape[1] <= 4:
+        if (
+            layout in ("ncdhw", "auto")
+            and dataset.ndim == 5
+            and dataset.shape[1] <= 4
+        ):
             if channel >= dataset.shape[1]:
                 raise IndexError(
                     "channel index %d is outside dataset shape %s"
                     % (channel, dataset.shape)
                 )
-        if layout == "ndhwc" and dataset.ndim == 5 and channel >= dataset.shape[4]:
+        if (
+            layout == "ndhwc"
+            and dataset.ndim == 5
+            and channel >= dataset.shape[4]
+        ):
             raise IndexError(
                 "channel index %d is outside dataset shape %s"
                 % (channel, dataset.shape)
@@ -295,7 +318,9 @@ def stratify(libxs, curve, depth, height, width, volume, frame="compact"):
     for record in records:
         dst_index = record[4] * sheet_width + record[5]
         if dst_index in used:
-            raise RuntimeError("stratification collision at destination %d" % dst_index)
+            raise RuntimeError(
+                "stratification collision at destination %d" % dst_index
+            )
         used.add(dst_index)
         sheet[dst_index] = record[6]
     return sheet, sheet_height, sheet_width, records, map_seconds
@@ -307,7 +332,9 @@ def write_pgm(path, data, height, width):
     with open(path, "wb") as out_file:
         out_file.write(("P5\n%d %d\n255\n" % (width, height)).encode("ascii"))
         out_file.write(
-            bytearray(int(max(0.0, min(255.0, value * scale))) for value in data)
+            bytearray(
+                int(max(0.0, min(255.0, value * scale))) for value in data
+            )
         )
 
 
@@ -333,7 +360,16 @@ def write_map_csv(path, depth, height, source_width, sheet_width, records):
 
 
 def write_hdf5(
-    path, data, height, width, records, depth, source_height, source_width, curve, frame
+    path,
+    data,
+    height,
+    width,
+    records,
+    depth,
+    source_height,
+    source_width,
+    curve,
+    frame,
 ):
     h5py = require_h5py()
     np = require_numpy()
@@ -358,7 +394,11 @@ def write_hdf5(
         out_file.create_dataset("map", data=mapping)
         out_file["sheet"].attrs["curve"] = curve
         out_file["sheet"].attrs["frame"] = frame
-        out_file["sheet"].attrs["source_shape"] = (depth, source_height, source_width)
+        out_file["sheet"].attrs["source_shape"] = (
+            depth,
+            source_height,
+            source_width,
+        )
         out_file["map"].attrs["columns"] = "src,z,y,x,dst,v,u"
 
 
@@ -372,7 +412,9 @@ def parse_args(argv):
         default=(8, 16, 16),
         help="source volume shape",
     )
-    parser.add_argument("--curve", choices=("hilbert", "morton"), default="hilbert")
+    parser.add_argument(
+        "--curve", choices=("hilbert", "morton"), default="hilbert"
+    )
     parser.add_argument(
         "--frame",
         choices=("compact", "canonical"),
@@ -382,7 +424,9 @@ def parse_args(argv):
     parser.add_argument("--libxs", help="path to libxs shared library")
     parser.add_argument("--hdf5", help="read source volume from an HDF5 file")
     parser.add_argument(
-        "--hdf5-dataset", default="ECAL", help="HDF5 dataset containing source volumes"
+        "--hdf5-dataset",
+        default="ECAL",
+        help="HDF5 dataset containing source volumes",
     )
     parser.add_argument(
         "--hdf5-layout",
@@ -398,7 +442,10 @@ def parse_args(argv):
         help="reshape selected flat HDF5 data to a 3D volume",
     )
     parser.add_argument(
-        "--hdf5-event", type=int, default=0, help="event index for batched HDF5 layouts"
+        "--hdf5-event",
+        type=int,
+        default=0,
+        help="event index for batched HDF5 layouts",
     )
     parser.add_argument(
         "--hdf5-channel",
@@ -406,9 +453,15 @@ def parse_args(argv):
         default=0,
         help="channel index for channelled HDF5 layouts",
     )
-    parser.add_argument("--out", help="write stratified sheet as an 8-bit PGM image")
-    parser.add_argument("--map-csv", help="write source-to-destination map as CSV")
-    parser.add_argument("--out-hdf5", help="write stratified sheet and map as HDF5")
+    parser.add_argument(
+        "--out", help="write stratified sheet as an 8-bit PGM image"
+    )
+    parser.add_argument(
+        "--map-csv", help="write source-to-destination map as CSV"
+    )
+    parser.add_argument(
+        "--out-hdf5", help="write stratified sheet and map as HDF5"
+    )
     return parser.parse_args(argv)
 
 

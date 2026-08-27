@@ -24,7 +24,9 @@ def generate_uniform(n, boxsize, seed):
         import random
 
         random.seed(seed)
-        return [[random.uniform(0.0, boxsize) for _ in range(3)] for _ in range(n)]
+        return [
+            [random.uniform(0.0, boxsize) for _ in range(3)] for _ in range(n)
+        ]
 
 
 def generate_clustered(n, boxsize, nclusters, seed):
@@ -94,7 +96,9 @@ def main():
     args = parser.parse_args()
 
     if args.clustered:
-        pts = generate_clustered(args.npoints, args.boxsize, args.nclusters, args.seed)
+        pts = generate_clustered(
+            args.npoints, args.boxsize, args.nclusters, args.seed
+        )
     else:
         pts = generate_uniform(args.npoints, args.boxsize, args.seed)
 

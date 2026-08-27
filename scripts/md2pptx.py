@@ -66,7 +66,9 @@ BODY_HEIGHT = SLIDE_HEIGHT - BODY_TOP - MARGIN
 CONTENT_WIDTH = SLIDE_WIDTH - 2 * MARGIN
 TABLE_LINE_SPACING = 1.2
 TABLE_CELL_INSET = Pt(3.6)
-TABLE_ROW_HEIGHT = Emu(int(TABLE_SIZE * TABLE_LINE_SPACING + 2 * TABLE_CELL_INSET))
+TABLE_ROW_HEIGHT = Emu(
+    int(TABLE_SIZE * TABLE_LINE_SPACING + 2 * TABLE_CELL_INSET)
+)
 CODE_LINE_HEIGHT = Inches(0.35)
 TEXT_LINE_HEIGHT = Inches(0.4)
 BLOCK_SPACING = Inches(0.15)
@@ -76,7 +78,9 @@ MATH_SCALE = 2.4
 
 MAX_CONTENT_LINES = 15
 
-HAS_LATEX = shutil.which("latex") is not None and shutil.which("dvipng") is not None
+HAS_LATEX = (
+    shutil.which("latex") is not None and shutil.which("dvipng") is not None
+)
 _math_tmpdir = None
 _math_counter = 0
 
@@ -223,10 +227,14 @@ def parse_inline(text):
     )
     for m in pat.finditer(text):
         if m.start() > pos:
-            result.append((_typographic(text[pos : m.start()]), "normal", None))
+            result.append(
+                (_typographic(text[pos : m.start()]), "normal", None)
+            )
         if m.group(1) is not None:
             for seg, style, href in parse_inline(m.group(1)):
-                result.append((seg, "dim" if style == "normal" else style, href))
+                result.append(
+                    (seg, "dim" if style == "normal" else style, href)
+                )
         elif m.group(2) is not None:
             for seg, style, _ in parse_inline(m.group(2)):
                 result.append((seg, style, m.group(3)))
@@ -539,7 +547,9 @@ def _parse_slide(text):
             continue
 
         m_imgtag = re.match(
-            r'^\s*<img\b[^>]*\bsrc="([^"]+)"[^>]*/?\s*>\s*$', line, re.IGNORECASE
+            r'^\s*<img\b[^>]*\bsrc="([^"]+)"[^>]*/?\s*>\s*$',
+            line,
+            re.IGNORECASE,
         )
         if m_imgtag:
             if cur:
@@ -555,7 +565,9 @@ def _parse_slide(text):
             i += 1
             continue
 
-        if re.match(r"^\s*<[^>]+>\s*$", line) and not line.strip().startswith("<br"):
+        if re.match(r"^\s*<[^>]+>\s*$", line) and not line.strip().startswith(
+            "<br"
+        ):
             stripped = line.strip()
             # Keep a whole-line dim span intact: parse_inline styles it, so
             # stripping the tag here would silently drop the styling.
@@ -615,7 +627,9 @@ def _parse_slide(text):
             if cur:
                 slide["blocks"].append(cur)
                 cur = None
-            slide["blocks"].append({"type": "heading", "text": line[4:].strip()})
+            slide["blocks"].append(
+                {"type": "heading", "text": line[4:].strip()}
+            )
             i += 1
             continue
 
@@ -625,7 +639,11 @@ def _parse_slide(text):
                 slide["blocks"].append(cur)
                 cur = None
             slide["blocks"].append(
-                {"type": "image", "alt": m_img.group(1), "path": m_img.group(2)}
+                {
+                    "type": "image",
+                    "alt": m_img.group(1),
+                    "path": m_img.group(2),
+                }
             )
             i += 1
             continue
@@ -819,9 +837,15 @@ def _content_slide(prs, data, base_dir="."):
                     n = len(block.get("lines", block.get("items", [])))
                 elif block["type"] == "text":
                     n = len(block["lines"])
-                lh = CODE_LINE_HEIGHT if block["type"] == "code" else TEXT_LINE_HEIGHT
+                lh = (
+                    CODE_LINE_HEIGHT
+                    if block["type"] == "code"
+                    else TEXT_LINE_HEIGHT
+                )
                 height = lh * max(n, 1)
-                txbox = slide.shapes.add_textbox(MARGIN, top, CONTENT_WIDTH, height)
+                txbox = slide.shapes.add_textbox(
+                    MARGIN, top, CONTENT_WIDTH, height
+                )
                 tf = txbox.text_frame
                 tf.word_wrap = True
                 _render_blocks(tf, [block], placeholder=False)
@@ -854,7 +878,11 @@ def _table_slide(prs, data, base_dir="."):
                 n = len(block.get("lines", block.get("items", [])))
             elif block["type"] == "text":
                 n = len(block["lines"])
-            lh = CODE_LINE_HEIGHT if block["type"] == "code" else TEXT_LINE_HEIGHT
+            lh = (
+                CODE_LINE_HEIGHT
+                if block["type"] == "code"
+                else TEXT_LINE_HEIGHT
+            )
             height = lh * max(n, 1)
             txbox = slide.shapes.add_textbox(left, top, width, height)
             tf = txbox.text_frame

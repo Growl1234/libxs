@@ -121,14 +121,20 @@ def add_fingerprint_metrics(
 ):
     order = 4
     source = fingerprint(libxs, volume, (width, height, depth), order)
-    recovered = fingerprint(libxs, reconstructed, (width, height, depth), order)
+    recovered = fingerprint(
+        libxs, reconstructed, (width, height, depth), order
+    )
     sheet_fp = fingerprint(libxs, sheet, (sheet_width, sheet_height), order)
     metrics["fprint.order"] = min(source.order, sheet_fp.order)
-    metrics["fprint.source.decay"] = libxs.libxs_fprint_decay(ctypes.byref(source))
+    metrics["fprint.source.decay"] = libxs.libxs_fprint_decay(
+        ctypes.byref(source)
+    )
     metrics["fprint.reconstructed.decay"] = libxs.libxs_fprint_decay(
         ctypes.byref(recovered)
     )
-    metrics["fprint.sheet.decay"] = libxs.libxs_fprint_decay(ctypes.byref(sheet_fp))
+    metrics["fprint.sheet.decay"] = libxs.libxs_fprint_decay(
+        ctypes.byref(sheet_fp)
+    )
     metrics["fprint.source_reconstructed.diff"] = libxs.libxs_fprint_diff(
         ctypes.byref(source), ctypes.byref(recovered), None
     )
@@ -150,7 +156,9 @@ def profile(values, depth, height, width, axis):
     for z_coord in range(depth):
         for y_coord in range(height):
             for x_coord in range(width):
-                value = values[source_index(z_coord, y_coord, x_coord, height, width)]
+                value = values[
+                    source_index(z_coord, y_coord, x_coord, height, width)
+                ]
                 if axis == "z":
                     result[z_coord] += value
                 elif axis == "y":
@@ -187,15 +195,21 @@ def source_neighbor_distances(depth, height, width, src_to_dst):
                 neighbors = []
                 if x_coord + 1 < width:
                     neighbors.append(
-                        source_index(z_coord, y_coord, x_coord + 1, height, width)
+                        source_index(
+                            z_coord, y_coord, x_coord + 1, height, width
+                        )
                     )
                 if y_coord + 1 < height:
                     neighbors.append(
-                        source_index(z_coord, y_coord + 1, x_coord, height, width)
+                        source_index(
+                            z_coord, y_coord + 1, x_coord, height, width
+                        )
                     )
                 if z_coord + 1 < depth:
                     neighbors.append(
-                        source_index(z_coord + 1, y_coord, x_coord, height, width)
+                        source_index(
+                            z_coord + 1, y_coord, x_coord, height, width
+                        )
                     )
                 for neighbor in neighbors:
                     v1, u1 = src_to_dst[neighbor]
@@ -236,11 +250,15 @@ def sheet_neighbor_source_distances(sheet_height, sheet_width, dst_to_src):
 
 
 def compute_metrics(libxs, curve, frame, depth, height, width, volume):
-    sheet, sheet_height, sheet_width, records, map_seconds = stratify_dense3d.stratify(
-        libxs, curve, depth, height, width, volume, frame
+    sheet, sheet_height, sheet_width, records, map_seconds = (
+        stratify_dense3d.stratify(
+            libxs, curve, depth, height, width, volume, frame
+        )
     )
     src_to_dst, dst_to_src = build_maps(records, sheet_width)
-    reconstructed = reconstruct_volume(sheet, records, sheet_width, len(volume))
+    reconstructed = reconstruct_volume(
+        sheet, records, sheet_width, len(volume)
+    )
     source_sum = sum(volume)
     sheet_sum = sum(sheet)
     occupied = len(records)
@@ -262,7 +280,9 @@ def compute_metrics(libxs, curve, frame, depth, height, width, volume):
         "invariant.source_sum": source_sum,
         "invariant.sheet_sum": sheet_sum,
         "invariant.sum_absdiff": abs(source_sum - sheet_sum),
-        "invariant.reconstruction_max_absdiff": max_abs_delta(volume, reconstructed),
+        "invariant.reconstruction_max_absdiff": max_abs_delta(
+            volume, reconstructed
+        ),
         "profile.z_max_absdiff": max_abs_delta(
             profile(volume, depth, height, width, "z"),
             profile(reconstructed, depth, height, width, "z"),
@@ -294,9 +314,15 @@ def compute_metrics(libxs, curve, frame, depth, height, width, volume):
     summarize(source_distances, "source_neighbors.sheet_manhattan", metrics)
     if source_distances:
         count = float(len(source_distances))
-        metrics["source_neighbors.sheet_adjacent_fraction"] = float(adjacent) / count
-        metrics["source_neighbors.sheet_within2_fraction"] = float(within2) / count
-        metrics["source_neighbors.sheet_within4_fraction"] = float(within4) / count
+        metrics["source_neighbors.sheet_adjacent_fraction"] = (
+            float(adjacent) / count
+        )
+        metrics["source_neighbors.sheet_within2_fraction"] = (
+            float(within2) / count
+        )
+        metrics["source_neighbors.sheet_within4_fraction"] = (
+            float(within4) / count
+        )
     sheet_distances, sheet_adjacent = sheet_neighbor_source_distances(
         sheet_height, sheet_width, dst_to_src
     )
@@ -329,7 +355,9 @@ def parse_args(argv):
         default=(8, 16, 16),
         help="source volume shape",
     )
-    parser.add_argument("--curve", choices=("hilbert", "morton"), default="hilbert")
+    parser.add_argument(
+        "--curve", choices=("hilbert", "morton"), default="hilbert"
+    )
     parser.add_argument(
         "--frame",
         choices=("compact", "canonical"),
@@ -339,7 +367,9 @@ def parse_args(argv):
     parser.add_argument("--libxs", help="path to libxs shared library")
     parser.add_argument("--hdf5", help="read source volume from an HDF5 file")
     parser.add_argument(
-        "--hdf5-dataset", default="ECAL", help="HDF5 dataset containing source volumes"
+        "--hdf5-dataset",
+        default="ECAL",
+        help="HDF5 dataset containing source volumes",
     )
     parser.add_argument(
         "--hdf5-layout",
@@ -355,7 +385,10 @@ def parse_args(argv):
         help="reshape selected flat HDF5 data to a 3D volume",
     )
     parser.add_argument(
-        "--hdf5-event", type=int, default=0, help="event index for batched HDF5 layouts"
+        "--hdf5-event",
+        type=int,
+        default=0,
+        help="event index for batched HDF5 layouts",
     )
     parser.add_argument(
         "--hdf5-channel",
@@ -369,7 +402,8 @@ def parse_args(argv):
         help="read source volume from MedMNIST3D root/flag lookup",
     )
     parser.add_argument(
-        "--medmnist3d-npz", help="read source volume from a MedMNIST3D NPZ file"
+        "--medmnist3d-npz",
+        help="read source volume from a MedMNIST3D NPZ file",
     )
     parser.add_argument(
         "--medmnist3d-root",
@@ -418,8 +452,10 @@ def main(argv):
             args.medmnist3d_flag,
             args.medmnist3d_size,
         )
-        volume, depth, height, width, _ = stratify_medmnist3d.load_medmnist3d_volume(
-            npz_path, args.medmnist3d_split, args.medmnist3d_index
+        volume, depth, height, width, _ = (
+            stratify_medmnist3d.load_medmnist3d_volume(
+                npz_path, args.medmnist3d_split, args.medmnist3d_index
+            )
         )
     else:
         if depth <= 0 or height <= 0 or width <= 0:

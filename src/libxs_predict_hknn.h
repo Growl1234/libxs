@@ -620,5 +620,3 @@ LIBXS_API_INLINE int internal_libxs_predict_hknn_build_po(
   }
   return result;
 }
-
-

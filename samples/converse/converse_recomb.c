@@ -2276,5 +2276,3 @@ int converse_recomb_compose_best(const libxs_registry_t* corpus,
   if (NULL != out_ncand) *out_ncand = ncand;
   return result;
 }
-
-

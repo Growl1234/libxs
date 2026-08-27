@@ -180,5 +180,3 @@ LIBXS_API int libxs_setdiff_min(
 #undef LIBXS_SETDIFF_RANGE
 #undef LIBXS_SETDIFF_CMPLX
 #undef LIBXS_SETDIFF_REAL
-
-

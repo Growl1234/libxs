@@ -1203,4 +1203,3 @@
           MODULE PROCEDURE libxs_fprint_partial_i32
           MODULE PROCEDURE libxs_fprint_partial_i8
         END INTERFACE
-

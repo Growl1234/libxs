@@ -23,7 +23,9 @@ def require_numpy():
     try:
         import numpy as np
     except ImportError as error:
-        raise RuntimeError("numpy is required for MedMNIST3D NPZ input") from error
+        raise RuntimeError(
+            "numpy is required for MedMNIST3D NPZ input"
+        ) from error
     return np
 
 
@@ -41,13 +43,16 @@ def resolve_npz_path(path, root, flag, size):
     if path:
         result = Path(path).expanduser()
         if not result.is_file():
-            raise FileNotFoundError("MedMNIST3D NPZ file not found: %s" % result)
+            raise FileNotFoundError(
+                "MedMNIST3D NPZ file not found: %s" % result
+            )
         return result
     for candidate in medmnist_npz_candidates(root, flag, size):
         if candidate.is_file():
             return candidate
     tried = ", ".join(
-        str(candidate) for candidate in medmnist_npz_candidates(root, flag, size)
+        str(candidate)
+        for candidate in medmnist_npz_candidates(root, flag, size)
     )
     raise FileNotFoundError("MedMNIST3D NPZ file not found; tried: %s" % tried)
 
@@ -58,7 +63,9 @@ def load_medmnist3d_volume(path, split, index):
     label_key = "%s_labels" % split
     with np.load(str(path)) as data:
         if image_key not in data:
-            raise KeyError("dataset key '%s' not found in %s" % (image_key, path))
+            raise KeyError(
+                "dataset key '%s' not found in %s" % (image_key, path)
+            )
         images = data[image_key]
         labels = data[label_key] if label_key in data else None
         if images.ndim != 4:
@@ -96,7 +103,11 @@ def write_label_csv(path, source, split, index, label):
                 source,
                 split,
                 index,
-                "" if label is None else " ".join(str(value) for value in label),
+                (
+                    ""
+                    if label is None
+                    else " ".join(str(value) for value in label)
+                ),
             ]
         )
 
@@ -105,7 +116,9 @@ def parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--npz", help="path to a MedMNIST3D NPZ file")
     parser.add_argument(
-        "--root", default="~/.medmnist", help="directory containing MedMNIST NPZ files"
+        "--root",
+        default="~/.medmnist",
+        help="directory containing MedMNIST NPZ files",
     )
     parser.add_argument(
         "--flag",
@@ -114,13 +127,20 @@ def parse_args(argv):
         help="MedMNIST3D dataset flag used with --root",
     )
     parser.add_argument(
-        "--size", type=int, default=28, help="MedMNIST image size used with --root"
+        "--size",
+        type=int,
+        default=28,
+        help="MedMNIST image size used with --root",
     )
-    parser.add_argument("--split", choices=("train", "val", "test"), default="train")
+    parser.add_argument(
+        "--split", choices=("train", "val", "test"), default="train"
+    )
     parser.add_argument(
         "--index", type=int, default=0, help="sample index within the split"
     )
-    parser.add_argument("--curve", choices=("hilbert", "morton"), default="hilbert")
+    parser.add_argument(
+        "--curve", choices=("hilbert", "morton"), default="hilbert"
+    )
     parser.add_argument(
         "--frame",
         choices=("compact", "canonical"),
@@ -128,10 +148,18 @@ def parse_args(argv):
         help="sheet framing policy for finite-bit stratification",
     )
     parser.add_argument("--libxs", help="path to libxs shared library")
-    parser.add_argument("--out", help="write stratified sheet as an 8-bit PGM image")
-    parser.add_argument("--map-csv", help="write source-to-destination map as CSV")
-    parser.add_argument("--label-csv", help="write selected MedMNIST label as CSV")
-    parser.add_argument("--out-hdf5", help="write stratified sheet and map as HDF5")
+    parser.add_argument(
+        "--out", help="write stratified sheet as an 8-bit PGM image"
+    )
+    parser.add_argument(
+        "--map-csv", help="write source-to-destination map as CSV"
+    )
+    parser.add_argument(
+        "--label-csv", help="write selected MedMNIST label as CSV"
+    )
+    parser.add_argument(
+        "--out-hdf5", help="write stratified sheet and map as HDF5"
+    )
     return parser.parse_args(argv)
 
 
@@ -142,8 +170,10 @@ def main(argv):
         npz_path, args.split, args.index
     )
     libxs, lib_path = stratify_dense3d.load_libxs(args.libxs)
-    sheet, sheet_height, sheet_width, records, map_seconds = stratify_dense3d.stratify(
-        libxs, args.curve, depth, height, width, volume, args.frame
+    sheet, sheet_height, sheet_width, records, map_seconds = (
+        stratify_dense3d.stratify(
+            libxs, args.curve, depth, height, width, volume, args.frame
+        )
     )
     volume_sum = sum(volume)
     sheet_sum = sum(sheet)
@@ -154,7 +184,11 @@ def main(argv):
     print("input: %s:%s[%d]" % (npz_path, args.split, args.index))
     print(
         "label: %s"
-        % ("none" if label is None else " ".join(str(value) for value in label))
+        % (
+            "none"
+            if label is None
+            else " ".join(str(value) for value in label)
+        )
     )
     print(
         "source: D=%d H=%d W=%d voxels=%d"
@@ -178,7 +212,9 @@ def main(argv):
         )
         print("wrote: %s" % args.map_csv)
     if args.label_csv:
-        write_label_csv(args.label_csv, str(npz_path), args.split, args.index, label)
+        write_label_csv(
+            args.label_csv, str(npz_path), args.split, args.index, label
+        )
         print("wrote: %s" % args.label_csv)
     if args.out_hdf5:
         stratify_dense3d.write_hdf5(

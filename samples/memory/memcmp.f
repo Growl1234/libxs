@@ -108,4 +108,3 @@
         CALL libxs_finalize()
         DEALLOCATE(a, b)
       END PROGRAM
-

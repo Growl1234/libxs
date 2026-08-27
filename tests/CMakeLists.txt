@@ -419,4 +419,3 @@ foreach(test_entry IN LISTS LIBXS_TEST_ENTRIES)
     WORKING_DIRECTORY "${LIBXS_TEST_DIR}"
     LABELS libxs)
 endforeach()
-

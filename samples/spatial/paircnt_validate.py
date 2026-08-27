@@ -32,7 +32,15 @@ def run_corrfunc(x, y, z, rmin, rmax, nbins, boxsize, periodic):
     edges = np.logspace(np.log10(rmin), np.log10(rmax), nbins + 1)
     binfile = edges
     results = DD(
-        1, 1, binfile, x, y, z, periodic=periodic, boxsize=boxsize, verbose=False
+        1,
+        1,
+        binfile,
+        x,
+        y,
+        z,
+        periodic=periodic,
+        boxsize=boxsize,
+        verbose=False,
     )
     return results["npairs"], edges
 
@@ -65,7 +73,9 @@ def run_paircnt_dd(catalog, rmin, rmax, nbins, boxsize, exe="./paircnt_dd"):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate paircnt_dd against Corrfunc")
+    parser = argparse.ArgumentParser(
+        description="Validate paircnt_dd against Corrfunc"
+    )
     parser.add_argument("catalog")
     parser.add_argument("--rmin", type=float, default=0.1)
     parser.add_argument("--rmax", type=float, default=25.0)

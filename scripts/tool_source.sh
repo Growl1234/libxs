@@ -63,4 +63,3 @@ cat << EOM
 
 #endif /*LIBXS_SOURCE_H*/
 EOM
-
