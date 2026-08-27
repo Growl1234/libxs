@@ -193,7 +193,29 @@ OZAKI_API_INTERN void gemm_complex(GEMM_ARGDECL)
     beta_d[1] = (double)beta[1];
     result = ozaki_ocl_gemm_complex(ozaki_ocl_handle, *transa, *transb, *m, *n, *k, alpha_d, a, *lda, b, *ldb, beta_d, c, *ldc);
     done = (EXIT_SUCCESS == result);
-    /* Fall through to CPU path on failure */
+    /**
+     * Falling through to the host is correct but must not be quiet. A device
+     * path that fails every call still returns the right answer here, so the
+     * only symptom is a slower one: an arena change once sent every launch back
+     * to the host for a whole campaign, and the rows it produced looked
+     * ordinary. Said once per process, since a wrapper sees every GEMM.
+     */
+    if (0 == done) {
+      static int once = 0;
+      if (0 == once) {
+        once = 1;
+        fprintf(stderr, "WARN OZAKI: complex GEMM fell back to the host"
+                        " (device path failed; set LIBXSTREAM_VERBOSE to see why)\n");
+      }
+    }
+  }
+  else if (2 <= ozaki_complex) { /* asked for the device and it is not available at all */
+    static int once = 0;
+    if (0 == once) {
+      once = 1;
+      fprintf(stderr, "WARN OZAKI: OZAKI_COMPLEX=%i but the device path is unavailable,"
+                      " using the host\n", ozaki_complex);
+    }
   }
 #endif
 
