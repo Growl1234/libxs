@@ -2792,19 +2792,22 @@ endif
 
 # Policies are maintained in LIBXS and copied into dependent projects, i.e.,
 # the same way this Makefile.inc is shared (MAKEINC locates the origin).
+POLICIES := CLAUDE.md .editorconfig .pre-commit-config.yaml \
+  .github/workflows/lint.yml scripts/tool_normalize.sh
 POLICYMDS := $(NULL)
-ifneq (,$(strip $(DOCDIR)))
+
+define POLICY_RULE
+ifneq (,$(wildcard $(MAKEINC)/$(1)))
+POLICYMDS += $(2)
+$(2): $(MAKEINC)/$(1)
+	@$(CP) $$< $$@
+endif
+endef
+
 ifneq ($(abspath $(MAKEINC)),$(abspath $(ROOTDIR)))
-ifneq (,$(wildcard $(MAKEINC)/$(DOCDIR)/libxs_contrib.md))
-POLICYMDS += $(DOCDIR)/$(PROJECT)_contrib.md
-$(DOCDIR)/$(PROJECT)_contrib.md: $(MAKEINC)/$(DOCDIR)/libxs_contrib.md
-	@$(CP) $< $@
-endif
-ifneq (,$(wildcard $(MAKEINC)/CLAUDE.md))
-POLICYMDS += $(ROOTDIR)/CLAUDE.md
-$(ROOTDIR)/CLAUDE.md: $(MAKEINC)/CLAUDE.md
-	@$(CP) $< $@
-endif
+$(foreach POLICY,$(POLICIES),$(eval $(call POLICY_RULE,$(POLICY),$(POLICY))))
+ifneq (,$(strip $(DOCDIR)))
+$(eval $(call POLICY_RULE,$(DOCDIR)/libxs_contrib.md,$(DOCDIR)/$(PROJECT)_contrib.md))
 endif
 endif
 

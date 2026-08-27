@@ -42,9 +42,25 @@ Beyond encoding:
 - A script carrying a shebang is executable in the index (mode 755); every
   other file is 644.
 
-`scripts/tool_normalize.sh` checks, and where it can fixes, everything above
-except the spacing conventions. Run it before submitting — continuous
-integration does not.
+These are enforced mechanically rather than by review. `.pre-commit-config.yaml`
+combines the standard [pre-commit](https://pre-commit.com/) hooks (trailing
+whitespace, line endings, byte-order marks, shebang and exec-bit consistency,
+YAML syntax) with the project-specific rules (US-ASCII, tabs, C++ comments,
+whitespace before `#`, `exit()` in library code, `sed -i` in scripts). Install
+the Git hook once per clone; the same configuration runs in continuous
+integration, so a violation fails the pull request:
+
+```bash
+scripts/tool_normalize.sh --install   # once per clone
+scripts/tool_normalize.sh            # check and fix the whole tree
+scripts/tool_normalize.sh src        # or one directory
+```
+
+`.editorconfig` keeps most of it from happening in the first place. Data files
+(`*.csv`, `*.tsv`, `*.dat`) and generated sources are exempt — tabs and line
+endings are part of their format, and their producer owns them. Of the rules
+above only the two spacing conventions are checked partially: a space before a
+comma or semicolon is caught in C sources, the rest is on the author.
 
 ## C Source File Structure
 
