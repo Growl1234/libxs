@@ -190,6 +190,22 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
   void* registry);
 
 /**
+ * libxs_gemm_dispatch_rt populating a caller-owned config.
+ * Returns non-zero if config was populated, zero otherwise.
+ * A config without kernel is NOT entered into the registry here: the caller
+ * owns the storage and the warm-up counters live outside the registry, so
+ * nothing needs the entry. The registry therefore holds kernels only, and a
+ * shape refused by LIBXS_GEMM_JIT_MAX costs no entry at all. The pointer
+ * flavors must register, since a returned pointer has to stay valid.
+ */
+LIBXS_API int libxs_gemm_dispatch_cpy_rt(
+  libxs_gemm_config_t* config,
+  const libxs_gemm_shape_t* shape,
+  const libxs_gemm_shape_t* kernel_shape,
+  const libxs_gemm_backend_t* backend,
+  void* registry);
+
+/**
  * Process a batch of GEMMs given arrays of pointers to matrices.
  * C_i := alpha * op(A_i) * op(B_i) + beta * C_i, for i in [0, batchsize).
  * Shape, alpha, beta, datatype, and transpose info come from config->shape.
@@ -349,9 +365,23 @@ LIBXS_API_INLINE int libxs_gemm_dispatch_cpy(
   const void* alpha, const void* beta,
   void* LIBXS_ARGDEF(registry, NULL))
 {
-  return libxs_gemm_config_cpy(config, libxs_gemm_dispatch(
-    datatype, transa, transb, m, n, k, lda, ldb, ldc,
-    alpha, beta, registry));
+  libxs_gemm_shape_t shape;
+  libxs_gemm_backend_t be;
+  LIBXS_MEMZERO(&shape);
+  shape.datatype = datatype;
+  shape.transa = transa; shape.transb = transb;
+  shape.m = m; shape.n = n; shape.k = k;
+  shape.lda = lda; shape.ldb = ldb; shape.ldc = ldc;
+  if (LIBXS_DATATYPE_F64 == datatype) {
+    shape.alpha = (NULL != alpha ? *(const double*)alpha : 1.0);
+    shape.beta  = (NULL != beta  ? *(const double*)beta  : 0.0);
+  }
+  else if (LIBXS_DATATYPE_F32 == datatype) {
+    shape.alpha = (NULL != alpha ? (double)*(const float*)alpha : 1.0);
+    shape.beta  = (NULL != beta  ? (double)*(const float*)beta  : 0.0);
+  }
+  libxs_gemm_backend_init(&be);
+  return libxs_gemm_dispatch_cpy_rt(config, &shape, NULL, &be, registry);
 }
 
 /**
@@ -466,6 +496,20 @@ LIBXS_API libxs_gemm_config_t* libxs_syrk_dispatch_rt(
   const libxs_gemm_backend_t* LIBXS_ARGDEF(backend, NULL),
   void* LIBXS_ARGDEF(registry, NULL));
 
+/** libxs_syr2k_dispatch_rt populating a caller-owned config (see _cpy_rt). */
+LIBXS_API int libxs_syr2k_dispatch_cpy_rt(
+  libxs_gemm_config_t* config,
+  libxs_data_t datatype, int n, int k, int lda, int ldb, int ldc,
+  const libxs_gemm_backend_t* LIBXS_ARGDEF(backend, NULL),
+  void* LIBXS_ARGDEF(registry, NULL));
+
+/** libxs_syrk_dispatch_rt populating a caller-owned config (see _cpy_rt). */
+LIBXS_API int libxs_syrk_dispatch_cpy_rt(
+  libxs_gemm_config_t* config,
+  libxs_data_t datatype, int n, int k, int lda, int ldc,
+  const libxs_gemm_backend_t* LIBXS_ARGDEF(backend, NULL),
+  void* LIBXS_ARGDEF(registry, NULL));
+
 /**
  * Dispatch a GEMM config suitable for libxs_syr2k, with the backend
  * detected at the caller's compile time (libxs_gemm_backend_init).
@@ -502,8 +546,10 @@ LIBXS_API_INLINE int libxs_syr2k_dispatch_cpy(
   libxs_data_t datatype, int n, int k, int lda, int ldb, int ldc,
   void* LIBXS_ARGDEF(registry, NULL))
 {
-  return libxs_gemm_config_cpy(config, libxs_syr2k_dispatch(
-    datatype, n, k, lda, ldb, ldc, registry));
+  libxs_gemm_backend_t be;
+  libxs_gemm_backend_init(&be);
+  return libxs_syr2k_dispatch_cpy_rt(config,
+    datatype, n, k, lda, ldb, ldc, &be, registry);
 }
 
 /**
@@ -515,8 +561,10 @@ LIBXS_API_INLINE int libxs_syrk_dispatch_cpy(
   libxs_data_t datatype, int n, int k, int lda, int ldc,
   void* LIBXS_ARGDEF(registry, NULL))
 {
-  return libxs_gemm_config_cpy(config, libxs_syrk_dispatch(
-    datatype, n, k, lda, ldc, registry));
+  libxs_gemm_backend_t be;
+  libxs_gemm_backend_init(&be);
+  return libxs_syrk_dispatch_cpy_rt(config,
+    datatype, n, k, lda, ldc, &be, registry);
 }
 
 /**

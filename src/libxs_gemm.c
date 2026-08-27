@@ -38,8 +38,12 @@
 /* slot: 24-bit identity tag (bits 31..8) plus 8-bit state (bits 7..0) */
 /* state 0 is unseen, 1 to threshold-1 counts dispatches */
 /* DONE is terminal: the JIT was attempted, successfully or not */
+/* NOJIT is terminal too and stronger: no kernel can ever exist for this */
+/* shape, because the arithmetic-intensity gate refused it and that gate */
+/* reads the kernel shape alone, hence no backend can change the answer */
 /* a tag mismatch reclaims the slot instead of inheriting foreign state */
 #define INTERNAL_GEMM_WARMUP_DONE 255
+#define INTERNAL_GEMM_WARMUP_NOJIT 254
 #define INTERNAL_GEMM_WARMUP_TAG(HASH) (((HASH) >> 8) & 0xFFFFFF)
 #define INTERNAL_GEMM_WARMUP_SLOT(TAG, STATE) \
   (((unsigned int)(TAG) << 8) | (unsigned int)(STATE))
@@ -171,6 +175,7 @@ LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_jit_warmup);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_backend);
 LIBXS_APIVAR_DEFINE(unsigned int
   internal_libxs_gemm_warmup[LIBXS_GEMM_NWARMUP]);
+LIBXS_APIVAR_DEFINE(unsigned int internal_libxs_gemm_nshape);
 
 static LIBXS_TLS void* internal_libxs_syrk_buffer;
 static LIBXS_TLS size_t internal_libxs_syrk_buffer_size;
@@ -269,9 +274,9 @@ LIBXS_API_INTERN void internal_libxs_gemm_init(void)
       ? 7 /*default: AI of ~80x80x80*/ : atoi(gemm_jit_max_env));
     internal_libxs_gemm_jit_warmup = (NULL == gemm_jit_warmup_env
       ? 8 /*default*/ : atoi(gemm_jit_warmup_env));
-    /* the slot state must stay below INTERNAL_GEMM_WARMUP_DONE */
-    if (INTERNAL_GEMM_WARMUP_DONE <= internal_libxs_gemm_jit_warmup) {
-      internal_libxs_gemm_jit_warmup = INTERNAL_GEMM_WARMUP_DONE - 1;
+    /* the counting states must stay below the terminal ones */
+    if (INTERNAL_GEMM_WARMUP_NOJIT <= internal_libxs_gemm_jit_warmup) {
+      internal_libxs_gemm_jit_warmup = INTERNAL_GEMM_WARMUP_NOJIT - 1;
     }
     internal_libxs_gemm_backend = (NULL == gemm_backend_env)
       ? INTERNAL_GEMM_BACKEND_AUTO : atoi(gemm_backend_env);
@@ -286,22 +291,39 @@ LIBXS_API_INTERN void internal_libxs_gemm_init(void)
 }
 
 
+LIBXS_API_INLINE unsigned int internal_libxs_gemm_warmup_state(
+  unsigned int hash)
+{
+  const unsigned int *const slot = internal_libxs_gemm_warmup
+    + (hash & (LIBXS_GEMM_NWARMUP - 1));
+  const unsigned int cur = LIBXS_ATOMIC_LOAD(slot, LIBXS_ATOMIC_RELAXED);
+  const unsigned int s = INTERNAL_GEMM_WARMUP_STATE(cur);
+  /* a foreign tag reclaims the slot rather than inheriting its state */
+  return (INTERNAL_GEMM_WARMUP_SLOT(INTERNAL_GEMM_WARMUP_TAG(hash), s) == cur)
+    ? s : 0;
+}
+
+
 LIBXS_API_INLINE int internal_libxs_gemm_warmup_due(
-  const libxs_registry_t* registry, unsigned int hash, unsigned int* state)
+  unsigned int hash, unsigned int* state)
 {
   const int threshold = internal_libxs_gemm_jit_warmup;
   unsigned int *const slot = internal_libxs_gemm_warmup
     + (hash & (LIBXS_GEMM_NWARMUP - 1));
   const unsigned int tag = INTERNAL_GEMM_WARMUP_TAG(hash);
-  const unsigned int cur = LIBXS_ATOMIC_LOAD(slot, LIBXS_ATOMIC_RELAXED);
-  unsigned int s = INTERNAL_GEMM_WARMUP_STATE(cur);
+  unsigned int s = internal_libxs_gemm_warmup_state(hash);
   int result = 0;
-  /* a foreign tag reclaims the slot rather than inheriting its state */
-  if (INTERNAL_GEMM_WARMUP_SLOT(tag, s) != cur) s = 0;
-  if (INTERNAL_GEMM_WARMUP_DONE != s) {
-    /* an empty registry cannot prove reuse: dispatch once, call often */
-    if (1 >= threshold || 0 == libxs_registry_size(registry)) {
+  if (INTERNAL_GEMM_WARMUP_DONE != s && INTERNAL_GEMM_WARMUP_NOJIT != s) {
+    if (1 >= threshold) {
       result = 1;
+    }
+    else if (0 == s && 1 == (unsigned int)LIBXS_ATOMIC_ADD_FETCH(
+      &internal_libxs_gemm_nshape, 1, LIBXS_ATOMIC_RELAXED))
+    { /* the first shape cannot prove reuse: dispatch once, call often */
+      s = (unsigned int)threshold;
+      result = 1;
+      LIBXS_ATOMIC_STORE(slot,
+        INTERNAL_GEMM_WARMUP_SLOT(tag, s), LIBXS_ATOMIC_RELAXED);
     }
     else {
       if ((unsigned int)threshold <= ++s) result = 1;
@@ -315,13 +337,15 @@ LIBXS_API_INLINE int internal_libxs_gemm_warmup_due(
 }
 
 
-LIBXS_API_INLINE void internal_libxs_gemm_warmup_done(unsigned int hash)
+LIBXS_API_INLINE void internal_libxs_gemm_warmup_term(
+  unsigned int hash, unsigned int state)
 {
   unsigned int *const slot = internal_libxs_gemm_warmup
     + (hash & (LIBXS_GEMM_NWARMUP - 1));
+  LIBXS_ASSERT(INTERNAL_GEMM_WARMUP_DONE == state
+    || INTERNAL_GEMM_WARMUP_NOJIT == state);
   LIBXS_ATOMIC_STORE(slot, INTERNAL_GEMM_WARMUP_SLOT(
-    INTERNAL_GEMM_WARMUP_TAG(hash), INTERNAL_GEMM_WARMUP_DONE),
-    LIBXS_ATOMIC_RELAXED);
+    INTERNAL_GEMM_WARMUP_TAG(hash), state), LIBXS_ATOMIC_RELAXED);
 }
 
 
@@ -432,6 +456,18 @@ LIBXS_API_INLINE void internal_libxs_gemm_print_registry(const libxs_registry_t*
           (unsigned long)info.size, (unsigned long)info.capacity, (unsigned long)info.nbytes, backend);
         fprintf(stderr, "LIBXS INFO: GEMM histogram f64=%lu f32=%lu mkl-jit=%lu libxsmm=%lu blas=%lu fallback=%lu\n",
           nf64, nf32, njit, nxgemm, nblas, nfallback);
+        { /* kernel-less shapes own no entry, hence the counters report them */
+          unsigned long nwarm = 0, nojit = 0, i;
+          for (i = 0; i < LIBXS_GEMM_NWARMUP; ++i) {
+            const unsigned int s = INTERNAL_GEMM_WARMUP_STATE(
+              LIBXS_ATOMIC_LOAD(internal_libxs_gemm_warmup + i,
+                LIBXS_ATOMIC_RELAXED));
+            if (0 != s) ++nwarm;
+            if (INTERNAL_GEMM_WARMUP_NOJIT == s) ++nojit;
+          }
+          fprintf(stderr, "LIBXS INFO: GEMM warm-up slots=%lu/%lu nojit=%lu\n",
+            nwarm, (unsigned long)LIBXS_GEMM_NWARMUP, nojit);
+        }
       }
     }
   }
@@ -467,11 +503,19 @@ LIBXS_API_INTERN void internal_libxs_gemm_finalize(void)
 }
 
 
-LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
+/* own is the caller's config when the caller owns it, else NULL */
+/* a config without kernel is not registered when the caller owns it: the */
+/* warm-up counters live outside the registry, hence nothing needs the entry */
+LIBXS_API_INTERN libxs_gemm_config_t* internal_libxs_gemm_dispatch(
   const libxs_gemm_shape_t* shape,
   const libxs_gemm_shape_t* kernel_shape,
   const libxs_gemm_backend_t* backend,
-  void* registry)
+  void* registry, libxs_gemm_config_t* own);
+LIBXS_API_INTERN libxs_gemm_config_t* internal_libxs_gemm_dispatch(
+  const libxs_gemm_shape_t* shape,
+  const libxs_gemm_shape_t* kernel_shape,
+  const libxs_gemm_backend_t* backend,
+  void* registry, libxs_gemm_config_t* own)
 {
   libxs_gemm_config_t* result = NULL;
   libxs_registry_t* reg = NULL;
@@ -509,17 +553,21 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
       /* one hash per dispatch, shared by the registry and the warm-up table */
       whash = libxs_registry_hash(
         (const libxs_registry_t*)reg, shape, sizeof(*shape));
-      result = (libxs_gemm_config_t*)libxs_registry_get_hashed(
-        (const libxs_registry_t*)reg, shape, sizeof(*shape),
-        whash, libxs_registry_lock(reg));
+      /* a NOJIT shape owns no entry when the caller owns the config */
+      if (NULL == own || INTERNAL_GEMM_WARMUP_NOJIT
+        != internal_libxs_gemm_warmup_state(whash))
+      {
+        result = (libxs_gemm_config_t*)libxs_registry_get_hashed(
+          (const libxs_registry_t*)reg, shape, sizeof(*shape),
+          whash, libxs_registry_lock(reg));
+      }
     }
     /* a config without kernel is provisional: reuse decides when to JIT */
     if (NULL != reg && (NULL == result
       || (NULL == result->dgemm_jit && NULL == result->sgemm_jit
         && NULL == result->xgemm)))
     {
-      jit_due = internal_libxs_gemm_warmup_due(
-        (const libxs_registry_t*)reg, whash, &wstate);
+      jit_due = internal_libxs_gemm_warmup_due(whash, &wstate);
       if (0 != jit_due) result = NULL;
     }
     if (NULL == result && NULL != reg) {
@@ -527,6 +575,7 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
       const libxs_gemm_config_t* kernel = NULL;
       const libxs_gemm_config_t* cached = NULL;
       libxs_gemm_config_t config;
+      int gate = 0;
       LIBXS_MEMZERO(&config);
       /* snapshot of the shared warm-up counter (introspection only) */
       config.warmup = (int)wstate;
@@ -585,6 +634,7 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
         const libxs_xgemm_dispatch_t xdisp =
           (NULL != backend && NULL != backend->xgemm_dispatch)
           ? backend->xgemm_dispatch : internal_libxs_xgemm_dispatch;
+        gate = use_kernel; /* the gate reads the kernel shape alone */
         if (0 != use_jit && 0 != use_kernel
           && NULL != jcd && NULL != jgd
           && LIBXS_DATATYPE_F64 == kernel_shape->datatype)
@@ -683,16 +733,28 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
           }
         }
       }
-      if (0 != jit_allowed) { /* attempted once, hence never again */
-        internal_libxs_gemm_warmup_done(whash);
-      }
-      result = (libxs_gemm_config_t*)libxs_registry_set_hashed(
-        reg, shape, sizeof(*shape), whash,
-        &config, sizeof(config), libxs_registry_lock(reg));
-      if (NULL == result) {
-        static LIBXS_TLS libxs_gemm_config_t fallback;
-        fallback = config;
-        result = &fallback;
+      { const int kernel_ok = (NULL != config.dgemm_jit
+          || NULL != config.sgemm_jit || NULL != config.xgemm);
+        if (0 != jit_allowed) { /* attempted once, hence never again */
+          const unsigned int term = (0 == kernel_ok
+            && NULL == kernel && 0 == gate)
+            ? INTERNAL_GEMM_WARMUP_NOJIT : INTERNAL_GEMM_WARMUP_DONE;
+          internal_libxs_gemm_warmup_term(whash, term);
+        }
+        if (0 == kernel_ok && NULL != own) {
+          *own = config; /* caller-owned, hence not registered */
+          result = own;
+        }
+        else {
+          result = (libxs_gemm_config_t*)libxs_registry_set_hashed(
+            reg, shape, sizeof(*shape), whash,
+            &config, sizeof(config), libxs_registry_lock(reg));
+          if (NULL == result) {
+            static LIBXS_TLS libxs_gemm_config_t fallback;
+            fallback = config;
+            result = &fallback;
+          }
+        }
       }
       LIBXS_ASSERT(LIBXS_DATATYPE_F64 != shape->datatype
         || NULL != result->dgemm_blas);
@@ -721,6 +783,35 @@ LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
       }
     }
 #endif
+  }
+  return result;
+}
+
+
+LIBXS_API libxs_gemm_config_t* libxs_gemm_dispatch_rt(
+  const libxs_gemm_shape_t* shape,
+  const libxs_gemm_shape_t* kernel_shape,
+  const libxs_gemm_backend_t* backend,
+  void* registry)
+{
+  return internal_libxs_gemm_dispatch(
+    shape, kernel_shape, backend, registry, NULL);
+}
+
+
+LIBXS_API int libxs_gemm_dispatch_cpy_rt(
+  libxs_gemm_config_t* config,
+  const libxs_gemm_shape_t* shape,
+  const libxs_gemm_shape_t* kernel_shape,
+  const libxs_gemm_backend_t* backend,
+  void* registry)
+{
+  int result = 0;
+  if (NULL != config) {
+    libxs_gemm_config_t *const cfg = internal_libxs_gemm_dispatch(
+      shape, kernel_shape, backend, registry, config);
+    /* cfg == config when the impl filled it, else it is registry-owned */
+    result = (cfg == config) ? 1 : libxs_gemm_config_cpy(config, cfg);
   }
   return result;
 }
@@ -996,9 +1087,14 @@ LIBXS_API_INTERN void internal_libxs_gemm_blas(
 }
 
 
-LIBXS_API libxs_gemm_config_t* libxs_syr2k_dispatch_rt(
+LIBXS_API_INTERN libxs_gemm_config_t* internal_libxs_syr2k_dispatch(
   libxs_data_t datatype, int n, int k, int lda, int ldb, int ldc,
-  const libxs_gemm_backend_t* backend, void* registry)
+  const libxs_gemm_backend_t* backend, void* registry,
+  libxs_gemm_config_t* own);
+LIBXS_API_INTERN libxs_gemm_config_t* internal_libxs_syr2k_dispatch(
+  libxs_data_t datatype, int n, int k, int lda, int ldb, int ldc,
+  const libxs_gemm_backend_t* backend, void* registry,
+  libxs_gemm_config_t* own)
 {
   const int km = LIBXS_MIN(n, internal_libxs_gemm_bm);
   const int kn = LIBXS_MIN(n, internal_libxs_gemm_bn);
@@ -1016,7 +1112,16 @@ LIBXS_API libxs_gemm_config_t* libxs_syr2k_dispatch_rt(
   kshape.m = km; kshape.n = kn; kshape.k = kk;
   kshape.lda = lda; kshape.ldb = ldb; kshape.ldc = km;
   kshape.alpha = 1.0; kshape.beta = 1.0;
-  return libxs_gemm_dispatch_rt(&shape, &kshape, backend, registry);
+  return internal_libxs_gemm_dispatch(&shape, &kshape, backend, registry, own);
+}
+
+
+LIBXS_API libxs_gemm_config_t* libxs_syr2k_dispatch_rt(
+  libxs_data_t datatype, int n, int k, int lda, int ldb, int ldc,
+  const libxs_gemm_backend_t* backend, void* registry)
+{
+  return internal_libxs_syr2k_dispatch(
+    datatype, n, k, lda, ldb, ldc, backend, registry, NULL);
 }
 
 
@@ -1026,6 +1131,31 @@ LIBXS_API libxs_gemm_config_t* libxs_syrk_dispatch_rt(
 {
   return libxs_syr2k_dispatch_rt(datatype, n, k, lda, lda, ldc,
     backend, registry);
+}
+
+
+LIBXS_API int libxs_syr2k_dispatch_cpy_rt(
+  libxs_gemm_config_t* config,
+  libxs_data_t datatype, int n, int k, int lda, int ldb, int ldc,
+  const libxs_gemm_backend_t* backend, void* registry)
+{
+  int result = 0;
+  if (NULL != config) {
+    libxs_gemm_config_t *const cfg = internal_libxs_syr2k_dispatch(
+      datatype, n, k, lda, ldb, ldc, backend, registry, config);
+    result = (cfg == config) ? 1 : libxs_gemm_config_cpy(config, cfg);
+  }
+  return result;
+}
+
+
+LIBXS_API int libxs_syrk_dispatch_cpy_rt(
+  libxs_gemm_config_t* config,
+  libxs_data_t datatype, int n, int k, int lda, int ldc,
+  const libxs_gemm_backend_t* backend, void* registry)
+{
+  return libxs_syr2k_dispatch_cpy_rt(config,
+    datatype, n, k, lda, lda, ldc, backend, registry);
 }
 
 

@@ -785,6 +785,19 @@
             TYPE(C_PTR) :: internal_gemm_dispatch_rt
           END FUNCTION
 
+          FUNCTION internal_gemm_dispatch_cpy_rt(config,                &
+     &    shape, kernel_shape, backend, registry)                       &
+     &    BIND(C, NAME="libxs_gemm_dispatch_cpy_rt")
+            IMPORT :: libxs_gemm_config_t, libxs_gemm_shape_t,          &
+     &        libxs_gemm_backend_t, C_PTR, C_INT
+            TYPE(libxs_gemm_config_t), INTENT(INOUT) :: config
+            TYPE(libxs_gemm_shape_t), INTENT(IN) :: shape
+            TYPE(libxs_gemm_shape_t), INTENT(IN) :: kernel_shape
+            TYPE(libxs_gemm_backend_t), INTENT(IN) :: backend
+            TYPE(C_PTR), INTENT(IN), VALUE :: registry
+            INTEGER(C_INT) :: internal_gemm_dispatch_cpy_rt
+          END FUNCTION
+
           ! internal C binding
           SUBROUTINE internal_syr2k(config, uplo,                       &
      &    alpha, beta, a, b, c)                                         &
@@ -907,6 +920,18 @@
      &      m, n, ldi, ldo, tid, ntasks
           END SUBROUTINE
 
+          FUNCTION internal_syr2k_dispatch_cpy(config, datatype,        &
+     &    n, k, lda, ldb, ldc, backend, registry)                       &
+     &    BIND(C, NAME="libxs_syr2k_dispatch_cpy_rt")
+            IMPORT :: libxs_gemm_config_t, libxs_gemm_backend_t,        &
+     &        C_PTR, C_INT
+            TYPE(libxs_gemm_config_t), INTENT(INOUT) :: config
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &        datatype, n, k, lda, ldb, ldc
+            TYPE(libxs_gemm_backend_t), INTENT(IN) :: backend
+            TYPE(C_PTR), INTENT(IN), VALUE :: registry
+            INTEGER(C_INT) :: internal_syr2k_dispatch_cpy
+          END FUNCTION
           FUNCTION internal_syr2k_dispatch(datatype,                    &
      &    n, k, lda, ldb, ldc, backend, registry)                       &
      &    BIND(C, NAME="libxs_syr2k_dispatch_rt")

@@ -155,9 +155,39 @@
           REAL(C_DOUBLE), INTENT(IN) :: alpha, beta
           TYPE(C_PTR), INTENT(IN), OPTIONAL :: registry
           INTEGER(C_INT) :: libxs_gemm_dispatch
-          libxs_gemm_dispatch = libxs_gemm_config_cpy(config,           &
-     &      libxs_gemm_dispatch_ptr(datatype, transa, transb,           &
-     &      m, n, k, lda, ldb, ldc, alpha, beta, registry))
+          TYPE(C_FUNPTR) :: dgemm_fp, sgemm_fp
+#if defined(__MKL)
+          TYPE(C_FUNPTR) :: jcd_fp, jgd_fp, jcs_fp, jgs_fp
+#endif
+#if defined(__LIBXSMM)
+          TYPE(C_FUNPTR) :: xdisp_fp
+#endif
+          dgemm_fp = C_FUNLOC(dgemm_blas)
+          sgemm_fp = C_FUNLOC(sgemm_blas)
+#if defined(__MKL)
+          jcd_fp = C_FUNLOC(mkl_cblas_jit_create_dgemm)
+          jgd_fp = C_FUNLOC(mkl_jit_get_dgemm_ptr)
+          jcs_fp = C_FUNLOC(mkl_cblas_jit_create_sgemm)
+          jgs_fp = C_FUNLOC(mkl_jit_get_sgemm_ptr)
+#endif
+#if defined(__LIBXSMM)
+          xdisp_fp = C_FUNLOC(libxsmm_dispatch_gemm)
+#endif
+          libxs_gemm_dispatch = libxs_gemm_dispatch_base(config,        &
+     &      datatype, transa, transb,                                   &
+     &      m, n, k, lda, ldb, ldc, alpha, beta,                        &
+#if defined(__MKL)
+     &      jit_create_dgemm=jcd_fp,                                    &
+     &      jit_get_dgemm=jgd_fp,                                       &
+     &      jit_create_sgemm=jcs_fp,                                    &
+     &      jit_get_sgemm=jgs_fp,                                       &
+#endif
+#if defined(__LIBXSMM)
+     &      xgemm_dispatch=xdisp_fp,                                    &
+#endif
+     &      dgemm_blas=dgemm_fp,                                        &
+     &      sgemm_blas=sgemm_fp,                                        &
+     &      registry=registry)
         END FUNCTION
 
 
@@ -224,9 +254,38 @@
           INTEGER(C_INT), INTENT(IN) :: lda, ldb, ldc
           TYPE(C_PTR), INTENT(IN), OPTIONAL :: registry
           INTEGER(C_INT) :: libxs_syr2k_dispatch_cpy
-          libxs_syr2k_dispatch_cpy = libxs_gemm_config_cpy(config,      &
-     &      libxs_syr2k_dispatch(datatype, n, k, lda, ldb, ldc,         &
-     &      registry))
+          TYPE(C_FUNPTR) :: dgemm_fp, sgemm_fp
+#if defined(__MKL)
+          TYPE(C_FUNPTR) :: jcd_fp, jgd_fp, jcs_fp, jgs_fp
+#endif
+#if defined(__LIBXSMM)
+          TYPE(C_FUNPTR) :: xdisp_fp
+#endif
+          dgemm_fp = C_FUNLOC(dgemm_blas)
+          sgemm_fp = C_FUNLOC(sgemm_blas)
+#if defined(__MKL)
+          jcd_fp = C_FUNLOC(mkl_cblas_jit_create_dgemm)
+          jgd_fp = C_FUNLOC(mkl_jit_get_dgemm_ptr)
+          jcs_fp = C_FUNLOC(mkl_cblas_jit_create_sgemm)
+          jgs_fp = C_FUNLOC(mkl_jit_get_sgemm_ptr)
+#endif
+#if defined(__LIBXSMM)
+          xdisp_fp = C_FUNLOC(libxsmm_dispatch_gemm)
+#endif
+          libxs_syr2k_dispatch_cpy = libxs_syr2k_dispatch_cpy_base(     &
+     &      config, datatype, n, k, lda, ldb, ldc,                      &
+#if defined(__MKL)
+     &      jit_create_dgemm=jcd_fp,                                    &
+     &      jit_get_dgemm=jgd_fp,                                       &
+     &      jit_create_sgemm=jcs_fp,                                    &
+     &      jit_get_sgemm=jgs_fp,                                       &
+#endif
+#if defined(__LIBXSMM)
+     &      xgemm_dispatch=xdisp_fp,                                    &
+#endif
+     &      dgemm_blas=dgemm_fp,                                        &
+     &      sgemm_blas=sgemm_fp,                                        &
+     &      registry=registry)
         END FUNCTION
 
 

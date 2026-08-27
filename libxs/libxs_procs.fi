@@ -651,6 +651,39 @@
           END IF
         END FUNCTION
 
+        !> Fill a backend from the OPTIONAL function pointers.
+        SUBROUTINE internal_gemm_backend(be,                            &
+     &    jit_create_dgemm, jit_get_dgemm,                              &
+     &    jit_create_sgemm, jit_get_sgemm,                              &
+     &    xgemm_dispatch, dgemm_blas, sgemm_blas)
+          TYPE(libxs_gemm_backend_t), INTENT(OUT) :: be
+          TYPE(C_FUNPTR), INTENT(IN), OPTIONAL ::                       &
+     &      jit_create_dgemm, jit_get_dgemm,                            &
+     &      jit_create_sgemm, jit_get_sgemm,                            &
+     &      xgemm_dispatch, dgemm_blas, sgemm_blas
+          IF (PRESENT(jit_create_dgemm)) THEN
+            be%jit_create_dgemm = jit_create_dgemm
+          END IF
+          IF (PRESENT(jit_get_dgemm)) THEN
+            be%jit_get_dgemm = jit_get_dgemm
+          END IF
+          IF (PRESENT(jit_create_sgemm)) THEN
+            be%jit_create_sgemm = jit_create_sgemm
+          END IF
+          IF (PRESENT(jit_get_sgemm)) THEN
+            be%jit_get_sgemm = jit_get_sgemm
+          END IF
+          IF (PRESENT(xgemm_dispatch)) THEN
+            be%xgemm_dispatch = xgemm_dispatch
+          END IF
+          IF (PRESENT(dgemm_blas)) THEN
+            be%dgemm_blas = dgemm_blas
+          END IF
+          IF (PRESENT(sgemm_blas)) THEN
+            be%sgemm_blas = sgemm_blas
+          END IF
+        END SUBROUTINE
+
         !> Dispatch a GEMM kernel and return the registry-owned config.
         FUNCTION libxs_gemm_dispatch_ptr_base(                          &
      &    datatype, transa, transb,                                     &
@@ -677,27 +710,10 @@
           shape%m = m; shape%n = n; shape%k = k
           shape%lda = lda; shape%ldb = ldb; shape%ldc = ldc
           shape%alpha = alpha; shape%beta = beta
-          IF (PRESENT(jit_create_dgemm)) THEN
-            be%jit_create_dgemm = jit_create_dgemm
-          END IF
-          IF (PRESENT(jit_get_dgemm)) THEN
-            be%jit_get_dgemm = jit_get_dgemm
-          END IF
-          IF (PRESENT(jit_create_sgemm)) THEN
-            be%jit_create_sgemm = jit_create_sgemm
-          END IF
-          IF (PRESENT(jit_get_sgemm)) THEN
-            be%jit_get_sgemm = jit_get_sgemm
-          END IF
-          IF (PRESENT(xgemm_dispatch)) THEN
-            be%xgemm_dispatch = xgemm_dispatch
-          END IF
-          IF (PRESENT(dgemm_blas)) THEN
-            be%dgemm_blas = dgemm_blas
-          END IF
-          IF (PRESENT(sgemm_blas)) THEN
-            be%sgemm_blas = sgemm_blas
-          END IF
+          CALL internal_gemm_backend(be,                                &
+     &      jit_create_dgemm, jit_get_dgemm,                            &
+     &      jit_create_sgemm, jit_get_sgemm,                            &
+     &      xgemm_dispatch, dgemm_blas, sgemm_blas)
           IF (PRESENT(registry)) THEN
             preg = registry
           ELSE; preg = C_NULL_PTR; END IF
@@ -724,15 +740,24 @@
      &      xgemm_dispatch, dgemm_blas, sgemm_blas
           TYPE(C_PTR), INTENT(IN), OPTIONAL :: registry
           INTEGER(C_INT) :: libxs_gemm_dispatch_base
-          TYPE(C_PTR) :: ptr
-          ptr = libxs_gemm_dispatch_ptr_base(                           &
-     &      datatype, transa, transb,                                   &
-     &      m, n, k, lda, ldb, ldc, alpha, beta,                        &
+          TYPE(libxs_gemm_shape_t) :: shape
+          TYPE(libxs_gemm_backend_t) :: be
+          TYPE(C_PTR) :: preg
+          shape%datatype = datatype
+          shape%transa = transa; shape%transb = transb
+          shape%m = m; shape%n = n; shape%k = k
+          shape%lda = lda; shape%ldb = ldb; shape%ldc = ldc
+          shape%alpha = alpha; shape%beta = beta
+          CALL internal_gemm_backend(be,                                &
      &      jit_create_dgemm, jit_get_dgemm,                            &
      &      jit_create_sgemm, jit_get_sgemm,                            &
-     &      xgemm_dispatch, dgemm_blas, sgemm_blas, registry)
+     &      xgemm_dispatch, dgemm_blas, sgemm_blas)
+          IF (PRESENT(registry)) THEN
+            preg = registry
+          ELSE; preg = C_NULL_PTR; END IF
           libxs_gemm_dispatch_base =                                    &
-     &      libxs_gemm_config_cpy(config, ptr)
+     &      internal_gemm_dispatch_cpy_rt(config,                       &
+     &      shape, shape, be, preg)
         END FUNCTION
 
         !> Release a GEMM config: clear all kernel pointers.
@@ -763,27 +788,10 @@
           TYPE(C_PTR) :: libxs_syr2k_dispatch_base
           TYPE(libxs_gemm_backend_t) :: be
           TYPE(C_PTR) :: preg
-          IF (PRESENT(jit_create_dgemm)) THEN
-            be%jit_create_dgemm = jit_create_dgemm
-          END IF
-          IF (PRESENT(jit_get_dgemm)) THEN
-            be%jit_get_dgemm = jit_get_dgemm
-          END IF
-          IF (PRESENT(jit_create_sgemm)) THEN
-            be%jit_create_sgemm = jit_create_sgemm
-          END IF
-          IF (PRESENT(jit_get_sgemm)) THEN
-            be%jit_get_sgemm = jit_get_sgemm
-          END IF
-          IF (PRESENT(xgemm_dispatch)) THEN
-            be%xgemm_dispatch = xgemm_dispatch
-          END IF
-          IF (PRESENT(dgemm_blas)) THEN
-            be%dgemm_blas = dgemm_blas
-          END IF
-          IF (PRESENT(sgemm_blas)) THEN
-            be%sgemm_blas = sgemm_blas
-          END IF
+          CALL internal_gemm_backend(be,                                &
+     &      jit_create_dgemm, jit_get_dgemm,                            &
+     &      jit_create_sgemm, jit_get_sgemm,                            &
+     &      xgemm_dispatch, dgemm_blas, sgemm_blas)
           IF (PRESENT(registry)) THEN
             preg = registry
           ELSE; preg = C_NULL_PTR; END IF
@@ -830,15 +838,17 @@
      &      xgemm_dispatch, dgemm_blas, sgemm_blas
           TYPE(C_PTR), INTENT(IN), OPTIONAL :: registry
           INTEGER(C_INT) :: libxs_syr2k_dispatch_cpy_base
-          TYPE(C_PTR) :: ptr
-          ptr = libxs_syr2k_dispatch_base(datatype,                     &
-     &      n, k, lda, ldb, ldc,                                        &
+          TYPE(libxs_gemm_backend_t) :: be
+          TYPE(C_PTR) :: preg
+          CALL internal_gemm_backend(be,                                &
      &      jit_create_dgemm, jit_get_dgemm,                            &
      &      jit_create_sgemm, jit_get_sgemm,                            &
-     &      xgemm_dispatch, dgemm_blas, sgemm_blas,                     &
-     &      registry)
-          libxs_syr2k_dispatch_cpy_base =                               &
-     &      libxs_gemm_config_cpy(config, ptr)
+     &      xgemm_dispatch, dgemm_blas, sgemm_blas)
+          IF (PRESENT(registry)) THEN
+            preg = registry
+          ELSE; preg = C_NULL_PTR; END IF
+          libxs_syr2k_dispatch_cpy_base = internal_syr2k_dispatch_cpy(  &
+     &      config, datatype, n, k, lda, ldb, ldc, be, preg)
         END FUNCTION
 
         !> Dispatch a SYRK config and populate config.
@@ -887,15 +897,15 @@
           TYPE(C_PTR), INTENT(IN) :: a, b
           TYPE(C_PTR) :: c
           TYPE(C_PTR), INTENT(IN), OPTIONAL :: registry
-          TYPE(libxs_gemm_config_t), POINTER :: cfg
-          TYPE(C_PTR) :: ptr, preg
+          TYPE(libxs_gemm_config_t) :: cfg
+          TYPE(C_PTR) :: preg
           IF (PRESENT(registry)) THEN
             preg = registry
           ELSE; preg = C_NULL_PTR; END IF
-          ptr = libxs_syr2k_dispatch_base(datatype,                     &
-     &      n, k, lda, ldb, ldc, registry=preg)
-          IF (C_ASSOCIATED(ptr)) THEN
-            CALL C_F_POINTER(ptr, cfg)
+          ! the config stays in this frame, hence the copy flavor: a
+          ! shape without kernel then owns no registry entry
+          IF (0 .NE. libxs_syr2k_dispatch_cpy_base(cfg, datatype,       &
+     &      n, k, lda, ldb, ldc, registry=preg)) THEN
             CALL internal_syr2k(cfg, uplo, alpha, beta, a, b, c)
           END IF
         END SUBROUTINE
@@ -921,15 +931,15 @@
           TYPE(C_PTR), INTENT(IN) :: a
           TYPE(C_PTR) :: c
           TYPE(C_PTR), INTENT(IN), OPTIONAL :: registry
-          TYPE(libxs_gemm_config_t), POINTER :: cfg
-          TYPE(C_PTR) :: ptr, preg
+          TYPE(libxs_gemm_config_t) :: cfg
+          TYPE(C_PTR) :: preg
           IF (PRESENT(registry)) THEN
             preg = registry
           ELSE; preg = C_NULL_PTR; END IF
-          ptr = libxs_syrk_dispatch_base(datatype,                      &
-     &      n, k, lda, ldc, registry=preg)
-          IF (C_ASSOCIATED(ptr)) THEN
-            CALL C_F_POINTER(ptr, cfg)
+          ! the config stays in this frame, hence the copy flavor: a
+          ! shape without kernel then owns no registry entry
+          IF (0 .NE. libxs_syrk_dispatch_cpy_base(cfg, datatype,        &
+     &      n, k, lda, ldc, registry=preg)) THEN
             CALL internal_syrk(cfg, uplo, alpha, beta, a, c)
           END IF
         END SUBROUTINE

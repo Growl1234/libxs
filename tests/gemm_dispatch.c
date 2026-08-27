@@ -415,10 +415,184 @@ static int test_warmup_sticky(void)
   /* a shape whose JIT was attempted must not be attempted again */
   calls = jit_create_dgemm_calls;
   for (i = 0; i < TEST_MAXWARMUP; ++i) {
-    TEST_CHECK(NULL != libxs_gemm_dispatch_rt(&shape, NULL, &backend, registry));
+    TEST_CHECK(NULL != libxs_gemm_dispatch_rt(
+      &shape, NULL, &backend, registry));
   }
   TEST_CHECK(calls == jit_create_dgemm_calls);
 
+  libxs_gemm_release_registry(registry);
+  return EXIT_SUCCESS;
+}
+
+
+static int test_registry_no_warmup_entries(void)
+{
+  libxs_gemm_backend_t backend;
+  libxs_gemm_shape_t shape;
+  libxs_gemm_config_t config;
+  libxs_registry_t* registry;
+  size_t n0;
+  int i;
+
+  LIBXS_MEMZERO(&backend);
+  backend.jit_create_dgemm = test_jit_create_handle;
+  backend.jit_get_dgemm = test_jit_get_handle;
+  registry = libxs_registry_create();
+  TEST_CHECK(NULL != registry);
+  LIBXS_MEMZERO(&shape);
+  shape.datatype = LIBXS_DATATYPE_F64;
+  shape.transa = 'N'; shape.transb = 'N';
+  shape.m = 5; shape.n = 5; shape.k = 5;
+  shape.lda = 5; shape.ldb = 5; shape.ldc = 5;
+  shape.alpha = 1.0;
+  /* the first shape of a process skips warm-up, so spend that on a throwaway
+     and keep these checks independent of the order main() runs them in */
+  TEST_CHECK(NULL != libxs_gemm_dispatch_rt(
+    &shape, NULL, &backend, registry));
+
+  shape.m = 6; shape.n = 6; shape.k = 6;
+  shape.lda = 6; shape.ldb = 6; shape.ldc = 6;
+  n0 = libxs_registry_size(registry);
+  jit_create_handle_calls = 0;
+  for (i = 0; i < TEST_MAXWARMUP && 0 == jit_create_handle_calls; ++i) {
+    LIBXS_MEMZERO(&config);
+    TEST_CHECK(0 != libxs_gemm_dispatch_cpy_rt(
+      &config, &shape, NULL, &backend, registry));
+    if (0 == jit_create_handle_calls) { /* still warming up */
+      TEST_CHECK(n0 == libxs_registry_size(registry));
+      TEST_CHECK(NULL == config.dgemm_jit);
+      TEST_CHECK(NULL != config.dgemm_blas); /* usable meanwhile */
+    }
+  }
+  TEST_CHECK(1 < i); /* warm-up was required */
+  TEST_CHECK(1 == jit_create_handle_calls);
+  /* the kernel arrives and brings exactly one entry with it */
+  TEST_CHECK(NULL != config.dgemm_jit);
+  TEST_CHECK((n0 + 1) == libxs_registry_size(registry));
+  /* a hot shape keeps returning the same kernel without growing further */
+  for (i = 0; i < TEST_MAXWARMUP; ++i) {
+    LIBXS_MEMZERO(&config);
+    TEST_CHECK(0 != libxs_gemm_dispatch_cpy_rt(
+      &config, &shape, NULL, &backend, registry));
+    TEST_CHECK(NULL != config.dgemm_jit);
+  }
+  TEST_CHECK((n0 + 1) == libxs_registry_size(registry));
+  TEST_CHECK(1 == jit_create_handle_calls);
+
+  /* the mock handle must not reach the JIT-provider's destructor */
+  { libxs_gemm_config_t *const e = (libxs_gemm_config_t*)libxs_registry_get(
+      registry, &shape, sizeof(shape), NULL);
+    TEST_CHECK(NULL != e);
+    e->jitter = NULL;
+    e->flags = LIBXS_GEMM_FLAGS_DEFAULT;
+  }
+  libxs_gemm_release_registry(registry);
+  return EXIT_SUCCESS;
+}
+
+
+static int test_registry_no_blas_entries(void)
+{
+  libxs_gemm_backend_t backend;
+  libxs_gemm_shape_t shape;
+  libxs_gemm_config_t config;
+  libxs_registry_t* registry;
+  size_t n0;
+  int i;
+
+  LIBXS_MEMZERO(&backend);
+  backend.jit_create_dgemm = test_jit_create_handle;
+  backend.jit_get_dgemm = test_jit_get_handle;
+  registry = libxs_registry_create();
+  TEST_CHECK(NULL != registry);
+  LIBXS_MEMZERO(&shape);
+  shape.datatype = LIBXS_DATATYPE_F64;
+  shape.transa = 'N'; shape.transb = 'N';
+  shape.m = 7; shape.n = 7; shape.k = 7;
+  shape.lda = 7; shape.ldb = 7; shape.ldc = 7;
+  shape.alpha = 1.0;
+  /* the first shape of a process skips warm-up, so spend that on a throwaway
+     and keep these checks independent of the order main() runs them in */
+  TEST_CHECK(NULL != libxs_gemm_dispatch_rt(
+    &shape, NULL, &backend, registry));
+
+  /* an arithmetic intensity of 2*128/24 is far above LIBXS_GEMM_JIT_MAX, so
+     the gate refuses this shape whatever backend is offered */
+  shape.m = 128; shape.n = 128; shape.k = 128;
+  shape.lda = 128; shape.ldb = 128; shape.ldc = 128;
+  n0 = libxs_registry_size(registry);
+  jit_create_handle_calls = 0;
+  for (i = 0; i < (4 * TEST_MAXWARMUP); ++i) {
+    LIBXS_MEMZERO(&config);
+    TEST_CHECK(0 != libxs_gemm_dispatch_cpy_rt(
+      &config, &shape, NULL, &backend, registry));
+    TEST_CHECK(NULL == config.dgemm_jit);
+    TEST_CHECK(NULL != config.dgemm_blas);
+    /* the registry must not grow by a single entry, ever */
+    TEST_CHECK(n0 == libxs_registry_size(registry));
+  }
+  /* and the refusal is terminal: the gate is never re-evaluated by a JIT */
+  TEST_CHECK(0 == jit_create_handle_calls);
+
+  /* the pointer flavor still registers: a returned pointer must stay valid */
+  TEST_CHECK(NULL != libxs_gemm_dispatch_rt(&shape, NULL, &backend, registry));
+  TEST_CHECK((n0 + 1) == libxs_registry_size(registry));
+  TEST_CHECK(NULL != libxs_gemm_dispatch_rt(&shape, NULL, &backend, registry));
+  TEST_CHECK((n0 + 1) == libxs_registry_size(registry));
+
+  libxs_gemm_release_registry(registry);
+  return EXIT_SUCCESS;
+}
+
+
+static int test_registry_no_syrk_entries(void)
+{
+  libxs_gemm_backend_t backend;
+  libxs_gemm_config_t config;
+  libxs_registry_t* registry;
+  int i;
+
+  LIBXS_MEMZERO(&backend);
+  backend.jit_create_dgemm = test_jit_create_handle;
+  backend.jit_get_dgemm = test_jit_get_handle;
+  registry = libxs_registry_create();
+  TEST_CHECK(NULL != registry);
+  /* spend the first-shape shortcut on a throwaway (see above) */
+  TEST_CHECK(NULL != libxs_syrk_dispatch_rt(
+    LIBXS_DATATYPE_F64, 9, 4, 9, 9, &backend, registry));
+  libxs_gemm_release_registry(registry);
+
+  registry = libxs_registry_create();
+  TEST_CHECK(NULL != registry);
+  jit_create_handle_calls = 0;
+  /* double dispatch: neither the problem shape nor the tile may be entered
+     while the shape is still proving reuse */
+  for (i = 0; i < TEST_MAXWARMUP && 0 == jit_create_handle_calls; ++i) {
+    LIBXS_MEMZERO(&config);
+    TEST_CHECK(0 != libxs_syrk_dispatch_cpy_rt(
+      &config, LIBXS_DATATYPE_F64, 32, 8, 32, 32, &backend, registry));
+    if (0 == jit_create_handle_calls) {
+      TEST_CHECK(0 == libxs_registry_size(registry));
+      TEST_CHECK(NULL != config.dgemm_blas);
+    }
+  }
+  TEST_CHECK(1 < i); /* warm-up was required */
+  TEST_CHECK(1 == jit_create_handle_calls);
+  /* exactly two entries once the kernel exists: the shape and its tile */
+  TEST_CHECK(NULL != config.dgemm_jit);
+  TEST_CHECK(2 == libxs_registry_size(registry));
+
+  /* the mock handle must not reach the JIT-provider's destructor */
+  { const void* key = NULL;
+    size_t cursor = 0;
+    libxs_gemm_config_t* e = (libxs_gemm_config_t*)libxs_registry_begin(
+      registry, &key, &cursor);
+    while (NULL != e) {
+      e->jitter = NULL;
+      e->flags = LIBXS_GEMM_FLAGS_DEFAULT;
+      e = (libxs_gemm_config_t*)libxs_registry_next(registry, &key, &cursor);
+    }
+  }
   libxs_gemm_release_registry(registry);
   return EXIT_SUCCESS;
 }
@@ -433,5 +607,8 @@ int main(void)
   if (EXIT_SUCCESS == result) result = test_release_ownership();
   if (EXIT_SUCCESS == result) result = test_config_cpy();
   if (EXIT_SUCCESS == result) result = test_warmup_sticky();
+  if (EXIT_SUCCESS == result) result = test_registry_no_warmup_entries();
+  if (EXIT_SUCCESS == result) result = test_registry_no_blas_entries();
+  if (EXIT_SUCCESS == result) result = test_registry_no_syrk_entries();
   return result;
 }
