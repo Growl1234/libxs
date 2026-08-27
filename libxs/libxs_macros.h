@@ -971,15 +971,18 @@
 #elif !defined(LIBXS_PATH_SEPARATOR)
 # define LIBXS_PATH_SEPARATOR '/'
 #endif
-#if defined(LIBXS_BUILD) && !defined(_WIN32)
-# if !defined(_XOPEN_SOURCE) && 0
-#   define _XOPEN_SOURCE 500
-# endif
+#if !defined(_WIN32)
+/* strict ANSI hides snprintf, i.e., LIBXS_SNPRINTF becomes an unbounded sprintf */
 # if !defined(_DEFAULT_SOURCE)
 #   define _DEFAULT_SOURCE
 # endif
-# if !defined(_GNU_SOURCE)
-#   define _GNU_SOURCE
+# if defined(LIBXS_BUILD)
+#   if !defined(_XOPEN_SOURCE) && 0
+#     define _XOPEN_SOURCE 500
+#   endif
+#   if !defined(_GNU_SOURCE)
+#     define _GNU_SOURCE
+#   endif
 # endif
 #endif
 #if !defined(__STDC_FORMAT_MACROS)
@@ -1138,9 +1141,12 @@ LIBXS_PRAGMA_DIAG_POP()
 #endif
 #if defined(_WIN32) && 0
 # define LIBXS_SNPRINTF(S, N, ...) _snprintf_s(S, N, _TRUNCATE, __VA_ARGS__)
-#elif (defined(__STDC_VERSION__) && 199901L <= __STDC_VERSION__) || defined(__cplusplus)
+#elif (defined(__STDC_VERSION__) && 199901L <= __STDC_VERSION__) || defined(__cplusplus) || \
+  defined(__USE_ISOC99) /* glibc declares snprintf */ || \
+  (defined(_MSC_VER) && 1900 <= _MSC_VER) /* C99-conforming snprintf */
 # define LIBXS_SNPRINTF(S, N, ...) snprintf(S, N, __VA_ARGS__)
 #else
+/* the size argument is discarded: bounded formatting is unavailable */
 # define LIBXS_SNPRINTF(S, N, ...) sprintf((S) + /*unused*/(N) * 0, __VA_ARGS__)
 #endif
 
