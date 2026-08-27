@@ -971,10 +971,9 @@ static int predict_eval_stride(void)
   return result;
 }
 
-/**
- * Rank the successors of a single record by count (converse's legacy order-2
- * adapters expose a bare entry; the library ranks internally via predict).
- */
+/* rank the successors of a single record by count */
+/* converse's legacy order-2 adapters expose a bare entry, whereas the */
+/* library ranks internally via predict */
 static int ngram_topk(const ngram_entry_t* entry, unsigned int out_ids[],
   int k)
 {
@@ -1083,10 +1082,8 @@ static int token_input_vector(unsigned int prev2, unsigned int prev1,
   return result;
 }
 
-/**
- * Number of context tokens summarized into a kNN-LM query vector (>=2; 2 is
- * the historical prev2/prev1 pair, bit-exact). Wider context = longer reach.
- */
+/* context tokens summarized into a kNN-LM query vector (>=2) */
+/* 2 is the historical prev2/prev1 pair and bit-exact; wider reaches further */
 static int knnlm_ctxlen(void)
 {
   int result = 2;
@@ -3390,10 +3387,8 @@ static void knnlm_cache_free(void)
   knnlm_cache_model = NULL;
 }
 
-/**
- * Approximate NN over the static datastore is enabled by CONVERSE_KNNLM_ANN;
- * default off keeps the exact brute-force scan (bit-identical results).
- */
+/* CONVERSE_KNNLM_ANN enables approximate NN over the static datastore */
+/* default off keeps the exact brute-force scan, bit-identical results */
 static int knnlm_ann_mode(void)
 {
   const char* env = getenv("CONVERSE_KNNLM_ANN");
@@ -3497,11 +3492,9 @@ static void knnlm_ann_consider(const double* in, int idx,
   }
 }
 
-/**
- * Retrieve the static-cache neighbors of the query from a window around its
- * Hilbert code, then exact-rerank them. Replaces the O(N) scan of the static
- * cache; the dynamic store is still scanned brute-force by the caller.
- */
+/* retrieve the static-cache neighbors from a window around the query's */
+/* Hilbert code, then exact-rerank them */
+/* replaces the O(N) scan; the dynamic store is still scanned by the caller */
 static void knnlm_ann_scan(const double* in, unsigned int near_next[],
   double near_dist[], int* nnear)
 {
@@ -4352,12 +4345,10 @@ const converse_judge_t* converse_lm_judge(void)
 }
 
 
-/**
- * A -T prefix supplies a fixed held-out corpus: train on all of the main corpus
- * (holdout forced 0) and evaluate on the separate test set. This keeps the test
- * set identical across training-corpus sizes, so BPC is comparable along a
- * scaling curve.
- */
+/* a -T prefix supplies a fixed held-out corpus: train on all of the main */
+/* corpus (holdout forced 0) and evaluate on the separate test set */
+/* the test set stays identical across training sizes, so BPC is comparable */
+/* along a scaling curve */
 static const libxs_registry_t* converse_lm_test_corpus(converse_run_t* run,
   libxs_registry_t** owned)
 {

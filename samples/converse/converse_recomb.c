@@ -691,11 +691,9 @@ static void recomb_index_free(void)
 }
 
 
-/**
- * Build the pivot index over sentence-scale entries. Entry pointers are stored, so
- * the index is only valid while the corpus registry is alive and unmodified -
- * which holds for the probe, whose corpus is complete before it runs.
- */
+/* build the pivot index over sentence-scale entries */
+/* entry pointers are stored, so the index is only valid while the corpus */
+/* registry is alive and unmodified, which holds for the probe */
 static int recomb_index_build(const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon)
 {
@@ -1680,10 +1678,8 @@ static long recomb_capacity(const libxs_registry_t* corpus,
 }
 
 
-/**
- * Try to build one novel sentence by splicing entry a with some later entry that
- * shares a content word. Returns the composed length, 0 if none worked.
- */
+/* splice entry a with some later entry that shares a content word, to build */
+/* one novel sentence; returns the composed length, 0 if none worked */
 static int recomb_compose(const libxs_registry_t* corpus,
   libxs_lexicon_t* lexicon, const corpus_entry_t* a,
   const recomb_word_t awords[], int nawords, long skip,

@@ -5882,11 +5882,9 @@ static void answer_docdef_facts_free(void)
   answer_docdef_facts_size = 0;
 }
 
-/**
- * Parse an optional leading "Header: `name`" line and return the byte offset
- * of the definition prose that follows it (0 when absent). Fills header with
- * the base module name (backticks and trailing extension stripped).
- */
+/* parse an optional leading "Header: `name`" line and return the byte */
+/* offset of the definition prose that follows it, 0 when absent */
+/* header receives the base module name, backticks and extension stripped */
 static int answer_docdef_header(const char* text, int text_len,
   char* header, int header_size, int* header_len)
 {
@@ -5930,12 +5928,10 @@ static int answer_docdef_header(const char* text, int text_len,
   return result;
 }
 
-/**
- * Learn module definitions from Markdown ingest: the first paragraph under a
- * heading becomes that title's definition, with the "Header:" filename kept as
- * an alias. Structural only (no corpus vocabulary), so prose corpora without
- * headings contribute nothing.
- */
+/* learn module definitions from Markdown ingest: the first paragraph under */
+/* a heading becomes that title's definition, with the "Header:" filename */
+/* kept as an alias */
+/* structural only, so prose corpora without headings contribute nothing */
 static size_t answer_docdef_facts_build(const libxs_registry_t* corpus)
 {
   const void* key = NULL;
@@ -6237,10 +6233,8 @@ static int answer_facts_load(const libxs_registry_t* corpus,
   return result;
 }
 
-/**
- * Extract the subject term from "what is [the] X" or "what does X do",
- * skipping a leading article. Language-generic, no corpus vocabulary.
- */
+/* extract the subject term from "what is [the] X" or "what does X do", */
+/* skipping a leading article; language-generic, no corpus vocabulary */
 static int answer_docdef_term(const char* query_text, size_t query_len,
   char* term, int term_size)
 {
@@ -6334,11 +6328,10 @@ static void conv_reset(void)
   conv_topic_len = 0;
 }
 
-/**
- * Remember the subject of a successfully answered question so that a later
- * follow-up can refer back to it. Uses the same subject extraction as the
- * definition path; only a real subject term updates the topic.
- */
+/* remember the subject of a successfully answered question, so a later */
+/* follow-up can refer back to it */
+/* uses the same subject extraction as the definition path, and only a real */
+/* subject term updates the topic */
 static void conv_remember(const char* query_text, size_t query_len)
 {
   char term[CONV_TOPIC_MAX];
@@ -9100,10 +9093,8 @@ static double ngram_gen_contfloor(void)
  * continuation extends what was said. Non-questions keep the pure generation
  * probe. Continuation is labeled and its grounding reported.
  */
-/**
- * Minimum content-word overlap for a continuation to be shown with an answer.
- * Zero keeps the historical behaviour (attestation only), which is bit-exact.
- */
+/* minimum content-word overlap for a continuation to be shown with an answer */
+/* zero keeps the historical behaviour (attestation only), which is bit-exact */
 static double gen_relevance_min(void)
 {
   double result = 0.0;
@@ -9509,12 +9500,11 @@ static void converse_qa_recomb(converse_run_t* run,
 }
 
 
-/**
- * Read prompts and print grounded continuations. Questions answer from the
- * corpus first (with a continuation on top); everything else replays the
- * n-gram. A prediction kind under -c is served by the other half, so this path
- * only ever holds the grounded generator.
- */
+/* read prompts and print grounded continuations */
+/* questions answer from the corpus first, with a continuation on top, and */
+/* everything else replays the n-gram */
+/* a prediction kind under -c is served by the other half, so this path only */
+/* ever holds the grounded generator */
 static void converse_qa_complete(converse_run_t* run,
   libxs_registry_t* ngram_model)
 {
