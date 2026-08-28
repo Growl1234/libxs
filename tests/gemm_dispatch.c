@@ -545,6 +545,21 @@ static int test_registry_no_blas_entries(void)
 }
 
 
+/** The mock handle must not reach the JIT-provider's destructor. */
+static void test_disown_jitters(libxs_registry_t* registry)
+{
+  const void* key = NULL;
+  size_t cursor = 0;
+  libxs_gemm_config_t* e = (libxs_gemm_config_t*)libxs_registry_begin(
+    registry, &key, &cursor);
+  while (NULL != e) {
+    e->jitter = NULL;
+    e->flags = LIBXS_GEMM_FLAGS_DEFAULT;
+    e = (libxs_gemm_config_t*)libxs_registry_next(registry, &key, &cursor);
+  }
+}
+
+
 static int test_registry_no_syrk_entries(void)
 {
   libxs_gemm_backend_t backend;
@@ -565,12 +580,13 @@ static int test_registry_no_syrk_entries(void)
   registry = libxs_registry_create();
   TEST_CHECK(NULL != registry);
   jit_create_handle_calls = 0;
-  /* double dispatch: neither the problem shape nor the tile may be entered
-     while the shape is still proving reuse */
+  /* a shape that fits one tile runs the kernel, hence it is dispatched: this
+     double dispatch may enter neither the problem shape nor the tile while the
+     shape is still proving reuse */
   for (i = 0; i < TEST_MAXWARMUP && 0 == jit_create_handle_calls; ++i) {
     LIBXS_MEMZERO(&config);
     TEST_CHECK(0 != libxs_syrk_dispatch_cpy_rt(
-      &config, LIBXS_DATATYPE_F64, 32, 8, 32, 32, &backend, registry));
+      &config, LIBXS_DATATYPE_F64, 16, 8, 16, 16, &backend, registry));
     if (0 == jit_create_handle_calls) {
       TEST_CHECK(0 == libxs_registry_size(registry));
       TEST_CHECK(NULL != config.dgemm_blas);
@@ -581,18 +597,32 @@ static int test_registry_no_syrk_entries(void)
   /* exactly two entries once the kernel exists: the shape and its tile */
   TEST_CHECK(NULL != config.dgemm_jit);
   TEST_CHECK(2 == libxs_registry_size(registry));
+  test_disown_jitters(registry);
+  libxs_gemm_release_registry(registry);
 
-  /* the mock handle must not reach the JIT-provider's destructor */
-  { const void* key = NULL;
-    size_t cursor = 0;
-    libxs_gemm_config_t* e = (libxs_gemm_config_t*)libxs_registry_begin(
-      registry, &key, &cursor);
-    while (NULL != e) {
-      e->jitter = NULL;
-      e->flags = LIBXS_GEMM_FLAGS_DEFAULT;
-      e = (libxs_gemm_config_t*)libxs_registry_next(registry, &key, &cursor);
-    }
+  registry = libxs_registry_create();
+  TEST_CHECK(NULL != registry);
+  jit_create_handle_calls = 0;
+  /* a shape wider than one tile runs the BLAS SYRK wherever that entry point
+     is available, and a kernel nothing calls is then neither built nor entered;
+     without the entry point the same shape tiles like the case above */
+  for (i = 0; i < TEST_MAXWARMUP && 0 == jit_create_handle_calls; ++i) {
+    LIBXS_MEMZERO(&config);
+    TEST_CHECK(0 != libxs_syrk_dispatch_cpy_rt(
+      &config, LIBXS_DATATYPE_F64, 890, 54, 890, 890, &backend, registry));
   }
+  if (0 == jit_create_handle_calls) {
+    TEST_CHECK(TEST_MAXWARMUP == i); /* no warm-up was ever due */
+    TEST_CHECK(0 == libxs_registry_size(registry));
+    TEST_CHECK(NULL == config.dgemm_jit);
+    TEST_CHECK(NULL != config.dgemm_blas);
+  }
+  else {
+    TEST_CHECK(1 == jit_create_handle_calls);
+    TEST_CHECK(NULL != config.dgemm_jit);
+    TEST_CHECK(2 == libxs_registry_size(registry));
+  }
+  test_disown_jitters(registry);
   libxs_gemm_release_registry(registry);
   return EXIT_SUCCESS;
 }

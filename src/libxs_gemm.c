@@ -422,6 +422,19 @@ LIBXS_API_INTERN void internal_libxs_sgemm_default(
 }
 
 
+/**
+ * Identifies the process behind a line, because ranks share one stream and
+ * their lines interleave. The rank is preferred where it can be determined
+ * (libxs_rid), and the value is stable for the lifetime of the process.
+ */
+LIBXS_API_INLINE unsigned int internal_libxs_gemm_origin(void)
+{
+  static unsigned int origin = 0xFFFFFFFF;
+  if (0xFFFFFFFF == origin) origin = libxs_rid();
+  return origin;
+}
+
+
 LIBXS_API_INLINE void internal_libxs_gemm_print_registry(const libxs_registry_t* registry)
 {
 #if defined(LIBXS_GEMM_PRINT)
@@ -453,9 +466,13 @@ LIBXS_API_INLINE void internal_libxs_gemm_print_registry(const libxs_registry_t*
           config = (const libxs_gemm_config_t*)
             libxs_registry_next(registry, &key, &cursor);
         }
-        fprintf(stderr, "LIBXS INFO: GEMM registry entries=%lu capacity=%lu nbytes=%lu backend=%s\n",
-          (unsigned long)info.size, (unsigned long)info.capacity, (unsigned long)info.nbytes, backend);
-        fprintf(stderr, "LIBXS INFO: GEMM histogram f64=%lu f32=%lu mkl-jit=%lu libxsmm=%lu blas=%lu fallback=%lu\n",
+        fprintf(stderr, "LIBXS INFO[%u]: GEMM registry"
+          " entries=%lu capacity=%lu nbytes=%lu backend=%s\n",
+          internal_libxs_gemm_origin(), (unsigned long)info.size,
+          (unsigned long)info.capacity, (unsigned long)info.nbytes, backend);
+        fprintf(stderr, "LIBXS INFO[%u]: GEMM histogram"
+          " f64=%lu f32=%lu mkl-jit=%lu libxsmm=%lu blas=%lu fallback=%lu\n",
+          internal_libxs_gemm_origin(),
           nf64, nf32, njit, nxgemm, nblas, nfallback);
         { /* kernel-less shapes own no entry, hence the counters report them */
           unsigned long nwarm = 0, nojit = 0, i;
@@ -466,7 +483,9 @@ LIBXS_API_INLINE void internal_libxs_gemm_print_registry(const libxs_registry_t*
             if (0 != s) ++nwarm;
             if (INTERNAL_GEMM_WARMUP_NOJIT == s) ++nojit;
           }
-          fprintf(stderr, "LIBXS INFO: GEMM warm-up slots=%lu/%lu nojit=%lu\n",
+          fprintf(stderr, "LIBXS INFO[%u]:"
+            " GEMM warm-up slots=%lu/%lu nojit=%lu\n",
+            internal_libxs_gemm_origin(),
             nwarm, (unsigned long)LIBXS_GEMM_NWARMUP, nojit);
         }
       }
@@ -500,6 +519,26 @@ LIBXS_API_INTERN void internal_libxs_gemm_finalize(void)
   if (NULL != internal_libxs_gemm_registry) {
     libxs_gemm_release_registry(internal_libxs_gemm_registry);
     internal_libxs_gemm_registry = NULL;
+  }
+}
+
+
+/** Assigns the BLAS entry points, either the backend's or the library's. */
+LIBXS_API_INLINE void internal_libxs_gemm_blas_init(
+  libxs_gemm_config_t* config,
+  const libxs_gemm_backend_t* backend, int use_blas)
+{
+  if (0 != use_blas) {
+    config->dgemm_blas = (NULL != backend && NULL != backend->dgemm_blas)
+      ? backend->dgemm_blas : (NULL != internal_libxs_dgemm_blas)
+      ? internal_libxs_dgemm_blas : internal_libxs_dgemm_default;
+    config->sgemm_blas = (NULL != backend && NULL != backend->sgemm_blas)
+      ? backend->sgemm_blas : (NULL != internal_libxs_sgemm_blas)
+      ? internal_libxs_sgemm_blas : internal_libxs_sgemm_default;
+  }
+  else {
+    config->dgemm_blas = internal_libxs_dgemm_default;
+    config->sgemm_blas = internal_libxs_sgemm_default;
   }
 }
 
@@ -696,18 +735,7 @@ LIBXS_API_INTERN libxs_gemm_config_t* internal_libxs_gemm_dispatch(
             }
           }
         }
-        if (0 != use_blas) {
-          config.dgemm_blas = (NULL != backend && NULL != backend->dgemm_blas)
-            ? backend->dgemm_blas : (NULL != internal_libxs_dgemm_blas)
-            ? internal_libxs_dgemm_blas : internal_libxs_dgemm_default;
-          config.sgemm_blas = (NULL != backend && NULL != backend->sgemm_blas)
-            ? backend->sgemm_blas : (NULL != internal_libxs_sgemm_blas)
-            ? internal_libxs_sgemm_blas : internal_libxs_sgemm_default;
-        }
-        else {
-          config.dgemm_blas = internal_libxs_dgemm_default;
-          config.sgemm_blas = internal_libxs_sgemm_default;
-        }
+        internal_libxs_gemm_blas_init(&config, backend, use_blas);
         if (0 != memcmp(shape, kernel_shape, sizeof(*shape))
           && (NULL != config.dgemm_jit || NULL != config.sgemm_jit
             || NULL != config.xgemm))
@@ -773,8 +801,9 @@ LIBXS_API_INTERN libxs_gemm_config_t* internal_libxs_gemm_dispatch(
           LIBXS_MEMZERO(&info);
           LIBXS_EXPECT(EXIT_SUCCESS == libxs_registry_info(reg, &info));
           LIBXS_ASSERT((NULL != result));
-          fprintf(stderr, "LIBXS INFO: "
+          fprintf(stderr, "LIBXS INFO[%u]: "
             "gemm=%s trans=%c%c mnk=%ix%ix%i ld=%ix%ix%i alpha=%g beta=%g regsize=%lu jit=%i\n",
+            internal_libxs_gemm_origin(),
             libxs_typename(shape->datatype), shape->transa, shape->transb, shape->m, shape->n, shape->k,
             shape->lda, shape->ldb, shape->ldc, shape->alpha, shape->beta, (unsigned long)info.size,
             NULL != result->dgemm_jit || NULL != result->sgemm_jit || NULL != result->xgemm);
@@ -1086,6 +1115,34 @@ LIBXS_API_INTERN void internal_libxs_gemm_blas(
 }
 
 
+/**
+ * Predicts that the call side runs the BLAS SYRK, which reads the shape of the
+ * config but never its kernel (see libxs_syrk_task and libxs_syr2k_task). The
+ * decision rests on the block size and the resolved entry points, both of which
+ * are settled at this point and no longer change. Requiring the SYRK and the
+ * SYR2K entry point conservatively covers either caller, because the dispatch
+ * is shared and cannot tell them apart.
+ */
+LIBXS_API_INLINE int internal_libxs_syrk_blas_due(
+  libxs_data_t datatype, int n, int k)
+{
+  int result = 0;
+  if (n > internal_libxs_gemm_bm || n > internal_libxs_gemm_bn
+    || k > internal_libxs_gemm_bk)
+  {
+    if (LIBXS_DATATYPE_F64 == datatype) {
+      result = (NULL != internal_libxs_dsyrk_blas
+        && NULL != internal_libxs_dsyr2k_blas);
+    }
+    else if (LIBXS_DATATYPE_F32 == datatype) {
+      result = (NULL != internal_libxs_ssyrk_blas
+        && NULL != internal_libxs_ssyr2k_blas);
+    }
+  }
+  return result;
+}
+
+
 LIBXS_API_INTERN libxs_gemm_config_t* internal_libxs_syr2k_dispatch(
   libxs_data_t datatype, int n, int k, int lda, int ldb, int ldc,
   const libxs_gemm_backend_t* backend, void* registry,
@@ -1095,23 +1152,39 @@ LIBXS_API_INTERN libxs_gemm_config_t* internal_libxs_syr2k_dispatch(
   const libxs_gemm_backend_t* backend, void* registry,
   libxs_gemm_config_t* own)
 {
-  const int km = LIBXS_MIN(n, internal_libxs_gemm_bm);
-  const int kn = LIBXS_MIN(n, internal_libxs_gemm_bn);
-  const int kk = LIBXS_MIN(k, internal_libxs_gemm_bk);
-  libxs_gemm_shape_t shape, kshape;
+  libxs_gemm_config_t* result = NULL;
+  libxs_gemm_shape_t shape;
+  /* the tile is derived from the block size, hence the state must be settled */
+  internal_libxs_gemm_init();
   LIBXS_MEMZERO(&shape);
   shape.datatype = datatype;
   shape.transa = 'N'; shape.transb = 'T';
   shape.m = n; shape.n = n; shape.k = k;
   shape.lda = lda; shape.ldb = ldb; shape.ldc = ldc;
   shape.alpha = 1.0; shape.beta = 0.0;
-  LIBXS_MEMZERO(&kshape);
-  kshape.datatype = datatype;
-  kshape.transa = 'N'; kshape.transb = 'T';
-  kshape.m = km; kshape.n = kn; kshape.k = kk;
-  kshape.lda = lda; kshape.ldb = ldb; kshape.ldc = km;
-  kshape.alpha = 1.0; kshape.beta = 1.0;
-  return internal_libxs_gemm_dispatch(&shape, &kshape, backend, registry, own);
+  if (NULL != own && 0 != internal_libxs_syrk_blas_due(datatype, n, k)) {
+    /* an unused kernel is worth neither the JIT nor an entry */
+    LIBXS_MEMZERO(own);
+    own->shape = shape;
+    internal_libxs_gemm_blas_init(own, backend,
+      INTERNAL_GEMM_BACKEND_BLAS >= internal_libxs_gemm_backend);
+    result = own;
+  }
+  else {
+    const int km = LIBXS_MIN(n, internal_libxs_gemm_bm);
+    const int kn = LIBXS_MIN(n, internal_libxs_gemm_bn);
+    const int kk = LIBXS_MIN(k, internal_libxs_gemm_bk);
+    libxs_gemm_shape_t kshape;
+    LIBXS_MEMZERO(&kshape);
+    kshape.datatype = datatype;
+    kshape.transa = 'N'; kshape.transb = 'T';
+    kshape.m = km; kshape.n = kn; kshape.k = kk;
+    kshape.lda = lda; kshape.ldb = ldb; kshape.ldc = km;
+    kshape.alpha = 1.0; kshape.beta = 1.0;
+    result = internal_libxs_gemm_dispatch(
+      &shape, &kshape, backend, registry, own);
+  }
+  return result;
 }
 
 
@@ -1224,8 +1297,10 @@ LIBXS_API void libxs_syr2k_task(
           interval = (NULL != env ? atoi(env) : 0);
         }
         if (0 < interval) {
-          fprintf(stderr, "LIBXS INFO: dsyr2k uplo=%c n=%i k=%i lda=%i ldb=%i ldc=%i"
-            " alpha=%g beta=%g upper=%i\n", uplo, n, k, lda, ldb, ldc, alpha, beta, upper);
+          fprintf(stderr, "LIBXS INFO[%u]: dsyr2k uplo=%c n=%i k=%i"
+            " lda=%i ldb=%i ldc=%i alpha=%g beta=%g upper=%i\n",
+            internal_libxs_gemm_origin(),
+            uplo, n, k, lda, ldb, ldc, alpha, beta, upper);
         }
       }
 #endif
@@ -1390,8 +1465,10 @@ LIBXS_API void libxs_syrk_task(
           interval = (NULL != env ? atoi(env) : 0);
         }
         if (0 < interval) {
-          fprintf(stderr, "LIBXS INFO: dsyrk uplo=%c n=%i k=%i lda=%i ldc=%i"
-            " alpha=%g beta=%g upper=%i\n", uplo, n, k, lda, ldc, alpha, beta, upper);
+          fprintf(stderr, "LIBXS INFO[%u]: dsyrk uplo=%c n=%i k=%i"
+            " lda=%i ldc=%i alpha=%g beta=%g upper=%i\n",
+            internal_libxs_gemm_origin(),
+            uplo, n, k, lda, ldc, alpha, beta, upper);
         }
       }
 #endif

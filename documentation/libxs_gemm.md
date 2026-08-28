@@ -477,8 +477,23 @@ therefore degrades to later JIT, never to a wrong kernel.
                             on first miss (default: 8, clamped to 254).
     LIBXS_GEMM_PRINT=N      Print dispatch info every N-th call
                             to stderr (requires compile-time gate).
+                            Set to 0 for a summary at teardown instead
+                            (registry, histogram, and warm-up slots).
+                            Every line carries the origin of the
+                            process, because ranks share one stream:
+                            "LIBXS INFO[rid]:" with rid as libxs_rid,
+                            hence the local rank where it is known and
+                            the process id otherwise.
     LIBXS_SYRK_PRINT=N      Print DSYRK/DSYR2K BLAS fallback calls
                             to stderr (requires compile-time gate).
+    LIBXS_SYRK_BLAS=0|1     Resolve the BLAS DSYRK/DSYR2K entry points
+                            and prefer them for any shape wider than
+                            one tile. The tiled path (and with it the
+                            kernel of the dispatched config) is then
+                            unreachable, so the SYRK dispatch neither
+                            compiles a kernel nor takes a registry
+                            entry for such a shape. Set to 0 to tile
+                            and to make the kernel matter (default: 1).
 
 ## Example (C)
 

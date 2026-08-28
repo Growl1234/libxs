@@ -478,7 +478,12 @@ LIBXS_API void libxs_gemm_release_registry(libxs_registry_t* registry);
 /**
  * Dispatch a GEMM config suitable for libxs_syr2k (runtime, explicit
  * backend selection). The kernel shape is the SYRK tile, hence the
- * blocking (LIBXS_GEMM_BM/BN/BK) is applied inside.
+ * blocking (LIBXS_GEMM_BM/BN/BK) is applied inside. A shape wider than
+ * one tile runs the BLAS SYRK where that entry point is available
+ * (LIBXS_SYRK_BLAS), which reads the shape of the config but never its
+ * kernel. The caller-owned flavors then skip the kernel and the registry
+ * alike, whereas this flavor keeps an entry, because a returned pointer
+ * has to stay valid.
  * backend: optional backend pointers (NULL = built-in only).
  * Returns pointer to cached config (registry-owned), or NULL.
  */
