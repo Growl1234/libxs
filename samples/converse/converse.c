@@ -1036,8 +1036,10 @@ static void answer_rules_member(double* csum, double* ssum, unsigned int id)
 }
 
 
-/* probability of at most k successes in n draws at rate p */
-/* evaluated by the term ratio, so no factorial is ever formed */
+/**
+ * Probability of at most k successes in n draws at rate p, by the term ratio so
+ * that no factorial is ever formed.
+ */
 static double answer_rules_tail(long k, long n, double p)
 {
   double result = 0.0;
@@ -1755,11 +1757,13 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
   return result;
 }
 
-/* materialize the `norm|from|to` rules as a libxs_lexnorm_t table, which */
-/* the tokenizer applies during encoding */
-/* the mechanism is language-agnostic, the vocabulary lives in the */
-/* caller-owned rule file; rebuilt whenever rules are (re)loaded */
-/* with no norm rules the table is empty and encoding is bit-identical */
+/**
+ * Materialize the `norm|from|to` rules as a libxs_lexnorm_t table, which the
+ * tokenizer applies during encoding. This is the library's data-only
+ * normalization facility: the mechanism is language-agnostic, the vocabulary
+ * lives in the caller-owned rule file. Rebuilt whenever rules are (re)loaded;
+ * with no norm rules the table is empty and encoding is bit-identical.
+ */
 static void answer_lexnorms_build(void)
 {
   size_t rule_pos;
@@ -1909,11 +1913,13 @@ int answer_relation_rule_provenance(int kind, const char* text, int text_len)
   return (RELATION_RULE_PROPOSED < result) ? RELATION_RULE_ASSERTED : result;
 }
 
-/* resolve the per-corpus namespace from the prefix: state and companion */
-/* files live in the current directory keyed by the prefix basename, so each */
-/* corpus owns its own converse.dat/eval/relations/... */
-/* a prefix of "." (the default) takes the working directory's own name, */
-/* which reproduces the plain "converse.*" layout in the sample directory */
+/**
+ * Resolve the per-corpus namespace from the prefix: state and companion files
+ * live in the current directory keyed by the prefix basename, so each corpus
+ * owns its own converse.dat/eval/relations/... A prefix of "." (the default)
+ * takes the working directory's own name, which reproduces the plain
+ * "converse.*" layout when run from the sample directory.
+ */
 static void converse_namespace_init(const char* prefix)
 {
   char base[CONVERSE_PATH_MAX - 16];
@@ -3734,8 +3740,10 @@ int ngram_native_mode(void)
   return (GRAN_WORD != ngram_gran_mode()) ? 1 : 0;
 }
 
-/* prior whole words carried as sub-word prediction context, 0 = off and */
-/* byte-identical to piece-only context; ignored at word/native mode */
+/**
+ * Number of prior whole words to carry as sub-word prediction context, or 0
+ * (off, byte-identical to piece-only context). Ignored at word/native mode.
+ */
 int ngram_wordctx(void)
 {
   int result = 0;
@@ -3760,9 +3768,11 @@ static int ngram_is_vowel(unsigned char c)
     || 'y' == c) ? 1 : 0;
 }
 
-/* signed-length adapter over libxs_utf8_decode, which is the strict form */
-/* an invalid or truncated sequence reports width 1, so a scan always */
-/* advances and a malformed byte is simply not a vowel */
+/**
+ * Signed-length adapter over libxs_utf8_decode, which is the strict form: an
+ * invalid or truncated sequence reports width 1, so scanning always advances and
+ * a malformed byte is simply not a vowel.
+ */
 static unsigned long ngram_utf8_decode(const char* text, int len, int* width)
 {
   return libxs_utf8_decode((const unsigned char*)text, (size_t)len, width);
@@ -3851,11 +3861,12 @@ static void bpe_free(void)
   bpe_merges = NULL;
 }
 
-/* learn byte-pair merges from the training split only */
-/* words are byte runs split on whitespace, with a leading-space marker */
-/* keeping word starts distinct */
-/* each iteration adds the most frequent adjacent pair as a new symbol and */
-/* records its rank, so encoding can replay the merges */
+/**
+ * Learn byte-pair merges from the training split only. Words are byte runs
+ * split on whitespace (a leading-space marker keeps word starts distinct);
+ * each iteration adds the most frequent adjacent symbol pair as a new symbol
+ * and records its rank so encoding can replay the merges.
+ */
 static void bpe_build(const libxs_registry_t* corpus, int holdout)
 {
   int nmerges = BPE_MERGES_DEFAULT;
@@ -4037,9 +4048,11 @@ static int bpe_encode_run(const char* text, int len, libxs_lexeme_t tokens[],
   return result;
 }
 
-/* split a word [text,wlen) into syllable pieces by a VC|CV heuristic */
-/* cut before a consonant followed by a vowel, once the current piece */
-/* already holds a vowel; piece length is capped and a piece ends at word end */
+/**
+ * Split a word [text,wlen) into syllable pieces by a simple VC|CV heuristic:
+ * cut before a consonant that is followed by a vowel, once the current piece
+ * already contains a vowel. Caps piece length; always ends at word end.
+ */
 /**
  * Whether the consonant run text[a,b) is a legal syllable ONSET, i.e. may begin
  * a syllable in this orthography.
@@ -4250,13 +4263,14 @@ static int ngram_metatoken_tokens(libxs_lexicon_t* lexicon,
   return result;
 }
 
-/* emits LIBXS_LEXEME_BREAK on a token preceded by whitespace in the source, */
-/* so libxs_lexeme_word_next groups the pieces of one word */
-/* native granularity cuts fixed-width chunks across word boundaries and */
-/* hence marks none */
-/* a non-NULL word_ids gives each piece the whole-word lexicon id of the word */
-/* it belongs to (its own id for native chunks and standalone punctuation), */
-/* which lets a caller build word-span context over sub-word emission */
+/**
+ * Emits LIBXS_LEXEME_BREAK on a token preceded by whitespace in the source, so
+ * libxs_lexeme_word_next groups the pieces of one word. Native granularity cuts
+ * fixed-width chunks across word boundaries and hence marks none. When word_ids
+ * is non-NULL, each piece receives the whole-word lexicon id of the word it
+ * belongs to (its own id for native chunks and standalone punctuation), which
+ * lets a caller build word-span context over sub-word emission.
+ */
 int ngram_native_tokens(libxs_lexicon_t* lexicon, const char* text,
   int text_len, libxs_lexeme_t tokens[], unsigned int word_ids[], int max,
   int create)
@@ -4500,10 +4514,12 @@ void converse_stage_report(void)
   }
 }
 
-/* skip-gram tier: an auxiliary store keyed by the pair (w[-3], w[-1]) that */
-/* abstracts over the varying middle slot, so an unseen exact context can */
-/* still match a seen "w ___ w" pattern (analogic, no parameters) */
-/* off by default, hence bit-exact to the exact-only model */
+/**
+ * Skip-gram tier: an auxiliary store keyed by the pair (w[-3], w[-1]) that
+ * abstracts over the varying middle slot, so an unseen exact context can still
+ * match a seen "w ___ w" pattern (analogic generalization, no parameters).
+ * Off by default -> bit-exact to the exact-only model.
+ */
 static int ngram_skip(void)
 {
   const char* env = getenv("CONVERSE_SKIP");
@@ -4522,8 +4538,10 @@ static double ngram_skip_mu(void)
   return result;
 }
 
-/* record a skip-gram observation from a rolling history */
-/* keys the pair (hist[hlen-3], hist[hlen-1]) to the successor, hlen >= 3 */
+/**
+ * Record a skip-gram observation from a rolling history: keys the pair
+ * (hist[hlen-3], hist[hlen-1]) to the successor, requiring hlen >= 3.
+ */
 static void ngram_skip_observe(const unsigned int hist[], int hlen,
   unsigned int succ_id)
 {
@@ -4599,11 +4617,12 @@ void ngram_hist_push(unsigned int hist[], int* hlen, int cap,
   }
 }
 
-/* word-span context for predicting sub-word token i: the whole-word ids of */
-/* the preceding wctx words, then the pieces of the current word emitted so */
-/* far, kept as the most-recent cap entries */
-/* rebuilt per position so train and eval derive identical keys */
-/* groups are delimited by LIBXS_LEXEME_BREAK */
+/**
+ * Word-span context for predicting sub-word token i: the whole-word ids of the
+ * preceding wctx words followed by the pieces of the current word emitted so
+ * far, kept as the most-recent cap entries. Rebuilt per position so that train
+ * and eval derive identical keys; groups are delimited by LIBXS_LEXEME_BREAK.
+ */
 int ngram_wordctx_hist(const libxs_lexeme_t nat[],
   const unsigned int word_ids[], int i, int wctx, unsigned int hist[], int cap)
 {
@@ -5043,10 +5062,12 @@ int token_emb_succ_append(const unsigned int ctx[], int nctx,
   return result;
 }
 
-/* rank of cand among all vocabulary ids by successor score, 0 = best */
-/* no sort: the rank is how many ids strictly outscore it, which is one pass */
-/* and needs no candidate list at all */
-/* the point being that this scorer is TOTAL where the count model is partial */
+/**
+ * Rank of cand among all vocabulary ids by the successor score, 0 = best. No
+ * sort: the rank is the number of ids that strictly outscore it, which is one
+ * pass and needs no candidate list at all - the point being that this scorer is
+ * TOTAL where the count model is partial.
+ */
 int token_emb_succ_rank(const unsigned int ctx[], int nctx,
   unsigned int cand, unsigned int vocab)
 {
@@ -5149,8 +5170,8 @@ static void token_emb_cooc_text(libxs_registry_t* pairs, double* rowcnt,
   libxs_lexeme_stream_release(&stream);
 }
 
-/* multiply the sparse PPMI matrix (CSR) by a dense (vocab+1) x DIM block */
-/* out = A * in when transpose is zero, out = A^T * in otherwise */
+/* Multiply the sparse PPMI matrix (CSR) by a dense (vocab+1) x DIM block:
+   out = A * in when transpose is zero, out = A^T * in otherwise. */
 static void token_emb_spmm(const size_t* rowptr, const unsigned int* colidx,
   const double* val, unsigned int vocab, const double* in, int transpose,
   double* out)
@@ -5174,8 +5195,8 @@ static void token_emb_spmm(const size_t* rowptr, const unsigned int* colidx,
   }
 }
 
-/* Gram-Schmidt orthonormalization of the DIM columns, in place */
-/* the block is (vocab+1) x DIM */
+/* Gram-Schmidt orthonormalization of the DIM columns of a (vocab+1) x DIM
+   block, in place. */
 static void token_emb_orthonormalize(double* block, unsigned int vocab)
 {
   const size_t rows = (size_t)vocab + 1;
@@ -5525,10 +5546,11 @@ void token_emb_build(const libxs_registry_t* corpus,
   }
 }
 
-/* fill hist[] with the trailing content-token ids of the prompt (at most */
-/* NGRAM_ORDER_MAX) and return the count */
-/* mirrors ngram_last_context but keeps the whole window the deep store can */
-/* use, not just the final two ids */
+/**
+ * Fill hist[] with the trailing content-token ids of the prompt (at most
+ * NGRAM_ORDER_MAX), returning the count. Mirrors ngram_last_context but keeps
+ * the whole window the deep store can use, not just the final two ids.
+ */
 static int ngram_history(libxs_lexicon_t* lexicon, const libxs_lexrule_t* rules,
   int nrules, const char* text, int text_len, unsigned int hist[])
 {
@@ -5606,9 +5628,11 @@ static int ngram_render_separated(void)
   return (0 == ngram_native_mode()) ? 1 : 0;
 }
 
-/* append one piece's text at pos, inserting the separator first when the */
-/* view needs one and the piece may be preceded by something */
-/* returns the new end, or pos unchanged when the piece does not fit */
+/**
+ * Append one piece's text at pos, inserting the separator first when the view
+ * needs one and the piece may be preceded by something. Returns the new end, or
+ * pos unchanged when the piece does not fit or has no text.
+ */
 size_t ngram_render_append(char* out, size_t out_size, size_t pos,
   const char* piece, int len, int leading)
 {
@@ -5624,10 +5648,12 @@ size_t ngram_render_append(char* out, size_t out_size, size_t pos,
   return result;
 }
 
-/* choose among the count-ranked successors with the byte model and return */
-/* the index to take */
-/* falls back to the n-gram's own first choice whenever the model is absent */
-/* or nothing could be scored, so this only reorders what it already offered */
+/**
+ * Choose among the count-ranked successors with the byte model, returning the
+ * index to take. Falls back to the n-gram's own first choice whenever the model
+ * is absent or nothing could be scored, so enabling this can only reorder
+ * candidates the n-gram already offered.
+ */
 int ngram_gen_select(libxs_lexicon_t* lexicon,
   const unsigned int ids[], int nids, const char* context, int context_len)
 {
@@ -5673,9 +5699,11 @@ int ngram_gen_minorder(void)
  * or at the length budget. Prints the continuation plus the mean/min order
  * that quantifies how well grounded it was.
  */
-/* greedy grounded continuation of the prompt into out[], space-joined */
-/* returns the generated token count, 0 when nothing cleared the floor */
-/* order_mean/order_min optionally report how attested the run was */
+/**
+ * Greedy grounded continuation of the prompt into out[] (space-joined words).
+ * Returns the number of generated tokens (0 = nothing cleared the grounding
+ * floor). Optional order_mean/order_min report how attested the run was.
+ */
 int ngram_generate(libxs_registry_t* model, libxs_lexicon_t* lexicon,
   const libxs_lexrule_t* rules, int nrules, const char* text, int text_len,
   char* out, size_t out_size, double* order_mean, int* order_min_out)
@@ -6580,9 +6608,11 @@ static void converse_usage(const char* program)
 }
 
 
-/* parse the command line into `run` */
-/* basenames may be NULL when the caller only needs the modes, which is how */
-/* converse_role_of asks the same parser the same question without acquiring */
+/**
+ * Parse the command line into `run`. `basenames` may be NULL when the caller
+ * only needs the modes, which is how converse_role_of asks the same parser the
+ * same question without acquiring anything.
+ */
 static int converse_parse(int argc, char* argv[], converse_run_t* run,
   const char* basenames[], int* nbasenames, int* first)
 {

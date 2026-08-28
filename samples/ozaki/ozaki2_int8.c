@@ -9,9 +9,11 @@
 ******************************************************************************/
 #include "ozaki.h"
 
-/* (mi,nj) elements per Garner reconstruction batch */
-/* batching exposes data-parallelism across independent elements, so the */
-/* per-element Garner inner loop auto-vectorizes */
+/**
+ * Number of (mi,nj) elements processed in one Garner reconstruction batch.
+ * Batching exposes data-parallelism across independent elements so the
+ * compiler can auto-vectorize the per-element Garner inner loop.
+ */
 #if !defined(OZ2_BATCH)
 # define OZ2_BATCH 16
 #endif
@@ -37,8 +39,10 @@
 
 #if defined(OZAKI_I8) && (OZAKI_I8)
 
-/* 20 pairwise coprime moduli <= 128 (prime powers and primes) */
-/* 128=2^7, 125=5^3, 121=11^2, 119=7*17, 81=3^4 alongside primes */
+/**
+ * 20 pairwise coprime moduli <= 128 (prime powers + primes).
+ * 128=2^7, 125=5^3, 121=11^2, 119=7*17, 81=3^4 alongside primes.
+ */
 static const uint16_t oz2_moduli[] = {128, 127, 125, 121, 119, 113, 109, 107, 103, 101, 97, 89, 83, 81, 79, 73, 71, 67, 61, 59};
 static const uint32_t oz2_rcp[] = {(uint32_t)(0x100000000ULL / 128), (uint32_t)(0x100000000ULL / 127),
   (uint32_t)(0x100000000ULL / 125), (uint32_t)(0x100000000ULL / 121), (uint32_t)(0x100000000ULL / 119),
@@ -61,8 +65,10 @@ typedef int8_t oz2_res_t;
 
 #else /* u8 default */
 
-/* 20 pairwise coprime moduli <= 256 (prime powers and primes) */
-/* 256=2^8, 243=3^5, 169=13^2 alongside primes */
+/**
+ * 20 pairwise coprime moduli <= 256 (prime powers + primes).
+ * 256=2^8, 243=3^5, 169=13^2 alongside primes.
+ */
 static const uint16_t oz2_moduli[] = {
   256, 251, 243, 241, 239, 233, 229, 227, 223, 211, 199, 197, 193, 191, 181, 179, 173, 169, 167, 163};
 static const uint32_t oz2_rcp[] = {(uint32_t)(0x100000000ULL / 256), (uint32_t)(0x100000000ULL / 251),
@@ -86,8 +92,11 @@ typedef uint8_t oz2_res_t;
 
 #endif /* OZAKI_I8 */
 
-/* sign folding for residue storage, used by the host preprocessing wrappers */
-/* u8 takes the additive inverse (p - r) for negatives, i8 negates */
+/**
+ * Sign folding for residue storage (used by host preprocessing wrappers).
+ * u8: additive inverse (p - r) for negatives.
+ * i8: sign negation (-r) for negatives.
+ */
 #if defined(OZAKI_I8) && (OZAKI_I8)
 # define OZ2_SIGN_FOLD(SIGN, RES, PIDX) ((oz2_res_t)((SIGN) * (int8_t)(RES)))
 #else
@@ -108,9 +117,11 @@ LIBXS_API_INLINE unsigned int oz2_mod64(uint64_t x, int pidx)
 }
 
 
-/* reduce an aligned mantissa modulo all active moduli */
-/* delta = max_exp - element_exp (>= 0), and the mantissa is right-shifted */
-/* by delta bits for exponent alignment before the reduction */
+/**
+ * Reduce an aligned mantissa modulo all active moduli.
+ * delta = max_exp - element_exp (>= 0); mantissa is right-shifted
+ * by delta bits for exponent alignment before reduction.
+ */
 LIBXS_API_INLINE void oz2_reduce(uint64_t mantissa, int delta, uint8_t residues[OZ2_NPRIMES_MAX], int nprimes)
 {
   int i;
@@ -126,9 +137,11 @@ LIBXS_API_INLINE void oz2_reduce(uint64_t mantissa, int delta, uint8_t residues[
 }
 
 
-/* hierarchical CRT, two-level Garner reconstruction */
-/* level 1: HIER_GS primes per group, small Garner in 32-bit */
-/* level 2: Garner over HIER_NGROUPS group-moduli, 64-bit Barrett */
+/**
+ * Hierarchical CRT: two-level Garner reconstruction.
+ * Level 1: HIER_GS primes per group (small Garner, 32-bit).
+ * Level 2: Garner over HIER_NGROUPS group-moduli (32-bit, 64-bit Barrett).
+ */
 #define HIER_GS 4
 #define HIER_NGROUPS_MAX ((OZ2_NPRIMES_MAX + HIER_GS - 1) / HIER_GS)
 #define HIER_L2_HORNER_GROUP 2
@@ -278,14 +291,18 @@ LIBXS_API_INLINE void oz2_reconstruct_batch(unsigned int batch_res[OZ2_BATCH][OZ
   }
 }
 
-/* AVX-512 batched CRT reconstruction via Garner */
-/* OZ2_BATCH (= 16) uint32 values per __m512i */
-/* uses libxs_mulhi_epu32 and libxs_mod_u32x16 from libxs_utils.h */
+/**
+ * AVX-512 batched CRT reconstruction via Garner's algorithm.
+ * Processes OZ2_BATCH (= 16) uint32 values in a single __m512i.
+ * Uses libxs_mulhi_epu32 and libxs_mod_u32x16 from libxs_utils.h.
+ */
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == OZ2_BATCH
 
-/* AVX-512 hierarchical batched CRT reconstruction */
-/* level 1: vectorized Garner across 16 batch elements per group */
-/* level 2: scalar Garner and Horner per element, HIER_NGROUPS_MAX steps */
+/**
+ * AVX-512 hierarchical batched CRT reconstruction.
+ * Level 1: vectorized Garner across 16 batch elements per group.
+ * Level 2: scalar Garner + Horner per element (only HIER_NGROUPS_MAX steps).
+ */
 LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void oz2_reconstruct_batch_avx512(
   unsigned int batch_res[OZ2_BATCH][OZ2_NPRIMES_MAX],
   uint8_t garner_inv[OZ2_NPRIMES_MAX][OZ2_NPRIMES_MAX],
@@ -404,9 +421,11 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
   int i, j;
   LIBXS_ASSERT(LIBXS_DATATYPE_F64 == LIBXS_DATATYPE(GEMM_REAL_TYPE) || LIBXS_DATATYPE_F32 == LIBXS_DATATYPE(GEMM_REAL_TYPE));
 
-  /* trim: truncate mantissa bits to reduce nprimes, mirroring GPU scheme 2 */
-  /* each trim level drops 2 input bits, hence 4 product bits */
-  /* nprimes auto-reduces once the CRT product bits exceed what is required */
+  /**
+   * Trim: truncate mantissa bits to reduce nprimes (mirroring GPU Scheme 2).
+   * Each trim level drops 2 input bits (4 product bits). Auto-reduce nprimes
+   * when cumulative CRT product bits exceed the required representation.
+   */
   if (0 < ozaki_trim) {
     const int mant = GEMM_IS_DOUBLE ? 52 : 23;
     const int max_levels = mant / 2;
@@ -466,8 +485,10 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
   {
     GEMM_INT_TYPE row, col, ib, jb, mi, nj, kb, kb_grp;
     int pidx;
-    /* phase 3: scale C by beta once, before the K-group loop */
-    /* per BLAS spec beta=0 zeroes C unconditionally, hence NaN/Inf safe */
+    /**
+     * Phase 3: scale C by beta (once, before K-group loop).
+     * Per BLAS spec, beta=0 must zero C unconditionally (NaN/Inf safe).
+     */
 #if defined(_OPENMP)
 # pragma omp for OZAKI_OMP_SCHEDULE
 #endif
@@ -580,8 +601,10 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
         expb_fp[col] = libxs_pow2((int)expb_raw[col] - OZ_BIAS_PLUS_MANT + oztrim_bits);
       }
 
-      /* phase 4: CRT dot products and accumulate for this K-group */
-      /* the K_CHUNK loop stays for int32 safety when K_GRP > K_CHUNK */
+      /**
+       * Phase 4: CRT dot products + accumulate for this K-group.
+       * K_CHUNK loop retained for int32 safety when K_GRP > K_CHUNK.
+       */
 #if defined(_OPENMP)
 # pragma omp for LIBXS_OPENMP_COLLAPSE(2) OZAKI_OMP_SCHEDULE
 #endif
@@ -593,9 +616,11 @@ LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, cons
           uint8_t tile_res[BLOCK_M * BLOCK_N][OZ2_NPRIMES_MAX];
           memset(tile_res, 0, sizeof(tile_res));
 
-          /* fused GEMM and mod-reduce: inline VNNI panel per prime, Barrett */
-          /* the accumulators in-register, accumulate into tile_res */
-          /* removes the partial[] buffer and the per-prime call overhead */
+          /**
+           * Fused GEMM + mod-reduce: inline VNNI panel per prime, Barrett-
+           * reduce accumulators in-register, accumulate into tile_res.
+           * Eliminates partial[] buffer and per-prime function call overhead.
+           */
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && \
   (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH || LIBXS_X86_AVX512 <= LIBXS_MAX_STATIC_TARGET_ARCH)
           if (BLOCK_N == jblk && LIBXS_X86_AVX512 <= ozaki_target_arch) {

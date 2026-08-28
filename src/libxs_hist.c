@@ -337,8 +337,10 @@ LIBXS_API void libxs_hist_push(libxs_lock_t* lock, libxs_hist_t* hist, const dou
 LIBXS_API void libxs_hist_query(libxs_lock_t* lock, const libxs_hist_t* hist,
   libxs_hist_info_t* info)
 {
-  /* C "mutable": the pending batch is folded here via cast */
-  /* safe because a histogram is always heap-allocated */
+  /**
+   * C "mutable": the pending batch is folded here (internal mutation) via cast,
+   * which is safe because a histogram is always heap-allocated.
+   */
   libxs_hist_t* const h = (libxs_hist_t*)(uintptr_t)hist;
   LIBXS_ASSERT(NULL != info);
   info->buckets = NULL;

@@ -20,8 +20,11 @@
 #endif
 
 
-/* not an example of how to use LIBXS: the functions tested here are */
-/* internal and not part of the API */
+/**
+ * This test case is NOT an example of how to use LIBXS
+ * since INTERNAL functions are tested which are not part
+ * of the LIBXS API.
+ */
 int main(void)
 {
   libxs_init();

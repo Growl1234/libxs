@@ -117,8 +117,11 @@ LIBXS_API_INLINE unsigned int internal_libxs_regkey_hash(
 }
 
 
-/* returns the matching USED entry, else the first EMPTY or TOMB slot */
-/* *found is 1 if an existing entry was matched, 0 if the slot is free */
+/**
+ * Find entry by key. Returns index of the matching USED entry,
+ * or the index of the first available slot (EMPTY or TOMB) suitable
+ * for insertion. Sets *found to 1 if an existing entry was found.
+ */
 LIBXS_API_INLINE unsigned int internal_libxs_registry_probe(
   const internal_libxs_regentry_t* entries, unsigned int capacity,
   const void* key, size_t key_size, unsigned int hash, int* found)
@@ -201,8 +204,10 @@ LIBXS_API_INLINE int internal_libxs_registry_grow(libxs_registry_t* registry)
 }
 
 
-/* core set logic, no locking: the caller holds whatever lock applies */
-/* returns the value pointer on success, NULL on failure */
+/**
+ * Core set logic (no locking). Caller must hold whatever lock is appropriate.
+ * Returns the value pointer on success, NULL on failure.
+ */
 LIBXS_API_INLINE void* internal_libxs_registry_set_impl(
   libxs_registry_t* registry,
   const void* key, size_t key_size, unsigned int hash,
@@ -449,9 +454,12 @@ LIBXS_API void* libxs_registry_set(libxs_registry_t* registry,
 }
 
 
-/* cache: 0 never trusts the TLS cache, 1 heap-stored values only, 2 any hit */
-/* a rehash moves inline values but not the heap buffer, hence 1 is lock-free */
-/* level 2 asserts no concurrent mutation of the queried entry */
+/**
+ * cache tells how far the TLS cache may be trusted: 0 never, 1 only for
+ * heap-stored values (a rehash moves inline values but not the heap buffer,
+ * hence such a hit needs no lock), 2 any hit (the caller asserts that the
+ * queried entry is not concurrently mutated).
+ */
 LIBXS_API_INLINE void* internal_libxs_registry_get_impl(
   const libxs_registry_t* registry, const void* key, size_t key_size,
   unsigned int hash, libxs_lock_t* lock, int cache)

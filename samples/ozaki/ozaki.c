@@ -75,8 +75,11 @@ OZAKI_API_INTERN void gemm_signal_handler(int sig)
 
 
 #if defined(__LIBXSTREAM)
-/* OpenCL diff matching the CPU _diff signature: ozaki_gemm on the GPU, */
-/* then optionally reference BLAS on the CPU and matdiff */
+/**
+ * OpenCL diff function matching the CPU _diff signature.
+ * Computes GEMM result on GPU via ozaki_gemm, then optionally
+ * runs reference BLAS on CPU and computes matdiff.
+ */
 LIBXS_API_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb, const GEMM_INT_TYPE* m, const GEMM_INT_TYPE* n,
   const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda, const GEMM_REAL_TYPE* b,
   const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc, libxs_matdiff_t* diff)
@@ -118,12 +121,16 @@ OZAKI_API_INTERN void gemm_init(void)
       const char* const ozaki_verbose_env = getenv("OZAKI_VERBOSE");
       const char* const ozaki_complex_env = getenv("OZAKI_COMPLEX");
       ozaki = (NULL == ozaki_env ? 2 /*default*/ : atoi(ozaki_env));
-      /* OZAKI_MAXK: max K per preprocessing pass, 0 means no grouping */
-      /* default K_GRP (compile-time, typically 32768) */
+      /**
+       * OZAKI_MAXK: max K per preprocessing pass (0=no grouping).
+       * Default: K_GRP (compile-time, typically 32768).
+       */
       ozaki_maxk = (NULL != ozaki_maxk_env ? atoi(ozaki_maxk_env) : K_GRP);
-      /* OZAKI_COMPLEX: 0=original BLAS, 1=CPU, 2=GPU, 3=original ZGEMM and */
-      /* lock out real GEMM during ZGEMM */
-      /* default 0 if OZAKI=0, else 2 (GPU preferred, CPU fallback) */
+      /**
+       * OZAKI_COMPLEX: 0=original BLAS, 1=CPU, 2=GPU,
+       * 3=original ZGEMM + lock out real GEMM during ZGEMM.
+       * Default: 0 if OZAKI=0, else 2 (GPU preferred, CPU fallback).
+       */
       ozaki_complex = (NULL != ozaki_complex_env ? atoi(ozaki_complex_env) : (0 != ozaki ? 2 : 0));
       if (NULL != ozaki_stat_env) ozaki_stat = atoi(ozaki_stat_env);
       if (NULL != ozaki_verbose_env) ozaki_verbose = atoi(ozaki_verbose_env);
@@ -164,9 +171,11 @@ OZAKI_API_INTERN void gemm_init(void)
                             ? 0 /*default*/
 #endif
                             : atoi(threshold_env));
-        /* -1 is auto: ozaki_flags_eff decides per call from the size */
-        /* only 0 and 3 are correct, so a bare 1 or 2 falls back to auto */
-        /* rather than silently computing the wrong product */
+        /**
+         * -1 means auto: ozaki_flags_eff decides per call from the size. Only
+         * 0 and 3 are correct, so a bare 1 or 2 falls back to auto rather than
+         * silently computing the wrong product.
+         */
         if (NULL == ozaki_flags_env) {
           ozaki_flags = -1;
         }
@@ -261,8 +270,10 @@ OZAKI_API_INTERN LIBXS_ATTRIBUTE_WEAK void GEMM_WRAP(const char* transa, const c
 
   gemm_init();
 
-  /* quick-return for degenerate dimensions, a valid no-op per BLAS spec */
-  /* pointers may be NULL when any dimension is zero */
+  /**
+   * Quick-return for degenerate dimensions (BLAS spec: valid no-op).
+   * Pointers may be NULL when any dimension is zero.
+   */
   if (*m > 0 && *n > 0 && *k > 0) {
     LIBXS_ASSERT(NULL != a && NULL != b && NULL != c);
     LIBXS_ASSERT(NULL != lda && NULL != ldb && NULL != ldc);

@@ -14,8 +14,11 @@
 # include <libxstream/libxstream_opencl.h>
 #endif
 
-/* weak references: gemm-blas.x links without the Ozaki library */
-/* CHECK must not be used there: the variables resolve to a zero address */
+/**
+ * Weak references: gemm-blas.x links without the Ozaki library,
+ * so these symbols may be undefined. CHECK should not be used
+ * with gemm-blas.x (the variables resolve to zero-address).
+ */
 LIBXS_PRAGMA_WEAK(gemm_original)
 LIBXS_PRAGMA_WEAK(ozaki_verbose)
 LIBXS_PRAGMA_WEAK(gemm_diff)
@@ -31,10 +34,10 @@ static void gemm_host_free(void* ptr, int hostmem);
 int main(int argc, char* argv[])
 {
   const char* const nrepeat_env = getenv("NREPEAT");
-  /* GEMM_HOSTMEM=1 takes the page-locked allocator instead of malloc, which */
-  /* separates the device-reach cost from the pinned-memory cost */
-  /* default 0: a real dgemm caller cannot choose the allocator, so 0 is the */
-  /* drop-in replacement and 1 the achievable ceiling */
+  /* GEMM_HOSTMEM=1 uses the offload library's page-locked allocator instead
+   * of malloc, separating the device-reach cost from the pinned-memory cost.
+   * Default is 0: a real dgemm caller cannot choose the allocator, so 0
+   * matches a drop-in replacement and 1 is the achievable ceiling. */
   const char* const env_hostmem = getenv("GEMM_HOSTMEM");
   const int hostmem = (NULL != env_hostmem && 0 != *env_hostmem) ? atoi(env_hostmem) : 0;
   const char* const env_check = getenv("CHECK");
@@ -354,9 +357,9 @@ static void* gemm_host_malloc(size_t nbytes, int hostmem)
   }
   else {
     result = malloc(nbytes);
-    /* declare the operand: the library cannot discover a caller's pointer, */
-    /* so pinning is the caller's contract and LIBXSTREAM_PIN decides what */
-    /* happens with the range (doing nothing is a valid answer) */
+    /* Declare the operand: the library cannot discover a caller's pointer on
+     * its own, so pinning is the caller's contract (LIBXSTREAM_PIN decides
+     * what happens with the range; doing nothing is a valid answer). */
     if (NULL != result && EXIT_SUCCESS == libxstream_init()) {
       LIBXS_EXPECT(EXIT_SUCCESS == libxstream_mem_host_pin(result, nbytes));
     }

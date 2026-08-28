@@ -128,9 +128,12 @@
 #define ZGEMM_WRAP LIBXS_CONCATENATE(__wrap_, ZGEMM)
 #define ZGEMM_REAL LIBXS_CONCATENATE(__real_, ZGEMM)
 
-/* precision-specific type and variable names, for dual-precision builds */
-/* the friendly names redirect to unique symbols, e.g. gemm_original becomes */
-/* dgemm_original or sgemm_original, so both coexist in one binary */
+/**
+ * Precision-specific type and variable names (enable dual-precision builds).
+ * These macros redirect "friendly" names used throughout the implementation
+ * to unique symbols, e.g. gemm_original -> dgemm_original (double) or
+ * sgemm_original (float). Both precisions can coexist in one binary.
+ */
 #define gemm_function_t LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_ftype_t)
 #define zgemm_function_t LIBXS_CPREFIX(GEMM_REAL_TYPE, gemm_ftype_t)
 #define gemm_original LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_original)
@@ -167,9 +170,11 @@
 # define gemm_oz_ocl_diff LIBXS_TPREFIX(GEMM_REAL_TYPE, gemm_oz_ocl_diff)
 #endif
 
-/* scalar int8 fallback: C[M,N] += A[M,K] * B'[N,K] by per-element dot */
-/* used for edge tiles where N < BLOCK_N, so the panel path does not apply */
-/* the inner loop is auto-vectorizable */
+/**
+ * Scalar int8 GEMM fallback: C[M,N] += A[M,K] * B'[N,K] via per-element
+ * dot product. Used for edge tiles where N < BLOCK_N (panel path not
+ * applicable). Auto-vectorizable inner loop.
+ */
 #define OZAKI_GEMM_INT8_BODY(ELEM_T, DOT_FN) \
   { \
     GEMM_INT_TYPE mi, nj, kb; \
@@ -960,8 +965,10 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx_
 #endif /* LIBXS_INTRINSICS_AMX && BLOCK_M==16 && BLOCK_N==16 */
 
 
-/* dispatch helpers: BSSD/BUUD (native int8) against VNNI (base AVX-512) */
-/* the arguments are statement blocks and may contain do{}while(0) macros */
+/**
+ * Dispatch helpers: select BSSD/BUUD (native int8) vs VNNI (base AVX-512).
+ * Arguments are statement blocks (may contain do{}while(0) macros).
+ */
 #if (LIBXS_X86_AVX512_INT8 <= LIBXS_STATIC_TARGET_ARCH) || (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
 # define OZAKI_DISPATCH_I8(BSSD_CALL, VNNI_CALL) \
     if (LIBXS_X86_AVX512_INT8 <= ozaki_target_arch) { BSSD_CALL; } else { VNNI_CALL; }
@@ -1183,8 +1190,10 @@ LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value, int16_t* exp_biase
     exp_raw = (uint16_t)((bits >> OZ_MANT_BITS) & OZ_EXP_MASK);
     frac = bits & ((1ULL << OZ_MANT_BITS) - 1ULL);
 
-    /* exp_raw == 0 is subnormal, treated as zero */
-    /* exp_raw == OZ_EXP_MASK is Inf when frac==0, NaN otherwise */
+    /**
+     * exp_raw == 0: subnormal (treated as zero).
+     * exp_raw == OZ_EXP_MASK: Inf (frac==0) or NaN (frac!=0).
+     */
     if (0 == exp_raw || exp_raw == (uint16_t)OZ_EXP_MASK) {
       *exp_biased = 0;
       *mantissa = 0;
@@ -1224,9 +1233,12 @@ LIBXS_API_INLINE void ozaki_diff_reference(GEMM_ARGDECL, GEMM_REAL_TYPE* c_ref, 
 }
 
 
-/* dump A and B as MHD, real (ncomponents=1) or complex (ncomponents=2) */
-/* gemm_diff.r is the dump ID; ozaki_eps/ozaki_rsq are raised afterwards */
-/* so the same pair is not dumped again */
+/**
+ * Dump A and B matrices as MHD files.
+ * Works for both real (ncomponents=1) and complex (ncomponents=2) matrices.
+ * Uses gemm_diff.r as the dump ID and updates ozaki_eps/ozaki_rsq thresholds
+ * to avoid repeated dumps.
+ */
 LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
 {
   char fname[64];
@@ -1306,8 +1318,10 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
 }
 
 
-/* post-diff: accumulate into the global diff, verbose output, matrix dumps */
-/* and conditional exit; called after a _diff kernel returns */
+/**
+ * Post-diff processing: accumulate into global diff, verbose output,
+ * matrix dumps, and conditional exit. Called after a _diff kernel returns.
+ */
 LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t ncomponents, libxs_matdiff_t* diff)
 {
   libxs_matdiff_t call_diff = *diff;

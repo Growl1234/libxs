@@ -35,13 +35,14 @@
 # error LIBXS_GEMM_NWARMUP must be a power of two
 #endif
 
-/* slot: 24-bit identity tag (bits 31..8) plus 8-bit state (bits 7..0) */
-/* state 0 is unseen, 1 to threshold-1 counts dispatches */
-/* DONE is terminal: the JIT was attempted, successfully or not */
-/* NOJIT is terminal too and stronger: no kernel can ever exist for this */
-/* shape, because the arithmetic-intensity gate refused it and that gate */
-/* reads the kernel shape alone, hence no backend can change the answer */
-/* a tag mismatch reclaims the slot instead of inheriting foreign state */
+/**
+ * A slot packs a 24-bit identity tag (bits 31..8) and an 8-bit state (bits
+ * 7..0): 0 is unseen, 1 to threshold-1 counts dispatches. DONE is terminal
+ * (the JIT was attempted, successfully or not), and NOJIT is terminal and
+ * stronger, because the arithmetic-intensity gate reads the kernel shape
+ * alone and no backend can change its answer. A tag mismatch reclaims the
+ * slot rather than inheriting foreign state.
+ */
 #define INTERNAL_GEMM_WARMUP_DONE 255
 #define INTERNAL_GEMM_WARMUP_NOJIT 254
 #define INTERNAL_GEMM_WARMUP_TAG(HASH) (((HASH) >> 8) & 0xFFFFFF)
@@ -503,9 +504,7 @@ LIBXS_API_INTERN void internal_libxs_gemm_finalize(void)
 }
 
 
-/* own is the caller's config when the caller owns it, else NULL */
-/* a config without kernel is not registered when the caller owns it: the */
-/* warm-up counters live outside the registry, hence nothing needs the entry */
+/* own is the caller's config; a kernel-less config then owns no entry */
 LIBXS_API_INTERN libxs_gemm_config_t* internal_libxs_gemm_dispatch(
   const libxs_gemm_shape_t* shape,
   const libxs_gemm_shape_t* kernel_shape,

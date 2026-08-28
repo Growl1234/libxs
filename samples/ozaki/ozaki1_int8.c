@@ -10,9 +10,12 @@
 #include "ozaki.h"
 
 
-/* split a pre-aligned mantissa into signed 7-bit digits */
-/* the format is ozaki_extract_ieee's (implicit bit at OZ_MANT_BITS), */
-/* possibly right-shifted for exponent alignment */
+/**
+ * Split a (pre-aligned) mantissa into signed 7-bit digits.
+ * The mantissa is expected to be in the same format as produced
+ * by ozaki_extract_ieee (implicit bit at position OZ_MANT_BITS),
+ * but may have been right-shifted for exponent alignment.
+ */
 static void split_digits(uint64_t mantissa, int sign, int8_t digits[MAX_NSLICES])
 {
   int s;
@@ -113,8 +116,10 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
   {
     GEMM_INT_TYPE row, col, ib, jb, mi, nj, kb_grp;
     int slice_a, slice_b;
-    /* phase 3: scale C by beta once, before the K-group loop */
-    /* per BLAS spec beta=0 zeroes C unconditionally, hence NaN/Inf safe */
+    /**
+     * Phase 3: scale C by beta (once, before K-group loop).
+     * Per BLAS spec, beta=0 must zero C unconditionally (NaN/Inf safe).
+     */
 #if defined(_OPENMP)
 # pragma omp for OZAKI_OMP_SCHEDULE
 #endif
@@ -132,8 +137,10 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
     for (kb_grp = 0; kb_grp < K; kb_grp += K_grp_size) {
       const GEMM_INT_TYPE K_len = LIBXS_MIN(K_grp_size, K - kb_grp);
 
-      /* K-permutation for smoothness, single-threaded */
-      /* B is K_len rows x N cols, column-major and non-transposed */
+      /**
+       * Compute K-permutation for smoothness (single-threaded).
+       * B is K_len rows x N cols in column-major (non-transposed).
+       */
       if (NULL != k_perm) {
 #if defined(_OPENMP)
 # pragma omp single
@@ -220,9 +227,11 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
       }
       /* implicit barrier: preprocessing done */
 
-      /* adaptive cutoff: find the highest occupied slice per side */
-      /* slices beyond the last non-zero index contribute nothing, and */
-      /* skipping them reduces the GEMM pair count quadratically */
+      /**
+       * Adaptive cutoff: find highest occupied slice per side.
+       * Slices beyond the maximum non-zero index contribute nothing;
+       * skipping them reduces the GEMM pair count quadratically.
+       */
       /* Reset adaptive slice bounds (single ensures visibility + barrier) */
 #if defined(_OPENMP)
 # pragma omp single
@@ -260,9 +269,11 @@ LIBXS_API_INLINE void gemm_oz1_diff(const char* transa, const char* transb, cons
         eff_cutoff = (sma >= 0 && smb >= 0) ? LIBXS_MIN(cutoff, sma + smb) : -1;
       }
 
-      /* forward-difference decay diagnostic, first K-group and verbose only */
-      /* libxs_fprint (1D) over the int8 slices reports per-axis Linf at each */
-      /* derivative order, which characterizes the exploitable smoothness */
+      /**
+       * Forward-difference decay diagnostic (first K-group, verbose only).
+       * Uses libxs_fprint (1D) on int8 slice buffers to report per-axis Linf
+       * at each derivative order - characterizes exploitable smoothness.
+       */
 #if defined(_OPENMP)
 # pragma omp single nowait
 #endif

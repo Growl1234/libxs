@@ -80,8 +80,10 @@ static const char* const prob_variant_name[] = {
   "flat", "freq", "dx", "cal", "bank", "blend"
 };
 
-/* candidate escape rates, geometric so the sweep resolves the small-rate */
-/* end where the optimum was measured to sit; these are the bank's experts */
+/**
+ * Candidate escape rates, geometric so the sweep resolves the small-rate end
+ * where the optimum was measured to sit.  These double as the bank's experts.
+ */
 static const double prob_expert_rate[PROB_NEXPERT] = {
   0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02,
   0.05, 0.10, 0.20, 0.35, 0.55, 0.80

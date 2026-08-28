@@ -66,9 +66,11 @@ int main(int argc, char* argv[])
   else if (0 < load_ett_all(filename, &data, &total, &ncols)) {
     const int train_end = LIBXS_MAX((int)(total * split + 0.5), WMAX + 1);
     const int target = nseries - 1;
-    /* window budget, the upper bound for the auto sizer */
-    /* single-series gets a wide cap so the grid can explore */
-    /* multi-series caps at WINDOW_DEF, which the abstention then returns */
+    /**
+     * Window budget (upper bound for the auto sizer). Single-series gets
+     * a wide cap so the grid can explore; multi-series caps at the tuned
+     * WINDOW_DEF so the library's multi-series abstention returns it.
+     */
     const int wcap_req = (0 < window_req) ? window_req
       : ((nseries <= 1) ? WMAX : WINDOW_DEF);
     const int ninputs = nseries * wcap_req;

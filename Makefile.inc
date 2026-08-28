@@ -2811,7 +2811,4 @@ $(eval $(call POLICY_RULE,$(DOCDIR)/libxs_contrib.md,$(DOCDIR)/$(PROJECT)_contri
 endif
 endif
 
-.PHONY: policies
-policies: $(POLICYMDS)
-
 .DEFAULT_GOAL := $(NULL)

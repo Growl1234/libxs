@@ -161,8 +161,10 @@ int main(int argc, char* argv[])
 #endif
   }
 
-  /* kernels here only go up to AVX-512: clamp the reachability check to that */
-  /* coverage so a higher CPU or compiler level does not false-fail */
+  /**
+   * this test only implements kernels up to AVX-512; clamp the reachability
+   * check to that coverage so higher CPU/compiler levels do not false-fail
+   */
   { const int reachable = LIBXS_MIN(LIBXS_MAX_STATIC_TARGET_ARCH, LIBXS_X86_AVX512);
     if (highest < reachable && reachable <= cpuid) {
       FPRINTF(stderr, "ERROR: cannot reach LIBXS_MAX_STATIC_TARGET_ARCH (%i < %i)\n",

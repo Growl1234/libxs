@@ -291,9 +291,13 @@ int main(void)
     }
   }
 
-  /* N-D per-axis: 3D shape={3, 4, 2}, m[i][j][k] = 1 + j, only axis 1 varies */
-  /* axis 0 and axis 2 are constant, hence all derivatives ~ 0 */
-  /* axis 1 is linear, hence d1 nonzero and d2+ ~ 0 */
+  /**
+   * N-D per-axis: 3D array, shape={3, 4, 2}, linear along axis 1 only.
+   * m[i][j][k] = 1 + j  (j=0..3 is the only varying axis).
+   * axis=0: constant along dim 0 -> all derivatives ~ 0
+   * axis=1: linear along dim 1   -> d1 nonzero, d2+ ~ 0
+   * axis=2: constant along dim 2 -> all derivatives ~ 0
+   */
   { double m[3 * 4 * 2];
     const size_t shape[] = {3, 4, 2};
     libxs_fprint_t fp;

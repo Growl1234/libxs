@@ -12,8 +12,10 @@
 #include <libxs/libxs_sync.h>
 
 
-/* SplitMix64 PRNG (Vigna, 2015), period 2^64 */
-/* self-contained, no libc dependency, good statistical quality */
+/**
+ * SplitMix64 PRNG (Vigna, 2015). Period: 2^64.
+ * Self-contained, no libc dependency, excellent statistical quality.
+ */
 LIBXS_API_INLINE unsigned long long internal_libxs_rng_splitmix64(
   unsigned long long* state)
 {

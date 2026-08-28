@@ -191,10 +191,13 @@ int internal_libxs_lexeme_normalize_word(char* out, int out_size,
 }
 
 
-/* apply a whole-token normalization; returns the rewritten length */
-/* a replacement may expand to several tokens via LIBXS_LEXNORM_SEPARATOR */
-/* the separator is retained and split_out receives the first one's offset */
-/* (or the resulting length when there is none), one token per piece */
+/**
+ * Apply a whole-token normalization. The replacement may expand to several
+ * tokens by separating them with LIBXS_LEXNORM_SEPARATOR; the text is rewritten
+ * with the separator retained and split_out receives the offset of the first
+ * separator (or the resulting length when there is none), so the caller can
+ * emit one token per piece. Returns the total rewritten length.
+ */
 LIBXS_API_INLINE
 int internal_libxs_lexeme_apply_norm(char* text, int text_size, int length,
   const libxs_lexnorm_t* norms, int nnorms, int* split_out)
