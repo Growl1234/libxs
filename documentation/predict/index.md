@@ -191,6 +191,51 @@ a confidence-gated predictor can provide it or abstain.
 
 ---
 
+## Gradient-Boosted Baseline
+
+Same corpus, same split, same metric — `xgb` in the samples.
+
+| PVC exact-match | Ours | XGBoost |
+| --- | ---: | ---: |
+| Gated outputs | 24–87% | 28–88% |
+| Rule-owned `BM`, `WS` | 35%, 49% | 86%, 88% |
+| Largest shapes held out: `WS` | 12.7% | 1.1% |
+
+Boosting's margin sits on rule-owned outputs, which never act —  
+and it collapses where it has to extrapolate.
+
+Note: XGBoost 3.0.0 via the C API, 200 rounds, depth 6, eta 0.1. Each output is
+posed the task the fingerprint chose for LIBXS: classification over the attested
+value set, or regression. Exact match is a proxy - the shipped CSVs carry no
+GFLOPS, so an equally fast kernel with other parameters counts as a miss for
+both. Last row is the default prefix split; the CSV is sorted by problem size,
+so that split holds out the largest shapes. The others use `mix`.
+
+---
+
+## Matched Metric, Three Domains
+
+| Same split, same metric | Ours | XGBoost |
+| --- | ---: | ---: |
+| Crystals, precision at 58% coverage | 94.3% | 94.3% |
+| Earthquakes, MAE | 0.241 | 0.237 |
+| ETTh1, MSE at window 6 | 0.245 | **0.225** |
+| ETTh1, MSE at window 96 | **0.320** | 0.436 |
+
+Window choice moves more than the model choice does —  
+and our sizer picks 6 over the conventional 96.
+
+Note: crystal rows come from a gate sweep (`GATE=...`), not one threshold - at
+the single 0.9 gate it reads 95.2%/53.4% against 98.5%/20.3%, which looks like a
+calibration gap and is two points on one curve. Above 0.95 ours saturates: 38% of
+queries sit at conf >= 0.99 with no precision left to buy. Earthquakes: 0.254 if
+the boosted objective is left unaligned to the MAE metric, which alone inverts
+the result. ETT: boosting doubles its error going 6 to 96 lags where we lose 31%,
+so it is the more sensitive to irrelevant lags; a fingerprint-chosen window has
+no counterpart on that side short of an external grid search.
+
+---
+
 ## Secondary Evidence
 
 | Domain | Ours | Literature | Confidence |

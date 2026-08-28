@@ -33,6 +33,68 @@ Or from the LIBXS root:
     make samples/predict
 
 
+## XGBoost Comparison
+
+`predict_params`, `predict_crystal`, `predict_earthquakes` and `predict_ett`
+accept an `xgb` keyword that trains XGBoost on **exactly** the entries LIBXS was
+built from and reports both models side by side.  It is compiled in when XGBoost is found,
+which needs the development headers (a pip-installed `xgboost` ships the shared
+library only):
+
+    XGBOOST_ROOT=/path/to/xgboost make    # explicit location
+    make                                  # or found via pkg-config
+    XGB=0 make                            # never compile it in
+
+Requesting `xgb` from a binary built without it is an error, not a silent
+LIBXS-only run.
+
+Per-output, XGBoost is posed the same task LIBXS chose for itself: a
+classification over the attested value set where LIBXS classifies, a regression
+where it interpolates.  An output with a single attested value is reported as
+constant and not trained (five of the sixteen kernel parameters are constant in
+`tune_multiply_PVC.csv`, so an average over all outputs is dominated by columns
+both models get for free).
+
+Hyperparameters are fixed so the numbers are reproducible, and overridable:
+
+| Variable      | Default        | Meaning                       |
+| ------------- | -------------- | ----------------------------- |
+| `XGB_ROUNDS`  | 200            | Boosting rounds               |
+| `XGB_DEPTH`   | 6              | `max_depth`                   |
+| `XGB_ETA`     | 0.1            | Learning rate                 |
+| `XGB_NTHREAD` | 0              | Threads (0 = XGBoost default) |
+| `XGB_REGOBJ`  | *(per sample)* | Regression objective          |
+
+`XGB_REGOBJ` matters where the reported metric is mean absolute error:
+`predict_earthquakes` therefore proposes `reg:absoluteerror`, and forcing
+`reg:squarederror` there moves the magnitude error 0.237 to 0.254, which is
+enough to invert the comparison.  `predict_params` and `predict_crystal` propose
+`reg:squarederror`.
+
+`predict_crystal` additionally reads `GATE`: a comma-separated list of
+confidence thresholds (default `0.9`).  The first entry drives the
+confidence-gated line; supplying more than one also prints a precision/coverage
+sweep for both models.  Comparing two confidence signals at one threshold
+compares two different operating points, so a sweep is the only way to tell a
+better-calibrated signal from a differently-scaled one:
+
+    GATE=0.5,0.6,0.7,0.8,0.9,0.95,0.99 ./predict_crystal.x predict_crystal.csv 0.8 2 0 xgb
+
+### Examples
+
+    ./predict_params.x 0.8 mix xgb ../smm/params/tune_multiply_PVC.csv
+    ./predict_crystal.x predict_crystal.csv 0.8 2 0 xgb
+
+The `mix` keyword matters for the parameter CSVs: they are sorted by problem
+size, so the default prefix split holds out the *largest* shapes and measures
+extrapolation, which changes which model looks better.  Use `mix` for
+interpolation, omit it for extrapolation, and say which one a number came from.
+
+Exact-match on kernel parameters is a proxy for kernel quality: the shipped
+CSVs carry no `GFLOPS`, so a differently-parameterized kernel that performs
+identically counts as a miss for both models.
+
+
 ## predict_params
 
 Train a prediction model from a CSV file and save it for later use.
@@ -40,7 +102,7 @@ Reports validation quality on a held-out subset.
 
 ### Usage
 
-    ./predict_params.x [fraction] [auto|cat|compress[Q]|interp|rf|hknn] [-N] <csvfile> [modelfile [confidence-prefix]]
+    ./predict_params.x [fraction] [auto|cat|compress[Q]|interp|rf|hknn|xgb] [-N] <csvfile> [modelfile [confidence-prefix]]
 
     fraction   Validation split 0..1 for quality report (default: 0.8).
     auto       Auto-detect mode per output (default).
@@ -49,6 +111,7 @@ Reports validation quality on a held-out subset.
     interp     Force interpolation for all outputs.
     rf         Random Forest classification.
     hknn       Hierarchical kNN (Fisher-guided partition).
+    xgb        Also train XGBoost on the same split and compare.
     -N         Max polynomial order (default: 0 = auto).
     csvfile    Delimited text file.
     modelfile  Output path for the binary model.
@@ -105,7 +168,9 @@ Predict earthquake magnitude from geographic location and depth.
 
 ### Usage
 
-    ./predict_earthquakes.x <usgs_csv> [train_fraction] [compress[Q]] [hknn|rf]
+    ./predict_earthquakes.x <usgs_csv> [train_fraction] [compress[Q]] [hknn|rf] [xgb]
+
+    xgb        Also train XGBoost on the same split and compare.
 
 The kNN vote reports the median rather than the mean here.
 libxs_predict_set_central picks that per output at build time and needs no
@@ -184,13 +249,14 @@ composition features.
 
 ### Usage
 
-    ./predict_crystal.x <crystal_csv> [train_fraction] [order] [nclusters] [compress[Q]] [fisher|hknn|setdiff|rf|none]
+    ./predict_crystal.x <crystal_csv> [train_fraction] [order] [nclusters] [compress[Q]] [fisher|hknn|setdiff|rf|none] [xgb]
 
     fisher     Fisher discriminant feature weighting.
     hknn       Hierarchical kNN (Gini-guided partition).
     setdiff    Setdiff feature selection.
     rf         Random Forest classification (default).
     none       Raw kNN without feature processing.
+    xgb        Also train XGBoost on the same split and compare.
 
 ### Example
 
@@ -240,12 +306,20 @@ for comparison against transformer-based timeseries models.
 
 ### Usage
 
-    ./predict_ett.x <ett_csv> [nseries=1..7] [attend|spread|pca|hknn|rf|nocompress]
+    ./predict_ett.x <ett_csv> [nseries=1..7] [attend|spread|pca|hknn|rf|nocompress|xgb]
 
     nseries    Number of input channels (1=OT only, 7=all).
     attend     Per-query local-correlation channel weighting.
     spread     Sum/diff decomposition across channels.
     pca        PCA rotation of multi-channel input space.
+    xgb        Also train XGBoost on the same windows and compare.
+
+`xgb` reads the built sliding windows back out of the model, so it implies
+`nocompress` (compression prunes entries before they can be read) and is refused
+alongside `attend`, a decomposition, or `BANK`, each of which zeroes the weight
+of lags the distance does not read.  The effective window applies to both models,
+so `WINDOW=96` compares them at the conventional input length rather than at the
+auto-selected one — the two rank differently at the two lengths.
 
 ### Examples
 

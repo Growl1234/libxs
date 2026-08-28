@@ -15,6 +15,9 @@
 #if defined(_OPENMP)
 # include <omp.h>
 #endif
+#if defined(__XGBOOST)
+# include "predict_xgb.h"
+#endif
 
 static const char input_names[] = "M,N,K";
 static const char output_names[] =
@@ -25,7 +28,8 @@ enum { NINPUTS = 3, NOUTPUTS = 16 };
 static const int confidence_outputs[] = { 5, 6, 8, 12, 13 };
 
 static void evaluate(const libxs_predict_t* model,
-  const libxs_predict_t* reference, int ntotal, const char trained[]);
+  const libxs_predict_t* reference, int ntotal, const char trained[],
+  int use_xgb);
 static int write_confidence_maps(const char* prefix, const void* buffer,
   size_t size, const libxs_predict_t* reference, int ntotal);
 static double deployment_confidence(const libxs_predict_info_t* info);
@@ -34,7 +38,7 @@ static double deployment_confidence(const libxs_predict_info_t* info);
 int main(int argc, char* argv[])
 {
   int argi = 1, mode = LIBXS_PREDICT_AUTO, use_rf = 0, use_hknn = 0;
-  int order_arg = 0, shuffle_split = 0;
+  int order_arg = 0, shuffle_split = 0, use_xgb = 0;
   double quality = 0, smooth = 0, consistency = 0, quantile = 0;
   double eval_fraction = 0.8;
   const char *filename, *modelfile, *confidence_prefix;
@@ -64,6 +68,7 @@ int main(int argc, char* argv[])
     else if ('m' == argv[argi][0]) shuffle_split = 1;
     else if ('r' == argv[argi][0]) use_rf = 1;
     else if ('h' == argv[argi][0]) use_hknn = 1;
+    else if ('x' == argv[argi][0]) use_xgb = 1;
     else if ('q' == argv[argi][0]) {
       const char* p = argv[argi];
       while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
@@ -99,7 +104,7 @@ int main(int argc, char* argv[])
   }
   if (NULL == filename) {
     fprintf(stdout,
-      "Usage: %s [fraction] [auto|cat|compress[Q]|consist[C]|interp|quantile[Q]|rf|hknn|smooth[A]]"
+      "Usage: %s [fraction] [auto|cat|compress[Q]|consist[C]|interp|quantile[Q]|rf|hknn|smooth[A]|xgb]"
       " [-N] <csvfile> [modelfile [confidence-prefix]]\n"
       "  fraction: validation split 0..1 for quality report (default: 0.8)\n"
       "  auto:     auto-detect mode per output (default)\n"
@@ -114,11 +119,18 @@ int main(int argc, char* argv[])
       "  rf:       Random Forest classification\n"
       "  hknn:     hierarchical kNN (Fisher-guided partition)\n"
       "  smooth:   multi-cluster blending (A: radius or -1=auto, default: auto)\n"
+      "  xgb:      also train XGBoost on the same split and compare\n"
       "  -N: max polynomial order (default: 0 = auto)\n"
       "  confidence-prefix: optional prefix for saved-model confidence maps\n"
       "  Trains on all entries, saves the model, and reports\n"
       "  quality on a held-out validation set.\n", argv[0]);
   }
+#if !defined(__XGBOOST)
+  else if (0 != use_xgb) {
+    fprintf(stderr, "Requested xgb but this binary was built without XGBoost:"
+      " set XGBOOST_ROOT, or install the pkg-config module.\n");
+  }
+#endif
   else {
     libxs_predict_t* source = libxs_predict_create(NINPUTS, NOUTPUTS);
     if (NULL != source) {
@@ -197,7 +209,7 @@ int main(int argc, char* argv[])
                 if (EXIT_SUCCESS == libxs_predict_build(
                   val_model, 0, order_arg, quality))
                 {
-                  evaluate(val_model, source, ntotal, trained);
+                  evaluate(val_model, source, ntotal, trained, use_xgb);
                 }
               }
               libxs_predict_destroy(val_model);
@@ -241,15 +253,19 @@ int main(int argc, char* argv[])
 
 
 static void evaluate(const libxs_predict_t* model,
-  const libxs_predict_t* reference, int ntotal, const char trained[])
+  const libxs_predict_t* reference, int ntotal, const char trained[],
+  int use_xgb)
 {
   double* all_inputs = (double*)malloc((size_t)ntotal * NINPUTS * sizeof(double));
   double* all_predicted = (double*)malloc((size_t)ntotal * NOUTPUTS * sizeof(double));
+  LIBXS_UNUSED(use_xgb);
   if (NULL != all_inputs && NULL != all_predicted) {
     double maxerr[NOUTPUTS] = { 0 }, sumerr[NOUTPUTS] = { 0 };
+    int interp[NOUTPUTS];
     libxs_timer_tick_t tick;
     double dt_eval;
     int i, j;
+    memset(interp, 0, sizeof(interp));
     for (i = 0; i < ntotal; ++i) {
       libxs_predict_get(reference, i, all_inputs + (size_t)i * NINPUTS, NULL);
     }
@@ -306,6 +322,11 @@ static void evaluate(const libxs_predict_t* model,
           all_inputs + (size_t)i * NINPUTS, NULL, &info, 1);
         libxs_predict_get(reference, i, NULL, expected);
         ++split_n[novel];
+        if (NULL != info.interpolated) {
+          for (j = 0; j < NOUTPUTS; ++j) {
+            if (0 != info.interpolated[j]) ++interp[j];
+          }
+        }
         for (ci = 0; ci < nconf; ++ci) {
           const int oi = confidence_outputs[ci];
           if (NULL != info.confidence && info.confidence[oi] >= threshold) {
@@ -357,6 +378,72 @@ static void evaluate(const libxs_predict_t* model,
           (0 < split_n[1]) ? 100.0 * split_acted[ci][1] / split_n[1] : 0.0);
       }
     }
+#if defined(__XGBOOST)
+    if (0 != use_xgb) {
+      double* xgb_predicted = (double*)malloc(
+        (size_t)ntotal * NOUTPUTS * sizeof(double));
+      int classify[NOUTPUTS], task[NOUTPUTS];
+      for (j = 0; j < NOUTPUTS; ++j) {
+        classify[j] = (2 * interp[j] < ntotal) ? 1 : 0;
+      }
+      if (NULL != xgb_predicted && EXIT_SUCCESS == predict_xgb(reference,
+        ntotal, NINPUTS, NOUTPUTS, trained, classify, xgb_predicted,
+        NULL, task, NULL))
+      {
+        double lsum[NOUTPUTS], xsum[NOUTPUTS];
+        int lhit[NOUTPUTS], xhit[NOUTPUTS], nnovel = 0;
+        memset(lsum, 0, sizeof(lsum));
+        memset(xsum, 0, sizeof(xsum));
+        memset(lhit, 0, sizeof(lhit));
+        memset(xhit, 0, sizeof(xhit));
+        for (i = 0; i < ntotal; ++i) {
+          if (0 == trained[i]) {
+            double expected[NOUTPUTS];
+            libxs_predict_get(reference, i, NULL, expected);
+            ++nnovel;
+            for (j = 0; j < NOUTPUTS; ++j) {
+              const double lval = all_predicted[(size_t)i * NOUTPUTS + j];
+              const double xval = xgb_predicted[(size_t)i * NOUTPUTS + j];
+              const int label = LIBXS_ROUNDX(int, expected[j]);
+              lsum[j] += LIBXS_DELTA(lval, expected[j]);
+              xsum[j] += LIBXS_DELTA(xval, expected[j]);
+              if (LIBXS_ROUNDX(int, lval) == label) ++lhit[j];
+              if (LIBXS_ROUNDX(int, xval) == label) ++xhit[j];
+            }
+          }
+        }
+        fprintf(stdout, "XGBoost head-to-head on %d novel entries"
+          " (rounds=%i, depth=%i, eta=%g):\n", nnovel,
+          predict_xgb_geti("XGB_ROUNDS", 200),
+          predict_xgb_geti("XGB_DEPTH", 6),
+          predict_xgb_getd("XGB_ETA", 0.1));
+        fprintf(stdout, "  param  values  libxs-err   xgb-err"
+          "  libxs-exact  xgb-exact\n");
+        for (j = 0; j < NOUTPUTS; ++j) {
+          int len = 0;
+          const char* name = libxs_strtoken(output_names, ",", j, &len);
+          char values[16];
+          if (0 < task[j]) {
+            LIBXS_SNPRINTF(values, sizeof(values), "%i", task[j]);
+          }
+          else {
+            LIBXS_SNPRINTF(values, sizeof(values), "reg");
+          }
+          fprintf(stdout,
+            "  %-4.*s  %6s  %9.2e %9.2e      %6.1f%%     %6.1f%%\n",
+            len, name, values,
+            (0 < nnovel) ? lsum[j] / nnovel : 0.0,
+            (0 < nnovel) ? xsum[j] / nnovel : 0.0,
+            (0 < nnovel) ? 100.0 * lhit[j] / nnovel : 0.0,
+            (0 < nnovel) ? 100.0 * xhit[j] / nnovel : 0.0);
+        }
+        fprintf(stdout, "  Exact match is a proxy: this CSV carries no GFLOPS,"
+          " so a differing\n  parameter that performs identically counts as a"
+          " miss for both models.\n");
+      }
+      free(xgb_predicted);
+    }
+#endif
   }
   free(all_inputs);
   free(all_predicted);

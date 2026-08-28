@@ -15,6 +15,9 @@
 #if defined(_OPENMP)
 # include <omp.h>
 #endif
+#if defined(__XGBOOST)
+# include "predict_xgb.h"
+#endif
 
 static const char input_names[] = "latitude,longitude,depth";
 static const char output_names[] = "mag";
@@ -28,7 +31,7 @@ int main(int argc, char* argv[])
   const double split = (argc > 2) ? atof(argv[2]) : 0.8;
   int decompose = LIBXS_PREDICT_RAW;
   double quality = 0, consistency = 0;
-  int argi, result = EXIT_FAILURE;
+  int argi, use_xgb = 0, result = EXIT_FAILURE;
   for (argi = 3; argi < argc; ++argi) {
     if ('c' == argv[argi][0] && 'o' == argv[argi][1]
       && 'n' == argv[argi][2])
@@ -44,13 +47,21 @@ int main(int argc, char* argv[])
     }
     else if ('h' == argv[argi][0]) decompose = LIBXS_PREDICT_HKNN;
     else if ('r' == argv[argi][0]) decompose = LIBXS_PREDICT_RF;
+    else if ('x' == argv[argi][0]) use_xgb = 1;
   }
   if (NULL == filename) {
     fprintf(stdout,
-      "Usage: %s <usgs_csv> [train_fraction] [compress[Q]] [hknn|rf]\n"
+      "Usage: %s <usgs_csv> [train_fraction] [compress[Q]] [hknn|rf] [xgb]\n"
       "  Earthquake magnitude prediction from location and depth.\n"
+      "  xgb: also train XGBoost on the same split and compare.\n"
       "  Default train_fraction: 0.8\n", argv[0]);
   }
+#if !defined(__XGBOOST)
+  else if (0 != use_xgb) {
+    fprintf(stderr, "Requested xgb but this binary was built without XGBoost:"
+      " set XGBOOST_ROOT, or install the pkg-config module.\n");
+  }
+#endif
   else {
     libxs_predict_t* source = libxs_predict_create(NINPUTS, NOUTPUTS);
     if (NULL != source) {
@@ -109,6 +120,40 @@ int main(int argc, char* argv[])
               fprintf(stdout, "  max magnitude error: %.3f\n", max_err);
               fprintf(stdout, "  avg confidence:      %.3f\n", sum_conf / neval);
               fprintf(stdout, "Eval: %d queries (%.2f s)\n", neval, dt_eval);
+#if defined(__XGBOOST)
+              if (0 != use_xgb) {
+                double* xgb_pred = (double*)malloc(
+                  (size_t)total * sizeof(double));
+                char* mask = (char*)calloc((size_t)total, 1);
+                int classify = 0;
+                if (NULL != xgb_pred && NULL != mask) {
+                  for (i = 0; i < train_end; ++i) mask[i] = 1;
+                  if (EXIT_SUCCESS == predict_xgb(source, total, NINPUTS,
+                    NOUTPUTS, mask, &classify, xgb_pred, NULL, NULL,
+                    "reg:absoluteerror"))
+                  {
+                    double xsum_err = 0, xmax_err = 0;
+                    for (i = train_end; i < total; ++i) {
+                      double expected[NOUTPUTS], err;
+                      libxs_predict_get(source, i, NULL, expected);
+                      err = LIBXS_FABS(xgb_pred[i] - expected[0]);
+                      xsum_err += err;
+                      if (err > xmax_err) xmax_err = err;
+                    }
+                    fprintf(stdout, "XGBoost (%s, rounds=%i, depth=%i,"
+                      " eta=%g):\n", predict_xgb_regobj("reg:absoluteerror"),
+                      predict_xgb_geti("XGB_ROUNDS", 200),
+                      predict_xgb_geti("XGB_DEPTH", 6),
+                      predict_xgb_getd("XGB_ETA", 0.1));
+                    fprintf(stdout, "  avg magnitude error: %.3f\n",
+                      xsum_err / neval);
+                    fprintf(stdout, "  max magnitude error: %.3f\n", xmax_err);
+                  }
+                }
+                free(mask);
+                free(xgb_pred);
+              }
+#endif
             }
             result = EXIT_SUCCESS;
           }

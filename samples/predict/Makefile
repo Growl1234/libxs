@@ -25,6 +25,24 @@ ifneq (,$(wildcard $(DEPDIR)/libxs/libxs_source.h))
 endif
 endif
 
+# XGBoost (optional): head-to-head comparison in predict_params/predict_crystal
+XGB ?= 1
+ifneq (0,$(XGB))
+  PKGCFG ?= $(call which,pkg-config)
+  XGBOOST_ROOT ?= $(shell echo "$$XGBOOST_ROOT")
+  ifneq (,$(wildcard $(XGBOOST_ROOT)/include/xgboost/c_api.h))
+    XGB_LDIR := $(if $(wildcard $(XGBOOST_ROOT)/lib64),lib64,lib)
+    IFLAGS += -I$(call quote,$(XGBOOST_ROOT)/include)
+    DFLAGS += -D__XGBOOST
+    XGBLDFLAGS := -Wl,--rpath=$(XGBOOST_ROOT)/$(XGB_LDIR) \
+                  -L$(XGBOOST_ROOT)/$(XGB_LDIR) -lxgboost
+  else ifneq (,$(shell $(PKGCFG) --exists xgboost 2>/dev/null && echo yes))
+    IFLAGS += $(shell $(PKGCFG) --cflags xgboost)
+    DFLAGS += -D__XGBOOST
+    XGBLDFLAGS := $(shell $(PKGCFG) --libs xgboost)
+  endif
+endif
+
 # include directories
 IFLAGS += -I$(call quote,$(INCDIR))
 IFLAGS += -I$(call quote,$(DEPDIR))
@@ -51,13 +69,13 @@ all: $(XFILES)
 compile: $(OBJECTS)
 
 $(OUTDIR)/predict_params.x: $(OUTDIR)/.make $(BLDDIR)/predict_params-c.o $(XLIB)
-	$(LD) -o $@ $(BLDDIR)/predict_params-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+	$(LD) -o $@ $(BLDDIR)/predict_params-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(XGBLDFLAGS) $(CLDFLAGS)
 
 $(OUTDIR)/predict_sunspots.x: $(OUTDIR)/.make $(BLDDIR)/predict_sunspots-c.o $(XLIB)
 	$(LD) -o $@ $(BLDDIR)/predict_sunspots-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
 $(OUTDIR)/predict_earthquakes.x: $(OUTDIR)/.make $(BLDDIR)/predict_earthquakes-c.o $(XLIB)
-	$(LD) -o $@ $(BLDDIR)/predict_earthquakes-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+	$(LD) -o $@ $(BLDDIR)/predict_earthquakes-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(XGBLDFLAGS) $(CLDFLAGS)
 
 $(OUTDIR)/predict_discharge.x: $(OUTDIR)/.make $(BLDDIR)/predict_discharge-c.o $(XLIB)
 	$(LD) -o $@ $(BLDDIR)/predict_discharge-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
@@ -69,10 +87,10 @@ $(OUTDIR)/predict_stock.x: $(OUTDIR)/.make $(BLDDIR)/predict_stock-c.o $(XLIB)
 	$(LD) -o $@ $(BLDDIR)/predict_stock-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
 
 $(OUTDIR)/predict_crystal.x: $(OUTDIR)/.make $(BLDDIR)/predict_crystal-c.o $(XLIB)
-	$(LD) -o $@ $(BLDDIR)/predict_crystal-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+	$(LD) -o $@ $(BLDDIR)/predict_crystal-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(XGBLDFLAGS) $(CLDFLAGS)
 
 $(OUTDIR)/predict_ett.x: $(OUTDIR)/.make $(BLDDIR)/predict_ett-c.o $(XLIB)
-	$(LD) -o $@ $(BLDDIR)/predict_ett-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+	$(LD) -o $@ $(BLDDIR)/predict_ett-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(XGBLDFLAGS) $(CLDFLAGS)
 
 $(OUTDIR)/predict_prob.x: $(OUTDIR)/.make $(BLDDIR)/predict_prob-c.o $(XLIB)
 	$(LD) -o $@ $(BLDDIR)/predict_prob-c.o $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)

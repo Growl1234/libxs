@@ -15,6 +15,9 @@
 #if defined(_OPENMP)
 # include <omp.h>
 #endif
+#if defined(__XGBOOST)
+# include "predict_xgb.h"
+#endif
 
 enum { WINDOW_DEF = 96, HORIZON = 96, MAXCOLS = 7, WMAX = 512 };
 static const char* col_names[MAXCOLS] = {
@@ -38,7 +41,7 @@ int main(int argc, char* argv[])
   int decompose = LIBXS_PREDICT_RAW;
   int attend = 0;
   double quality = 0.9;
-  int argi, result = EXIT_FAILURE;
+  int argi, use_xgb = 0, result = EXIT_FAILURE;
   double* data = NULL;
   int total = 0, ncols = 0;
   for (argi = 3; argi < argc; ++argi) {
@@ -48,21 +51,40 @@ int main(int argc, char* argv[])
     else if ('s' == argv[argi][0]) decompose = LIBXS_PREDICT_SPREAD;
     else if ('p' == argv[argi][0]) decompose = LIBXS_PREDICT_PCA;
     else if ('n' == argv[argi][0]) quality = 0;
+    else if ('x' == argv[argi][0]) use_xgb = 1;
   }
   if (nseries < 1) nseries = 1;
   if (nseries > MAXCOLS) nseries = MAXCOLS;
+  /* the comparison reads the built windows back, which compression prunes */
+  if (0 != use_xgb) quality = 0;
   if (NULL == filename) {
     fprintf(stdout,
       "Usage: %s <ett_csv> [nseries=1..7]"
-      " [attend|spread|pca|hknn|rf|nocompress]\n"
+      " [attend|spread|pca|hknn|rf|nocompress|xgb]\n"
       "  Multivariate ETT forecasting: predict OT from nseries channels.\n"
       "  Channels (in order): HUFL,HULL,MUFL,MULL,LUFL,LULL,OT.\n"
       "  attend: per-query local-correlation channel weighting.\n"
+      "  xgb: also train XGBoost on the same windows and compare\n"
+      "    (implies nocompress; plain configuration only).\n"
       "  nseries=1: univariate (OT only).\n"
       "  nseries=7: all channels as co-inputs to predict OT.\n"
       "  Window=%d, Horizon=%d, split=0.661 (standard ETTh1).\n",
       argv[0], WINDOW_DEF, HORIZON);
   }
+#if !defined(__XGBOOST)
+  else if (0 != use_xgb) {
+    fprintf(stderr, "Requested xgb but this binary was built without XGBoost:"
+      " set XGBOOST_ROOT, or install the pkg-config module.\n");
+  }
+#else
+  else if (0 != use_xgb && (LIBXS_PREDICT_RAW != decompose
+    || 0 != attend || NULL != getenv("BANK")))
+  {
+    fprintf(stderr, "xgb needs the plain configuration: a decomposition,"
+      " attend, or BANK zeroes the weight of lags the distance does not read,"
+      " which makes the built windows unrecoverable.\n");
+  }
+#endif
   else if (0 < load_ett_all(filename, &data, &total, &ncols)) {
     const int train_end = LIBXS_MAX((int)(total * split + 0.5), WMAX + 1);
     const int target = nseries - 1;
@@ -233,6 +255,79 @@ int main(int argc, char* argv[])
           fprintf(stdout, "  MSE (normalized): %.4f\n", norm_mse);
           fprintf(stdout, "  MAE (normalized): %.4f\n", norm_mae);
           fprintf(stdout, "Eval: %d queries (%.2f s)\n", neval, dt_eval);
+#if defined(__XGBOOST)
+          if (0 != use_xgb) {
+            const int nin = nseries * window;
+            const int ncorp = qi.nentries + neval;
+            libxs_predict_t* xsrc = libxs_predict_create(nin, HORIZON);
+            double* xpred = (double*)malloc(
+              (size_t)ncorp * HORIZON * sizeof(double));
+            char* mask = (char*)calloc((size_t)ncorp, 1);
+            int* classify = (int*)calloc((size_t)HORIZON, sizeof(int));
+            double* in = (double*)malloc((size_t)nin * sizeof(double));
+            double* out = (double*)malloc((size_t)HORIZON * sizeof(double));
+            int k = 0;
+            if (NULL != xsrc && NULL != xpred && NULL != mask
+              && NULL != classify && NULL != in && NULL != out)
+            {
+              for (k = 0; k < qi.nentries; ++k) {
+                libxs_predict_get(model, k, in, out);
+                libxs_predict_push(NULL, xsrc, in, out);
+                mask[k] = 1;
+              }
+              for (t = train_end; t <= total - HORIZON; t += HORIZON) {
+                int i;
+                for (i = 0; i < window; ++i) {
+                  for (s = 0; s < nseries; ++s) {
+                    in[s * window + i] = data[(size_t)(t - window + i) * ncols
+                      + (ncols - nseries + s)];
+                  }
+                }
+                for (h = 0; h < HORIZON; ++h) {
+                  out[h] = data[(size_t)(t + h) * ncols + (ncols - 1)];
+                }
+                libxs_predict_push(NULL, xsrc, in, out);
+                ++k;
+              }
+              tick = libxs_timer_tick();
+              if (EXIT_SUCCESS == predict_xgb(xsrc, k, nin, HORIZON, mask,
+                classify, xpred, NULL, NULL, "reg:squarederror"))
+              {
+                const double dt_xgb =
+                  libxs_timer_duration(tick, libxs_timer_tick());
+                const int pts = neval * HORIZON;
+                double xsum_mae = 0, xsum_mse = 0;
+                int idx;
+                for (idx = qi.nentries; idx < k; ++idx) {
+                  libxs_predict_get(xsrc, idx, NULL, out);
+                  for (h = 0; h < HORIZON; ++h) {
+                    const double err =
+                      xpred[(size_t)idx * HORIZON + h] - out[h];
+                    xsum_mae += (err >= 0) ? err : -err;
+                    xsum_mse += err * err;
+                  }
+                }
+                fprintf(stdout, "XGBoost (%d boosters, rounds=%i, depth=%i,"
+                  " eta=%g):\n", HORIZON,
+                  predict_xgb_geti("XGB_ROUNDS", 200),
+                  predict_xgb_geti("XGB_DEPTH", 6),
+                  predict_xgb_getd("XGB_ETA", 0.1));
+                fprintf(stdout, "  MSE (normalized): %.4f\n",
+                  xsum_mse / pts / (train_std * train_std));
+                fprintf(stdout, "  MAE (normalized): %.4f\n",
+                  xsum_mae / pts / train_std);
+                fprintf(stdout, "Train+eval: %d windows, %d features (%.2f s)\n",
+                  qi.nentries, nin, dt_xgb);
+              }
+            }
+            free(out);
+            free(in);
+            free(classify);
+            free(mask);
+            free(xpred);
+            libxs_predict_destroy(xsrc);
+          }
+#endif
         }
         result = EXIT_SUCCESS;
       }
