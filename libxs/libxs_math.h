@@ -540,7 +540,9 @@ LIBXS_API_INLINE double libxs_bf16_to_f64(libxs_bf16_t v) {
 LIBXS_API_INLINE libxs_f16_t libxs_round_f16_f32(float x) {
 #if defined(LIBXS_F16)
   libxs_f16_t out;
+  LIBXS_PRAGMA_LOSSY
   LIBXS_UNION_ASSIGN(libxs_f16_t, out, _Float16, (_Float16)x);
+  LIBXS_PRAGMA_LOSSY_END
   return out;
 #else
   uint32_t bits, sign, exp32, mant32;
@@ -630,7 +632,9 @@ LIBXS_API_INLINE float libxs_f16_to_f32(libxs_f16_t v) {
 LIBXS_API_INLINE libxs_f16_t libxs_round_f16(double x) {
 #if defined(LIBXS_F16)
   libxs_f16_t out;
+  LIBXS_PRAGMA_LOSSY
   LIBXS_UNION_ASSIGN(libxs_f16_t, out, _Float16, (_Float16)x);
+  LIBXS_PRAGMA_LOSSY_END
   return out;
 #else
   return libxs_round_f16_f32((float)x);

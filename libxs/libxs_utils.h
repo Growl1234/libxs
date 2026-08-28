@@ -19,9 +19,7 @@
 # define __NO_INTRINSICS
 #endif
 #if !defined(__NO_INTRINSICS) && ( \
-    /*no intrinsics: tested with 17.x and 18.x*/ \
-    (defined(__PGI) && LIBXS_VERSION2(19, 0) > LIBXS_VERSION2(__PGIC__, __PGIC_MINOR__)) \
- || /*legacy*/(defined(_CRAYC) && !defined(__GNUC__)) \
+    /*legacy*/(defined(_CRAYC) && !defined(__GNUC__)) \
  || (defined(__GNUC__) && !defined(__clang__) && !defined(LIBXS_INTEL_COMPILER) && !defined(_CRAYC) && \
       LIBXS_VERSION2(4, 4) > LIBXS_VERSION2(__GNUC__, __GNUC_MINOR__)) /* GCC 4.4 */ \
  || (defined(__clang__) && !defined(__APPLE__) && \
@@ -138,7 +136,7 @@
 #     define LIBXS_INTRINSICS_INCLUDE
 #   elif (!defined(__GNUC__)  || LIBXS_VERSION2(4, 9) <= LIBXS_VERSION2(__GNUC__, __GNUC_MINOR__)) \
       && (!defined(__clang__) || LIBXS_VERSION2(4, 0) <= LIBXS_VERSION2(__clang_major__, __clang_minor__)) \
-      && (!defined(__APPLE__) || !defined(__MACH__)) && !defined(__PGI) && !defined(_MSC_VER)
+      && (!defined(__APPLE__) || !defined(__MACH__)) && !defined(_MSC_VER)
 #     if !defined(LIBXS_MAX_STATIC_TARGET_ARCH)
 #       if defined(__CYGWIN__) /* Cygwin: invalid register for .seh_savexmm */
 #         define LIBXS_MAX_STATIC_TARGET_ARCH LIBXS_X86_AVX2
@@ -186,7 +184,7 @@
 #         define LIBXS_MAX_STATIC_TARGET_ARCH LIBXS_STATIC_TARGET_ARCH
 #       endif
 #     endif
-#     if !defined(LIBXS_INTRINSICS_INCLUDE) && (!defined(__PGI) || LIBXS_VERSION2(19, 0) <= LIBXS_VERSION2(__PGIC__, __PGIC_MINOR__))
+#     if !defined(LIBXS_INTRINSICS_INCLUDE)
 #       define LIBXS_INTRINSICS_INCLUDE
 #     endif
 #   endif /* GCC/legacy incl. Clang */
@@ -315,7 +313,7 @@
 #if defined(LIBXS_INTRINSICS_INCLUDE)
 # if defined(_WIN32)
 #   include <intrin.h>
-# elif defined(LIBXS_INTEL_COMPILER) || defined(_CRAYC) || defined(__clang__) || defined(__PGI)
+# elif defined(LIBXS_INTEL_COMPILER) || defined(_CRAYC) || defined(__clang__)
 #   include <x86intrin.h>
 # elif defined(__GNUC__) && (LIBXS_VERSION2(4, 4) <= LIBXS_VERSION2(__GNUC__, __GNUC_MINOR__))
 #   include <x86intrin.h>

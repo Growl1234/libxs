@@ -385,7 +385,7 @@
 #   define LIBXS_PACKED(TYPE) LIBXS_PRAGMA(pack(1)) TYPE
 # endif
 # define LIBXS_CDECL __cdecl
-#elif (defined(__GNUC__) || defined(__clang__) || defined(__PGI))
+#elif (defined(__GNUC__) || defined(__clang__))
 # define LIBXS_ATTRIBUTE(A) __attribute__((A))
 # define LIBXS_INLINE_ALWAYS LIBXS_ATTRIBUTE(always_inline) LIBXS_INLINE
 # define LIBXS_INLINE_NEVER LIBXS_ATTRIBUTE(noinline)
@@ -738,6 +738,15 @@
 # endif
 #endif
 
+/* nvc flags an explicit narrowing cast; losing precision is the intent */
+#if defined(__PGLLVM__)
+# define LIBXS_PRAGMA_LOSSY LIBXS_PRAGMA(diag_suppress lossy_conversion)
+# define LIBXS_PRAGMA_LOSSY_END LIBXS_PRAGMA(diag_default lossy_conversion)
+#else
+# define LIBXS_PRAGMA_LOSSY
+# define LIBXS_PRAGMA_LOSSY_END
+#endif
+
 #if defined(_OPENMP) && (200805/*v3.0*/ <= _OPENMP) \
  && defined(NDEBUG) /* CCE complains for debug builds */
 # define LIBXS_OPENMP_COLLAPSE(N) collapse(N)
@@ -785,11 +794,7 @@
 
 /** Makes some functions available independent of C99 support. */
 #if defined(__STDC_VERSION__) && (199901L/*C99*/ <= __STDC_VERSION__)
-# if defined(__PGI)
-#   define LIBXS_POWF(A, B) ((float)pow((float)(A), (float)(B)))
-# else
-#   define LIBXS_POWF(A, B) powf(A, B)
-# endif
+# define LIBXS_POWF(A, B) powf(A, B)
 # define LIBXS_FREXPF(A, B) frexpf(A, B)
 # define LIBXS_ROUNDF(A) roundf(A)
 # define LIBXS_ROUND(A) round(A)
@@ -908,7 +913,7 @@
 # define LIBXS_API_DTOR LIBXS_API
 #endif
 
-#if defined(__GNUC__) && !defined(__PGI) && !defined(__ibmxl__)
+#if defined(__GNUC__) && !defined(__ibmxl__)
 # define LIBXS_ATTRIBUTE_NO_TRACE LIBXS_ATTRIBUTE(no_instrument_function)
 #else
 # define LIBXS_ATTRIBUTE_NO_TRACE
@@ -998,12 +1003,6 @@
 #if (0 != LIBXS_SYNC)
 # if !defined(_REENTRANT)
 #   define _REENTRANT
-# endif
-# if defined(__PGI)
-#   if defined(__GCC_ATOMIC_TEST_AND_SET_TRUEVAL)
-#     undef __GCC_ATOMIC_TEST_AND_SET_TRUEVAL
-#   endif
-#   define __GCC_ATOMIC_TEST_AND_SET_TRUEVAL 1
 # endif
 #endif
 

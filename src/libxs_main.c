@@ -16,7 +16,7 @@
 # include <errno.h>
 #endif
 #if !defined(_WIN32)
-# if defined(__GNUC__) || defined(__PGI) || defined(_CRAYC)
+# if defined(__GNUC__) || defined(_CRAYC)
 #   include <sys/time.h>
 #   include <time.h>
 # endif

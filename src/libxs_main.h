@@ -37,7 +37,7 @@
     CYCLE = __ppc_get_timebase(); \
   } while(0)
 #elif ((defined(LIBXS_PLATFORM_X86) && (64 <= (LIBXS_BITS))) && \
-      (defined(__GNUC__) || defined(LIBXS_INTEL_COMPILER) || defined(__PGI)))
+      (defined(__GNUC__) || defined(LIBXS_INTEL_COMPILER)))
 # define LIBXS_TIMER_RDTSC(CYCLE) do { \
     libxs_timer_tick_t libxs_timer_rdtsc_hi_; \
     __asm__ __volatile__ ("rdtsc" : "=a"(CYCLE), "=d"(libxs_timer_rdtsc_hi_)); \

@@ -85,8 +85,9 @@ REALTYPE := $(word $(if $(REALTYPE_INDEX),$(REALTYPE_INDEX),1),double float)
 
 SAMPLES := $(dir $(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
   $(DEPDIR)/samples/*/Makefile 2>/dev/null))
-# the Intel Compiler needs excessive time to optimize the INT8 kernels
-ifneq (,$(filter Darwin,$(UNAME))$(filter-out 0,$(ICX)))
+# the Intel Compiler needs excessive time to optimize the INT8 kernels, and
+# nvc supplies no VNNI intrinsics (_mm512_dpbusd_epi32 is not even declared)
+ifneq (,$(filter Darwin,$(UNAME))$(filter-out 0,$(ICX))$(findstring nvc,$(CC_NAME)))
   OZAKI ?= 0
 else
   OZAKI ?= 1

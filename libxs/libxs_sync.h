@@ -18,9 +18,9 @@
 #     define LIBXS_NO_TLS
 #     define LIBXS_TLS
 #   else
-#     if (defined(_WIN32) && !defined(__GNUC__) && !defined(__clang__)) || (defined(__PGI) && !defined(__PGLLVM__))
+#     if defined(_WIN32) && !defined(__GNUC__) && !defined(__clang__)
 #       define LIBXS_TLS LIBXS_ATTRIBUTE(thread)
-#     elif defined(__GNUC__) || defined(__clang__) || defined(__PGLLVM__) || defined(_CRAYC)
+#     elif defined(__GNUC__) || defined(__clang__) || defined(_CRAYC)
 #       define LIBXS_TLS __thread
 #     elif defined(__cplusplus)
 #       define LIBXS_TLS thread_local
@@ -54,9 +54,7 @@
 #endif
 
 /* permit thread-unsafe */
-#if !defined(LIBXS_SYNC_NONE) && ( \
-  (defined(__PGI) && !defined(__LIBATOMIC)) || \
-  (defined(_CRAYC) && !defined(__GNUC__)))
+#if !defined(LIBXS_SYNC_NONE) && (defined(_CRAYC) && !defined(__GNUC__))
 # define LIBXS_SYNC_NONE
 #endif
 
@@ -141,25 +139,14 @@ typedef enum libxs_atomic_kind_t {
 #   define LIBXS_ATOMIC16(FN) LIBXS_CONCATENATE(FN, 16)
 #   define LIBXS_ATOMIC32(FN) FN/*default*/
 #   define LIBXS_ATOMIC64(FN) LIBXS_CONCATENATE(FN, 64)
-#   if defined(__PGI)
-#     define LIBXS_ATOMIC_LOAD(SRC_PTR, KIND) LIBXS_NONATOMIC_LOAD(SRC_PTR, KIND)
-#     define LIBXS_ATOMIC_LOAD8(SRC_PTR, KIND) LIBXS_NONATOMIC_LOAD(SRC_PTR, KIND)
-#     define LIBXS_ATOMIC_LOAD16(SRC_PTR, KIND) LIBXS_NONATOMIC_LOAD(SRC_PTR, KIND)
-#     define LIBXS_ATOMIC_LOAD64(SRC_PTR, KIND) LIBXS_NONATOMIC_LOAD(SRC_PTR, KIND)
-#     define LIBXS_ATOMIC_STORE(DST_PTR, VALUE, KIND) LIBXS_NONATOMIC_STORE(DST_PTR, VALUE, KIND)
-#     define LIBXS_ATOMIC_STORE8(DST_PTR, VALUE, KIND) LIBXS_NONATOMIC_STORE(DST_PTR, VALUE, KIND)
-#     define LIBXS_ATOMIC_STORE16(DST_PTR, VALUE, KIND) LIBXS_NONATOMIC_STORE(DST_PTR, VALUE, KIND)
-#     define LIBXS_ATOMIC_STORE64(DST_PTR, VALUE, KIND) LIBXS_NONATOMIC_STORE(DST_PTR, VALUE, KIND)
-#   else
-#     define LIBXS_ATOMIC_LOAD(SRC_PTR, KIND) __atomic_load_4(SRC_PTR, KIND)
-#     define LIBXS_ATOMIC_LOAD8(SRC_PTR, KIND) __atomic_load_1(SRC_PTR, KIND)
-#     define LIBXS_ATOMIC_LOAD16(SRC_PTR, KIND) __atomic_load_2(SRC_PTR, KIND)
-#     define LIBXS_ATOMIC_LOAD64(SRC_PTR, KIND) __atomic_load_8(SRC_PTR, KIND)
-#     define LIBXS_ATOMIC_STORE(DST_PTR, VALUE, KIND) __atomic_store_4(DST_PTR, (unsigned int)(VALUE), KIND)
-#     define LIBXS_ATOMIC_STORE8(DST_PTR, VALUE, KIND) __atomic_store_1(DST_PTR, (unsigned char)(VALUE), KIND)
-#     define LIBXS_ATOMIC_STORE16(DST_PTR, VALUE, KIND) __atomic_store_2(DST_PTR, (unsigned short)(VALUE), KIND)
-#     define LIBXS_ATOMIC_STORE64(DST_PTR, VALUE, KIND) __atomic_store_8(DST_PTR, (unsigned long long)(VALUE), KIND)
-#   endif
+#   define LIBXS_ATOMIC_LOAD(SRC_PTR, KIND) __atomic_load_4(SRC_PTR, KIND)
+#   define LIBXS_ATOMIC_LOAD8(SRC_PTR, KIND) __atomic_load_1(SRC_PTR, KIND)
+#   define LIBXS_ATOMIC_LOAD16(SRC_PTR, KIND) __atomic_load_2(SRC_PTR, KIND)
+#   define LIBXS_ATOMIC_LOAD64(SRC_PTR, KIND) __atomic_load_8(SRC_PTR, KIND)
+#   define LIBXS_ATOMIC_STORE(DST_PTR, VALUE, KIND) __atomic_store_4(DST_PTR, (unsigned int)(VALUE), KIND)
+#   define LIBXS_ATOMIC_STORE8(DST_PTR, VALUE, KIND) __atomic_store_1(DST_PTR, (unsigned char)(VALUE), KIND)
+#   define LIBXS_ATOMIC_STORE16(DST_PTR, VALUE, KIND) __atomic_store_2(DST_PTR, (unsigned short)(VALUE), KIND)
+#   define LIBXS_ATOMIC_STORE64(DST_PTR, VALUE, KIND) __atomic_store_8(DST_PTR, (unsigned long long)(VALUE), KIND)
 #   define LIBXS_ATOMIC_FETCH_OR(DST_PTR, VALUE, KIND) __atomic_fetch_or_4(DST_PTR, (unsigned int)(VALUE), KIND)
 #   define LIBXS_ATOMIC_FETCH_OR8(DST_PTR, VALUE, KIND) __atomic_fetch_or_1(DST_PTR, (unsigned char)(VALUE), KIND)
 #   define LIBXS_ATOMIC_FETCH_OR16(DST_PTR, VALUE, KIND) __atomic_fetch_or_2(DST_PTR, (unsigned short)(VALUE), KIND)
@@ -191,13 +178,8 @@ typedef enum libxs_atomic_kind_t {
 #   if defined(LIBXS_ATOMIC_TRYLOCK_CMPSWP)
 #     define LIBXS_ATOMIC_TRYLOCK(DST_PTR, KIND) (!__atomic_test_and_set(DST_PTR, KIND))
 #   endif
-#   if defined(__PGI)
-#     define LIBXS_ATOMIC_RELEASE(DST_PTR, KIND) do { LIBXS_ASSERT_MSG(0 != *(DST_PTR), "LIBXS_ATOMIC_RELEASE"); \
-              LIBXS_ATOMIC_STORE_ZERO8(DST_PTR, KIND); } while(0) /* matches bit-width of LIBXS_ATOMIC_LOCKTYPE */
-#   else
-#     define LIBXS_ATOMIC_RELEASE(DST_PTR, KIND) do { LIBXS_ASSERT_MSG(0 != *(DST_PTR), "LIBXS_ATOMIC_RELEASE"); \
-              __atomic_clear(DST_PTR, KIND); } while(0)
-#   endif
+#   define LIBXS_ATOMIC_RELEASE(DST_PTR, KIND) do { LIBXS_ASSERT_MSG(0 != *(DST_PTR), "LIBXS_ATOMIC_RELEASE"); \
+            __atomic_clear(DST_PTR, KIND); } while(0)
 #   define LIBXS_ATOMIC_SYNC(KIND) __sync_synchronize()
 #   if !defined(LIBXS_ATOMIC_ZERO_STORE)
 #     define LIBXS_ATOMIC_ZERO_STORE
