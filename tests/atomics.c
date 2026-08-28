@@ -34,6 +34,12 @@ int main(void)
   if (tmp != LIBXS_ATOMIC_LOAD(&hp, ATOMIC_KIND)) {
     result = EXIT_FAILURE;
   }
+  /* compilation shall fail rather than RMW at runtime */
+  { const int cst = 25071975;
+    if (cst != LIBXS_ATOMIC_LOAD(&cst, ATOMIC_KIND)) {
+      result = EXIT_FAILURE;
+    }
+  }
   if (mh != LIBXS_NONATOMIC_SUB_FETCH(&hp, 24019994, ATOMIC_KIND)) {
     result = EXIT_FAILURE;
   }

@@ -294,8 +294,7 @@ LIBXS_API_INTERN void internal_libxs_gemm_init(void)
 LIBXS_API_INLINE unsigned int internal_libxs_gemm_warmup_state(
   unsigned int hash)
 {
-  /* not const: LIBXS_ATOMIC_LOAD is a read-modify-write on some platforms */
-  unsigned int *const slot = internal_libxs_gemm_warmup
+  const unsigned int *const slot = internal_libxs_gemm_warmup
     + (hash & (LIBXS_GEMM_NWARMUP - 1));
   const unsigned int cur = LIBXS_ATOMIC_LOAD(slot, LIBXS_ATOMIC_RELAXED);
   const unsigned int s = INTERNAL_GEMM_WARMUP_STATE(cur);

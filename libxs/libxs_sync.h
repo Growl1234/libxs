@@ -227,7 +227,8 @@ typedef enum libxs_atomic_kind_t {
 #   endif
 # else /* GCC legacy atomics */
 #   define LIBXS_ATOMIC(FN, BITS) FN
-#   define LIBXS_ATOMIC_LOAD(SRC_PTR, KIND) __sync_or_and_fetch(SRC_PTR, 0)
+/* full barrier as __sync_or_and_fetch (but without writing the location) */
+#   define LIBXS_ATOMIC_LOAD(SRC_PTR, KIND) (__sync_synchronize(), *(SRC_PTR))
 #   if (LIBXS_X86_GENERIC <= LIBXS_STATIC_TARGET_ARCH)
 #     define LIBXS_ATOMIC_STORE(DST_PTR, VALUE, KIND) do { \
               __asm__ __volatile__("" ::: "memory"); *(DST_PTR) = (VALUE); \
@@ -275,9 +276,10 @@ typedef enum libxs_atomic_kind_t {
 # define LIBXS_ATOMIC16(FN) LIBXS_CONCATENATE(FN, 16)
 # define LIBXS_ATOMIC32(FN) FN/*default*/
 # define LIBXS_ATOMIC64(FN) LIBXS_CONCATENATE(FN, 64)
-# define LIBXS_ATOMIC_LOAD(SRC_PTR, KIND) InterlockedOr((volatile LONG*)(SRC_PTR), 0)
-# define LIBXS_ATOMIC_LOAD8(SRC_PTR, KIND) _InterlockedOr8((volatile char*)(SRC_PTR), 0)
-# define LIBXS_ATOMIC_LOAD64(SRC_PTR, KIND) InterlockedOr64((volatile LONGLONG*)(SRC_PTR), 0)
+/* use volatile read to load (weaker than full barrier InterlockedOr, bit no write) */
+# define LIBXS_ATOMIC_LOAD(SRC_PTR, KIND) (*(volatile LONG*)(SRC_PTR))
+# define LIBXS_ATOMIC_LOAD8(SRC_PTR, KIND) (*(volatile char*)(SRC_PTR))
+# define LIBXS_ATOMIC_LOAD64(SRC_PTR, KIND) (*(volatile LONGLONG*)(SRC_PTR))
 # define LIBXS_ATOMIC_STORE(DST_PTR, VALUE, KIND) InterlockedExchange((volatile LONG*)(DST_PTR), (LONG)(VALUE))
 # define LIBXS_ATOMIC_STORE8(DST_PTR, VALUE, KIND) InterlockedExchange8((volatile char*)(DST_PTR), (LONGLONG)(VALUE))
 # define LIBXS_ATOMIC_STORE64(DST_PTR, VALUE, KIND) InterlockedExchange64((volatile LONGLONG*)(DST_PTR), (LONGLONG)(VALUE))
