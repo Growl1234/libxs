@@ -30,7 +30,7 @@
  * 1 (v1.0.0), so the reader gates each field on the version it appeared in.
  */
 #if !defined(LIBXS_PREDICT_VERSION)
-#  define LIBXS_PREDICT_VERSION 2
+#  define LIBXS_PREDICT_VERSION 3
 #endif
 #if !defined(LIBXS_PREDICT_KNN)
 #  define LIBXS_PREDICT_KNN 32
@@ -101,6 +101,8 @@
 typedef struct internal_libxs_predict_entry_t {
   double* inputs;
   double* outputs;
+  /** Relative say this entry has in a vote; 1 unless push_weighted set it. */
+  double weight;
 } internal_libxs_predict_entry_t;
 
 typedef struct internal_libxs_predict_cluster_t {
@@ -116,6 +118,13 @@ typedef struct internal_libxs_predict_cluster_t {
   int* interpolated;
   int* mode;
   int* ndistinct;
+  /** Neighbour count per output.  Replaces one k_eff chosen by a majority vote
+   *  over the outputs' modes, which gave an interpolating output the formula
+   *  picked for its classifying neighbours.  Derived at build and again at load,
+   *  so it costs nothing in the file. */
+  int* k_out;
+  /** Entry weights in kd order, parallel to kd_pts; NULL when all are 1. */
+  double* eweight;
   int* sorted_idx;
   double* sorted_dist;
   double* tangent;
@@ -210,6 +219,8 @@ LIBXS_EXTERN_C struct libxs_predict_t {
    *  The second is derived - from the entries at build, from the stored points
    *  at load - so it holds for a loaded model that never saw the setter. */
   int missing_mode, has_missing;
+  /** Non-zero once any pushed entry carries a weight other than 1. */
+  int has_eweight;
   /** Requested forest size and depth (0: decide at build). */
   int rf_ntrees, rf_depth;
   /** Requested central tendency (0/negative: decide per output at build). */
@@ -240,6 +251,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
 LIBXS_API_INLINE int internal_libxs_predict_support_all(libxs_predict_t* model);
 LIBXS_API_INLINE void internal_libxs_predict_missing_all(libxs_predict_t* model);
 LIBXS_API_INLINE void internal_libxs_predict_central_all(libxs_predict_t* model);
+LIBXS_API_INLINE void internal_libxs_predict_keff_all(libxs_predict_t* model);
 LIBXS_API_INLINE void internal_libxs_predict_bank_all(libxs_predict_t* model);
 
 
@@ -261,6 +273,8 @@ LIBXS_API_INLINE void internal_libxs_predict_free_clusters(libxs_predict_t* mode
       free(cl->interpolated);
       free(cl->mode);
       free(cl->ndistinct);
+      free(cl->k_out);
+      free(cl->eweight);
       free(cl->sorted_idx);
       free(cl->sorted_dist);
       free(cl->tangent);
@@ -785,7 +799,7 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
   const int* po_groups, int query_group,
   double* candidates, double* dists, int* out_nfound,
   int* out_exact, int* out_exact_nearest, double* out_best,
-  const internal_libxs_predict_view_t* view, int missing)
+  const internal_libxs_predict_view_t* view, int missing, double* out_iw)
 {
   const double* kd_pts = cl->kd_pts;
   const int nc = cl->nentries;
@@ -795,8 +809,9 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
    * The loaders reject an out-of-range value, but keeping the clamp local means
    * the writes cannot exceed the arrays whatever the caller passed.
    */
-  const int k = (cl->k_eff < LIBXS_PREDICT_KNN)
-    ? ((0 < cl->k_eff) ? cl->k_eff : 1) : LIBXS_PREDICT_KNN;
+  const int kreq = (NULL != cl->k_out) ? cl->k_out[output_j] : cl->k_eff;
+  const int k = (kreq < LIBXS_PREDICT_KNN)
+    ? ((0 < kreq) ? kreq : 1) : LIBXS_PREDICT_KNN;
   double qtan[512];
   const double* qpts = inputs;
   const double* dpts = kd_pts;
@@ -874,6 +889,9 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
     if (nfound < k) {
       candidates[nfound] = cl->raw_outputs[(size_t)i * nouts + output_j];
       dists[nfound] = sqrt(d2);
+      if (NULL != out_iw) {
+        out_iw[nfound] = (NULL != cl->eweight) ? cl->eweight[i] : 1.0;
+      }
       ++nfound;
     }
     else {
@@ -884,6 +902,9 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
       if (sqrt(d2) < dists[worst]) {
         candidates[worst] = cl->raw_outputs[(size_t)i * nouts + output_j];
         dists[worst] = sqrt(d2);
+        if (NULL != out_iw) {
+          out_iw[worst] = (NULL != cl->eweight) ? cl->eweight[i] : 1.0;
+        }
       }
     }
   }
@@ -919,6 +940,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
   const int ndistinct_thresh = (int)(sqrt((double)nc) + 0.5);
   double candidates[LIBXS_PREDICT_KNN];
   double dists[LIBXS_PREDICT_KNN];
+  double iw[LIBXS_PREDICT_KNN];
   double best_val = 0.0;
   int nfound = 0, exact = 0, exact_nearest = 0, i;
   if (NULL != confidence) *confidence = 0.0;
@@ -930,7 +952,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
     internal_libxs_predict_evidence(cl, m, inputs, output_j, nouts,
       extrapolate, skip_local, po_groups, query_group,
       candidates, dists, &nfound, &exact, &exact_nearest, &best_val, view,
-      missing);
+      missing, iw);
     if (NULL != out_variance) {
       if (0 != exact_nearest || nfound <= 1) {
         *out_variance = 0;
@@ -965,7 +987,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
       double wsum = 0;
       int si, sj;
       for (i = 0; i < nq; ++i) {
-        weights[i] = (dists[i] > 0.0) ? (1.0 / dists[i]) : 1e30;
+        weights[i] = iw[i] * ((dists[i] > 0.0) ? (1.0 / dists[i]) : 1e30);
         wsum += weights[i];
       }
       for (i = 0; i < nq; ++i) {
@@ -1000,7 +1022,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
       if (ndistinct > ndistinct_thresh) {
         double wsum = 0, wavg = 0;
         for (i = 0; i < nfound; ++i) {
-          const double wi = (dists[i] > 0.0) ? (1.0 / dists[i]) : 1e30;
+          const double wi = iw[i] * ((dists[i] > 0.0) ? (1.0 / dists[i]) : 1e30);
           wavg += wi * candidates[i];
           wsum += wi;
         }
@@ -1066,7 +1088,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
           int ii;
           for (ii = 0; ii < nfound; ++ii) {
             if (candidates[ii] == candidates[i]) {
-              ws += (dists[ii] > 0.0) ? (1.0 / dists[ii]) : 1e30;
+              ws += iw[ii] * ((dists[ii] > 0.0) ? (1.0 / dists[ii]) : 1e30);
             }
           }
           if (ws > best_weight) { best_weight = ws; best_val = candidates[i]; }
@@ -1074,7 +1096,8 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
         if (NULL != confidence) {
           double total_weight = 0;
           for (i = 0; i < nfound; ++i) {
-            total_weight += (dists[i] > 0.0) ? (1.0 / dists[i]) : 1e30;
+            total_weight += iw[i]
+              * ((dists[i] > 0.0) ? (1.0 / dists[i]) : 1e30);
           }
           *confidence = (total_weight > 0.0) ? best_weight / total_weight : 1.0;
         }
@@ -1190,6 +1213,8 @@ LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
             free(cl->order);
             free(cl->mode);
             free(cl->ndistinct);
+            free(cl->k_out);
+            free(cl->eweight);
             free(cl->interpolated);
             free(cl->coeffs);
             free(cl->errors);
@@ -2458,8 +2483,14 @@ LIBXS_API_INLINE void internal_libxs_predict_ts_expand(libxs_predict_t* model)
 }
 
 
-LIBXS_API int libxs_predict_push(
-  libxs_lock_t* lock, libxs_predict_t* model, const double inputs[], const double outputs[])
+/**
+ * The weight travels as an argument rather than as model state: push takes an
+ * optional lock so that threads may push concurrently, and a field set around
+ * the call would be written outside it.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_push_impl(
+  libxs_lock_t* lock, libxs_predict_t* model, const double inputs[],
+  const double outputs[], double weight)
 {
   int result = EXIT_SUCCESS;
   if (NULL == model || NULL == inputs) {
@@ -2504,6 +2535,8 @@ LIBXS_API int libxs_predict_push(
       e->inputs = (double*)malloc((size_t)m * sizeof(double));
       e->outputs = (double*)malloc((size_t)n * sizeof(double));
       if (NULL != e->inputs && NULL != e->outputs) {
+        e->weight = weight;
+        if (1.0 != weight) model->has_eweight = 1;
         memcpy(e->inputs, inputs, (size_t)m * sizeof(double));
         if (NULL != model->transforms) {
           int j;
@@ -2525,6 +2558,34 @@ LIBXS_API int libxs_predict_push(
       }
     }
     if (NULL != lock) LIBXS_LOCK_RELEASE(LIBXS_LOCK, lock);
+  }
+  return result;
+}
+
+
+LIBXS_API int libxs_predict_push(
+  libxs_lock_t* lock, libxs_predict_t* model, const double inputs[],
+  const double outputs[])
+{
+  return internal_libxs_predict_push_impl(lock, model, inputs, outputs, 1.0);
+}
+
+
+LIBXS_API int libxs_predict_push_weighted(
+  libxs_lock_t* lock, libxs_predict_t* model, const double inputs[],
+  const double outputs[], double weight)
+{
+  int result = EXIT_FAILURE;
+  if (NULL != model && 0 < weight && weight == weight) {
+    /**
+     * A weighted timestep has nothing to attach to: series mode turns the
+     * pushed timesteps into overlapping windows at build, so one timestep
+     * contributes to many entries and no entry corresponds to one push.
+     */
+    if (1.0 == weight || 0 >= model->nseries) {
+      result = internal_libxs_predict_push_impl(lock, model, inputs, outputs,
+        weight);
+    }
   }
   return result;
 }
@@ -2807,11 +2868,17 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
           }
           if (cl->dmax <= 0.0) cl->dmax = 1.0;
           cl->kd_pts = (double*)malloc((size_t)nc * (size_t)m * sizeof(double));
+          if (0 != model->has_eweight && NULL == cl->eweight) {
+            cl->eweight = (double*)malloc((size_t)nc * sizeof(double));
+          }
           if (NULL != cl->kd_pts) {
             for (k = 0; k < nc; ++k) {
               internal_libxs_predict_normalize(model,
                 model->entries[cl->sorted_idx[k]].inputs,
                 cl->kd_pts + (size_t)k * m);
+              if (NULL != cl->eweight) {
+                cl->eweight[k] = model->entries[cl->sorted_idx[k]].weight;
+              }
             }
             if (0 != model->tangent) {
               internal_libxs_predict_cluster_tangent(cl, m, model->tangent);
@@ -2886,6 +2953,7 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
        * shared state, which is exactly what the context exists to avoid.
        */
       internal_libxs_predict_support_all(model);
+      internal_libxs_predict_keff_all(model);
       if (0 >= model->central) internal_libxs_predict_central_all(model);
       internal_libxs_predict_bank_all(model);
       if (model->smooth < 0) {
@@ -4011,7 +4079,7 @@ LIBXS_API_INLINE int internal_libxs_predict_dist(
   internal_libxs_predict_evidence(cl,
     model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL, -1,
     candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL,
-    model->has_missing);
+    model->has_missing, NULL);
   for (i = 0; i < ns; ++i) local[i] = 0;
   for (i = 0; i < nfound; ++i) {
     const int si = internal_libxs_predict_support_index(sv, ns, candidates[i]);
@@ -4106,7 +4174,7 @@ LIBXS_API_INLINE int internal_libxs_predict_point(
   internal_libxs_predict_evidence(cl,
     model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL, -1,
     candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL,
-    model->has_missing);
+    model->has_missing, NULL);
   /* Accumulate evidence per DISTINCT support entry, as the dense path does by
      indexing into local[]; a value can be returned by several neighbors. */
   for (i = 0; i < nfound; ++i) {
@@ -4392,6 +4460,41 @@ LIBXS_API_INLINE void internal_libxs_predict_bank_all(libxs_predict_t* model)
  * Absolute error is the criterion because that is what the median optimizes;
  * a tie keeps the mean, which is the historical behavior.
  */
+/** The two formulas the single k_eff chose between, now applied per output. */
+LIBXS_API_INLINE int internal_libxs_predict_keff_mode(int nc, int classify)
+{
+  const int k = (0 != classify)
+    ? LIBXS_MAX(5, nc / 3)
+    : LIBXS_MAX(3, (int)(sqrt((double)nc) + 0.5));
+  return LIBXS_MIN(LIBXS_MIN(k, nc), LIBXS_PREDICT_KNN);
+}
+
+
+/**
+ * Per-output neighbour count from each output's own mode.  Runs at build and at
+ * load so a loaded model behaves as the built one did, which is also why nothing
+ * about this reaches the file.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_keff_all(libxs_predict_t* model)
+{
+  const int n = model->noutputs;
+  int c;
+  if (NULL != model->clusters) for (c = 0; c < model->nclusters; ++c) {
+    internal_libxs_predict_cluster_t* cl = &model->clusters[c];
+    if (NULL == cl->k_out) {
+      cl->k_out = (int*)malloc((size_t)n * sizeof(int));
+    }
+    if (NULL != cl->k_out) {
+      int j;
+      for (j = 0; j < n; ++j) {
+        const int classify = (NULL != cl->mode) ? cl->mode[j] : 1;
+        cl->k_out[j] = internal_libxs_predict_keff_mode(cl->nentries, classify);
+      }
+    }
+  }
+}
+
+
 LIBXS_API_INLINE void internal_libxs_predict_central_all(libxs_predict_t* model)
 {
   const int n = model->noutputs;

@@ -479,6 +479,37 @@ LIBXS_API int libxs_predict_push(libxs_lock_t* lock,
   const double inputs[], const double outputs[]);
 
 /**
+ * Push one training entry with a weight on how much say it has.
+ *
+ * weight > 0 scales this entry's contribution to the kNN vote, on top of the
+ * distance weighting it already receives. Two entries at the same distance with
+ * weights 3 and 1 count three to one. weight == 1 is exactly libxs_predict_push.
+ * A non-positive or NaN weight is rejected.
+ *
+ * Use it where the corpus is unbalanced and the metric is not: up-weighting a
+ * rare class raises its recall and *lowers* overall accuracy, because the two
+ * are different questions and the corpus was already optimal for the second.
+ * Decide which one is being reported before reaching for this.
+ *
+ * Scope: the vote only. The polynomial fit, the cluster partition and the
+ * probability API (libxs_predict_prob and friends) ignore the weights. The last
+ * is deliberate rather than pending - reweighted evidence yields a different
+ * quantity from P(y|x), and calling it that would misreport it.
+ *
+ * Not available in series mode with a weight other than 1: build turns pushed
+ * timesteps into overlapping windows, so one timestep contributes to many
+ * entries and no entry corresponds to one push. Such a call returns failure
+ * rather than picking an interpretation.
+ *
+ * Weights are serialized (file version 3). A model saved with weights loads with
+ * them; a file written before version 3 loads with every weight at 1, which is
+ * what it meant.
+ */
+LIBXS_API int libxs_predict_push_weighted(libxs_lock_t* lock,
+  libxs_predict_t* model, const double inputs[], const double outputs[],
+  double weight);
+
+/**
  * Build (finalize) the prediction model from pushed entries.
  * Performs clustering, distance-ordering, fingerprinting, and
  * polynomial fitting. Must be called before libxs_predict_eval.

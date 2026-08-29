@@ -223,6 +223,8 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     WRITE_U16(n);
     WRITE_U16(model->nclusters);
     WRITE_U16(NULL != model->weights ? 1 : 0);
+    /* introduced with version 3; an older file simply has no weights */
+    WRITE_U8(0 != model->has_eweight ? 1 : 0);
     WRITE_F64(model->quality);
     WRITE_BLK(model->input_min, (size_t)m * sizeof(double));
     WRITE_BLK(model->input_rng, (size_t)m * sizeof(double));
@@ -242,6 +244,9 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
         (size_t)cl->nentries * (size_t)m * sizeof(double));
       WRITE_BLK(cl->raw_outputs,
         (size_t)cl->nentries * (size_t)n * sizeof(double));
+      if (0 != model->has_eweight) {
+        WRITE_BLK(cl->eweight, (size_t)cl->nentries * sizeof(double));
+      }
       WRITE_BLK(cl->out_rms, (size_t)n * sizeof(double));
       for (k = 0; k < cl->nentries; ++k) WRITE_U16(cl->sorted_idx[k]);
     }
@@ -337,6 +342,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
   else {
     size_t required = 0;
     int c, j, has_sidx = 1;
+    const int has_ew = (0 != model->has_eweight) ? 1 : 0;
     /**
      * A model loaded from a version-1 flat file has no sorted_idx to write, so
      * its presence is a flag rather than an invariant.  Fabricating indices
@@ -367,6 +373,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       required += (size_t)cl->nentries * (size_t)model->ninputs * sizeof(double);
       required += (size_t)cl->nentries * (size_t)model->noutputs * sizeof(double);
       if (0 != has_sidx) required += (size_t)cl->nentries * sizeof(uint32_t);
+      if (0 != has_ew) required += (size_t)cl->nentries * sizeof(double);
       for (j = 0; j < model->noutputs; ++j) {
         required += (size_t)(cl->order[j] + 1) * sizeof(double);
       }
@@ -428,6 +435,8 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       WRITE_U8(model->refine);
       WRITE_U8(NULL != model->decompose_mat ? 1 : 0);
       WRITE_U8(has_sidx);
+      /* introduced with version 3; an older file simply has no weights */
+      WRITE_U8(has_ew);
       WRITE_U16(model->order);
       WRITE_U8(model->iterations);
       WRITE_U32(model->nentries);
@@ -459,6 +468,9 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
         WRITE_BLK(cl->out_rms, (size_t)model->noutputs * sizeof(double));
         WRITE_BLK(cl->kd_pts, (size_t)cl->nentries * (size_t)model->ninputs * sizeof(double));
         WRITE_BLK(cl->raw_outputs, (size_t)cl->nentries * (size_t)model->noutputs * sizeof(double));
+        if (0 != has_ew) {
+          WRITE_BLK(cl->eweight, (size_t)cl->nentries * sizeof(double));
+        }
         /**
          * sorted_idx is what recency weighting and the local-error diagnostic
          * read; without it a loaded model silently takes a different path from
@@ -597,11 +609,16 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
 {
   libxs_predict_t* model = NULL;
   uint16_t ninp = 0, nout = 0, nclust = 0, has_weights = 0;
-  int ok = EXIT_SUCCESS, c, j;
+  int ok = EXIT_SUCCESS, c, j, has_ew = 0;
   ok = internal_libxs_predict_read(&src, end, &ninp, 2);
   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &nout, 2);
   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &nclust, 2);
   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &has_weights, 2);
+  if (EXIT_SUCCESS == ok && 2 < version) {
+    uint8_t v = 0;
+    ok = internal_libxs_predict_read(&src, end, &v, 1);
+    if (EXIT_SUCCESS == ok) has_ew = (0 != v);
+  }
   if (EXIT_SUCCESS == ok) {
     model = libxs_predict_create((int)ninp, (int)nout);
     if (NULL == model) ok = EXIT_FAILURE;
@@ -696,6 +713,18 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
       if (NULL == cl->raw_outputs) ok = EXIT_FAILURE;
       else ok = internal_libxs_predict_read(&src, end,
         cl->raw_outputs, (size_t)ne * (size_t)nout * sizeof(double));
+    }
+    if (EXIT_SUCCESS == ok && 0 != has_ew) {
+      ok = internal_libxs_predict_avail(src, end, (size_t)ne, sizeof(double));
+    }
+    if (EXIT_SUCCESS == ok && 0 != has_ew) {
+      cl->eweight = (double*)malloc((size_t)ne * sizeof(double));
+      if (NULL == cl->eweight) ok = EXIT_FAILURE;
+      else {
+        ok = internal_libxs_predict_read(&src, end, cl->eweight,
+          (size_t)ne * sizeof(double));
+        if (EXIT_SUCCESS == ok) model->has_eweight = 1;
+      }
     }
     /**
      * out_rms arrived with version 2.  A version-1 file carries no fit residual,
@@ -906,6 +935,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     ++model->nbuild;
     internal_libxs_predict_missing_all(model);
     internal_libxs_predict_support_all(model);
+    internal_libxs_predict_keff_all(model);
     if (0 >= model->central) internal_libxs_predict_central_all(model);
   }
   else if (NULL != model) {
@@ -927,7 +957,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
     const unsigned char* end = src + size;
     uint32_t magic = 0;
     uint16_t version = 0, ninp = 0, nout = 0, nclust = 0;
-    int has_sidx = 0;
+    int has_sidx = 0, has_ew = 0;
     int ok = internal_libxs_predict_read(&src, end, &magic, 4);
     if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &version, 2);
     if (EXIT_SUCCESS == ok
@@ -986,6 +1016,11 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         uint8_t v = 0;
         ok = internal_libxs_predict_read(&src, end, &v, 1);
         if (EXIT_SUCCESS == ok) has_sidx = (0 != v);
+      }
+      if (EXIT_SUCCESS == ok && 2 < version) {
+        uint8_t v = 0;
+        ok = internal_libxs_predict_read(&src, end, &v, 1);
+        if (EXIT_SUCCESS == ok) has_ew = (0 != v);
       }
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &order, 2);
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &iterations, 1);
@@ -1162,6 +1197,19 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
               cl->raw_outputs, (size_t)cl->nentries * (size_t)nout * sizeof(double));
           }
         }
+        if (EXIT_SUCCESS == ok && 0 != has_ew) {
+          ok = internal_libxs_predict_avail(src, end,
+            (size_t)cl->nentries, sizeof(double));
+        }
+        if (EXIT_SUCCESS == ok && 0 != has_ew) {
+          cl->eweight = (double*)malloc((size_t)cl->nentries * sizeof(double));
+          if (NULL == cl->eweight) ok = EXIT_FAILURE;
+          else {
+            ok = internal_libxs_predict_read(&src, end, cl->eweight,
+              (size_t)cl->nentries * sizeof(double));
+            if (EXIT_SUCCESS == ok) model->has_eweight = 1;
+          }
+        }
         /**
          * A version-1 flat file has no sorted_idx, and so has no global order to
          * recover.  It is left NULL: eval already treats that as "no recency
@@ -1301,6 +1349,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
       ++model->nbuild;
       internal_libxs_predict_missing_all(model);
       internal_libxs_predict_support_all(model);
+      internal_libxs_predict_keff_all(model);
       if (0 >= model->central) internal_libxs_predict_central_all(model);
     }
     else if (0 == hknn && NULL != model) {

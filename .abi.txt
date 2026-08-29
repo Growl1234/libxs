@@ -204,6 +204,7 @@ libxs_predict_prob_destroy
 libxs_predict_prob_observe
 libxs_predict_prob_support
 libxs_predict_push
+libxs_predict_push_weighted
 libxs_predict_query
 libxs_predict_save
 libxs_predict_set_central
