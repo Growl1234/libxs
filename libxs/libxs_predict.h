@@ -370,6 +370,53 @@ LIBXS_API void libxs_predict_set_decompose(libxs_predict_t* model,
   int decompose);
 
 /**
+ * Accept absent input values, written as NaN, instead of requiring every
+ * coordinate to be present.
+ *
+ * enable != 0: libxs_predict_load_csv admits a row whose *input* field is empty
+ *   or unparseable, storing it as absent, rather than skipping the row (an
+ *   absent output still skips it, because there is nothing to learn from).
+ * enable == 0 (default): such rows are skipped, exactly as before.
+ *
+ * The flag governs that admission only. Whether absences are *handled* is
+ * decided by the values themselves: push has always copied what it was given,
+ * so a NaN pushed directly is honoured whether or not this was called, and the
+ * build detects it. Calling this on a model fed by push is therefore harmless
+ * and redundant, and its absence is not a way to opt out of the handling below.
+ *
+ * Where a coordinate is absent on either side, the distance omits it and scales
+ * the remainder by the number of coordinates it did read, so entries carrying
+ * different absences stay comparable. Two entries sharing no present coordinate
+ * are reported maximally distant rather than identical, which is what a plain
+ * sum over the present terms would have made them.
+ *
+ * A consequence worth knowing before relying on it: an entry with an absent
+ * coordinate is weaker evidence than a complete one, because that scaling makes
+ * agreement on one of two coordinates count for less than agreement on two of
+ * two. A complete query therefore need not be answered by an entry that agrees
+ * exactly on every coordinate it does have - a fully comparable neighbour
+ * agreeing slightly less well can outrank it. Absences cost accuracy where they
+ * are common; they do not merely cost nothing.
+ *
+ * Interpolation abstains for a query with an absent coordinate, and an entry
+ * with one does not enter a polynomial fit: a least-squares normal equation has
+ * no way to omit a term, so admitting one would silently poison the fit for
+ * every other entry in the cluster rather than only for that one.
+ *
+ * libxs_predict_build FAILS on absences under a tree-based decomposition
+ * (LIBXS_PREDICT_RF, LIBXS_PREDICT_HKNN) rather than guessing. A tree reads one
+ * coordinate per node and the serialized node has no field in which to record
+ * which way an absent one should go; imputing a median instead would work at
+ * build and not survive a round trip, since the medians are not recoverable
+ * from what is written. Use LIBXS_PREDICT_RAW, or supply complete inputs.
+ *
+ * Must be called before push. The flag governs ingestion only: a loaded model
+ * derives what it needs from the values themselves, so the serialization format
+ * is unchanged and a model built this way loads into any released version.
+ */
+LIBXS_API void libxs_predict_set_missing(libxs_predict_t* model, int enable);
+
+/**
  * Enable auto-differencing for non-stationary timeseries.
  * order > 0: explicit differencing order (1 removes linear trend,
  *            2 removes quadratic trend).

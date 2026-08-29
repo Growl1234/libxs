@@ -37,7 +37,8 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
             const double predicted = internal_libxs_predict_classify(
               cl, m, cl->kd_pts + (size_t)li * m, j, n,
               cl->ndistinct[j], 0, li, &conf, &var,
-              internal_libxs_predict_central(model, j), NULL);
+              internal_libxs_predict_central(model, j), NULL,
+              model->has_missing);
             if (predicted != actual || var > 0) {
               mismatch = 1;
             }

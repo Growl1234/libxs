@@ -34,11 +34,21 @@ LIBXS_API_INLINE int internal_libxs_predict_resolve_col(
 }
 
 
+/**
+ * Fill vals[] from the columns idx[] names.  With missing set, a field that does
+ * not parse - or a column the row does not reach at all - is recorded as absent
+ * instead of rejecting the whole row.  Only the caller's input side passes it:
+ * an absent output leaves nothing to learn from, so that row is still skipped.
+ */
 LIBXS_API_INLINE int internal_libxs_predict_parse_row(
-  const char* line, const char* delims, const int idx[], int nidx, double vals[])
+  const char* line, const char* delims, const int idx[], int nidx,
+  double vals[], int missing)
 {
   int filled = 0, col = 0, ok = 1, i;
   const char* p = line;
+  if (0 != missing) {
+    for (i = 0; i < nidx; ++i) vals[i] = internal_libxs_predict_absent();
+  }
   while ('\0' != *p && filled < nidx && 0 != ok) {
     const char* field = p;
     while ('\0' != *p && NULL == strchr(delims, *p)) ++p;
@@ -49,7 +59,8 @@ LIBXS_API_INLINE int internal_libxs_predict_parse_row(
         if (endptr == field || (endptr != p && '\0' != *endptr
           && NULL == strchr(delims, *endptr)))
         {
-          ok = 0;
+          if (0 == missing) ok = 0;
+          else ++filled;
         }
         else {
           vals[i] = v;
@@ -60,7 +71,7 @@ LIBXS_API_INLINE int internal_libxs_predict_parse_row(
     if ('\0' != *p) ++p;
     ++col;
   }
-  return (0 != ok && filled >= nidx) ? 1 : 0;
+  return (0 != ok && (filled >= nidx || 0 != missing)) ? 1 : 0;
 }
 
 
@@ -210,8 +221,10 @@ LIBXS_API int libxs_predict_load_csv(libxs_predict_t* model,
       if ('#' == line[0]) continue;
       len = strlen(line);
       while (0 < len && ('\n' == line[len - 1] || '\r' == line[len - 1])) line[--len] = '\0';
-      if (0 != internal_libxs_predict_parse_row(line, sep, idx, ninputs, inp)
-        && 0 != internal_libxs_predict_parse_row(line, sep, idx + ninputs, noutputs, outp))
+      if (0 != internal_libxs_predict_parse_row(line, sep, idx, ninputs, inp,
+          model->missing_mode)
+        && 0 != internal_libxs_predict_parse_row(line, sep, idx + ninputs,
+          noutputs, outp, 0))
       {
         if (EXIT_SUCCESS == libxs_predict_push(NULL, model, inp, outp)) {
           ++result;

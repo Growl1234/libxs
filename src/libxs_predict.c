@@ -203,6 +203,10 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   int diff_mode, diff_order;
   int refine;
   int tangent;
+  /** Absent inputs accepted (set_missing), and whether any is actually present.
+   *  The second is derived - from the entries at build, from the stored points
+   *  at load - so it holds for a loaded model that never saw the setter. */
+  int missing_mode, has_missing;
   /** Requested central tendency (0/negative: decide per output at build). */
   int central;
   /** Per-output resolved choice, noutputs entries, NULL until built. */
@@ -229,6 +233,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
 
 
 LIBXS_API_INLINE int internal_libxs_predict_support_all(libxs_predict_t* model);
+LIBXS_API_INLINE void internal_libxs_predict_missing_all(libxs_predict_t* model);
 LIBXS_API_INLINE void internal_libxs_predict_central_all(libxs_predict_t* model);
 LIBXS_API_INLINE void internal_libxs_predict_bank_all(libxs_predict_t* model);
 
@@ -286,6 +291,62 @@ LIBXS_API_INLINE void internal_libxs_predict_free_clusters(libxs_predict_t* mode
 }
 
 
+/**
+ * Squared distance that omits the coordinates either side is missing, scaled by
+ * the count it did read so entries with different absences stay comparable.
+ *
+ * The missing flag is the model's, constant for the life of a build, so a model
+ * without absences takes the same call it always did: this is the hot path for
+ * every query and a per-coordinate NaN test on it would be paid by everyone to
+ * serve the few models that need it.
+ */
+LIBXS_API_INLINE double internal_libxs_predict_dist2(const double* a,
+  const double* b, int m, int missing)
+{
+  double result;
+  if (0 == missing) {
+    result = libxs_dist2(a, b, m);
+  }
+  else {
+    int i, used = 0;
+    result = 0;
+    for (i = 0; i < m; ++i) {
+      if (LIBXS_NOTNAN(a[i]) && LIBXS_NOTNAN(b[i])) {
+        const double d = a[i] - b[i];
+        result += d * d;
+        ++used;
+      }
+    }
+    /* no shared coordinate is no evidence, which must not read as coincident */
+    result = (0 < used) ? (result * m / used) : (double)m;
+  }
+  return result;
+}
+
+
+/**
+ * A quiet NaN, standing for "no value here".  C89 has no NAN macro, and a
+ * literal 0.0/0.0 is a constant expression the compiler is entitled to fold or
+ * diagnose, so the zero is read through volatile.
+ */
+LIBXS_API_INLINE double internal_libxs_predict_absent(void)
+{
+  static const volatile double zero = 0;
+  return zero / zero;
+}
+
+
+/** Non-zero if any coordinate of the vector is absent. */
+LIBXS_API_INLINE int internal_libxs_predict_incomplete(const double* v, int m)
+{
+  int i, result = 0;
+  for (i = 0; i < m && 0 == result; ++i) {
+    if (LIBXS_ISNAN(v[i])) result = 1;
+  }
+  return result;
+}
+
+
 LIBXS_API_INLINE void internal_libxs_predict_normalize(
   const libxs_predict_t* model, const double* inputs, double* norm)
 {
@@ -322,13 +383,20 @@ LIBXS_API_INLINE void internal_libxs_predict_kmeans(libxs_predict_t* model, int 
 {
   const int m = model->ninputs;
   const int p = model->nentries;
+  const int missing = model->has_missing;
   int pool_pts = 0, pool_cen = 0, pool_comp = 0, pool_cnt = 0, pool_dist = 0;
+  int pool_dcnt = 0;
   double* pts = (double*)LIBXS_PREDICT_MALLOC((size_t)p * (size_t)m * sizeof(double), pool_pts);
   double* centroids = (double*)LIBXS_PREDICT_MALLOC((size_t)nclusters * (size_t)m * sizeof(double), pool_cen);
   double* comp = (double*)LIBXS_PREDICT_MALLOC((size_t)nclusters * (size_t)m * sizeof(double), pool_comp);
   int* counts = (int*)LIBXS_PREDICT_MALLOC((size_t)nclusters * sizeof(int), pool_cnt);
   double* dists = (double*)LIBXS_PREDICT_MALLOC((size_t)p * sizeof(double), pool_dist);
-  if (NULL != pts && NULL != centroids && NULL != counts && NULL != comp && NULL != dists) {
+  /* per-dimension counts: a centroid averages only the values actually present */
+  int* dcounts = (0 == missing) ? NULL : (int*)LIBXS_PREDICT_MALLOC(
+    (size_t)nclusters * (size_t)m * sizeof(int), pool_dcnt);
+  if (NULL != pts && NULL != centroids && NULL != counts && NULL != comp
+    && NULL != dists && (0 == missing || NULL != dcounts))
+  {
     int c, i, j, iter;
     for (i = 0; i < p; ++i) {
       internal_libxs_predict_normalize(model,
@@ -344,8 +412,8 @@ LIBXS_API_INLINE void internal_libxs_predict_kmeans(libxs_predict_t* model, int 
       int farthest = 0;
       double maxd = 0;
       for (i = 0; i < p; ++i) {
-        const double d = libxs_dist2(
-          pts + (size_t)i * m, centroids + (size_t)(c - 1) * m, m);
+        const double d = internal_libxs_predict_dist2(
+          pts + (size_t)i * m, centroids + (size_t)(c - 1) * m, m, missing);
         if (d < dists[i]) dists[i] = d;
         if (dists[i] > maxd) { maxd = dists[i]; farthest = i; }
       }
@@ -356,11 +424,12 @@ LIBXS_API_INLINE void internal_libxs_predict_kmeans(libxs_predict_t* model, int 
     for (iter = 0; iter < LIBXS_PREDICT_MAXITER; ++iter) {
       int changed = 0;
       for (i = 0; i < p; ++i) {
-        double best = libxs_dist2(pts + (size_t)i * m, centroids, m);
+        double best = internal_libxs_predict_dist2(
+          pts + (size_t)i * m, centroids, m, missing);
         int bestc = 0;
         for (c = 1; c < nclusters; ++c) {
-          const double d = libxs_dist2(
-            pts + (size_t)i * m, centroids + (size_t)c * m, m);
+          const double d = internal_libxs_predict_dist2(
+            pts + (size_t)i * m, centroids + (size_t)c * m, m, missing);
           if (d < best) { best = d; bestc = c; }
         }
         if (model->assignments[i] != bestc) {
@@ -373,19 +442,38 @@ LIBXS_API_INLINE void internal_libxs_predict_kmeans(libxs_predict_t* model, int 
         memset(centroids, 0, (size_t)nclusters * (size_t)m * sizeof(double));
         memset(comp, 0, (size_t)nclusters * (size_t)m * sizeof(double));
         memset(counts, 0, (size_t)nclusters * sizeof(int));
+        if (0 != missing) {
+          memset(dcounts, 0, (size_t)nclusters * (size_t)m * sizeof(int));
+        }
         for (i = 0; i < p; ++i) {
           const int ci = model->assignments[i];
           double* cen = centroids + (size_t)ci * m;
           double* cmp = comp + (size_t)ci * m;
           for (j = 0; j < m; ++j) {
-            libxs_kahan_sum(pts[(size_t)i * m + j], &cen[j], &cmp[j]);
+            const double v = pts[(size_t)i * m + j];
+            if (0 == missing) {
+              libxs_kahan_sum(v, &cen[j], &cmp[j]);
+            }
+            else if (LIBXS_NOTNAN(v)) {
+              libxs_kahan_sum(v, &cen[j], &cmp[j]);
+              ++dcounts[(size_t)ci * m + j];
+            }
           }
           ++counts[ci];
         }
         for (c = 0; c < nclusters; ++c) {
           if (0 < counts[c]) {
             double* cen = centroids + (size_t)c * m;
-            for (j = 0; j < m; ++j) cen[j] /= counts[c];
+            if (0 == missing) {
+              for (j = 0; j < m; ++j) cen[j] /= counts[c];
+            }
+            else for (j = 0; j < m; ++j) {
+              const int n = dcounts[(size_t)c * m + j];
+              /* absent throughout the cluster: the centroid has no value here,
+                 and saying so lets the distance omit it rather than read a 0 */
+              cen[j] = (0 < n) ? (cen[j] / n)
+                : internal_libxs_predict_absent();
+            }
           }
         }
       }
@@ -394,6 +482,7 @@ LIBXS_API_INLINE void internal_libxs_predict_kmeans(libxs_predict_t* model, int 
       memcpy(model->clusters[c].centroid, centroids + (size_t)c * m, (size_t)m * sizeof(double));
     }
   }
+  LIBXS_PREDICT_FREE(dcounts, pool_dcnt);
   LIBXS_PREDICT_FREE(dists, pool_dist);
   LIBXS_PREDICT_FREE(comp, pool_comp);
   LIBXS_PREDICT_FREE(centroids, pool_cen);
@@ -443,7 +532,8 @@ LIBXS_API_INLINE double internal_libxs_predict_position(
   double best = DBL_MAX;
   int best_k = 0, k;
   for (k = 0; k < nc; ++k) {
-    const double d = libxs_dist2(inputs, cl->kd_pts + (size_t)k * m, m);
+    const double d = internal_libxs_predict_dist2(inputs,
+      cl->kd_pts + (size_t)k * m, m, model->has_missing);
     if (d < best) { best = d; best_k = k; }
   }
   return (double)best_k;
@@ -664,9 +754,10 @@ LIBXS_API_INLINE double internal_libxs_predict_coverage(
  * weight would have done, and it needs no second copy of the points.
  */
 LIBXS_API_INLINE double internal_libxs_predict_viewdist2(const double* a,
-  const double* b, int m, const internal_libxs_predict_view_t* view)
+  const double* b, int m, const internal_libxs_predict_view_t* view,
+  int missing)
 {
-  double result = libxs_dist2(a, b, m);
+  double result = internal_libxs_predict_dist2(a, b, m, missing);
   if (NULL != view && view->w < view->full && 0 < view->s) {
     int si, li;
     for (si = 0; si < view->s; ++si) {
@@ -689,7 +780,7 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
   const int* po_groups, int query_group,
   double* candidates, double* dists, int* out_nfound,
   int* out_exact, int* out_exact_nearest, double* out_best,
-  const internal_libxs_predict_view_t* view)
+  const internal_libxs_predict_view_t* view, int missing)
 {
   const double* kd_pts = cl->kd_pts;
   const int nc = cl->nentries;
@@ -729,7 +820,8 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
   for (i = 0; i < nc; ++i) {
     double d2;
     if (i == skip_local) continue;
-    d2 = libxs_dist2(qpts, dpts + (size_t)i * dm, dm);
+    d2 = internal_libxs_predict_dist2(qpts, dpts + (size_t)i * dm, dm,
+      missing);
     if (NULL != view && view->w < view->full && qpts == inputs) {
       /**
        * A view reads only the most recent view_w lags of each series.  Rather
@@ -816,7 +908,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
   const int* po_groups, int query_group,
   double* confidence, double* out_variance,
   double quantile, double* out_lower, double* out_upper,
-  int central, const internal_libxs_predict_view_t* view)
+  int central, const internal_libxs_predict_view_t* view, int missing)
 {
   const int nc = cl->nentries;
   const int ndistinct_thresh = (int)(sqrt((double)nc) + 0.5);
@@ -832,7 +924,8 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
     best_val = cl->raw_outputs[output_j];
     internal_libxs_predict_evidence(cl, m, inputs, output_j, nouts,
       extrapolate, skip_local, po_groups, query_group,
-      candidates, dists, &nfound, &exact, &exact_nearest, &best_val, view);
+      candidates, dists, &nfound, &exact, &exact_nearest, &best_val, view,
+      missing);
     if (NULL != out_variance) {
       if (0 != exact_nearest || nfound <= 1) {
         *out_variance = 0;
@@ -995,11 +1088,12 @@ LIBXS_API_INLINE double internal_libxs_predict_classify(
   int m, const double* inputs, int output_j, int nouts,
   int ndistinct, int extrapolate, int skip_local,
   double* confidence, double* out_variance, int central,
-  const internal_libxs_predict_view_t* view)
+  const internal_libxs_predict_view_t* view, int missing)
 {
   return internal_libxs_predict_classify2(cl, m, inputs,
     output_j, nouts, ndistinct, extrapolate, skip_local,
-    NULL, -1, confidence, out_variance, 0, NULL, NULL, central, view);
+    NULL, -1, confidence, out_variance, 0, NULL, NULL, central, view,
+    missing);
 }
 
 
@@ -1289,6 +1383,51 @@ LIBXS_API void libxs_predict_set_diff(libxs_predict_t* model, int order)
   LIBXS_ASSERT(NULL != model);
   if (NULL != model) {
     model->diff_mode = order;
+  }
+}
+
+
+/**
+ * Derive has_missing from whatever the model actually holds.  A loaded model has
+ * no setter call behind it and may have kept only the clustered points, so the
+ * flag is recovered from the values rather than stored, which is what keeps the
+ * serialization format unchanged.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_missing_all(libxs_predict_t* model)
+{
+  const int m = model->ninputs;
+  int i;
+  model->has_missing = 0;
+  if (NULL != model->entries) {
+    for (i = 0; i < model->nentries && 0 == model->has_missing; ++i) {
+      if (0 != internal_libxs_predict_incomplete(model->entries[i].inputs, m)) {
+        model->has_missing = 1;
+      }
+    }
+  }
+  else if (NULL != model->clusters) {
+    int c;
+    for (c = 0; c < model->nclusters && 0 == model->has_missing; ++c) {
+      const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
+      if (NULL != cl->kd_pts) {
+        for (i = 0; i < cl->nentries && 0 == model->has_missing; ++i) {
+          if (0 != internal_libxs_predict_incomplete(
+            cl->kd_pts + (size_t)i * m, m))
+          {
+            model->has_missing = 1;
+          }
+        }
+      }
+    }
+  }
+}
+
+
+LIBXS_API void libxs_predict_set_missing(libxs_predict_t* model, int enable)
+{
+  LIBXS_ASSERT(NULL != model);
+  if (NULL != model) {
+    model->missing_mode = enable;
   }
 }
 
@@ -2416,7 +2555,24 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
   if (NULL != model && 0 < model->nts && 0 == model->nentries) {
     internal_libxs_predict_ts_expand(model);
   }
-  if (NULL != model && 0 < model->nentries && NULL == model->decompose_mat
+  if (NULL != model && 0 < model->nentries) {
+    internal_libxs_predict_missing_all(model);
+    /**
+     * A tree reads one coordinate per node and has nowhere to record which way
+     * an absent one should go, so it would sort NaN into an arbitrary side and
+     * build a tree on it.  Imputing instead would work at build and not survive
+     * a round trip, because the medians are not recoverable from what is
+     * serialized.  Refusing is the only option here that cannot mislead.
+     */
+    if (0 != model->has_missing
+      && (LIBXS_PREDICT_RF == model->decompose
+        || LIBXS_PREDICT_HKNN == model->decompose))
+    {
+      result = EXIT_FAILURE;
+    }
+  }
+  if (EXIT_SUCCESS == result
+    && NULL != model && 0 < model->nentries && NULL == model->decompose_mat
     && (LIBXS_PREDICT_PCA == model->decompose
       || (LIBXS_PREDICT_SPREAD == model->decompose && model->nseries >= 2)))
   {
@@ -2430,7 +2586,7 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
       internal_libxs_predict_fisher_build(model);
     }
   }
-  if (NULL != model && 0 < model->nentries
+  if (EXIT_SUCCESS == result && NULL != model && 0 < model->nentries
     && LIBXS_PREDICT_HKNN == model->decompose
     && NULL == model->hknn_assignments)
   {
@@ -2441,7 +2597,7 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
       if (model->hknn_nclusters < 1) model->hknn_nclusters = 1;
     }
   }
-  if (NULL != model && 0 < model->nentries
+  if (EXIT_SUCCESS == result && NULL != model && 0 < model->nentries
     && LIBXS_PREDICT_RF == model->decompose && NULL == model->rf)
   {
     internal_libxs_predict_rf_build(model);
@@ -2449,7 +2605,7 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
       internal_libxs_predict_rf_build_tasks(model, 0, 1);
     }
   }
-  if (NULL == model || 0 >= model->nentries) {
+  if (EXIT_SUCCESS != result || NULL == model || 0 >= model->nentries) {
     result = EXIT_FAILURE;
   }
   else if (order <= 0) {
@@ -2480,17 +2636,31 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
     model->input_rng = (double*)malloc((size_t)m * sizeof(double));
     if (NULL != model->input_min && NULL != model->input_rng) {
       int j;
+      /**
+       * An absent value must not seed the extent: it compares false against
+       * everything, so a NaN in the first entry would leave the whole dimension
+       * NaN and silently un-normalize every later comparison on it.  A
+       * dimension that is absent throughout keeps a zero range, which
+       * internal_libxs_predict_normalize already treats as "do not scale".
+       */
       for (j = 0; j < m; ++j) {
-        model->input_min[j] = model->entries[0].inputs[j];
-        model->input_rng[j] = model->entries[0].inputs[j];
+        model->input_min[j] = 0;
+        model->input_rng[j] = 0;
       }
-      for (i = 1; i < p; ++i) {
-        for (j = 0; j < m; ++j) {
-          if (model->entries[i].inputs[j] < model->input_min[j]) {
-            model->input_min[j] = model->entries[i].inputs[j];
-          }
-          if (model->entries[i].inputs[j] > model->input_rng[j]) {
-            model->input_rng[j] = model->entries[i].inputs[j];
+      for (j = 0; j < m; ++j) {
+        int seeded = 0;
+        for (i = 0; i < p; ++i) {
+          const double v = model->entries[i].inputs[j];
+          if (LIBXS_NOTNAN(v)) {
+            if (0 == seeded) {
+              model->input_min[j] = v;
+              model->input_rng[j] = v;
+              seeded = 1;
+            }
+            else {
+              if (v < model->input_min[j]) model->input_min[j] = v;
+              if (v > model->input_rng[j]) model->input_rng[j] = v;
+            }
           }
         }
       }
@@ -2610,9 +2780,9 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
             LIBXS_DATATYPE_F64, sort_perm);
           for (k = 0; k < nc; ++k) {
             cl->sorted_idx[k] = entry_map[sort_perm[k]];
-            cl->sorted_dist[k] = sqrt(
-              libxs_dist2(model->entries[cl->sorted_idx[k]].inputs,
-                cl->centroid, m));
+            cl->sorted_dist[k] = sqrt(internal_libxs_predict_dist2(
+              model->entries[cl->sorted_idx[k]].inputs,
+              cl->centroid, m, model->has_missing));
           }
           cl->dmax = 0;
           for (k = 0; k < nc; ++k) {
@@ -2681,7 +2851,8 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
             const double actual = cl->raw_outputs[(size_t)k * n + j];
             const double pred = internal_libxs_predict_classify(
               cl, m, cl->kd_pts + (size_t)k * m,
-              j, n, cl->ndistinct[j], 0, k, NULL, NULL, 0, NULL);
+              j, n, cl->ndistinct[j], 0, k, NULL, NULL, 0, NULL,
+              model->has_missing);
             const double res = pred - actual;
             sse += res * res;
           }
@@ -2776,8 +2947,22 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
     const int m = model->ninputs, n = model->noutputs;
     const int mode = model->eval_mode;
     const int diff_d = (model->diff_mode >= 0) ? model->diff_order : 0;
-    const int force_classify = (0 != (mode & LIBXS_PREDICT_CLASSIFY)) ? 1 : 0;
-    const int force_interp = (0 != (mode & LIBXS_PREDICT_INTERPOLATE)) ? 1 : 0;
+    /**
+     * A query missing a coordinate takes the kNN vote even where the output
+     * interpolates.  The polynomial is fitted over rank rather than over the
+     * coordinates, so it would return a finite value - but it reports confidence
+     * 1.0 unconditionally, which would advertise a query that supplied less
+     * information as the most certain kind there is.  The vote reads the same
+     * neighbours through a distance that omits the absent coordinate and reports
+     * what the neighbourhood actually supports, so it is the honest path here
+     * and overrides a caller's INTERPOLATE for that reason alone.
+     */
+    const int incomplete = (0 != model->has_missing)
+      && (0 != internal_libxs_predict_incomplete(inputs, model->ninputs));
+    const int force_classify =
+      (0 != incomplete || 0 != (mode & LIBXS_PREDICT_CLASSIFY)) ? 1 : 0;
+    const int force_interp = (0 == incomplete
+      && 0 != (mode & LIBXS_PREDICT_INTERPOLATE)) ? 1 : 0;
     const int extrapolate_mode = (0 != (mode & LIBXS_PREDICT_TEMPORAL)) ? 1 : 0;
     const double* raw_inputs = inputs;
     int extrapolate = 0;
@@ -2882,10 +3067,10 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
      * distance exactly as the neighbor scan does.
      */
     best_dist = internal_libxs_predict_viewdist2(norm_inputs,
-      model->clusters[0].centroid, m, view);
+      model->clusters[0].centroid, m, view, model->has_missing);
     for (c = 1; c < model->nclusters; ++c) {
       const double d = internal_libxs_predict_viewdist2(norm_inputs,
-        model->clusters[c].centroid, m, view);
+        model->clusters[c].centroid, m, view, model->has_missing);
       if (d < best_dist && model->clusters[c].nentries > 0) {
         best_dist = d; best_c = c;
       }
@@ -2956,7 +3141,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                     pcl, m, norm_inputs,
                     lj, gsz, pcl->ndistinct[lj], extrapolate, -1, NULL, -1,
                     &po_conf, &po_var, qi, &lo[j], &hi[j],
-                    internal_libxs_predict_central(model, j), view);
+                    internal_libxs_predict_central(model, j), view,
+                    model->has_missing);
                   if (NULL != src) src[j] = pcl;
                   if (NULL != src_out) src_out[j] = lj;
                   if (NULL != src_nout) src_nout[j] = gsz;
@@ -2966,7 +3152,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                     cl, m, norm_inputs, j, n,
                     cl->ndistinct[j], extrapolate, -1, NULL, -1,
                     &po_conf, &po_var, qi, &lo[j], &hi[j],
-                    internal_libxs_predict_central(model, j), view);
+                    internal_libxs_predict_central(model, j), view,
+                    model->has_missing);
                   if (NULL != src) src[j] = cl;
                   if (NULL != src_out) src_out[j] = j;
                   if (NULL != src_nout) src_nout[j] = n;
@@ -2976,7 +3163,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
               internal_libxs_predict_classify(
                 cl, m, norm_inputs, j, n,
                 cl->ndistinct[j], extrapolate, -1, &conf[j], &var[j],
-                internal_libxs_predict_central(model, j), view);
+                internal_libxs_predict_central(model, j), view,
+                model->has_missing);
               errs[j] = 0;
               rels[j] = 0;
             }
@@ -2985,7 +3173,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                 cl, m, norm_inputs, j, n,
                 cl->ndistinct[j], extrapolate, -1, NULL, -1,
                 &conf[j], &var[j], qi, &lo[j], &hi[j],
-                internal_libxs_predict_central(model, j), view);
+                internal_libxs_predict_central(model, j), view,
+                model->has_missing);
               errs[j] = 0;
               rels[j] = 0;
               if (NULL != src) src[j] = cl;
@@ -2999,7 +3188,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
               cl, m, norm_inputs, j, n,
               cl->ndistinct[j], extrapolate, -1, NULL, -1,
               &conf[j], &var[j], qi, &lo[j], &hi[j],
-              internal_libxs_predict_central(model, j), view);
+              internal_libxs_predict_central(model, j), view,
+              model->has_missing);
             errs[j] = 0;
             rels[j] = 0;
             if (NULL != src) src[j] = cl;
@@ -3084,8 +3274,9 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
           int nb = 1;
           for (c = 0; c < model->nclusters; ++c) {
             if (c != best_c) {
-              const double d = sqrt(libxs_dist2(
-                norm_inputs, model->clusters[c].centroid, m));
+              const double d = sqrt(internal_libxs_predict_dist2(
+                norm_inputs, model->clusters[c].centroid, m,
+                model->has_missing));
               if (d <= radius) ++nb;
             }
           }
@@ -3107,7 +3298,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
       int b;
       LIBXS_ASSERT(NULL != dists);
       for (c = 0; c < model->nclusters; ++c) {
-        dists[c].dist = sqrt(libxs_dist2(norm_inputs, model->clusters[c].centroid, m));
+        dists[c].dist = sqrt(internal_libxs_predict_dist2(norm_inputs,
+          model->clusters[c].centroid, m, model->has_missing));
         dists[c].idx = c;
       }
       for (b = 0; b < nblend; ++b) {
@@ -3144,7 +3336,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                   cl2, m, norm_inputs, j, n,
                   cl2->ndistinct[j], extrapolate, -1, NULL, -1,
                   &cj_conf, &cj_var, qi, &cj_lo, &cj_hi,
-                  internal_libxs_predict_central(model, j), view);
+                  internal_libxs_predict_central(model, j), view,
+                  model->has_missing);
                 blend_val += w * v;
                 blend_conf += w * cj_conf;
                 blend_var += w * cj_var;
@@ -3249,7 +3442,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
               ? vals[j]
               : internal_libxs_predict_classify(&model->clusters[best_c], m, norm_inputs, j, n,
                   model->clusters[best_c].ndistinct[j], extrapolate, -1,
-                  NULL, NULL, 0, view);
+                  NULL, NULL, 0, view, model->has_missing);
             target[j] = (NULL != model->transforms)
               ? internal_libxs_predict_inv(model->transforms[j], vj)
               : vj;
@@ -3276,7 +3469,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
               internal_libxs_predict_normalize(model, eval_inp, rnorm);
               { const int rc = best_c;
                 const internal_libxs_predict_cluster_t* rcl = &model->clusters[rc];
-                const double rt_dist = sqrt(libxs_dist2(norm_inputs, rnorm, m));
+                const double rt_dist = sqrt(internal_libxs_predict_dist2(
+                  norm_inputs, rnorm, m, model->has_missing));
                 if (rt_dist <= rcl->dmax) {
                   for (j = 0; j < n; ++j) {
                     if (conf[j] >= 0.9) continue;
@@ -3287,7 +3481,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                         refined[j] = internal_libxs_predict_classify(
                           rcl, m, rnorm, j, n,
                           rcl->ndistinct[j], extrapolate, -1, &rc_conf, NULL,
-                          internal_libxs_predict_central(model, j), view);
+                          internal_libxs_predict_central(model, j), view,
+                          model->has_missing);
                         rconf[j] = rc_conf;
                       }
                       else {
@@ -3798,7 +3993,8 @@ LIBXS_API_INLINE int internal_libxs_predict_dist(
   const int outside = nvoc - ns;
   internal_libxs_predict_evidence(cl,
     model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL, -1,
-    candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL);
+    candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL,
+    model->has_missing);
   for (i = 0; i < ns; ++i) local[i] = 0;
   for (i = 0; i < nfound; ++i) {
     const int si = internal_libxs_predict_support_index(sv, ns, candidates[i]);
@@ -3892,7 +4088,8 @@ LIBXS_API_INLINE int internal_libxs_predict_point(
   const int si = internal_libxs_predict_support_index(sv, ns, v);
   internal_libxs_predict_evidence(cl,
     model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL, -1,
-    candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL);
+    candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL,
+    model->has_missing);
   /* Accumulate evidence per DISTINCT support entry, as the dense path does by
      indexing into local[]; a value can be returned by several neighbors. */
   for (i = 0; i < nfound; ++i) {
@@ -4204,8 +4401,10 @@ LIBXS_API_INLINE void internal_libxs_predict_central_all(libxs_predict_t* model)
           for (k = 0; k < nc; ++k) {
             const double* x = cl->kd_pts + (size_t)k * m;
             const double actual = cl->raw_outputs[(size_t)k * n + j];
-            const double a = internal_libxs_predict_classify(cl, m, x, j, n, cl->ndistinct[j], 0, k, NULL, NULL, 0, NULL);
-            const double d = internal_libxs_predict_classify(cl, m, x, j, n, cl->ndistinct[j], 0, k, NULL, NULL, 1, NULL);
+            const double a = internal_libxs_predict_classify(cl, m, x, j, n,
+              cl->ndistinct[j], 0, k, NULL, NULL, 0, NULL, model->has_missing);
+            const double d = internal_libxs_predict_classify(cl, m, x, j, n,
+              cl->ndistinct[j], 0, k, NULL, NULL, 1, NULL, model->has_missing);
             err_avg += LIBXS_FABS(a - actual);
             err_med += LIBXS_FABS(d - actual);
             ++nscored;
