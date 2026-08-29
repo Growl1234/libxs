@@ -185,21 +185,97 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree(
 #if !defined(LIBXS_PREDICT_RF_NTREES)
 #  define LIBXS_PREDICT_RF_NTREES 100
 #endif
+/** Trees per candidate while scoring depth: enough to average out the
+ *  bootstrap, few enough that trying four depths is not four full builds. */
+#if !defined(LIBXS_PREDICT_RF_PROBE)
+#  define LIBXS_PREDICT_RF_PROBE 12
+#endif
+
+
+/**
+ * Misclassification rate of a small forest grown to max_depth over the first
+ * ntrain entries, measured on the rest.  Depth is scored rather than derived
+ * because the derived 2*log2(p) is a function of the corpus size alone: it says
+ * 20 for a corpus of 1339 whether that corpus has three features or three
+ * hundred, and a tree that deep on three features is fitting the sample.
+ */
+LIBXS_API_INLINE double internal_libxs_predict_rf_score(
+  const internal_libxs_predict_entry_t* entries, int p, int m,
+  int output_idx, int label_off, int max_depth, int min_leaf, int ntrain)
+{
+  const int nt = LIBXS_PREDICT_RF_PROBE;
+  const int max_nodes = LIBXS_MIN(ntrain / min_leaf * 2 + 1, 65536);
+  int nodes_pool = 0, boot_pool = 0, nn_pool = 0;
+  internal_libxs_predict_rf_node_t* nodes =
+    (internal_libxs_predict_rf_node_t*)LIBXS_PREDICT_MALLOC(
+      (size_t)nt * (size_t)max_nodes
+        * sizeof(internal_libxs_predict_rf_node_t), nodes_pool);
+  int* bootstrap = (int*)LIBXS_PREDICT_MALLOC((size_t)ntrain * sizeof(int),
+    boot_pool);
+  int* nn = (int*)LIBXS_PREDICT_MALLOC((size_t)nt * sizeof(int), nn_pool);
+  double result = 1.0;
+  if (NULL != nodes && NULL != bootstrap && NULL != nn) {
+    const size_t boot_n = (size_t)ntrain * 2 + 1;
+    const size_t boot_coprime = libxs_coprime2(boot_n);
+    int t, i, wrong = 0, scored = 0;
+    for (t = 0; t < nt; ++t) {
+      for (i = 0; i < ntrain; ++i) {
+        bootstrap[i] = (int)(LIBXS_SHUFFLE_INDEX(i, boot_n, boot_coprime,
+          (size_t)t * 7 + 13) % (size_t)ntrain);
+      }
+      nn[t] = internal_libxs_predict_rf_build_tree(entries, bootstrap, ntrain,
+        m, max_depth, min_leaf, nodes + (size_t)t * max_nodes, max_nodes,
+        output_idx, label_off);
+    }
+    for (i = ntrain; i < p; ++i) {
+      const double* inputs = entries[i].inputs;
+      const int label =
+        (LIBXS_ROUNDX(int, entries[i].outputs[output_idx]) + label_off) & 127;
+      int votes[128], best_label = 0, best_count = 0, k;
+      memset(votes, 0, sizeof(votes));
+      for (t = 0; t < nt; ++t) {
+        const internal_libxs_predict_rf_node_t* tn = nodes + (size_t)t * max_nodes;
+        int ni = 0;
+        if (0 >= nn[t]) continue;
+        while (ni >= 0 && ni < nn[t] && tn[ni].feature >= 0) {
+          ni = (inputs[tn[ni].feature] <= tn[ni].threshold)
+            ? tn[ni].left : tn[ni].right;
+        }
+        if (ni >= 0 && ni < nn[t]) ++votes[tn[ni].label & 127];
+      }
+      for (k = 0; k < 128; ++k) {
+        if (votes[k] > best_count) { best_count = votes[k]; best_label = k; }
+      }
+      if (best_label != label) ++wrong;
+      ++scored;
+    }
+    result = (0 < scored) ? ((double)wrong / scored) : 1.0;
+  }
+  LIBXS_PREDICT_FREE(nn, nn_pool);
+  LIBXS_PREDICT_FREE(bootstrap, boot_pool);
+  LIBXS_PREDICT_FREE(nodes, nodes_pool);
+  return result;
+}
 
 LIBXS_API_INLINE void internal_libxs_predict_rf_build(libxs_predict_t* model)
 {
   const int p = model->nentries;
   const int n = model->noutputs;
-  const int ntrees = LIBXS_PREDICT_RF_NTREES;
+  const int ntrees = (0 < model->rf_ntrees)
+    ? model->rf_ntrees : LIBXS_PREDICT_RF_NTREES;
   internal_libxs_predict_rf_t* rf =
     (internal_libxs_predict_rf_t*)calloc(1, sizeof(internal_libxs_predict_rf_t));
   if (NULL != rf) {
     rf->trees = (internal_libxs_predict_rf_tree_t*)calloc(
       (size_t)ntrees * (size_t)n, sizeof(internal_libxs_predict_rf_tree_t));
     rf->label_offset = (int*)malloc((size_t)n * sizeof(int));
+    rf->depth = (int*)malloc((size_t)n * sizeof(int));
     rf->ntrees = ntrees;
     rf->noutputs = n;
-    if (NULL != rf->trees && NULL != rf->label_offset) {
+    if (NULL != rf->trees && NULL != rf->label_offset && NULL != rf->depth) {
+      const int derived = (int)(2.0 * log((double)p) / log(2.0));
+      const int min_leaf = 5;
+      const int ntrain = (int)(p * 0.8 + 0.5);
       int oi, i;
       for (oi = 0; oi < n; ++oi) {
         int vmin = LIBXS_ROUNDX(int, model->entries[0].outputs[oi]);
@@ -209,11 +285,51 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build(libxs_predict_t* model)
         }
         rf->label_offset[oi] = -vmin;
       }
+      if (0 < model->rf_depth) {
+        for (oi = 0; oi < n; ++oi) rf->depth[oi] = model->rf_depth;
+      }
+      /**
+       * Scoring is opt-in (a negative request), not the default, because it was
+       * measured not to pay: on the shipped tuning corpus it moved exact match
+       * over sixteen outputs by half a point and made the absolute error of the
+       * widest three outputs worse, while costing the crystal corpus 2.6x its
+       * build.  It is kept because it is the only way to find out for a corpus
+       * where the derived depth is wrong, and because there was previously no
+       * way to ask at all.
+       */
+      else if (0 == model->rf_depth || ntrain <= min_leaf || ntrain >= p) {
+        for (oi = 0; oi < n; ++oi) rf->depth[oi] = derived;
+      }
+      else for (oi = 0; oi < n; ++oi) {
+        /**
+         * Scored per output, not once for the model: outputs of one corpus
+         * differ in how much structure there is to fit, and the shallow
+         * candidates exist because the derived depth is the overfitting end of
+         * the range on a small corpus with few features.
+         */
+        int cand[4];
+        double best_err = -1.0;
+        int best = derived, ci;
+        cand[0] = 3;
+        cand[1] = 6;
+        cand[2] = derived / 2;
+        cand[3] = derived;
+        for (ci = 0; ci < 4; ++ci) {
+          const int d = (3 > cand[ci]) ? 3 : cand[ci];
+          if (0 < ci && d == ((3 > cand[ci-1]) ? 3 : cand[ci-1])) continue;
+          { const double err = internal_libxs_predict_rf_score(model->entries,
+              p, model->ninputs, oi, rf->label_offset[oi], d, min_leaf, ntrain);
+            if (0 > best_err || err < best_err) { best_err = err; best = d; }
+          }
+        }
+        rf->depth[oi] = best;
+      }
       model->rf = rf;
     }
     else {
       free(rf->trees);
       free(rf->label_offset);
+      free(rf->depth);
       free(rf);
     }
   }
@@ -230,7 +346,6 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build_tasks(
     const int n = rf->noutputs;
     const int ntrees = rf->ntrees;
     const int total_trees = ntrees * n;
-    const int max_depth = (int)(2.0 * log((double)p) / log(2.0));
     const int min_leaf = 5;
     const int max_nodes = LIBXS_MIN(p / min_leaf * 2 + 1, 65536);
     const int chunk = (total_trees + ntasks - 1) / ntasks;
@@ -244,6 +359,7 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build_tasks(
       for (ti = begin; ti < end; ++ti) {
         const int oi = ti / ntrees;
         const int t = ti % ntrees;
+        const int max_depth = rf->depth[oi];
         const size_t boot_n = (size_t)p * 2 + 1;
         const size_t boot_coprime = libxs_coprime2(boot_n);
         int nodes_pool = 0;

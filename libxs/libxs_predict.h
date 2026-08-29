@@ -417,6 +417,33 @@ LIBXS_API void libxs_predict_set_decompose(libxs_predict_t* model,
 LIBXS_API void libxs_predict_set_missing(libxs_predict_t* model, int enable);
 
 /**
+ * Size of the forest LIBXS_PREDICT_RF grows, and how deep its trees may go.
+ *
+ * ntrees > 0: that many trees per output (default 100).
+ * max_depth > 0: that depth for every output.
+ * max_depth == 0 (default): twice the base-2 logarithm of the entry count, as
+ *   before.
+ * max_depth < 0: scored per output at build time. Candidate depths are tried on
+ *   a held-back tail of the pushed entries and the one that misclassifies least
+ *   is kept, per output.
+ *
+ * Scoring is opt-in rather than the default because it was measured not to pay.
+ * On the shipped kernel-tuning corpus it moved exact match over the sixteen
+ * outputs from 62.5% to 63.0% and made the absolute error of the three widest
+ * outputs worse; on the 60k-entry crystal corpus it reproduced the derived depth
+ * exactly while costing 2.6x the build time. Request it where you suspect the
+ * derived depth is wrong for your data - it is a function of corpus size alone,
+ * so it asks for depth 20 on 1339 entries whether they carry three features or
+ * three hundred - and expect to verify rather than assume it helped.
+ *
+ * Must be called before build. Neither value is serialized - the stored nodes
+ * already encode the depth they were grown to - so this changes what a build
+ * produces and not what a file can carry.
+ */
+LIBXS_API void libxs_predict_set_forest(libxs_predict_t* model,
+  int ntrees, int max_depth);
+
+/**
  * Enable auto-differencing for non-stationary timeseries.
  * order > 0: explicit differencing order (1 removes linear trend,
  *            2 removes quadratic trend).

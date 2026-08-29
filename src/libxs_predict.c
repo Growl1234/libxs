@@ -157,6 +157,9 @@ typedef struct internal_libxs_predict_rf_tree_t {
 typedef struct internal_libxs_predict_rf_t {
   internal_libxs_predict_rf_tree_t* trees;
   int* label_offset;
+  /** Per-output tree depth, chosen at build.  Not serialized: the stored nodes
+   *  already encode the depth they were grown to, and nothing reads it again. */
+  int* depth;
   int ntrees;
   int noutputs;
 } internal_libxs_predict_rf_t;
@@ -207,6 +210,8 @@ LIBXS_EXTERN_C struct libxs_predict_t {
    *  The second is derived - from the entries at build, from the stored points
    *  at load - so it holds for a loaded model that never saw the setter. */
   int missing_mode, has_missing;
+  /** Requested forest size and depth (0: decide at build). */
+  int rf_ntrees, rf_depth;
   /** Requested central tendency (0/negative: decide per output at build). */
   int central;
   /** Per-output resolved choice, noutputs entries, NULL until built. */
@@ -1204,6 +1209,7 @@ LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
       for (ti = 0; ti < total_trees; ++ti) free(model->rf->trees[ti].nodes);
       free(model->rf->trees);
       free(model->rf->label_offset);
+      free(model->rf->depth);
       free(model->rf);
     }
     free(model);
@@ -1428,6 +1434,17 @@ LIBXS_API void libxs_predict_set_missing(libxs_predict_t* model, int enable)
   LIBXS_ASSERT(NULL != model);
   if (NULL != model) {
     model->missing_mode = enable;
+  }
+}
+
+
+LIBXS_API void libxs_predict_set_forest(libxs_predict_t* model,
+  int ntrees, int max_depth)
+{
+  LIBXS_ASSERT(NULL != model);
+  if (NULL != model) {
+    model->rf_ntrees = ntrees;
+    model->rf_depth = max_depth;
   }
 }
 
