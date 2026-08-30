@@ -38,6 +38,11 @@ typedef enum libxs_predict_transform_t {
 
 /** Input decomposition / feature selection mode. */
 typedef enum libxs_predict_decompose_t {
+  /**
+   * Sentinel: choose the mode at build by trial, see
+   * libxs_predict_set_decompose.
+   */
+  LIBXS_PREDICT_AUTO_DECOMPOSE = -1,
   LIBXS_PREDICT_RAW     = 0,
   LIBXS_PREDICT_SPREAD  = 1,
   LIBXS_PREDICT_PCA     = 2,
@@ -120,6 +125,12 @@ LIBXS_EXTERN_C typedef struct libxs_predict_query_t {
    * most queries and rebalancing the partition is the cheaper fix.
    */
   double escan;
+  /**
+   * Decomposition mode in force (see set_decompose). Equals the caller's
+   * choice, or the mode selected by trial when the model asked for
+   * LIBXS_PREDICT_AUTO_DECOMPOSE.
+   */
+  int decompose;
 } libxs_predict_query_t;
 
 /** Kind of quantity libxs_predict_prob reports for an output. */
@@ -365,9 +376,59 @@ LIBXS_API void libxs_predict_set_target(libxs_predict_t* model, int target);
  * LIBXS_PREDICT_RF: Random Forest classification (per-output).
  * LIBXS_PREDICT_HKNN: hierarchical kNN with RF-derived partition
  *   from Hilbert-stratified input space.
+ *
+ * LIBXS_PREDICT_AUTO_DECOMPOSE selects among the applicable modes at build,
+ * by building each on part of the corpus and scoring it on a part held back.
+ * The right mode moves with the corpus - a forest wins by 39 to 51% on the
+ * crystal corpus and loses to hierarchical kNN on earthquakes - so a fixed
+ * default costs about 22% on average against the mode a caller should have
+ * picked, and there is no signal short of building that says which it is.
+ *
+ * Scoring costs one build per candidate (per fold on a timeseries), so this is
+ * requested rather than the default. Modes that cannot apply are skipped:
+ * SPREAD needs at least two series, and RF and HKNN cannot take absent inputs.
+ * A window requested as LIBXS_PREDICT_AUTO_WINDOW is resolved first, under the
+ * default mode, and the trial then runs at that window; searching both jointly
+ * costs the product of the two and was not worth it.
+ *
+ * Read the resolved mode from libxs_predict_query_t::decompose.
  */
 LIBXS_API void libxs_predict_set_decompose(libxs_predict_t* model,
   int decompose);
+
+/**
+ * Set the number of neighbours the vote reads (default 0: derive it).
+ *
+ * k > 0 pins the count, k = 0 keeps the derived one, and k < 0 selects it at
+ * build by trial, per output, on entries held back from a probe build.
+ *
+ * The derived count is max(5, cluster/3) capped at 32, which is too large on
+ * every corpus measured: k=1 takes the crystal corpus from 0.3596 to 0.2838 and
+ * the tuned-parameter corpus from 0.3062 to 0.2826. The gain is not an artifact
+ * of duplicate rows, which that first corpus has in abundance - a query with an
+ * exact match is answered before the vote runs, and splitting the held-out rows
+ * by distance to their nearest stored neighbour puts the whole gain on the half
+ * that has no close match.
+ *
+ * There is no formula to switch to. The right count depends on the intrinsic
+ * dimension and not on the cluster size: holding the cluster at 56 entries and
+ * varying only the dimension of the subspace the data lies on, the best count
+ * runs 18, 5, 1 at dimensions 1, 2, 3. It is not a function of dimension alone
+ * either - it returns to 8 by dimension 10, where the label is noisy enough per
+ * neighbour that averaging pays again - so the classical n^(4/(4+d)) scaling
+ * predicts none of it. Hence the trial.
+ *
+ * The trial is cheap in the way the mode trial is not: k changes nothing about
+ * the model, only how many neighbours vote, so one probe build serves every
+ * candidate and the rest is evaluation. Choosing per output pays here (about
+ * 60% of the available headroom on a 16-output corpus) where choosing the mode
+ * per output does not, because the candidates form an ordered grid and a noisy
+ * pick still lands near the optimum.
+ *
+ * The resolved counts are part of the saved model, so a loaded model votes the
+ * way the built one did.
+ */
+LIBXS_API void libxs_predict_set_neighbors(libxs_predict_t* model, int k);
 
 /**
  * Floor that every confidence rescaling at eval pulls toward (0..1, default 0

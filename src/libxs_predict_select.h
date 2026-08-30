@@ -1,0 +1,392 @@
+/**
+ * Selection of the decomposition mode by trial.
+ *
+ * The mode decides more than any other build-time knob and nothing but a build
+ * says which one to take: a forest wins by 39 to 51% on the crystal corpus and
+ * loses to hierarchical kNN on earthquakes, so a fixed default costs about 22%
+ * on average against the mode a caller should have picked.  Every candidate is
+ * built on part of the corpus and scored on a part held back, which is the same
+ * regime for all of them and the only one in which they are comparable.
+ *
+ * Leave-one-out over stored points would be cheaper and is not admissible here.
+ * It is optimistic by an amount that varies with how much near-duplicate
+ * structure a corpus has, and the modes differ in exactly how they exploit that
+ * structure, so the bias does not cancel between them.
+ *
+ * More candidates turned out to be safer rather than riskier.  The wrong picks
+ * are all near-ties, where the validation slice cannot separate two modes and
+ * the arbitrary choice costs nearly nothing; adding a mode that wins by a real
+ * margin gives the slice something it can resolve.  Shortlisting therefore
+ * guards a risk that is only large where it does not matter, at the price of
+ * excluding the mode that would have won.
+ */
+
+#if !defined(LIBXS_PREDICT_NDECOMPOSE)
+# define LIBXS_PREDICT_NDECOMPOSE 7
+#endif
+#if !defined(LIBXS_PREDICT_NNEIGHBORS)
+# define LIBXS_PREDICT_NNEIGHBORS 9
+#endif
+
+
+/** Candidate by index, ordered so that a prefix is a sensible shortlist. */
+LIBXS_API_INLINE int internal_libxs_predict_decompose_cand(int i)
+{
+  int result;
+  switch (i) {
+    case 0: result = LIBXS_PREDICT_RAW; break;
+    case 1: result = LIBXS_PREDICT_RF; break;
+    case 2: result = LIBXS_PREDICT_FISHER; break;
+    case 3: result = LIBXS_PREDICT_HKNN; break;
+    case 4: result = LIBXS_PREDICT_PCA; break;
+    case 5: result = LIBXS_PREDICT_SETDIFF; break;
+    default: result = LIBXS_PREDICT_SPREAD;
+  }
+  return result;
+}
+
+
+/**
+ * Non-zero if the mode can apply to this model at all.  SPREAD without a second
+ * series is RAW under another name, and a tree cannot read an absent input, so
+ * building either would spend a build to learn what the model already knows.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_decompose_ok(
+  const libxs_predict_t* model, int mode)
+{
+  int result = 1;
+  if (LIBXS_PREDICT_SPREAD == mode && 2 > model->nseries) {
+    result = 0;
+  }
+  else if (0 != model->has_missing && (LIBXS_PREDICT_RF == mode
+    || LIBXS_PREDICT_HKNN == mode))
+  {
+    result = 0;
+  }
+  return result;
+}
+
+
+/**
+ * Per-output error kind and scale, taken from the fit slice alone.
+ *
+ * Outputs are scored together and do not share a unit, so each contributes a
+ * dimensionless number: a discrete output its miss rate, a continuous one its
+ * absolute error over its own mean absolute deviation.  The threshold on
+ * distinct values is the one the cluster refit uses to decide the same question.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_decompose_kind(
+  const libxs_predict_t* model, const char role[], int kind[], double mad[],
+  double* buf)
+{
+  const int n = model->noutputs;
+  int j;
+  for (j = 0; j < n; ++j) {
+    double sum = 0;
+    int i, nfit = 0, ndistinct = 1;
+    for (i = 0; i < model->nentries; ++i) {
+      if (0 == role[i]) {
+        buf[nfit++] = model->entries[i].outputs[j];
+        sum += model->entries[i].outputs[j];
+      }
+    }
+    kind[j] = 0;
+    mad[j] = 1.0;
+    if (0 < nfit) {
+      const double mean = sum / nfit;
+      libxs_sort(buf, nfit, sizeof(double), libxs_cmp_f64, NULL);
+      for (i = 1; i < nfit; ++i) {
+        if (buf[i] != buf[i - 1]) ++ndistinct;
+      }
+      kind[j] = (ndistinct <= (int)(sqrt((double)nfit) + 0.5)) ? 1 : 0;
+      sum = 0;
+      for (i = 0; i < model->nentries; ++i) {
+        if (0 == role[i]) {
+          sum += LIBXS_FABS(model->entries[i].outputs[j] - mean);
+        }
+      }
+      if (0 < sum) mad[j] = sum / nfit;
+    }
+  }
+}
+
+
+/**
+ * Score one mode on entries held back from the build.
+ *
+ * The probe carries the settings that change what a prediction is, and none of
+ * the timeseries state: a series model reaches this through the window probe
+ * instead, because its bank of window views is itself mode-dependent and would
+ * not be reproduced by a model fed the expanded entries.
+ *
+ * Returns a large value if the mode cannot be built, which is how a candidate
+ * that fails on this corpus takes itself out of the running.
+ */
+LIBXS_API_INLINE double internal_libxs_predict_decompose_probe(
+  const libxs_predict_t* model, int mode, const char role[], const int kind[],
+  const double mad[])
+{
+  const int m = model->ninputs, n = model->noutputs;
+  libxs_predict_t* probe = libxs_predict_create(m, n);
+  double result = 1e30;
+  if (NULL != probe) {
+    double* pred = (double*)malloc((size_t)n * sizeof(double));
+    int i, j;
+    probe->eval_mode = model->eval_mode;
+    probe->decompose = mode;
+    probe->central = model->central;
+    probe->consistency = model->consistency;
+    probe->smooth = model->smooth;
+    probe->floor = model->floor;
+    probe->refine = model->refine;
+    probe->tangent = model->tangent;
+    probe->missing_mode = model->missing_mode;
+    probe->rf_ntrees = model->rf_ntrees;
+    probe->rf_depth = model->rf_depth;
+    for (i = 0; i < model->nentries; ++i) {
+      if (0 == role[i]) {
+        libxs_predict_push(NULL, probe, model->entries[i].inputs,
+          model->entries[i].outputs);
+      }
+    }
+    if (NULL != pred && 0 < probe->nentries
+      && EXIT_SUCCESS == libxs_predict_build(probe, 0, 2, 0.0))
+    {
+      double err = 0;
+      int nval = 0;
+      for (i = 0; i < model->nentries; ++i) {
+        if (1 == role[i]) {
+          libxs_predict_eval(NULL, probe, model->entries[i].inputs, pred,
+            NULL, 1);
+          for (j = 0; j < n; ++j) {
+            const double actual = model->entries[i].outputs[j];
+            err += (0 != kind[j])
+              ? ((LIBXS_ROUNDX(int, pred[j]) == LIBXS_ROUNDX(int, actual))
+                ? 0.0 : 1.0)
+              : (LIBXS_FABS(pred[j] - actual) / mad[j]);
+          }
+          ++nval;
+        }
+      }
+      if (0 < nval) result = err / ((double)nval * n);
+    }
+    free(pred);
+    libxs_predict_destroy(probe);
+  }
+  return result;
+}
+
+
+/**
+ * Choose the mode, and fall back to the default rather than to a mode no
+ * measurement supported: an empty or unscoreable corpus has to leave the caller
+ * where a caller who never asked would have been.
+ *
+ * A timeseries is scored on rolling cuts and a table on one split.  The cut
+ * walks forward for the same reason the window trial's does, and there is more
+ * than one of them because a single held-out tail was measured to reverse the
+ * sign of a distance-scaling result on the discharge corpus.  A table has no
+ * such direction, and one shuffled split of it costs one build per candidate
+ * instead of three.
+ *
+ * folds: number of folds to score, or zero to take the default for the kind.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_decompose_select(
+  const libxs_predict_t* model, int folds)
+{
+  const int series = (0 < model->nts && 0 < model->nseries) ? 1 : 0;
+  const int nfold = (0 < folds) ? folds : ((0 != series) ? 3 : 1);
+  int result = LIBXS_PREDICT_RAW;
+  if (0 != series) {
+    double best = 1e30;
+    int i;
+    for (i = 0; i < LIBXS_PREDICT_NDECOMPOSE; ++i) {
+      const int mode = internal_libxs_predict_decompose_cand(i);
+      if (0 != internal_libxs_predict_decompose_ok(model, mode)) {
+        const double score = internal_libxs_predict_ts_window_probe(
+          model, model->window, nfold, mode);
+        if (score < best) {
+          best = score;
+          result = mode;
+        }
+      }
+    }
+  }
+  else if (0 < model->nentries) {
+    const int p = model->nentries;
+    const int n = model->noutputs;
+    int role_pool = 0, kind_pool = 0, mad_pool = 0, buf_pool = 0;
+    char* role = (char*)LIBXS_PREDICT_MALLOC((size_t)p, role_pool);
+    int* kind = (int*)LIBXS_PREDICT_MALLOC((size_t)n * sizeof(int), kind_pool);
+    double* mad = (double*)LIBXS_PREDICT_MALLOC(
+      (size_t)n * sizeof(double), mad_pool);
+    double* buf = (double*)LIBXS_PREDICT_MALLOC(
+      (size_t)p * sizeof(double), buf_pool);
+    if (NULL != role && NULL != kind && NULL != mad && NULL != buf) {
+      const size_t co = libxs_coprime2((size_t)p);
+      const int nfit = (int)(p * 0.8 + 0.5);
+      double total[LIBXS_PREDICT_NDECOMPOSE];
+      double best = 1e30;
+      int f, i, c;
+      for (c = 0; c < LIBXS_PREDICT_NDECOMPOSE; ++c) total[c] = 0;
+      for (f = 0; f < nfold; ++f) {
+        for (i = 0; i < p; ++i) {
+          role[LIBXS_SHUFFLE_INDEX(i, p, co, (unsigned)f)] =
+            (char)((i < nfit) ? 0 : 1);
+        }
+        internal_libxs_predict_decompose_kind(model, role, kind, mad, buf);
+        for (c = 0; c < LIBXS_PREDICT_NDECOMPOSE; ++c) {
+          const int mode = internal_libxs_predict_decompose_cand(c);
+          total[c] += (0 != internal_libxs_predict_decompose_ok(model, mode))
+            ? internal_libxs_predict_decompose_probe(model, mode, role, kind,
+              mad)
+            : 1e30;
+        }
+      }
+      for (c = 0; c < LIBXS_PREDICT_NDECOMPOSE; ++c) {
+        if (total[c] < best) {
+          best = total[c];
+          result = internal_libxs_predict_decompose_cand(c);
+        }
+      }
+    }
+    LIBXS_PREDICT_FREE(buf, buf_pool);
+    LIBXS_PREDICT_FREE(mad, mad_pool);
+    LIBXS_PREDICT_FREE(kind, kind_pool);
+    LIBXS_PREDICT_FREE(role, role_pool);
+  }
+  return result;
+}
+
+
+/** Neighbour counts to try, ordered; the cap at 32 makes the grid exhaustive. */
+LIBXS_API_INLINE int internal_libxs_predict_neighbors_cand(int i)
+{
+  int result;
+  switch (i) {
+    case 0: result = 1; break;
+    case 1: result = 2; break;
+    case 2: result = 3; break;
+    case 3: result = 5; break;
+    case 4: result = 8; break;
+    case 5: result = 12; break;
+    case 6: result = 18; break;
+    case 7: result = 25; break;
+    default: result = LIBXS_PREDICT_KNN;
+  }
+  return result;
+}
+
+
+/**
+ * Resolve one neighbour count per output, writing model->k_sel.
+ *
+ * A single probe build serves the whole grid, because the count changes nothing
+ * about the model and only how many neighbours the vote reads.  That is what
+ * makes choosing this per output affordable where choosing the mode per output
+ * was not, and the grid being ordered is what makes it work: a pick one step off
+ * the optimum is one step off, not a different model.
+ *
+ * The held-back entries are a contiguous tail for a timeseries and a shuffled
+ * fifth otherwise.  Overlapping windows share timesteps, so a shuffled split of
+ * them would leave a validation window's own history in the corpus that predicts
+ * it, and every candidate would look equally good.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_neighbors_select(
+  libxs_predict_t* model)
+{
+  const int p = model->nentries;
+  const int n = model->noutputs;
+  const int nfit = (int)(p * 0.8 + 0.5);
+  int role_pool = 0, kind_pool = 0, mad_pool = 0, buf_pool = 0;
+  char* role = (char*)LIBXS_PREDICT_MALLOC((size_t)p, role_pool);
+  int* kind = (int*)LIBXS_PREDICT_MALLOC((size_t)n * sizeof(int), kind_pool);
+  double* mad = (double*)LIBXS_PREDICT_MALLOC(
+    (size_t)n * sizeof(double), mad_pool);
+  double* buf = (double*)LIBXS_PREDICT_MALLOC(
+    (size_t)p * sizeof(double), buf_pool);
+  if (NULL != role && NULL != kind && NULL != mad && NULL != buf
+    && 8 < p && NULL == model->k_sel)
+  {
+    libxs_predict_t* probe = libxs_predict_create(model->ninputs, n);
+    const int series = (0 < model->nts && 0 < model->nseries) ? 1 : 0;
+    int i;
+    if (0 != series) {
+      for (i = 0; i < p; ++i) role[i] = (char)((i < nfit) ? 0 : 1);
+    }
+    else {
+      const size_t co = libxs_coprime2((size_t)p);
+      for (i = 0; i < p; ++i) {
+        role[LIBXS_SHUFFLE_INDEX(i, p, co, 0)] = (char)((i < nfit) ? 0 : 1);
+      }
+    }
+    internal_libxs_predict_decompose_kind(model, role, kind, mad, buf);
+    if (NULL != probe) {
+      double* pred = (double*)malloc((size_t)n * sizeof(double));
+      probe->eval_mode = model->eval_mode;
+      probe->decompose = model->decompose;
+      probe->central = model->central;
+      probe->consistency = model->consistency;
+      probe->smooth = model->smooth;
+      probe->floor = model->floor;
+      probe->refine = model->refine;
+      probe->tangent = model->tangent;
+      probe->missing_mode = model->missing_mode;
+      probe->rf_ntrees = model->rf_ntrees;
+      probe->rf_depth = model->rf_depth;
+      for (i = 0; i < p; ++i) {
+        if (0 == role[i]) {
+          libxs_predict_push(NULL, probe, model->entries[i].inputs,
+            model->entries[i].outputs);
+        }
+      }
+      if (NULL != pred && 0 < probe->nentries
+        && EXIT_SUCCESS == libxs_predict_build(probe, 0, 2, 0.0))
+      {
+        double* err = (double*)malloc(
+          (size_t)LIBXS_PREDICT_NNEIGHBORS * (size_t)n * sizeof(double));
+        if (NULL != err) {
+          int c, j;
+          for (c = 0; c < LIBXS_PREDICT_NNEIGHBORS; ++c) {
+            int nval = 0;
+            probe->kreq = internal_libxs_predict_neighbors_cand(c);
+            internal_libxs_predict_kapply(probe);
+            for (j = 0; j < n; ++j) err[c * n + j] = 0;
+            for (i = 0; i < p; ++i) {
+              if (1 == role[i]) {
+                libxs_predict_eval(NULL, probe, model->entries[i].inputs,
+                  pred, NULL, 1);
+                for (j = 0; j < n; ++j) {
+                  const double actual = model->entries[i].outputs[j];
+                  err[c * n + j] += (0 != kind[j])
+                    ? ((LIBXS_ROUNDX(int, pred[j])
+                      == LIBXS_ROUNDX(int, actual)) ? 0.0 : 1.0)
+                    : (LIBXS_FABS(pred[j] - actual) / mad[j]);
+                }
+                ++nval;
+              }
+            }
+            if (0 >= nval) c = LIBXS_PREDICT_NNEIGHBORS;
+          }
+          model->k_sel = (int*)malloc((size_t)n * sizeof(int));
+          if (NULL != model->k_sel) {
+            for (j = 0; j < n; ++j) {
+              int best = 0;
+              for (c = 1; c < LIBXS_PREDICT_NNEIGHBORS; ++c) {
+                if (err[c * n + j] < err[best * n + j]) best = c;
+              }
+              model->k_sel[j] = internal_libxs_predict_neighbors_cand(best);
+            }
+          }
+          free(err);
+        }
+      }
+      free(pred);
+      libxs_predict_destroy(probe);
+    }
+  }
+  LIBXS_PREDICT_FREE(buf, buf_pool);
+  LIBXS_PREDICT_FREE(mad, mad_pool);
+  LIBXS_PREDICT_FREE(kind, kind_pool);
+  LIBXS_PREDICT_FREE(role, role_pool);
+}

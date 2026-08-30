@@ -174,6 +174,11 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     required += (size_t)cl->nentries * sizeof(uint16_t);
   }
   required += 1;
+  /* the entry-weight flag, introduced with version 3 */
+  required += sizeof(uint8_t);
+  /* the resolved neighbour counts, one byte each behind a flag */
+  required += sizeof(uint8_t);
+  if (NULL != model->k_sel) required += (size_t)n;
   if (NULL != model->hknn_po_assignments && NULL != model->hknn_po_clusters) {
     const int ng = (model->hknn_ngroups > 0) ? model->hknn_ngroups : n;
     required += sizeof(uint16_t) + (size_t)n * sizeof(uint16_t);
@@ -225,6 +230,11 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     WRITE_U16(NULL != model->weights ? 1 : 0);
     /* introduced with version 3; an older file simply has no weights */
     WRITE_U8(0 != model->has_eweight ? 1 : 0);
+    WRITE_U8(NULL != model->k_sel ? 1 : 0);
+    if (NULL != model->k_sel) {
+      int ks;
+      for (ks = 0; ks < model->noutputs; ++ks) WRITE_U8(model->k_sel[ks]);
+    }
     WRITE_F64(model->quality);
     WRITE_BLK(model->input_min, (size_t)m * sizeof(double));
     WRITE_BLK(model->input_rng, (size_t)m * sizeof(double));
@@ -353,8 +363,10 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       if (0 < cl->nentries && NULL == cl->sorted_idx) has_sidx = 0;
     }
     required += sizeof(uint32_t) + 4 * sizeof(uint16_t) + 2 * sizeof(uint8_t);
-    required += 7 * sizeof(uint16_t) + 6 * sizeof(uint8_t) + sizeof(uint32_t)
+    required += 7 * sizeof(uint16_t) + 8 * sizeof(uint8_t) + sizeof(uint32_t)
       + sizeof(double);
+    /* the resolved neighbour counts, one byte each behind a flag */
+    if (NULL != model->k_sel) required += (size_t)model->noutputs;
     required += (size_t)model->ninputs * 2 * sizeof(double);
     if (NULL != model->weights) required += (size_t)model->ninputs * sizeof(double);
     if (NULL != model->transforms) required += (size_t)model->noutputs * sizeof(uint8_t);
@@ -437,6 +449,11 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       WRITE_U8(has_sidx);
       /* introduced with version 3; an older file simply has no weights */
       WRITE_U8(has_ew);
+      /* introduced with version 4; an older file derives the count instead */
+      WRITE_U8(NULL != model->k_sel ? 1 : 0);
+      if (NULL != model->k_sel) {
+        for (j = 0; j < model->noutputs; ++j) WRITE_U8(model->k_sel[j]);
+      }
       WRITE_U16(model->order);
       WRITE_U8(model->iterations);
       WRITE_U32(model->nentries);
@@ -610,6 +627,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
   libxs_predict_t* model = NULL;
   uint16_t ninp = 0, nout = 0, nclust = 0, has_weights = 0;
   int ok = EXIT_SUCCESS, c, j, has_ew = 0;
+  uint8_t* ksel = NULL;
   ok = internal_libxs_predict_read(&src, end, &ninp, 2);
   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &nout, 2);
   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &nclust, 2);
@@ -619,10 +637,35 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     ok = internal_libxs_predict_read(&src, end, &v, 1);
     if (EXIT_SUCCESS == ok) has_ew = (0 != v);
   }
+  if (EXIT_SUCCESS == ok && 3 < version) {
+    uint8_t v = 0;
+    ok = internal_libxs_predict_read(&src, end, &v, 1);
+    if (EXIT_SUCCESS == ok && 0 != v) {
+      ksel = (uint8_t*)malloc((size_t)nout);
+      if (NULL == ksel) {
+        ok = EXIT_FAILURE;
+      }
+      else {
+        for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
+          ok = internal_libxs_predict_read(&src, end, ksel + j, 1);
+        }
+      }
+    }
+  }
   if (EXIT_SUCCESS == ok) {
     model = libxs_predict_create((int)ninp, (int)nout);
     if (NULL == model) ok = EXIT_FAILURE;
   }
+  if (EXIT_SUCCESS == ok && NULL != ksel) {
+    model->k_sel = (int*)malloc((size_t)nout * sizeof(int));
+    if (NULL == model->k_sel) {
+      ok = EXIT_FAILURE;
+    }
+    else {
+      for (j = 0; j < (int)nout; ++j) model->k_sel[j] = (int)ksel[j];
+    }
+  }
+  free(ksel);
   if (EXIT_SUCCESS == ok) {
     model->decompose = LIBXS_PREDICT_HKNN;
     model->input_min = (double*)malloc((size_t)ninp * sizeof(double));
@@ -936,6 +979,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     internal_libxs_predict_missing_all(model);
     internal_libxs_predict_support_all(model);
     internal_libxs_predict_keff_all(model);
+    internal_libxs_predict_kapply(model);
     if (0 >= model->central) internal_libxs_predict_central_all(model);
   }
   else if (NULL != model) {
@@ -1021,6 +1065,22 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         uint8_t v = 0;
         ok = internal_libxs_predict_read(&src, end, &v, 1);
         if (EXIT_SUCCESS == ok) has_ew = (0 != v);
+      }
+      if (EXIT_SUCCESS == ok && 3 < version) {
+        uint8_t v = 0;
+        ok = internal_libxs_predict_read(&src, end, &v, 1);
+        if (EXIT_SUCCESS == ok && 0 != v) {
+          model->k_sel = (int*)malloc((size_t)model->noutputs * sizeof(int));
+          if (NULL == model->k_sel) ok = EXIT_FAILURE;
+          else {
+            int ks;
+            for (ks = 0; ks < model->noutputs && EXIT_SUCCESS == ok; ++ks) {
+              uint8_t kv = 0;
+              ok = internal_libxs_predict_read(&src, end, &kv, 1);
+              model->k_sel[ks] = (int)kv;
+            }
+          }
+        }
       }
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &order, 2);
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &iterations, 1);
@@ -1350,6 +1410,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
       internal_libxs_predict_missing_all(model);
       internal_libxs_predict_support_all(model);
       internal_libxs_predict_keff_all(model);
+      internal_libxs_predict_kapply(model);
       if (0 >= model->central) internal_libxs_predict_central_all(model);
     }
     else if (0 == hknn && NULL != model) {

@@ -30,7 +30,7 @@
  * 1 (v1.0.0), so the reader gates each field on the version it appeared in.
  */
 #if !defined(LIBXS_PREDICT_VERSION)
-#  define LIBXS_PREDICT_VERSION 3
+#  define LIBXS_PREDICT_VERSION 4
 #endif
 #if !defined(LIBXS_PREDICT_KNN)
 #  define LIBXS_PREDICT_KNN 32
@@ -223,6 +223,14 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   int has_eweight;
   /** Requested forest size and depth (0: decide at build). */
   int rf_ntrees, rf_depth;
+  /**
+   * Requested neighbour count (see set_neighbors): positive pins it, zero
+   * derives it, negative selects it by trial.  The resolved per-output counts
+   * live in k_sel and are saved with the model, because the derived formula
+   * would otherwise reassert itself at load.
+   */
+  int kreq;
+  int* k_sel;
   /** Requested central tendency (0/negative: decide per output at build). */
   int central;
   /** Per-output resolved choice, noutputs entries, NULL until built. */
@@ -261,6 +269,7 @@ LIBXS_API_INLINE int internal_libxs_predict_support_all(libxs_predict_t* model);
 LIBXS_API_INLINE void internal_libxs_predict_missing_all(libxs_predict_t* model);
 LIBXS_API_INLINE void internal_libxs_predict_central_all(libxs_predict_t* model);
 LIBXS_API_INLINE void internal_libxs_predict_keff_all(libxs_predict_t* model);
+LIBXS_API_INLINE void internal_libxs_predict_kapply(libxs_predict_t* model);
 LIBXS_API_INLINE void internal_libxs_predict_bank_all(libxs_predict_t* model);
 
 
@@ -1191,6 +1200,7 @@ LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
     free(model->ts_buf);
     free(model->aux_buf);
     free(model->bank_w);
+    free(model->k_sel);
     free(model->decompose_mat);
     free(model->hknn_assignments);
     if (NULL != model->hknn_po_assignments) {
@@ -1488,6 +1498,18 @@ LIBXS_API void libxs_predict_set_forest(libxs_predict_t* model,
   if (NULL != model) {
     model->rf_ntrees = ntrees;
     model->rf_depth = max_depth;
+  }
+}
+
+
+LIBXS_API void libxs_predict_set_neighbors(libxs_predict_t* model, int k)
+{
+  LIBXS_ASSERT(NULL != model);
+  if (NULL != model) {
+    model->kreq = k;
+    /* a later request replaces an earlier resolution rather than joining it */
+    free(model->k_sel);
+    model->k_sel = NULL;
   }
 }
 
@@ -2188,7 +2210,7 @@ LIBXS_API_INLINE double internal_libxs_predict_ts_window_score(
  * if the window cannot be scored.
  */
 LIBXS_API_INLINE double internal_libxs_predict_ts_window_probe(
-  const libxs_predict_t* model, int w, int nfold)
+  const libxs_predict_t* model, int w, int nfold, int decompose)
 {
   const int s = model->nseries;
   const int a = model->naux;
@@ -2213,7 +2235,7 @@ LIBXS_API_INLINE double internal_libxs_predict_ts_window_probe(
             double err = 0;
             int t, j, nsc = 0;
             probe->eval_mode = model->eval_mode;
-            probe->decompose = model->decompose;
+            probe->decompose = decompose;
             probe->target = model->target;
             probe->diff_mode = model->diff_mode;
             probe->consistency = model->consistency;
@@ -2333,8 +2355,14 @@ LIBXS_API_INLINE int internal_libxs_predict_ts_window_exact(
   { double best = 1e30;
     int i, nrise = 0;
     for (i = 0; i < ngrid && nrise < 2; ++i) {
+      /**
+       * The window is resolved before the mode is, so a model that asked for
+       * both is searched one after the other rather than jointly: the joint
+       * grid costs the product of the two and the window is the coarser knob.
+       */
       const double score = internal_libxs_predict_ts_window_probe(
-        model, grid[i], nfold);
+        model, grid[i], nfold, (0 > model->decompose)
+          ? LIBXS_PREDICT_RAW : model->decompose);
       if (score < best) {
         best = score;
         result = grid[i];
@@ -2637,6 +2665,7 @@ LIBXS_API_INLINE double internal_libxs_predict_order_fn(
 }
 
 
+#include "libxs_predict_select.h"
 #include "libxs_predict_compress.h"
 
 
@@ -2653,6 +2682,16 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
   }
   if (NULL != model && 0 < model->nentries) {
     internal_libxs_predict_missing_all(model);
+    /**
+     * Absent inputs are known by now and the window, if it was requested by
+     * sentinel, is resolved, so a mode that cannot apply can be ruled out
+     * before any of them is built.
+     */
+    if (0 > model->decompose) {
+      const char* fenv = getenv("LIBXS_PREDICT_DECOMPOSE_FOLDS");
+      model->decompose = internal_libxs_predict_decompose_select(model,
+        (NULL != fenv) ? atoi(fenv) : 0);
+    }
     /**
      * A tree reads one coordinate per node and has nowhere to record which way
      * an absent one should go, so it would sort NaN into an arbitrary side and
@@ -2972,6 +3011,29 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
        */
       internal_libxs_predict_support_all(model);
       internal_libxs_predict_keff_all(model);
+      /**
+       * The trial runs once and its result is kept: an order search rebuilds
+       * this model many times, and re-resolving the count on every pass would
+       * pay for it again without asking a different question.
+       */
+      if (0 != model->kreq && NULL == model->k_sel) {
+        if (0 > model->kreq) {
+          internal_libxs_predict_neighbors_select(model);
+        }
+        else {
+          /**
+           * A pinned count is resolved here too, rather than applied on the
+           * way past, so that it reaches the file: a loaded model derives its
+           * own counts and would otherwise quietly discard the caller's.
+           */
+          model->k_sel = (int*)malloc((size_t)n * sizeof(int));
+          if (NULL != model->k_sel) {
+            int kj;
+            for (kj = 0; kj < n; ++kj) model->k_sel[kj] = model->kreq;
+          }
+        }
+      }
+      internal_libxs_predict_kapply(model);
       if (0 >= model->central) internal_libxs_predict_central_all(model);
       internal_libxs_predict_bank_all(model);
       if (model->smooth < 0) {
@@ -4490,8 +4552,10 @@ LIBXS_API_INLINE int internal_libxs_predict_keff_mode(int nc, int classify)
 
 /**
  * Per-output neighbour count from each output's own mode.  Runs at build and at
- * load so a loaded model behaves as the built one did, which is also why nothing
- * about this reaches the file.
+ * load so a loaded model behaves as the built one did, which is why the derived
+ * form reaches no file.  A count the caller pinned or the trial resolved does
+ * reach one, because this formula would otherwise overwrite it at load; see
+ * internal_libxs_predict_kapply, which runs straight after.
  */
 LIBXS_API_INLINE void internal_libxs_predict_keff_all(libxs_predict_t* model)
 {
@@ -4507,6 +4571,34 @@ LIBXS_API_INLINE void internal_libxs_predict_keff_all(libxs_predict_t* model)
       for (j = 0; j < n; ++j) {
         const int classify = (NULL != cl->mode) ? cl->mode[j] : 1;
         cl->k_out[j] = internal_libxs_predict_keff_mode(cl->nentries, classify);
+      }
+    }
+  }
+}
+
+
+/**
+ * Override the derived neighbour count with the caller's, or with the one the
+ * trial resolved.  Runs after the formula rather than instead of it, so a
+ * cluster too small for the request still votes with what it has.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_kapply(libxs_predict_t* model)
+{
+  const int n = model->noutputs;
+  int c;
+  if (NULL != model->clusters && (NULL != model->k_sel || 0 < model->kreq)) {
+    for (c = 0; c < model->nclusters; ++c) {
+      internal_libxs_predict_cluster_t* cl = &model->clusters[c];
+      if (NULL != cl->k_out) {
+        int j;
+        for (j = 0; j < n; ++j) {
+          const int k = (NULL != model->k_sel)
+            ? model->k_sel[j] : model->kreq;
+          if (0 < k) {
+            cl->k_out[j] = LIBXS_MIN(LIBXS_MIN(k, cl->nentries),
+              LIBXS_PREDICT_KNN);
+          }
+        }
       }
     }
   }
@@ -5190,6 +5282,7 @@ LIBXS_API void libxs_predict_query(
   info->diff_order = model->diff_order;
   info->window = (model->nseries > 0) ? model->window : 0;
   info->nbank = (0 < model->nbank) ? model->nbank : 1;
+  info->decompose = model->decompose;
   { double sqsum = 0;
     int c;
     info->nscan = 0;

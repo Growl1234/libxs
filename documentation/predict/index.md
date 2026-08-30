@@ -236,6 +236,59 @@ no counterpart on that side short of an external grid search.
 
 ---
 
+## The Mode Is Now Chosen, Not Configured
+
+`set_decompose(LIBXS_PREDICT_AUTO_DECOMPOSE)` builds each applicable mode on part
+of the corpus and keeps the one that wins on a part held back.
+
+| Corpus | Default (RAW) | Selected | Selected mode |
+| --- | ---: | ---: | --- |
+| Crystals, held-out accuracy | 67.8% | **79.6%** | RF |
+| River discharge, MAE | 868 | **791** | hkNN |
+| Tuned GPU parameters, miss rate | 0.306 | **0.253** | RF |
+
+A fixed default costs 22% on average, and the worst candidate on discharge is
+2.8x worse than the best - the right mode moves with the corpus.
+
+Note: rows are default against selected on that corpus' own split. Nine
+held-back configurations, 9/9 correct at four and seven candidates,
+7/9 at two. More candidates were *safer*: both wrong picks are near-ties at two
+candidates, where the arbitrary choice costs nothing, and adding a mode that wins
+by a real margin gives the validation slice something it can resolve. Costs one
+build per candidate (per fold on a series), so it is requested, not the default.
+Per-output selection was measured and does not pay: about 2% of oracle headroom,
+none of it reachable, because the model-level score averages sixteen outputs and
+that averaging is what makes the estimate stable.
+
+---
+
+## The Vote Was Reading Too Many Neighbours
+
+`set_neighbors(-1)` resolves the count per output at build, on entries held back
+from a probe build.
+
+| Corpus | Derived count | Selected | Change |
+| --- | ---: | ---: | ---: |
+| Crystals, held-out accuracy | 67.8% | **74.8%** | +10.4% |
+| Crystals, miss rate | 0.3223 | **0.2520** | -21.8% |
+| Tuned GPU parameters, miss rate | 0.3062 | **0.2826** | -7.7% |
+
+The derived `max(5, cluster/3)` is too large everywhere, and the right count is
+not a function of cluster size: hold the cluster at 56 entries and vary only the
+dimension of the subspace the data lies on, and the best count runs 18, 5, 1 at
+dimensions 1, 2, 3.
+
+Note: not a duplicate-row artifact, though the crystal corpus is full of them - a
+query with an exact match never reaches the vote, and splitting the held-out rows
+by distance to their nearest stored neighbour puts the entire gain on the half
+with no close match (0.7306 to 0.5524). Not a formula either: the optimum returns
+to 8 by dimension 10, where the label is noisy enough per neighbour that
+averaging pays again, so n^(4/(4+d)) predicts none of it. Cheap where the mode
+trial is not - the count changes nothing about the model, so one probe build
+serves the whole grid.
+
+---
+
 ## Secondary Evidence
 
 | Domain | Ours | Literature | Confidence |
