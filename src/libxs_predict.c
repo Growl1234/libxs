@@ -384,6 +384,23 @@ LIBXS_API_INLINE int internal_libxs_predict_incomplete(const double* v, int m)
 }
 
 
+/**
+ * Non-zero if the mode can carry an absent input.
+ *
+ * The distance answers a gap by skipping the coordinate and rescaling by the
+ * ones it did use, so anything that reads coordinates independently can express
+ * "not known here".  A rotation cannot: every output component is a combination
+ * of every input, so one absent coordinate contaminates the whole vector rather
+ * than one place in it, and no rescaling undoes that.  A tree is refused for the
+ * separate reason given at its build site.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_gaps_ok(int mode)
+{
+  return (LIBXS_PREDICT_PCA != mode && LIBXS_PREDICT_SPREAD != mode
+    && LIBXS_PREDICT_RF != mode && LIBXS_PREDICT_HKNN != mode) ? 1 : 0;
+}
+
+
 LIBXS_API_INLINE void internal_libxs_predict_normalize(
   const libxs_predict_t* model, const double* inputs, double* norm)
 {
@@ -451,8 +468,23 @@ LIBXS_API_INLINE void internal_libxs_predict_kmeans(libxs_predict_t* model, int 
       for (i = 0; i < p; ++i) {
         const double d = internal_libxs_predict_dist2(
           pts + (size_t)i * m, centroids + (size_t)(c - 1) * m, m, missing);
-        if (d < dists[i]) dists[i] = d;
-        if (dists[i] > maxd) { maxd = dists[i]; farthest = i; }
+        /**
+         * A NaN distance compares false against everything, so a point that
+         * produces one keeps the initial DBL_MAX and is then the farthest point
+         * from every centroid there will ever be.  Seeding copies it into all of
+         * them, Lloyd finds one distinct centroid, and every entry lands in the
+         * same cluster: the partition collapses to one and the model still
+         * reports success.  Such a point is excluded from seeding instead, which
+         * costs one candidate centroid and cannot cost the partition.
+         */
+        if (LIBXS_NOTNAN(d)) {
+          if (d < dists[i]) dists[i] = d;
+          if (dists[i] > maxd && dists[i] < DBL_MAX) {
+            maxd = dists[i];
+            farthest = i;
+          }
+        }
+        else dists[i] = 0;
       }
       memcpy(centroids + (size_t)c * m, pts + (size_t)farthest * m,
         (size_t)m * sizeof(double));
@@ -1787,10 +1819,18 @@ LIBXS_API_INLINE void internal_libxs_predict_fisher_build(libxs_predict_t* model
   const int m = model->ninputs;
   int nclasses = 0, j, i, ci;
   int class_id[128], class_count[128];
+  /**
+   * Present values per class and per dimension.  A class count alone cannot
+   * normalize a mean here: missingness need not be spread evenly over the
+   * classes, and dividing a partial sum by the full count would report a
+   * discriminant that shrinks with how much of the column is absent.
+   */
+  int class_dn[128][128];
   double class_mean[128][128], class_var[128][128];
   double scores[128], sorted_scores[128], thr;
   LIBXS_ASSERT(m <= 128);
   memset(class_count, 0, sizeof(class_count));
+  memset(class_dn, 0, sizeof(class_dn));
   memset(class_mean, 0, sizeof(class_mean));
   memset(class_var, 0, sizeof(class_var));
   for (i = 0; i < p; ++i) {
@@ -1802,12 +1842,18 @@ LIBXS_API_INLINE void internal_libxs_predict_fisher_build(libxs_predict_t* model
     if (0 == found && nclasses < 128) { class_id[nclasses] = label; ci = nclasses++; }
     if (ci < 128) {
       ++class_count[ci];
-      for (j = 0; j < m; ++j) class_mean[ci][j] += model->entries[i].inputs[j];
+      for (j = 0; j < m; ++j) {
+        const double v = model->entries[i].inputs[j];
+        if (LIBXS_NOTNAN(v)) {
+          class_mean[ci][j] += v;
+          ++class_dn[ci][j];
+        }
+      }
     }
   }
   for (ci = 0; ci < nclasses; ++ci) {
-    if (0 < class_count[ci]) {
-      for (j = 0; j < m; ++j) class_mean[ci][j] /= class_count[ci];
+    for (j = 0; j < m; ++j) {
+      if (0 < class_dn[ci][j]) class_mean[ci][j] /= class_dn[ci][j];
     }
   }
   for (i = 0; i < p; ++i) {
@@ -1815,8 +1861,11 @@ LIBXS_API_INLINE void internal_libxs_predict_fisher_build(libxs_predict_t* model
     for (ci = 0; ci < nclasses; ++ci) {
       if (class_id[ci] == label) {
         for (j = 0; j < m; ++j) {
-          double d = model->entries[i].inputs[j] - class_mean[ci][j];
-          class_var[ci][j] += d * d;
+          const double v = model->entries[i].inputs[j];
+          if (LIBXS_NOTNAN(v)) {
+            const double d = v - class_mean[ci][j];
+            class_var[ci][j] += d * d;
+          }
         }
         break;
       }
@@ -1827,17 +1876,17 @@ LIBXS_API_INLINE void internal_libxs_predict_fisher_build(libxs_predict_t* model
       double between = 0, within = 0, grand_mean = 0;
       int total_n = 0;
       for (ci = 0; ci < nclasses; ++ci) {
-        if (0 < class_count[ci]) {
-          grand_mean += class_mean[ci][j] * class_count[ci];
-          total_n += class_count[ci];
+        if (0 < class_dn[ci][j]) {
+          grand_mean += class_mean[ci][j] * class_dn[ci][j];
+          total_n += class_dn[ci][j];
           within += class_var[ci][j];
         }
       }
       if (0 < total_n) grand_mean /= total_n;
       for (ci = 0; ci < nclasses; ++ci) {
-        if (0 < class_count[ci]) {
-          double d = class_mean[ci][j] - grand_mean;
-          between += class_count[ci] * d * d;
+        if (0 < class_dn[ci][j]) {
+          const double d = class_mean[ci][j] - grand_mean;
+          between += class_dn[ci][j] * d * d;
         }
       }
       scores[j] = (within > 0) ? between / within : 0.0;
@@ -1884,12 +1933,18 @@ LIBXS_API_INLINE void internal_libxs_predict_setdiff_build(libxs_predict_t* mode
   for (j = 0; j < m; ++j) {
     double score = 0;
     int npairs = 0;
-    { double fmin = model->entries[0].inputs[j];
-      double fmax = fmin, frange;
-      for (i = 1; i < p; ++i) {
+    { double fmin = 0, fmax = 0, frange;
+      int seen = 0;
+      /* the range spans the values present, so a gap widens nothing */
+      for (i = 0; i < p; ++i) {
         const double v = model->entries[i].inputs[j];
-        if (v < fmin) fmin = v;
-        if (v > fmax) fmax = v;
+        if (LIBXS_NOTNAN(v)) {
+          if (0 == seen) { fmin = v; fmax = v; seen = 1; }
+          else {
+            if (v < fmin) fmin = v;
+            if (v > fmax) fmax = v;
+          }
+        }
       }
       frange = fmax - fmin;
       if (frange <= 0) frange = 1.0;
@@ -1904,14 +1959,19 @@ LIBXS_API_INLINE void internal_libxs_predict_setdiff_build(libxs_predict_t* mode
             int na = 0, nb = 0;
             for (i = 0; i < p; ++i) {
               const int label = LIBXS_ROUNDX(int, model->entries[i].outputs[0]);
-              if (label == class_id[a]) va[na++] = model->entries[i].inputs[j];
-              else if (label == class_id[b]) vb[nb++] = model->entries[i].inputs[j];
+              const double v = model->entries[i].inputs[j];
+              /* an absent value separates nothing, so it joins neither side */
+              if (LIBXS_NOTNAN(v)) {
+                if (label == class_id[a]) va[na++] = v;
+                else if (label == class_id[b]) vb[nb++] = v;
+              }
             }
-            { const int sd = libxs_setdiff(LIBXS_DATATYPE_F64,
+            if (0 < na && 0 < nb) {
+              const int sd = libxs_setdiff(LIBXS_DATATYPE_F64,
                 va, na, vb, nb, frange * 0.05);
               score += (double)sd / LIBXS_MAX(na, nb);
+              ++npairs;
             }
-            ++npairs;
           }
           LIBXS_PREDICT_FREE(vb, cb_pool);
           LIBXS_PREDICT_FREE(va, ca_pool);
@@ -2697,11 +2757,13 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
      * an absent one should go, so it would sort NaN into an arbitrary side and
      * build a tree on it.  Imputing instead would work at build and not survive
      * a round trip, because the medians are not recoverable from what is
-     * serialized.  Refusing is the only option here that cannot mislead.
+     * serialized.  A rotation is refused for a different reason, given at
+     * internal_libxs_predict_gaps_ok.  Refusing is the only option here that
+     * cannot mislead: the alternative is a model that silently answers from a
+     * coordinate it never had.
      */
     if (0 != model->has_missing
-      && (LIBXS_PREDICT_RF == model->decompose
-        || LIBXS_PREDICT_HKNN == model->decompose))
+      && 0 == internal_libxs_predict_gaps_ok(model->decompose))
     {
       result = EXIT_FAILURE;
     }
@@ -2712,6 +2774,16 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
       || (LIBXS_PREDICT_SPREAD == model->decompose && model->nseries >= 2)))
   {
     internal_libxs_predict_pca_build(model);
+  }
+  /**
+   * The scan above ran before the decomposition rewrote the entries, so it
+   * cannot speak for what they hold now.  A mode that reached this point is one
+   * that carries gaps, and a gap it was given survives as a gap; a NaN that
+   * appears here instead was manufactured, and the distance must be told either
+   * way rather than treating it as a coordinate.
+   */
+  if (EXIT_SUCCESS == result && NULL != model && 0 < model->nentries) {
+    internal_libxs_predict_missing_all(model);
   }
   if (NULL != model && 0 < model->nentries && NULL == model->weights) {
     if (LIBXS_PREDICT_SETDIFF == model->decompose) {

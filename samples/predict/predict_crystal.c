@@ -26,14 +26,40 @@ static void gate_sweep(const double gates[], int ngates, int n,
   const double xconf[], const char xok[]);
 
 
+/**
+ * Replace a fraction of the inputs with the absent value, deterministically per
+ * row so a run is repeatable.  A quiet NaN is what the library reads as "not
+ * known here"; it is produced rather than written as a literal so the file needs
+ * no constant for it.
+ */
+static const char* mode_name(int decompose)
+{
+  static const char* names[] = { "RAW", "SPREAD", "PCA", "SETDIFF", "FISHER",
+    "RF", "hKNN" };
+  return (0 <= decompose && 7 > decompose) ? names[decompose] : "?";
+}
+
+
+static void blank_inputs(double inputs[], int n, double fraction, unsigned int s)
+{
+  const volatile double zero = 0;
+  const double absent = zero / zero;
+  int i;
+  for (i = 0; i < n; ++i) {
+    s = s * 1103515245u + 12345u;
+    if (((double)((s >> 16) & 0x7fff) / 32767.0) < fraction) inputs[i] = absent;
+  }
+}
+
+
 int main(int argc, char* argv[])
 {
   const char* filename = (argc > 1) ? argv[1] : NULL;
   const double split = (argc > 2) ? atof(argv[2]) : 0.8;
   const int order = (argc > 3) ? atoi(argv[3]) : 2;
   const int nclusters = (argc > 4) ? atoi(argv[4]) : 0;
-  int decompose = LIBXS_PREDICT_RF;
-  double quality = 0, consistency = 0;
+  int decompose = LIBXS_PREDICT_AUTO_DECOMPOSE;
+  double quality = 0, consistency = 0, gaps = 0;
   int argi = 5, use_xgb = 0, result = EXIT_FAILURE;
   while (argi < argc) {
     if ('c' == argv[argi][0] && 'o' == argv[argi][1]
@@ -53,19 +79,31 @@ int main(int argc, char* argv[])
     else if ('s' == argv[argi][0]) decompose = LIBXS_PREDICT_SETDIFF;
     else if ('r' == argv[argi][0]) decompose = LIBXS_PREDICT_RF;
     else if ('n' == argv[argi][0]) decompose = LIBXS_PREDICT_RAW;
+    else if ('p' == argv[argi][0]) decompose = LIBXS_PREDICT_PCA;
+    else if ('g' == argv[argi][0]) {
+      const char* p = argv[argi];
+      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
+      gaps = ('\0' != *p) ? atof(p) : 0.1;
+    }
     else if ('x' == argv[argi][0]) use_xgb = 1;
     ++argi;
   }
   if (NULL == filename) {
     fprintf(stdout,
       "Usage: %s <crystal_csv> [train_fraction] [order] [nclusters]"
-      " [compress[Q]] [fisher|hknn|setdiff|rf|none] [xgb]\n"
+      " [compress[Q]] [fisher|hknn|setdiff|rf|pca|none] [gaps[F]] [xgb]\n"
       "  Crystal system prediction from composition features.\n"
       "  xgb: also train XGBoost on the same split and compare.\n"
       "  Input: CSV with numeric features + crystal_system label (last col).\n"
       "  Crystal systems: 1=triclinic, 2=monoclinic, 3=orthorhombic,\n"
       "    4=tetragonal, 5=trigonal, 6=hexagonal, 7=cubic.\n"
-      "  Default: rf decomposition, train_fraction=0.8\n", argv[0]);
+      "  gaps[F]: blank that fraction of input values, to exercise the\n"
+      "    absent-value path (libxs_predict_set_missing). Modes that cannot\n"
+      "    carry a gap refuse to build rather than answer from a coordinate\n"
+      "    they never had.\n"
+      "  Default: the decomposition and the neighbour count are selected at\n"
+      "    build from data held back for the purpose, rather than configured.\n"
+      "  Default train_fraction: 0.8\n", argv[0]);
   }
 #if !defined(__XGBOOST)
   else if (0 != use_xgb) {
@@ -93,10 +131,13 @@ int main(int argc, char* argv[])
           double* lconf = (double*)malloc((size_t)total * sizeof(double));
           char* lok = (char*)calloc((size_t)total, 1);
           libxs_predict_set_decompose(model, decompose);
+          libxs_predict_set_neighbors(model, -1);
           if (0.0 != consistency) libxs_predict_set_consistency(model, consistency);
+          if (0.0 < gaps) libxs_predict_set_missing(model, 1);
           for (t = 0; t < train_end; ++t) {
             double inputs[NFEAT], output;
             libxs_predict_get(source, t, inputs, &output);
+            if (0.0 < gaps) blank_inputs(inputs, NFEAT, gaps, (unsigned int)t);
             libxs_predict_push(NULL, model, inputs, &output);
           }
           tick = libxs_timer_tick();
@@ -109,11 +150,18 @@ int main(int argc, char* argv[])
           build_ok = libxs_predict_build(model, nclusters, order, quality);
 #endif
           dt_build = libxs_timer_duration(tick, libxs_timer_tick());
+          if (EXIT_SUCCESS != build_ok && 0.0 < gaps) {
+            fprintf(stdout, "Refused: this decomposition cannot carry an absent"
+              " input, and the corpus has %.0f%% of them\n", 100.0 * gaps);
+          }
           if (EXIT_SUCCESS == build_ok && NULL != lconf && NULL != lok) {
             libxs_predict_query_t qi;
             LIBXS_MEMZERO(&qi);
             libxs_predict_query(model, &qi);
             fprintf(stdout, "Train=%d, Test=%d\n", qi.nentries, total - train_end);
+            fprintf(stdout, "Decomposition: %s (%s)\n", mode_name(qi.decompose),
+              (LIBXS_PREDICT_AUTO_DECOMPOSE == decompose)
+                ? "selected at build" : "requested");
             fprintf(stdout, "Built: %d clusters, %.1fx compression, order=%d"
               " (%.2f s)\n", qi.nclusters, qi.compression, qi.order, dt_build);
             tick = libxs_timer_tick();

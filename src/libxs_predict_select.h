@@ -27,6 +27,24 @@
 #if !defined(LIBXS_PREDICT_NNEIGHBORS)
 # define LIBXS_PREDICT_NNEIGHBORS 9
 #endif
+/**
+ * Entries a candidate is fitted on while it is being ranked.
+ *
+ * The trial does not need the model the caller asked for, only the ORDER of the
+ * candidates, and an order survives on far less data than an error does: on a
+ * 60k-row corpus every cap from 1000 up selects the same mode as the whole of
+ * it, at a hundred and sixty-ninth of the cost.
+ *
+ * The cap is nevertheless the largest of those rather than the cheapest, because
+ * the saving is not free where the candidates are close.  On a corpus whose
+ * modes sit within 7% of each other the ranking only settled at 8000; below that
+ * the trial named a different winner at every size, which is a subsample
+ * resolving noise rather than a margin.  Promoting only the candidates that are
+ * still close would beat a fixed cap on both counts and is not implemented here.
+ */
+#if !defined(LIBXS_PREDICT_TRIALCAP)
+# define LIBXS_PREDICT_TRIALCAP 8192
+#endif
 
 
 /** Candidate by index, ordered so that a prefix is a sensible shortlist. */
@@ -48,8 +66,9 @@ LIBXS_API_INLINE int internal_libxs_predict_decompose_cand(int i)
 
 /**
  * Non-zero if the mode can apply to this model at all.  SPREAD without a second
- * series is RAW under another name, and a tree cannot read an absent input, so
- * building either would spend a build to learn what the model already knows.
+ * series is RAW under another name, and a mode that cannot carry a gap has
+ * nothing to say about a corpus that has one, so building either would spend a
+ * build to learn what the model already knows.
  */
 LIBXS_API_INLINE int internal_libxs_predict_decompose_ok(
   const libxs_predict_t* model, int mode)
@@ -58,8 +77,8 @@ LIBXS_API_INLINE int internal_libxs_predict_decompose_ok(
   if (LIBXS_PREDICT_SPREAD == mode && 2 > model->nseries) {
     result = 0;
   }
-  else if (0 != model->has_missing && (LIBXS_PREDICT_RF == mode
-    || LIBXS_PREDICT_HKNN == mode))
+  else if (0 != model->has_missing
+    && 0 == internal_libxs_predict_gaps_ok(mode))
   {
     result = 0;
   }
@@ -117,7 +136,9 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_kind(
  * The probe carries the settings that change what a prediction is, and none of
  * the timeseries state: a series model reaches this through the window probe
  * instead, because its bank of window views is itself mode-dependent and would
- * not be reproduced by a model fed the expanded entries.
+ * not be reproduced by a model fed the expanded entries.  That path is also why
+ * the trial cap is not applied there: a series cannot be thinned without
+ * changing what the next step means.
  *
  * Returns a large value if the mode cannot be built, which is how a candidate
  * that fails on this corpus takes itself out of the running.
@@ -143,10 +164,25 @@ LIBXS_API_INLINE double internal_libxs_predict_decompose_probe(
     probe->missing_mode = model->missing_mode;
     probe->rf_ntrees = model->rf_ntrees;
     probe->rf_depth = model->rf_depth;
-    for (i = 0; i < model->nentries; ++i) {
-      if (0 == role[i]) {
-        libxs_predict_push(NULL, probe, model->entries[i].inputs,
-          model->entries[i].outputs);
+    { int nfit = 0, stride, seen = 0;
+      for (i = 0; i < model->nentries; ++i) {
+        if (0 == role[i]) ++nfit;
+      }
+      /**
+       * Every stride-th entry rather than a prefix: a corpus may be ordered by
+       * anything at all, and the prefix of one sorted by problem size is a
+       * different distribution rather than a smaller sample of the same one.
+       */
+      stride = (LIBXS_PREDICT_TRIALCAP < nfit)
+        ? ((nfit + LIBXS_PREDICT_TRIALCAP - 1) / LIBXS_PREDICT_TRIALCAP) : 1;
+      for (i = 0; i < model->nentries; ++i) {
+        if (0 == role[i]) {
+          if (0 == (seen % stride)) {
+            libxs_predict_push(NULL, probe, model->entries[i].inputs,
+              model->entries[i].outputs);
+          }
+          ++seen;
+        }
       }
     }
     if (NULL != pred && 0 < probe->nentries

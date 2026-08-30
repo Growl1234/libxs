@@ -30,6 +30,14 @@ static int load_ett_all(const char* filename, double** values,
   int* count, int* ncols_out);
 
 
+static const char* mode_name(int decompose)
+{
+  static const char* names[] = { "RAW", "SPREAD", "PCA", "SETDIFF", "FISHER",
+    "RF", "hKNN" };
+  return (0 <= decompose && 7 > decompose) ? names[decompose] : "?";
+}
+
+
 int main(int argc, char* argv[])
 {
   const char* filename = (argc > 1) ? argv[1] : NULL;
@@ -38,7 +46,7 @@ int main(int argc, char* argv[])
   const char* wenv = getenv("WINDOW");
   const int window_req = (NULL != wenv) ? atoi(wenv) : LIBXS_PREDICT_AUTO_WINDOW;
   int window = (0 < window_req) ? window_req : WINDOW_DEF;
-  int decompose = LIBXS_PREDICT_RAW;
+  int decompose = LIBXS_PREDICT_AUTO_DECOMPOSE;
   int attend = 0;
   double quality = 0.9;
   int argi, use_xgb = 0, result = EXIT_FAILURE;
@@ -77,6 +85,17 @@ int main(int argc, char* argv[])
       " set XGBOOST_ROOT, or install the pkg-config module.\n");
   }
 #else
+  /**
+   * The comparison needs the plain configuration, and the selected mode is not
+   * known until the build.  A caller who did not ask for a decomposition gets
+   * the plain one here rather than a refusal; one who did still gets the
+   * refusal, because that is a request the comparison cannot honour.
+   */
+  else if (0 != use_xgb && LIBXS_PREDICT_AUTO_DECOMPOSE == decompose
+    && 0 == attend && NULL == getenv("BANK"))
+  {
+    decompose = LIBXS_PREDICT_RAW;
+  }
   else if (0 != use_xgb && (LIBXS_PREDICT_RAW != decompose
     || 0 != attend || NULL != getenv("BANK")))
   {
@@ -195,6 +214,10 @@ int main(int argc, char* argv[])
         int neval = 0, h;
         LIBXS_MEMZERO(&qi);
         libxs_predict_query(model, &qi);
+        fprintf(stdout, "Decomposition: %s (%s)\n",
+          mode_name(qi.decompose),
+          (LIBXS_PREDICT_AUTO_DECOMPOSE == decompose)
+            ? "selected at build" : "requested");
         window = qi.window;
         fprintf(stdout, "Window=%d, Horizon=%d, Stride=%d,"
           " nseries=%d, Train=%d, Test=%d\n",

@@ -25,11 +25,19 @@ static const char output_names[] = "mag";
 enum { NINPUTS = 3, NOUTPUTS = 1 };
 
 
+static const char* mode_name(int decompose)
+{
+  static const char* names[] = { "RAW", "SPREAD", "PCA", "SETDIFF", "FISHER",
+    "RF", "hKNN" };
+  return (0 <= decompose && 7 > decompose) ? names[decompose] : "?";
+}
+
+
 int main(int argc, char* argv[])
 {
   const char* filename = (argc > 1) ? argv[1] : NULL;
   const double split = (argc > 2) ? atof(argv[2]) : 0.8;
-  int decompose = LIBXS_PREDICT_RAW;
+  int decompose = LIBXS_PREDICT_AUTO_DECOMPOSE;
   double quality = 0, consistency = 0;
   int argi, use_xgb = 0, result = EXIT_FAILURE;
   for (argi = 3; argi < argc; ++argi) {
@@ -47,11 +55,13 @@ int main(int argc, char* argv[])
     }
     else if ('h' == argv[argi][0]) decompose = LIBXS_PREDICT_HKNN;
     else if ('r' == argv[argi][0]) decompose = LIBXS_PREDICT_RF;
+    else if ('n' == argv[argi][0]) decompose = LIBXS_PREDICT_RAW;
     else if ('x' == argv[argi][0]) use_xgb = 1;
   }
   if (NULL == filename) {
     fprintf(stdout,
-      "Usage: %s <usgs_csv> [train_fraction] [compress[Q]] [hknn|rf] [xgb]\n"
+      "Usage: %s <usgs_csv> [train_fraction] [compress[Q]]"
+      " [hknn|rf|none] [xgb]\n"
       "  Earthquake magnitude prediction from location and depth.\n"
       "  xgb: also train XGBoost on the same split and compare.\n"
       "  Default train_fraction: 0.8\n", argv[0]);
@@ -78,6 +88,7 @@ int main(int argc, char* argv[])
           double inputs[NINPUTS], outputs[NOUTPUTS], dt_build;
           int i, build_ok = EXIT_FAILURE;
           libxs_predict_set_decompose(model, decompose);
+          libxs_predict_set_neighbors(model, -1);
           if (0.0 != consistency) libxs_predict_set_consistency(model, consistency);
           for (i = 0; i < train_end; ++i) {
             libxs_predict_get(source, i, inputs, outputs);
@@ -99,6 +110,9 @@ int main(int argc, char* argv[])
             int neval = 0;
             LIBXS_MEMZERO(&qi);
             libxs_predict_query(model, &qi);
+            fprintf(stdout, "Decomposition: %s (%s)\n", mode_name(qi.decompose),
+              (LIBXS_PREDICT_AUTO_DECOMPOSE == decompose)
+                ? "selected at build" : "requested");
             fprintf(stdout, "Built: %d clusters, %.1fx compression, order=%d"
               " (%.2f s)\n", qi.nclusters, qi.compression, qi.order, dt_build);
             tick = libxs_timer_tick();

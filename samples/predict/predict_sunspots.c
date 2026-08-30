@@ -24,6 +24,14 @@ static int cycle_phase(const double* series, int n, int period,
   double* phase);
 
 
+static const char* mode_name(int decompose)
+{
+  static const char* names[] = { "RAW", "SPREAD", "PCA", "SETDIFF", "FISHER",
+    "RF", "hKNN" };
+  return (0 <= decompose && 7 > decompose) ? names[decompose] : "?";
+}
+
+
 int main(int argc, char* argv[])
 {
   const char* filename = (argc > 1) ? argv[1] : NULL;
@@ -32,7 +40,7 @@ int main(int argc, char* argv[])
   const int window_req = (NULL != wenv) ? atoi(wenv) : LIBXS_PREDICT_AUTO_WINDOW;
   const int ninputs = (0 < window_req) ? window_req : WMAX;
   int window = window_req;
-  int decompose = LIBXS_PREDICT_RAW;
+  int decompose = LIBXS_PREDICT_AUTO_DECOMPOSE;
   const char* penv = getenv("NOPHASE");
   const int nophase = (NULL != penv) ? atoi(penv) : 0;
   const char* benv = getenv("NOBANK");
@@ -56,6 +64,7 @@ int main(int argc, char* argv[])
     }
     else if ('h' == argv[argi][0]) decompose = LIBXS_PREDICT_HKNN;
     else if ('r' == argv[argi][0]) decompose = LIBXS_PREDICT_RF;
+    else if ('n' == argv[argi][0]) decompose = LIBXS_PREDICT_RAW;
   }
   if (NULL == filename) {
     fprintf(stdout,
@@ -112,6 +121,10 @@ int main(int argc, char* argv[])
         int neval = 0, h;
         LIBXS_MEMZERO(&qi);
         libxs_predict_query(model, &qi);
+        fprintf(stdout, "Decomposition: %s (%s)\n",
+          mode_name(qi.decompose),
+          (LIBXS_PREDICT_AUTO_DECOMPOSE == decompose)
+            ? "selected at build" : "requested");
         window = qi.window;
         fprintf(stdout, "Window=%d%s, Horizon=%d, Train=%d, Test=%d\n",
           window, (0 != naux) ? " (+cycle phase)" : "", HORIZON,

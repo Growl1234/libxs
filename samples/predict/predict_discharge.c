@@ -38,11 +38,19 @@ static void evaluate_forecast(const libxs_predict_t* model,
   const double* series, int total, int train_end, int window);
 
 
+static const char* mode_name(int decompose)
+{
+  static const char* names[] = { "RAW", "SPREAD", "PCA", "SETDIFF", "FISHER",
+    "RF", "hKNN" };
+  return (0 <= decompose && 7 > decompose) ? names[decompose] : "?";
+}
+
+
 int main(int argc, char* argv[])
 {
   const char* filename = (argc > 1) ? argv[1] : NULL;
   const double split = (argc > 2) ? atof(argv[2]) : 0.8;
-  int decompose = LIBXS_PREDICT_RAW;
+  int decompose = LIBXS_PREDICT_AUTO_DECOMPOSE;
   double quality = 0, consistency = 0;
   int argi, result = EXIT_FAILURE;
   double* series = NULL;
@@ -62,6 +70,7 @@ int main(int argc, char* argv[])
     }
     else if ('h' == argv[argi][0]) decompose = LIBXS_PREDICT_HKNN;
     else if ('r' == argv[argi][0]) decompose = LIBXS_PREDICT_RF;
+    else if ('n' == argv[argi][0]) decompose = LIBXS_PREDICT_RAW;
   }
   if (NULL == filename) {
     fprintf(stdout,
@@ -112,6 +121,10 @@ int main(int argc, char* argv[])
         libxs_predict_query_t qi;
         LIBXS_MEMZERO(&qi);
         libxs_predict_query(model, &qi);
+        fprintf(stdout, "Decomposition: %s (%s)\n",
+          mode_name(qi.decompose),
+          (LIBXS_PREDICT_AUTO_DECOMPOSE == decompose)
+            ? "selected at build" : "requested");
 #if defined(DISCHARGE_USE_API)
         window = qi.window;
 #endif
