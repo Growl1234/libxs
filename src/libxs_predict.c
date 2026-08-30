@@ -228,7 +228,16 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   /** Per-output resolved choice, noutputs entries, NULL until built. */
   int* central_out;
   double smooth;
+  /** Compression threshold at build; see libxs_predict_build. */
   double quality;
+  /**
+   * Confidence floor at eval: every rescaling pulls confidence toward this
+   * rather than toward the compression threshold.  The two were one number,
+   * which meant asking for compression silently moved a runtime knob that
+   * decides how many clusters a query blends - worth more accuracy on a
+   * categorical output than the compression itself was.
+   */
+  double floor;
   double consistency;
   double quantile;
   /** Per-output sorted distinct values and counts: the exact support the
@@ -1450,6 +1459,15 @@ LIBXS_API_INLINE void internal_libxs_predict_missing_all(libxs_predict_t* model)
         }
       }
     }
+  }
+}
+
+
+LIBXS_API void libxs_predict_set_floor(libxs_predict_t* model, double floor)
+{
+  LIBXS_ASSERT(NULL != model);
+  if (NULL != model && 0 <= floor && 1 >= floor) {
+    model->floor = floor;
   }
 }
 
@@ -3304,14 +3322,14 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
           }
         }
       }
-      if (model->quality > 0) {
+      if (model->floor > 0) {
         const double cov_inter = internal_libxs_predict_coverage(
           cl->nentries, model->nentries, model->nclusters);
         const double d_rel = sqrt(best_dist) / cl->dmax;
         const double cov_intra = 1.0 / (1.0 + d_rel);
         const double cov = cov_inter * cov_intra;
         for (j = 0; j < n; ++j) {
-          conf[j] = model->quality + cov * (conf[j] - model->quality);
+          conf[j] = model->floor + cov * (conf[j] - model->floor);
         }
       }
       if (model->nclusters > 1) {
@@ -3585,7 +3603,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                   }
                 }
                 else if (model->consistency > 0) {
-                  const double q = model->quality;
+                  const double q = model->floor;
                   const double s = 1.0
                     / (1.0 + model->consistency * rt_dist / rcl->dmax);
                   for (j = 0; j < n; ++j) {
@@ -3601,7 +3619,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
         }
       }
     }
-    if (model->quality > 0 && 0 == extrapolate) {
+    if (model->floor > 0 && 0 == extrapolate) {
       const internal_libxs_predict_cluster_t* mcl = &model->clusters[best_c];
       if (NULL != mcl->out_var && mcl->nentries > 1) {
         double maha = 0;
@@ -3618,8 +3636,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
           if (maha_norm > 1.5) {
             const double penalty = 1.5 / maha_norm;
             for (j = 0; j < n; ++j) {
-              conf[j] = model->quality
-                + penalty * (conf[j] - model->quality);
+              conf[j] = model->floor
+                + penalty * (conf[j] - model->floor);
             }
           }
         }

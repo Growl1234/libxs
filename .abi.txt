@@ -211,6 +211,7 @@ libxs_predict_set_central
 libxs_predict_set_consistency
 libxs_predict_set_decompose
 libxs_predict_set_diff
+libxs_predict_set_floor
 libxs_predict_set_forest
 libxs_predict_set_missing
 libxs_predict_set_mode

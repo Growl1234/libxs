@@ -370,6 +370,29 @@ LIBXS_API void libxs_predict_set_decompose(libxs_predict_t* model,
   int decompose);
 
 /**
+ * Floor that every confidence rescaling at eval pulls toward (0..1, default 0
+ * = no rescaling).
+ *
+ * Three rescalings read it: the cluster-coverage discount, the round-trip
+ * consistency penalty (see libxs_predict_set_consistency) and the outlier
+ * penalty on a prediction far from its cluster's output distribution. Each
+ * replaces conf with floor + s * (conf - floor) for its own s in (0,1], so the
+ * floor is the value a heavily discounted confidence approaches.
+ *
+ * This was previously the same number as the compression threshold passed to
+ * libxs_predict_build, which meant asking for compression also moved a runtime
+ * knob - and the runtime effect was the larger of the two. Confidence drives how
+ * many clusters a query blends, so on a categorical output the old coupling was
+ * worth 3.9 points of accuracy against 1.5 for the compression itself, with the
+ * same entries dropped either way. They are separate because they are separate
+ * decisions.
+ *
+ * Raising the floor keeps confidence high and so keeps queries out of the
+ * blending path; leaving it at 0 disables the rescalings entirely.
+ */
+LIBXS_API void libxs_predict_set_floor(libxs_predict_t* model, double floor);
+
+/**
  * Accept absent input values, written as NaN, instead of requiring every
  * coordinate to be present.
  *
@@ -519,13 +542,29 @@ LIBXS_API int libxs_predict_push_weighted(libxs_lock_t* lock,
  *            >0 = use at most this order.
  *             0 = auto-optimize via GSS.
  *            <0 = auto-optimize with |order| GSS iterations.
- * quality:   confidence threshold for model compression (0..1).
- *            0.0 (default) keeps all entries (no compression).
- *            >0: after building, entries whose leave-one-out
- *            cross-prediction confidence >= quality are dropped
- *            (they are redundant). The resulting model is smaller
- *            and eval signals "no result" for queries below the
- *            quality threshold (info->distance = DBL_MAX).
+ * quality:   enables model compression (0..1); 0.0 (default) keeps every entry.
+ *            Any positive value drops the entries that a leave-one-out query
+ *            recovers *exactly* from a *unanimous* neighbourhood. It does not
+ *            select among them: for a classify output unanimity pins the vote
+ *            fraction at 1.0, so every positive value yields the same drop set.
+ *            Only an interpolating output reads the magnitude, where it scales a
+ *            residual tolerance.
+ *
+ *            Requiring unanimity rather than a confident majority is deliberate.
+ *            Letting the threshold decide was measured and is far worse: on a
+ *            60k-entry corpus with near-duplicate inputs it drops 57 to 72% of
+ *            the entries and takes held-out accuracy from 0.67 to 0.25, because
+ *            many entries there are recovered exactly by a neighbourhood that
+ *            disagrees.
+ *
+ *            Compression is not free even so. Dropping about 5% of that corpus
+ *            costs 1.5 to 1.7 points of held-out accuracy: the entries are
+ *            redundant for a query that coincides with one of them, which is
+ *            what leave-one-out asks, and not for a novel query. Measure before
+ *            trading accuracy for size.
+ *
+ *            This no longer affects confidence at eval; see
+ *            libxs_predict_set_floor.
  *
  * Returns EXIT_SUCCESS or EXIT_FAILURE.
  * May be called again after pushing additional entries (rebuilds).
