@@ -4,7 +4,7 @@
  * The mode decides more than any other build-time knob and nothing but a build
  * says which one to take: a forest wins by 39 to 51% on the crystal corpus and
  * loses to hierarchical kNN on earthquakes, so a fixed default costs about 22%
- * on average against the mode a caller should have picked.  Every candidate is
+ * on average against the mode a caller should have picked. Every candidate is
  * built on part of the corpus and scored on a part held back, which is the same
  * regime for all of them and the only one in which they are comparable.
  *
@@ -13,10 +13,10 @@
  * structure a corpus has, and the modes differ in exactly how they exploit that
  * structure, so the bias does not cancel between them.
  *
- * More candidates turned out to be safer rather than riskier.  The wrong picks
+ * More candidates turned out to be safer rather than riskier. The wrong picks
  * are all near-ties, where the validation slice cannot separate two modes and
  * the arbitrary choice costs nearly nothing; adding a mode that wins by a real
- * margin gives the slice something it can resolve.  Shortlisting therefore
+ * margin gives the slice something it can resolve. Shortlisting therefore
  * guards a risk that is only large where it does not matter, at the price of
  * excluding the mode that would have won.
  */
@@ -36,10 +36,10 @@
  * it, at a hundred and sixty-ninth of the cost.
  *
  * The cap is nevertheless the largest of those rather than the cheapest, because
- * the saving is not free where the candidates are close.  On a corpus whose
+ * the saving is not free where the candidates are close. On a corpus whose
  * modes sit within 7% of each other the ranking only settled at 8000; below that
  * the trial named a different winner at every size, which is a subsample
- * resolving noise rather than a margin.  Promoting only the candidates that are
+ * resolving noise rather than a margin. Promoting only the candidates that are
  * still close would beat a fixed cap on both counts and is not implemented here.
  */
 #if !defined(LIBXS_PREDICT_TRIALCAP)
@@ -65,7 +65,7 @@ LIBXS_API_INLINE int internal_libxs_predict_decompose_cand(int i)
 
 
 /**
- * Non-zero if the mode can apply to this model at all.  SPREAD without a second
+ * Non-zero if the mode can apply to this model at all. SPREAD without a second
  * series is RAW under another name, and a mode that cannot carry a gap has
  * nothing to say about a corpus that has one, so building either would spend a
  * build to learn what the model already knows.
@@ -91,7 +91,7 @@ LIBXS_API_INLINE int internal_libxs_predict_decompose_ok(
  *
  * Outputs are scored together and do not share a unit, so each contributes a
  * dimensionless number: a discrete output its miss rate, a continuous one its
- * absolute error over its own mean absolute deviation.  The threshold on
+ * absolute error over its own mean absolute deviation. The threshold on
  * distinct values is the one the cluster refit uses to decide the same question.
  */
 LIBXS_API_INLINE void internal_libxs_predict_decompose_kind(
@@ -136,7 +136,7 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_kind(
  * The probe carries the settings that change what a prediction is, and none of
  * the timeseries state: a series model reaches this through the window probe
  * instead, because its bank of window views is itself mode-dependent and would
- * not be reproduced by a model fed the expanded entries.  That path is also why
+ * not be reproduced by a model fed the expanded entries. That path is also why
  * the trial cap is not applied there: a series cannot be thinned without
  * changing what the next step means.
  *
@@ -218,33 +218,39 @@ LIBXS_API_INLINE double internal_libxs_predict_decompose_probe(
  * measurement supported: an empty or unscoreable corpus has to leave the caller
  * where a caller who never asked would have been.
  *
- * A timeseries is scored on rolling cuts and a table on one split.  The cut
+ * A timeseries is scored on rolling cuts and a table on one split. The cut
  * walks forward for the same reason the window trial's does, and there is more
  * than one of them because a single held-out tail was measured to reverse the
- * sign of a distance-scaling result on the discharge corpus.  A table has no
+ * sign of a distance-scaling result on the discharge corpus. A table has no
  * such direction, and one shuffled split of it costs one build per candidate
  * instead of three.
  *
  * folds: number of folds to score, or zero to take the default for the kind.
  */
-LIBXS_API_INLINE int internal_libxs_predict_decompose_select(
-  const libxs_predict_t* model, int folds)
+/**
+ * Score the candidates this task owns, accumulating into total[].
+ *
+ * A candidate is one build and shares nothing with the others, which makes the
+ * trial the most parallel stage of a build and, until it was distributed, the
+ * least parallel: entered collectively it ran wholly on the builder while every
+ * other task waited for it. Tasks take candidates round-robin and write only
+ * their own slots, so the result does not depend on who finishes first.
+ *
+ * folds: number of folds to score, or zero to take the default for the kind.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_decompose_score(
+  const libxs_predict_t* model, int folds, int tid, int ntasks, double total[])
 {
   const int series = (0 < model->nts && 0 < model->nseries) ? 1 : 0;
   const int nfold = (0 < folds) ? folds : ((0 != series) ? 3 : 1);
-  int result = LIBXS_PREDICT_RAW;
+  int c;
+  for (c = tid; c < LIBXS_PREDICT_NDECOMPOSE; c += ntasks) total[c] = 1e30;
   if (0 != series) {
-    double best = 1e30;
-    int i;
-    for (i = 0; i < LIBXS_PREDICT_NDECOMPOSE; ++i) {
-      const int mode = internal_libxs_predict_decompose_cand(i);
+    for (c = tid; c < LIBXS_PREDICT_NDECOMPOSE; c += ntasks) {
+      const int mode = internal_libxs_predict_decompose_cand(c);
       if (0 != internal_libxs_predict_decompose_ok(model, mode)) {
-        const double score = internal_libxs_predict_ts_window_probe(
+        total[c] = internal_libxs_predict_ts_window_probe(
           model, model->window, nfold, mode);
-        if (score < best) {
-          best = score;
-          result = mode;
-        }
       }
     }
   }
@@ -261,28 +267,25 @@ LIBXS_API_INLINE int internal_libxs_predict_decompose_select(
     if (NULL != role && NULL != kind && NULL != mad && NULL != buf) {
       const size_t co = libxs_coprime2((size_t)p);
       const int nfit = (int)(p * 0.8 + 0.5);
-      double total[LIBXS_PREDICT_NDECOMPOSE];
-      double best = 1e30;
-      int f, i, c;
-      for (c = 0; c < LIBXS_PREDICT_NDECOMPOSE; ++c) total[c] = 0;
+      int f, i;
+      for (c = tid; c < LIBXS_PREDICT_NDECOMPOSE; c += ntasks) total[c] = 0;
+      /**
+       * Every task derives the same split rather than sharing one, which costs
+       * a scan of the corpus per task and removes the only thing they would
+       * otherwise have to agree about beyond their own slots.
+       */
       for (f = 0; f < nfold; ++f) {
         for (i = 0; i < p; ++i) {
           role[LIBXS_SHUFFLE_INDEX(i, p, co, (unsigned)f)] =
             (char)((i < nfit) ? 0 : 1);
         }
         internal_libxs_predict_decompose_kind(model, role, kind, mad, buf);
-        for (c = 0; c < LIBXS_PREDICT_NDECOMPOSE; ++c) {
+        for (c = tid; c < LIBXS_PREDICT_NDECOMPOSE; c += ntasks) {
           const int mode = internal_libxs_predict_decompose_cand(c);
           total[c] += (0 != internal_libxs_predict_decompose_ok(model, mode))
             ? internal_libxs_predict_decompose_probe(model, mode, role, kind,
               mad)
             : 1e30;
-        }
-      }
-      for (c = 0; c < LIBXS_PREDICT_NDECOMPOSE; ++c) {
-        if (total[c] < best) {
-          best = total[c];
-          result = internal_libxs_predict_decompose_cand(c);
         }
       }
     }
@@ -291,7 +294,37 @@ LIBXS_API_INLINE int internal_libxs_predict_decompose_select(
     LIBXS_PREDICT_FREE(kind, kind_pool);
     LIBXS_PREDICT_FREE(role, role_pool);
   }
+}
+
+
+/**
+ * The mode with the lowest total, or the default where nothing was scoreable.
+ * Taken in candidate order by one task, so the answer does not depend on how
+ * the scoring was distributed.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_decompose_reduce(
+  const libxs_predict_t* model, const double total[])
+{
+  double best = 1e30;
+  int c, result = LIBXS_PREDICT_RAW;
+  for (c = 0; c < LIBXS_PREDICT_NDECOMPOSE; ++c) {
+    if (total[c] < best) {
+      best = total[c];
+      result = internal_libxs_predict_decompose_cand(c);
+    }
+  }
+  LIBXS_UNUSED(model);
   return result;
+}
+
+
+/** Serial form: one task scores everything, then reduces. */
+LIBXS_API_INLINE int internal_libxs_predict_decompose_select(
+  const libxs_predict_t* model, int folds)
+{
+  double total[LIBXS_PREDICT_NDECOMPOSE];
+  internal_libxs_predict_decompose_score(model, folds, 0, 1, total);
+  return internal_libxs_predict_decompose_reduce(model, total);
 }
 
 
@@ -318,13 +351,13 @@ LIBXS_API_INLINE int internal_libxs_predict_neighbors_cand(int i)
  * Resolve one neighbour count per output, writing model->k_sel.
  *
  * A single probe build serves the whole grid, because the count changes nothing
- * about the model and only how many neighbours the vote reads.  That is what
+ * about the model and only how many neighbours the vote reads. That is what
  * makes choosing this per output affordable where choosing the mode per output
  * was not, and the grid being ordered is what makes it work: a pick one step off
  * the optimum is one step off, not a different model.
  *
  * The held-back entries are a contiguous tail for a timeseries and a shuffled
- * fifth otherwise.  Overlapping windows share timesteps, so a shuffled split of
+ * fifth otherwise. Overlapping windows share timesteps, so a shuffled split of
  * them would leave a validation window's own history in the corpus that predicts
  * it, and every candidate would look equally good.
  */

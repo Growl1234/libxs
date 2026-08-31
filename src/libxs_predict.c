@@ -25,7 +25,7 @@
 #  define LIBXS_PREDICT_MAGIC_HKNN 0x58534B4EU /* "XSKN" */
 #endif
 /**
- * Serialization format version.  Bumped whenever the on-disk layout changes at
+ * Serialization format version. Bumped whenever the on-disk layout changes at
  * a release boundary; libxs_predict_load accepts every released version down to
  * 1 (v1.0.0), so the reader gates each field on the version it appeared in.
  */
@@ -56,7 +56,7 @@
 #define LIBXS_PREDICT_FREE(PTR, POOL) internal_libxs_scratch_free(PTR, POOL)
 
 /**
- * Which evidence served an output, as reported by the internal eval.  BLEND and
+ * Which evidence served an output, as reported by the internal eval. BLEND and
  * RF carry no single source cluster: a scoring rule must either handle them
  * explicitly or abstain rather than fall back to the primary cluster, which
  * would silently score against evidence the prediction did not use.
@@ -68,11 +68,11 @@
 #define LIBXS_PREDICT_SRC_RF       3
 
 /**
- * Escape-rate experts for the probability escape.  The mixing weight that beats
+ * Escape-rate experts for the probability escape. The mixing weight that beats
  * the local evidence alone was measured to range 0.10..0.80 across datasets -
  * an order of magnitude, and far above any novelty frequency - so no single
  * default is defensible and no build-time estimate of it succeeded (LOO
- * under-measures novelty 6-40x, coverage bins are flat).  A causal fixed-share
+ * under-measures novelty 6-40x, coverage bins are flat). A causal fixed-share
  * bank over candidate rates lands within 0.03 bits of the per-dataset oracle
  * rate without being told it, which is why the rate is learned per query from
  * realized log loss rather than configured.
@@ -118,9 +118,9 @@ typedef struct internal_libxs_predict_cluster_t {
   int* interpolated;
   int* mode;
   int* ndistinct;
-  /** Neighbour count per output.  Replaces one k_eff chosen by a majority vote
+  /** Neighbour count per output. Replaces one k_eff chosen by a majority vote
    *  over the outputs' modes, which gave an interpolating output the formula
-   *  picked for its classifying neighbours.  Derived at build and again at load,
+   *  picked for its classifying neighbours. Derived at build and again at load,
    *  so it costs nothing in the file. */
   int* k_out;
   /** Entry weights in kd order, parallel to kd_pts; NULL when all are 1. */
@@ -139,7 +139,7 @@ typedef struct internal_libxs_predict_cluster_t {
 
 /**
  * One window view: the distance reads only the most recent w lags of each of
- * s series, out of full lags stored per series.  NULL or w == full means the
+ * s series, out of full lags stored per series. NULL or w == full means the
  * whole window, which is the only view a non-series model has.
  */
 typedef struct internal_libxs_predict_view_t {
@@ -149,6 +149,7 @@ typedef struct internal_libxs_predict_view_t {
 typedef struct internal_libxs_predict_order_ctx_t {
   libxs_predict_t* model;
   int nclusters;
+  int collective;
 } internal_libxs_predict_order_ctx_t;
 
 typedef struct internal_libxs_predict_rf_node_t {
@@ -166,7 +167,7 @@ typedef struct internal_libxs_predict_rf_tree_t {
 typedef struct internal_libxs_predict_rf_t {
   internal_libxs_predict_rf_tree_t* trees;
   int* label_offset;
-  /** Per-output tree depth, chosen at build.  Not serialized: the stored nodes
+  /** Per-output tree depth, chosen at build. Not serialized: the stored nodes
    *  already encode the depth they were grown to, and nothing reads it again. */
   int* depth;
   int ntrees;
@@ -225,7 +226,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   int rf_ntrees, rf_depth;
   /**
    * Requested neighbour count (see set_neighbors): positive pins it, zero
-   * derives it, negative selects it by trial.  The resolved per-output counts
+   * derives it, negative selects it by trial. The resolved per-output counts
    * live in k_sel and are saved with the model, because the derived formula
    * would otherwise reassert itself at load.
    */
@@ -240,7 +241,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   double quality;
   /**
    * Confidence floor at eval: every rescaling pulls confidence toward this
-   * rather than toward the compression threshold.  The two were one number,
+   * rather than toward the compression threshold. The two were one number,
    * which meant asking for compression silently moved a runtime knob that
    * decides how many clusters a query blends - worth more accuracy on a
    * categorical output than the compression itself was.
@@ -249,7 +250,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   double consistency;
   double quantile;
   /** Per-output sorted distinct values and counts: the exact support the
-   *  probability normalizes over.  Derived from raw_outputs at build/load, so
+   *  probability normalizes over. Derived from raw_outputs at build/load, so
    *  the serialization format is unchanged. */
   double** sup_vals;
   double** sup_freq;
@@ -261,8 +262,52 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   /** Incremented by every build, so a scoring context can tell that the
    *  model it was sized for is no longer the model in front of it. */
   int nbuild;
-  volatile int phase;
+  /**
+   * Rendezvous for a collective build: arrivals at the stage in progress, and
+   * the number of stages completed. The epoch is what a waiting task watches,
+   * rather than a flag it must reset, so the same pair serves every stage and
+   * every build without a thread carrying state between them.
+   *
+   * This replaces a single field that meant two things at once - whether the
+   * builder had finished, and whether the build was collective at all. The
+   * second is a property of the call and is now a parameter, which cannot go
+   * stale the way the field did after the call it described had returned.
+   */
+  volatile int sync_count, sync_epoch;
+  /** Per-candidate scores of a collective trial, indexed by candidate. */
+  double sync_score[8];
 };
+
+
+/**
+ * Wait until every task has arrived.
+ *
+ * Reading the epoch before arriving is what makes this safe to reuse: the last
+ * arrival is the only one that advances it, and no task can advance past a
+ * stage that another has not yet entered, so a task that reads the epoch late
+ * still waits for the advance that follows its own arrival.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_sync(
+  libxs_predict_t* model, int ntasks)
+{
+  if (1 < ntasks) {
+    const int epoch = (int)LIBXS_ATOMIC_LOAD(
+      &model->sync_epoch, LIBXS_ATOMIC_SEQ_CST);
+    if (ntasks == (int)LIBXS_ATOMIC_ADD_FETCH(
+      &model->sync_count, 1, LIBXS_ATOMIC_SEQ_CST))
+    {
+      LIBXS_ATOMIC_STORE(&model->sync_count, 0, LIBXS_ATOMIC_SEQ_CST);
+      LIBXS_ATOMIC_ADD_FETCH(&model->sync_epoch, 1, LIBXS_ATOMIC_SEQ_CST);
+    }
+    else {
+      while (epoch == (int)LIBXS_ATOMIC_LOAD(
+        &model->sync_epoch, LIBXS_ATOMIC_SEQ_CST))
+      {
+        LIBXS_SYNC_PAUSE;
+      }
+    }
+  }
+}
 
 
 LIBXS_API_INLINE int internal_libxs_predict_support_all(libxs_predict_t* model);
@@ -270,6 +315,8 @@ LIBXS_API_INLINE void internal_libxs_predict_missing_all(libxs_predict_t* model)
 LIBXS_API_INLINE void internal_libxs_predict_central_all(libxs_predict_t* model);
 LIBXS_API_INLINE void internal_libxs_predict_keff_all(libxs_predict_t* model);
 LIBXS_API_INLINE void internal_libxs_predict_kapply(libxs_predict_t* model);
+LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_predict_t* model,
+  int nclusters, int order, double quality, int collective);
 LIBXS_API_INLINE void internal_libxs_predict_bank_all(libxs_predict_t* model);
 
 
@@ -362,7 +409,7 @@ LIBXS_API_INLINE double internal_libxs_predict_dist2(const double* a,
 
 
 /**
- * A quiet NaN, standing for "no value here".  C89 has no NAN macro, and a
+ * A quiet NaN, standing for "no value here". C89 has no NAN macro, and a
  * literal 0.0/0.0 is a constant expression the compiler is entitled to fold or
  * diagnose, so the zero is read through volatile.
  */
@@ -389,9 +436,9 @@ LIBXS_API_INLINE int internal_libxs_predict_incomplete(const double* v, int m)
  *
  * The distance answers a gap by skipping the coordinate and rescaling by the
  * ones it did use, so anything that reads coordinates independently can express
- * "not known here".  A rotation cannot: every output component is a combination
+ * "not known here". A rotation cannot: every output component is a combination
  * of every input, so one absent coordinate contaminates the whole vector rather
- * than one place in it, and no rescaling undoes that.  A tree is refused for the
+ * than one place in it, and no rescaling undoes that. A tree is refused for the
  * separate reason given at its build site.
  */
 LIBXS_API_INLINE int internal_libxs_predict_gaps_ok(int mode)
@@ -415,8 +462,8 @@ LIBXS_API_INLINE void internal_libxs_predict_normalize(
 
 
 /**
- * Inverse of internal_libxs_predict_normalize.  Kept adjacent to it so the two
- * cannot drift apart.  A zero weight is not invertible (feature selection drops
+ * Inverse of internal_libxs_predict_normalize. Kept adjacent to it so the two
+ * cannot drift apart. A zero weight is not invertible (feature selection drops
  * the coordinate), which callers must check before relying on the result.
  */
 LIBXS_API_INLINE void internal_libxs_predict_denormalize(
@@ -471,10 +518,10 @@ LIBXS_API_INLINE void internal_libxs_predict_kmeans(libxs_predict_t* model, int 
         /**
          * A NaN distance compares false against everything, so a point that
          * produces one keeps the initial DBL_MAX and is then the farthest point
-         * from every centroid there will ever be.  Seeding copies it into all of
+         * from every centroid there will ever be. Seeding copies it into all of
          * them, Lloyd finds one distinct centroid, and every entry lands in the
          * same cluster: the partition collapses to one and the model still
-         * reports success.  Such a point is excluded from seeding instead, which
+         * reports success. Such a point is excluded from seeding instead, which
          * costs one candidate centroid and cannot cost the partition.
          */
         if (LIBXS_NOTNAN(d)) {
@@ -811,7 +858,7 @@ LIBXS_API_INLINE double internal_libxs_predict_coverage(
 /**
  * The local evidence a query draws on for one output: the k nearest neighbors
  * within the cluster, their output values and distances, plus whether the query
- * coincides with a stored point.  Every scoring rule in this file reads this
+ * coincides with a stored point. Every scoring rule in this file reads this
  * same object - the kNN vote reduces it to a winner, a probability reads it at
  * an arbitrary value - so the scan lives here once rather than being repeated
  * per rule, where the tangent projection, per-output group filter and recency
@@ -819,7 +866,7 @@ LIBXS_API_INLINE double internal_libxs_predict_coverage(
  */
 /**
  * Squared distance restricted to a window view: the full distance less the
- * coordinates the view does not read.  Subtracting the terms is what a zero
+ * coordinates the view does not read. Subtracting the terms is what a zero
  * weight would have done, and it needs no second copy of the points.
  */
 LIBXS_API_INLINE double internal_libxs_predict_viewdist2(const double* a,
@@ -894,11 +941,11 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
       missing);
     if (NULL != view && view->w < view->full && qpts == inputs) {
       /**
-       * A view reads only the most recent view_w lags of each series.  Rather
+       * A view reads only the most recent view_w lags of each series. Rather
        * than pack a second copy of the points, the older lags are removed from
        * the distance they already contributed: subtracting a coordinate's term
        * is what a zero weight would have done, and it leaves the corpus, the
-       * partition and the neighbor index shared.  Skipped when the tangent
+       * partition and the neighbor index shared. Skipped when the tangent
        * projection is active, because there the coordinates are no longer lags.
        */
       const double* row = dpts + (size_t)i * dm;
@@ -923,11 +970,11 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
     }
     /**
      * An exact match is authoritative for the value wherever the scan finds
-     * it, not only when it happens to be admitted first.  Collapsing the
+     * it, not only when it happens to be admitted first. Collapsing the
      * spread is a separate question: with duplicate input vectors (9410 in
      * the crystal set) a zero-distance neighbor is ordinary evidence, and
      * reporting zero variance for it makes the compression criterion drop
-     * entries it must keep.  Hence nearest, tracked separately.
+     * entries it must keep. Hence nearest, tracked separately.
      */
     if (0.0 == d2) {
       if (0 == exact) {
@@ -1024,7 +1071,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
       /**
        * Zero-initialized because nfound arrives through a pointer from the
        * evidence scan: nothing at this point proves it positive, so a reader
-       * cannot see that the first element was written.  The loops below are
+       * cannot see that the first element was written. The loops below are
        * bounded by nfound in any case, but leaving the arrays indeterminate
        * makes the code depend on that proof holding, which it does not across
        * the extraction boundary.
@@ -1080,7 +1127,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
         /**
          * A right-skewed neighborhood pulls the weighted average off the bulk
          * of its own evidence, and absolute error is minimized by the median
-         * rather than the mean.  The median is unweighted on purpose: distance
+         * rather than the mean. The median is unweighted on purpose: distance
          * weighting measured worse than none (earthquake MAE 0.241 vs 0.236),
          * because it re-concentrates the estimate on the few nearest neighbors
          * and gives up the robustness the median was chosen for.
@@ -1104,7 +1151,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
         }
         /**
          * The mean is snapped to the nearest value the cluster attests, because
-         * an average of attested values need not be one.  A median of an odd
+         * an average of attested values need not be one. A median of an odd
          * count already is one, and snapping it would search the whole cluster
          * and can only move it off the neighborhood it summarizes, so the
          * median is reported as computed.
@@ -1123,7 +1170,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
         if (NULL != confidence) {
           /**
            * A many-valued output has no vote fraction, so it reports 1.0 and
-           * callers read info->variance for the neighborhood spread.  Folding
+           * callers read info->variance for the neighborhood spread. Folding
            * that spread into the confidence instead was measured and removed:
            * it lowered quality wherever it applied once the blended-cluster
            * count was derived from the confidence rather than fixed.
@@ -1470,7 +1517,7 @@ LIBXS_API void libxs_predict_set_diff(libxs_predict_t* model, int order)
 
 
 /**
- * Derive has_missing from whatever the model actually holds.  A loaded model has
+ * Derive has_missing from whatever the model actually holds. A loaded model has
  * no setter call behind it and may have kept only the clustered points, so the
  * flag is recovered from the values rather than stored, which is what keeps the
  * serialization format unchanged.
@@ -1820,7 +1867,7 @@ LIBXS_API_INLINE void internal_libxs_predict_fisher_build(libxs_predict_t* model
   int nclasses = 0, j, i, ci;
   int class_id[128], class_count[128];
   /**
-   * Present values per class and per dimension.  A class count alone cannot
+   * Present values per class and per dimension. A class count alone cannot
    * normalize a mean here: missingness need not be spread evenly over the
    * classes, and dividing a partial sum by the full count would report a
    * discriminant that shrinks with how much of the column is absent.
@@ -1995,6 +2042,27 @@ LIBXS_API_INLINE void internal_libxs_predict_setdiff_build(libxs_predict_t* mode
 }
 
 
+/**
+ * Contiguous partition of count items over ntasks, balanced to within one.
+ *
+ * Ceiling division gives every task the same rounded-up share and leaves the
+ * remainder to the last one, which is the task that then decides when everybody
+ * is finished: at 100 trees over 16 tasks it hands fourteen tasks seven trees,
+ * one task two, and the last none at all.  Spreading the remainder over the
+ * leading tasks instead costs one item of imbalance at most, keeps each task's
+ * range contiguous, and leaves no task idle while another still works.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_split(int count, int tid,
+  int ntasks, int* begin, int* end)
+{
+  const int base = (0 < ntasks) ? (count / ntasks) : count;
+  const int rem = (0 < ntasks) ? (count % ntasks) : 0;
+  const int lo = tid * base + LIBXS_MIN(tid, rem);
+  *begin = LIBXS_MIN(lo, count);
+  *end = LIBXS_MIN(lo + base + ((tid < rem) ? 1 : 0), count);
+}
+
+
 #include "libxs_predict_rf.h"
 #include "libxs_predict_hknn.h"
 
@@ -2160,12 +2228,12 @@ LIBXS_API_INLINE double internal_libxs_predict_ts_window_score(
   const int nwin = nts - w - h + 1;
   double result = 1e30;
   /**
-   * The proxy scores the first step only.  Scoring the whole horizon instead
+   * The proxy scores the first step only. Scoring the whole horizon instead
    * was available as a switch and is not kept: it moves the selected window
    * (14 to 20 on the monthly sunspot series) and recovers 0.1 of the 2.8
    * points that window selection costs at six steps
    * (Section 5, "What Automatic Selection Costs" in the paper), so the
-   * objective was never what made the proxy prefer short windows.  A switch
+   * objective was never what made the proxy prefer short windows. A switch
    * that changes the model and buys nothing is worse than no switch.
    */
   const int nsteps = 1;
@@ -2258,11 +2326,11 @@ LIBXS_API_INLINE double internal_libxs_predict_ts_window_score(
  *
  * Each fold trains on a prefix of the pushed timesteps and is scored on the
  * tail that follows it, so no validation window is ever in the corpus that
- * predicts it.  One contiguous tail is one stretch of the series and for a
+ * predicts it. One contiguous tail is one stretch of the series and for a
  * long cycle that is not a sample of it - the bare sunspot model ranked four
  * lags above nine on its last two cycles and the opposite way on the held-out
  * years - so the cut point walks forward and later cuts weigh more, the model
- * being built to predict what follows the data it has.  Interleaving the folds
+ * being built to predict what follows the data it has. Interleaving the folds
  * instead would leave the exact window in the training set for the neighbor
  * search to find, which reads as near-perfect accuracy for every candidate.
  *
@@ -2365,29 +2433,29 @@ LIBXS_API_INLINE double internal_libxs_predict_ts_window_probe(
  * The cheap path scores a flat kNN over the window features, which is biased
  * toward short windows: its error grows with the feature count for a reason the
  * built model does not share, since that one partitions and sizes its own
- * neighborhood.  On the monthly sunspot series the proxy score rises
+ * neighborhood. On the monthly sunspot series the proxy score rises
  * monotonically, so its minimum is always the shortest candidate and the choice
- * falls to a tolerance rather than to a measurement.  This path removes the
+ * falls to a tolerance rather than to a measurement. This path removes the
  * proxy instead of correcting it, and needs no tolerance.
  *
  * It walks the same geometric grid and stops after two candidates fail to
  * improve: the measured error against window is unimodal only up to noise - it
  * wiggles by 0.07 around its minimum on one of the cases here - so two rises is
  * the weaker claim that does hold, where a bracketing search could descend into
- * the wiggle.  A golden-section search was measured against this and rejected:
+ * the wiggle. A golden-section search was measured against this and rejected:
  * reaching unit precision over the same span costs about as many builds as the
  * grid has points, spent resolving differences smaller than the noise.
  * Bisection does not apply at all, locating a root rather than a minimum.
  *
- * Two ways to spend fewer builds were measured and only one kept.  Searching
+ * Two ways to spend fewer builds were measured and only one kept. Searching
  * between the winner's neighbors added three candidates and changed the
  * selected window on none of the three series measured - the grid is already
  * finer than the curve near its minimum - so it is gone, and with it a third
- * of the cost.  Abandoning a candidate that trails the incumbent on the
+ * of the cost. Abandoning a candidate that trails the incumbent on the
  * cheapest fold would save another quarter, but it selected a worse window on
  * one series of three: the fold that is cheapest to build is also the one
  * trained on the least data, and it ranked two windows in the opposite order
- * from the full set.  A margin would only move the arbitrariness into the
+ * from the full set. A margin would only move the arbitrariness into the
  * margin, so all folds are scored for every candidate the walk reaches.
  *
  * The cost is one build per fold per candidate, roughly an order of magnitude
@@ -2445,7 +2513,7 @@ LIBXS_API_INLINE int internal_libxs_predict_ts_window(
   if (4 <= wcap) {
     /**
      * The held-out kNN proxy is faithful only for low-dimensional
-     * (single-series) feature spaces.  For multi-series inputs the proxy
+     * (single-series) feature spaces. For multi-series inputs the proxy
      * is floor-biased and the real pipeline (decomposition, per-channel
      * structure) typically needs a longer window; the library abstains
      * and returns the caller's budgeted upper bound (wcap) rather than
@@ -2704,7 +2772,9 @@ LIBXS_API_INLINE double internal_libxs_predict_order_fn(
     (const internal_libxs_predict_order_ctx_t*)data;
   const int ord = LIBXS_MAX(LIBXS_ROUNDX(int, x), 1);
   double total_err = 1e30;
-  if (EXIT_SUCCESS == libxs_predict_build(ctx->model, ctx->nclusters, ord, 0)) {
+  if (EXIT_SUCCESS == internal_libxs_predict_build_impl(ctx->model,
+    ctx->nclusters, ord, 0, ctx->collective))
+  {
     const int p = ctx->model->nentries;
     const int n = ctx->model->noutputs;
     const int saved_decompose = ctx->model->decompose;
@@ -2729,8 +2799,14 @@ LIBXS_API_INLINE double internal_libxs_predict_order_fn(
 #include "libxs_predict_compress.h"
 
 
-LIBXS_API int libxs_predict_build(libxs_predict_t* model,
-  int nclusters, int order, double quality)
+/**
+ * collective: non-zero when the caller entered through libxs_predict_build_task
+ * and the forest is therefore built by the tasks afterwards rather than here.
+ * It travels with the call, including into the order search's rebuilds, so no
+ * part of the build has to consult state left behind by an earlier one.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_predict_t* model,
+  int nclusters, int order, double quality, int collective)
 {
   int result = EXIT_SUCCESS;
   if (NULL != model) {
@@ -2755,10 +2831,10 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
     /**
      * A tree reads one coordinate per node and has nowhere to record which way
      * an absent one should go, so it would sort NaN into an arbitrary side and
-     * build a tree on it.  Imputing instead would work at build and not survive
+     * build a tree on it. Imputing instead would work at build and not survive
      * a round trip, because the medians are not recoverable from what is
-     * serialized.  A rotation is refused for a different reason, given at
-     * internal_libxs_predict_gaps_ok.  Refusing is the only option here that
+     * serialized. A rotation is refused for a different reason, given at
+     * internal_libxs_predict_gaps_ok. Refusing is the only option here that
      * cannot mislead: the alternative is a model that silently answers from a
      * coordinate it never had.
      */
@@ -2777,7 +2853,7 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
   }
   /**
    * The scan above ran before the decomposition rewrote the entries, so it
-   * cannot speak for what they hold now.  A mode that reached this point is one
+   * cannot speak for what they hold now. A mode that reached this point is one
    * that carries gaps, and a gap it was given survives as a gap; a NaN that
    * appears here instead was manufactured, and the distance must be told either
    * way rather than treating it as a coordinate.
@@ -2808,7 +2884,7 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
     && LIBXS_PREDICT_RF == model->decompose && NULL == model->rf)
   {
     internal_libxs_predict_rf_build(model);
-    if (model->phase <= 0) {
+    if (0 == collective) {
       internal_libxs_predict_rf_build_tasks(model, 0, 1);
     }
   }
@@ -2822,12 +2898,14 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
     double best_err = 1e30;
     ctx.model = model;
     ctx.nclusters = nclusters;
+    ctx.collective = collective;
     for (ord = 1; ord <= max_ord; ++ord) {
       const double err = internal_libxs_predict_order_fn((double)ord, &ctx);
       if (err < best_err) { best_err = err; best_ord = ord; }
     }
     model->iterations = max_ord;
-    result = libxs_predict_build(model, nclusters, best_ord, quality);
+    result = internal_libxs_predict_build_impl(model, nclusters, best_ord,
+      quality, collective);
   }
   else {
     const int p = model->nentries;
@@ -2846,7 +2924,7 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
       /**
        * An absent value must not seed the extent: it compares false against
        * everything, so a NaN in the first entry would leave the whole dimension
-       * NaN and silently un-normalize every later comparison on it.  A
+       * NaN and silently un-normalize every later comparison on it. A
        * dimension that is absent throughout keeps a zero range, which
        * internal_libxs_predict_normalize already treats as "do not scale".
        */
@@ -3141,21 +3219,49 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
 }
 
 
+LIBXS_API int libxs_predict_build(libxs_predict_t* model,
+  int nclusters, int order, double quality)
+{
+  return internal_libxs_predict_build_impl(model, nclusters, order, quality, 0);
+}
+
+
 LIBXS_API int libxs_predict_build_task(libxs_lock_t* lock,
   libxs_predict_t* model, int nclusters, int order,
   double quality, int tid, int ntasks)
 {
-  int result;
+  int result = EXIT_SUCCESS;
   LIBXS_ASSERT(NULL != model);
+  /**
+   * The build is a sequence of collective stages rather than one serial block
+   * with a parallel tail. A stage is either the builder's alone or split
+   * across the tasks, and every stage ends at the same rendezvous, so adding
+   * one costs a barrier rather than another meaning for a shared word.
+   */
+  if (0 == tid) { /* the corpus has to exist before a candidate can be scored */
+    if (0 < model->nts && 0 == model->nentries) {
+      internal_libxs_predict_ts_expand(model);
+    }
+    if (0 < model->nentries) internal_libxs_predict_missing_all(model);
+  }
+  internal_libxs_predict_sync(model, ntasks);
+  if (0 > model->decompose && 0 < model->nentries) {
+    const char* fenv = getenv("LIBXS_PREDICT_DECOMPOSE_FOLDS");
+    internal_libxs_predict_decompose_score(model,
+      (NULL != fenv) ? atoi(fenv) : 0, tid, ntasks, model->sync_score);
+    internal_libxs_predict_sync(model, ntasks);
+    if (0 == tid) {
+      model->decompose =
+        internal_libxs_predict_decompose_reduce(model, model->sync_score);
+    }
+    internal_libxs_predict_sync(model, ntasks);
+  }
   if (0 == tid) {
-    model->phase = 1;
-    result = libxs_predict_build(model, nclusters, order, quality);
-    model->phase = -1;
+    result = internal_libxs_predict_build_impl(model, nclusters, order,
+      quality, 1);
   }
-  else {
-    LIBXS_SYNC_CYCLE_EQ(&model->phase, -1, LIBXS_SYNC_NPAUSE);
-    result = (0 != model->built) ? EXIT_SUCCESS : EXIT_FAILURE;
-  }
+  internal_libxs_predict_sync(model, ntasks);
+  if (0 != tid) result = (0 != model->built) ? EXIT_SUCCESS : EXIT_FAILURE;
   if (EXIT_SUCCESS == result && NULL != model->rf) {
     internal_libxs_predict_rf_build_tasks(model, tid, ntasks);
   }
@@ -3168,9 +3274,9 @@ LIBXS_API int libxs_predict_build_task(libxs_lock_t* lock,
  * Evaluation with optional reporting of which evidence served each output.
  * Deciding that is what most of this function does - flat versus per-output
  * hKNN cluster, classify versus interpolate, blended or not - and a scoring
- * rule that needs the same decision must not re-derive it.  src[j] receives the
+ * rule that needs the same decision must not re-derive it. src[j] receives the
  * cluster the value came from and src_mode[j] whether it was a kNN vote, so a
- * probability can read the identical evidence this dispatch selected.  Both are
+ * probability can read the identical evidence this dispatch selected. Both are
  * optional; passing NULL yields exactly the public eval behavior.
  */
 LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
@@ -3186,10 +3292,10 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
     const int diff_d = (model->diff_mode >= 0) ? model->diff_order : 0;
     /**
      * A query missing a coordinate takes the kNN vote even where the output
-     * interpolates.  The polynomial is fitted over rank rather than over the
+     * interpolates. The polynomial is fitted over rank rather than over the
      * coordinates, so it would return a finite value - but it reports confidence
      * 1.0 unconditionally, which would advertise a query that supplied less
-     * information as the most certain kind there is.  The vote reads the same
+     * information as the most certain kind there is. The vote reads the same
      * neighbours through a distance that omits the absent coordinate and reports
      * what the neighbourhood actually supports, so it is the honest path here
      * and overrides a caller's INTERPOLATE for that reason alone.
@@ -3300,7 +3406,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
      * the partition is shared, but which cluster serves a short view is its own
      * decision, and forcing the full-window choice on it was measured to give
      * up most of the bank's gain (sunspots, six months ahead: 21.2 against
-     * 20.2).  internal_libxs_predict_viewdist2 removes the older lags from the
+     * 20.2). internal_libxs_predict_viewdist2 removes the older lags from the
      * distance exactly as the neighbor scan does.
      */
     best_dist = internal_libxs_predict_viewdist2(norm_inputs,
@@ -3475,7 +3581,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
          * fixed: the vote's own agreement says how far the evidence reaches.
          * A committed vote needs one cluster, and the count grows as agreement
          * falls, because a query whose neighborhood disagrees is one whose
-         * regime the partition split.  Measured on the earthquake case, where
+         * regime the partition split. Measured on the earthquake case, where
          * confidence averages 0.45: three clusters give MAE 0.256 and the
          * curve only flattens near 0.243, so the former fixed 3 was leaving
          * most of the blending gain unclaimed.
@@ -3487,7 +3593,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
            * A few-valued output reports the winning vote fraction instead, and
            * additional clusters dilute the argmax rather than sharpen it -
            * measured on the GPU-tuning table, where growing the count cost AL
-           * 1.5 points of gated precision.  The distinction is the one the
+           * 1.5 points of gated precision. The distinction is the one the
            * vote itself already makes.
            */
           int nmany = 0;
@@ -3667,7 +3773,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
             /**
              * The inverse reads the whole output vector to recover one set of
              * inputs, so whatever it is given for output j reaches every other
-             * output's re-prediction.  It is therefore given the vote's mean
+             * output's re-prediction. It is therefore given the vote's mean
              * even where the model reports the median: the median is the
              * better answer for j, but substituting it here moves the inputs
              * that j's neighbors are refined from, which measured as a real
@@ -3880,7 +3986,7 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock,
     /**
      * Every view queries the same corpus, the same partition and the same
      * neighbor index; they differ only in how many of the most recent lags the
-     * distance reads.  info describes the first view, the one that reads the
+     * distance reads. info describes the first view, the one that reads the
      * whole window, so a caller reading confidence sees the primary model
      * rather than an average of incomparable numbers.
      */
@@ -3915,10 +4021,8 @@ LIBXS_API void libxs_predict_eval_batch_task(
   int count, int nblend, int tid, int ntasks)
 {
   const int m = model->ninputs, n = model->noutputs;
-  const int chunk = (int)LIBXS_UPDIV(count, ntasks);
-  const int begin = tid * chunk;
-  const int end = LIBXS_MIN(begin + chunk, count);
-  int i;
+  int begin, end, i;
+  internal_libxs_predict_split(count, tid, ntasks, &begin, &end);
   LIBXS_ASSERT(NULL != model && 0 != model->built);
   LIBXS_ASSERT(NULL != inputs_batch && NULL != outputs_batch);
   for (i = begin; i < end; ++i) {
@@ -4040,10 +4144,10 @@ LIBXS_API void libxs_predict_inverse(libxs_lock_t* lock,
 
 /**
  * Sorted distinct values and counts for one output, built from the clusters'
- * raw_outputs so a loaded model works without entries.  This is the support the
+ * raw_outputs so a loaded model works without entries. This is the support the
  * probability normalizes over: exact values, never tolerance balls, because
  * independently placed balls can overlap or leave gaps and the masses would
- * then not sum to one.  Derived state only - the serialized format is
+ * then not sum to one. Derived state only - the serialized format is
  * unchanged.
  */
 LIBXS_API_INLINE int internal_libxs_predict_support(libxs_predict_t* model,
@@ -4125,8 +4229,8 @@ LIBXS_API_INLINE int internal_libxs_predict_support_index(
 
 
 /**
- * Normalize to sum exactly 1.0.  Dividing by a compensated total is not
- * sufficient: the quotients round individually.  The residual is placed on the
+ * Normalize to sum exactly 1.0. Dividing by a compensated total is not
+ * sufficient: the quotients round individually. The residual is placed on the
  * largest element, where the relative perturbation is smallest, and then
  * corrected once more in the same order the verification sums, so the element
  * absorbs precisely the error the accumulation makes.
@@ -4164,7 +4268,7 @@ LIBXS_API_INLINE void internal_libxs_predict_prob_norm(double p[], int n,
  * log-loss update toward the experts that beat the mixture, then a uniform
  * share redistributed so an expert that was wrong for a stretch can recover.
  * Scored strictly after the reported probability is committed, so no target
- * information enters it.  The ratio is floored only where exactly zero, which
+ * information enters it. The ratio is floored only where exactly zero, which
  * would otherwise zero an expert permanently - the uniform recovery term only
  * reaches slots that still hold mass.
  */
@@ -4199,15 +4303,15 @@ static const double internal_libxs_predict_escape_rate[
 
 
 /**
- * Distribution over one discrete output at the query.  Each escape-rate expert
+ * Distribution over one discrete output at the query. Each escape-rate expert
  * mixes the local kNN evidence with the global frequency prior at its own rate;
  * the reported distribution is the bank-weighted average of the experts, and the
  * bank weights are then updated from how well each expert scored the value the
- * caller actually asked about.  A single default rate is not available: the
+ * caller actually asked about. A single default rate is not available: the
  * best rate was measured to range 0.10..0.80 across datasets.
  *
  * p receives ns+1 entries - the support followed by the aggregate mass of
- * everything outside it.  With vocabulary > ns that trailing mass is what each
+ * everything outside it. With vocabulary > ns that trailing mass is what each
  * unattested value shares; with vocabulary == 0 it is reported as-is via
  * out_novel and the support masses sum to 1 - novel.
  */
@@ -4249,7 +4353,7 @@ LIBXS_API_INLINE int internal_libxs_predict_dist(
    * The escape is the frequency prior smoothed over the declared vocabulary by
    * add-one, so every value the caller considers possible keeps positive mass:
    * an attested value the neighborhood happens to miss must not be scored
-   * impossible, and neither must an unattested one.  Without a vocabulary the
+   * impossible, and neither must an unattested one. Without a vocabulary the
    * escape is the prior over the attested support and the novel atom stays
    * empty, because mass for values the caller has not enumerated would make the
    * total meaningless.
@@ -4280,9 +4384,9 @@ LIBXS_API_INLINE int internal_libxs_predict_dist(
  * Mass of ONE value, without enumerating the support.
  *
  * The distribution routine costs NESCAPE * ns per call because it writes every
- * support entry.  It does not have to: local evidence reaches at most KNN
+ * support entry. It does not have to: local evidence reaches at most KNN
  * entries, so all but those carry pure escape mass, which is a closed-form
- * function of the frequency prior.  Writing
+ * function of the frequency prior. Writing
  *
  *   A = sum_e w_e (1 - r_e),  B = sum_e w_e r_e
  *
@@ -4292,8 +4396,8 @@ LIBXS_API_INLINE int internal_libxs_predict_dist(
  * ns - |set| entries in closed form.
  *
  * This is EXACT, not an approximation: no mass is truncated and no tail is
- * folded into the escape.  It is the same quantity the distribution reports,
- * computed in O(KNN log ns) instead of O(NESCAPE * ns).  A top-k truncation was
+ * folded into the escape. It is the same quantity the distribution reports,
+ * computed in O(KNN log ns) instead of O(NESCAPE * ns). A top-k truncation was
  * the plan until the KNN bound on local evidence made an exact form available;
  * an approximation would have needed its own error budget and a separate name,
  * and this needs neither.
@@ -4413,7 +4517,7 @@ LIBXS_API_INLINE int internal_libxs_predict_point(
   }
   /**
    * The normalized local evidence AT THE OBSERVED VALUE, which is the only
-   * element of the dense local[] array the bank update ever reads.  Returning
+   * element of the dense local[] array the bank update ever reads. Returning
    * it lets an adaptive stream skip the dense pass as well: the update needs one
    * scalar, not a distribution.
    */
@@ -4434,13 +4538,13 @@ LIBXS_API_INLINE int internal_libxs_predict_point(
 
 
 /**
- * Score the observed value under every expert and advance the bank.  Kept apart
+ * Score the observed value under every expert and advance the bank. Kept apart
  * from the distribution so the reported probability is fully committed before
  * any weight moves: the update is causal, and a caller that scores the same
  * query twice must get the same answer the first time.
  */
 /**
- * The bank update given the local evidence AT THE TRUTH only.  The dense form
+ * The bank update given the local evidence AT THE TRUTH only. The dense form
  * below reads local[truth] and nothing else, so this is the same update with the
  * array replaced by the one value it uses - which is what lets the sparse
  * scoring path adapt without materializing a distribution.
@@ -4507,9 +4611,9 @@ LIBXS_API_INLINE void internal_libxs_predict_dist_learn(
 
 
 /**
- * Layout of a caller-owned scoring context.  Everything a call mutates lives
+ * Layout of a caller-owned scoring context. Everything a call mutates lives
  * here rather than in the model, so concurrent streams cannot interfere and the
- * model stays read-only while scoring.  The escape weights are per output
+ * model stays read-only while scoring. The escape weights are per output
  * because the rate that suits one output does not suit another: within a single
  * PVC model the best rate was measured at 0.55, 0.80 and 0.20 for three of its
  * outputs, and one shared bank can only converge to a compromise none of them
@@ -4518,10 +4622,10 @@ LIBXS_API_INLINE void internal_libxs_predict_dist_learn(
 typedef struct internal_libxs_predict_ctx_t {
   uint32_t magic;
   /**
-   * Which model and which build this context was sized for.  The size depends
+   * Which model and which build this context was sized for. The size depends
    * on the largest support, which grows when a model is rebuilt after more
    * entries are pushed, so a context outliving a rebuild is undersized rather
-   * than merely stale.  Stamping both lets scoring refuse it instead of
+   * than merely stale. Stamping both lets scoring refuse it instead of
    * re-initializing into a buffer that is too small.
    */
   const void* model;
@@ -4557,9 +4661,9 @@ LIBXS_API_INLINE size_t internal_libxs_predict_ctx_size(int n, int maxsup)
 
 
 /**
- * Resolve the window views once the effective window is known.  Each view
+ * Resolve the window views once the effective window is known. Each view
  * halves the lags of the one before it and keeps the most recent, stopping
- * before a view would read fewer than two lags.  Only the lag count is stored:
+ * before a view would read fewer than two lags. Only the lag count is stored:
  * a view is applied by zeroing the weight of the lags it does not read, so the
  * corpus, the partition and the neighbor index are shared.
  */
@@ -4569,10 +4673,10 @@ LIBXS_API_INLINE void internal_libxs_predict_bank_all(libxs_predict_t* model)
   model->nbank = 1;
   /**
    * A view drops the oldest lags of each series, which presumes the inputs are
-   * still lags.  A rotation (PCA) or a mode decomposition (SPREAD) replaces them
+   * still lags. A rotation (PCA) or a mode decomposition (SPREAD) replaces them
    * with combinations spanning the whole window, where dropping a coordinate
    * removes a mode rather than a span of history: measured on the SOI pair,
-   * views raised the error at every horizon (0.58 to 0.63 at six months).  Such
+   * views raised the error at every horizon (0.58 to 0.63 at six months). Such
    * a model keeps the single view it would have had.
    */
   if (1 < nreq && 0 < model->nseries && 0 < model->window
@@ -4606,7 +4710,7 @@ LIBXS_API_INLINE void internal_libxs_predict_bank_all(libxs_predict_t* model)
 
 /**
  * Decide per output whether the vote reports the mean or the median, by
- * scoring both against the entries the model was built from.  Each entry is
+ * scoring both against the entries the model was built from. Each entry is
  * predicted with itself excluded (skip_local), so the comparison is not the
  * fit but the error the aggregation would have made on data it did not see.
  * Absolute error is the criterion because that is what the median optimizes;
@@ -4623,9 +4727,9 @@ LIBXS_API_INLINE int internal_libxs_predict_keff_mode(int nc, int classify)
 
 
 /**
- * Per-output neighbour count from each output's own mode.  Runs at build and at
+ * Per-output neighbour count from each output's own mode. Runs at build and at
  * load so a loaded model behaves as the built one did, which is why the derived
- * form reaches no file.  A count the caller pinned or the trial resolved does
+ * form reaches no file. A count the caller pinned or the trial resolved does
  * reach one, because this formula would otherwise overwrite it at load; see
  * internal_libxs_predict_kapply, which runs straight after.
  */
@@ -4651,7 +4755,7 @@ LIBXS_API_INLINE void internal_libxs_predict_keff_all(libxs_predict_t* model)
 
 /**
  * Override the derived neighbour count with the caller's, or with the one the
- * trial resolved.  Runs after the formula rather than instead of it, so a
+ * trial resolved. Runs after the formula rather than instead of it, so a
  * cluster too small for the request still votes with what it has.
  */
 LIBXS_API_INLINE void internal_libxs_predict_kapply(libxs_predict_t* model)
@@ -4727,7 +4831,7 @@ LIBXS_API_INLINE void internal_libxs_predict_central_all(libxs_predict_t* model)
 
 
 /**
- * Build the support cache for every output.  Called at build and load so that
+ * Build the support cache for every output. Called at build and load so that
  * scoring only reads it: a lazily-built cache would be a write to shared state
  * on the first call of every stream.
  */
@@ -4769,10 +4873,10 @@ LIBXS_API_INLINE int internal_libxs_predict_maxsup(const libxs_predict_t* model)
  * Zero means the model cannot be scored, and must be reachable for that to be a
  * usable signal: the support build allocates per output and can fail for some
  * outputs while leaving the array itself non-NULL, and the size formula is
- * positive even when every support is empty.  Reporting a plausible size for
+ * positive even when every support is empty. Reporting a plausible size for
  * such a model would let a caller allocate, score, and receive PNONE for every
  * output - a build failure indistinguishable from a model that simply has no
- * discrete outputs.  So every output is required to carry a usable support, and
+ * discrete outputs. So every output is required to carry a usable support, and
  * the weights must exist.
  */
 LIBXS_API_INLINE size_t internal_libxs_predict_ctx_bytes(
@@ -4801,7 +4905,7 @@ LIBXS_API_INLINE size_t internal_libxs_predict_ctx_bytes(
 
 
 /**
- * Validate a caller-supplied context against the model in front of it.  A
+ * Validate a caller-supplied context against the model in front of it. A
  * context that was not produced by libxs_predict_prob_create for this model and
  * build is rejected rather than adapted: its buffers may be smaller than this
  * model needs, so re-initializing in place would overrun them.
@@ -4954,7 +5058,7 @@ LIBXS_API void libxs_predict_prob(libxs_lock_t* lock,
     double dflt[LIBXS_PREDICT_NESCAPE];
     /**
      * Adaptive scoring takes every buffer from the context, so the path is
-     * allocation-free.  Frozen scoring has no context and allocates once from
+     * allocation-free. Frozen scoring has no context and allocates once from
      * the library pool rather than repeatedly from the system allocator.
      */
     int scratch_pool = 0;
@@ -5031,7 +5135,7 @@ LIBXS_API void libxs_predict_prob(libxs_lock_t* lock,
           /**
            * Frozen point query: no weight moves, so the local evidence the dense
            * path leaves in scratch is not needed afterwards and the mass can be
-           * had in closed form.  Same number, O(KNN log ns) instead of
+           * had in closed form. Same number, O(KNN log ns) instead of
            * O(NESCAPE * ns) - which is what this entry point already documents.
            * Entropy is a property of the distribution and is not reported here.
            */
@@ -5072,7 +5176,7 @@ LIBXS_API void libxs_predict_prob(libxs_lock_t* lock,
         }
         else if (LIBXS_PREDICT_SRC_INTERP == smode[j] && NULL != src[j]) {
           /**
-           * A continuous target has no mass at a point.  The bandwidth is
+           * A continuous target has no mass at a point. The bandwidth is
            * floored by the stored fit residual so the density cannot claim
            * more precision than the fit actually has.
            */
@@ -5121,10 +5225,10 @@ LIBXS_API void libxs_predict_prob(libxs_lock_t* lock,
 
 /**
  * Report the distribution for one output and, optionally, observe an outcome -
- * in that order, inside one call.  Splitting these across two entry points made
+ * in that order, inside one call. Splitting these across two entry points made
  * the ordering a caller obligation with no failure symptom: observing first
  * yields a distribution shaped by weights that already saw the target, which is
- * better than the truth and looks entirely plausible.  Here the guarantee is
+ * better than the truth and looks entirely plausible. Here the guarantee is
  * structural: the masses are copied out before any weight moves.
  */
 LIBXS_API int libxs_predict_prob_observe(libxs_lock_t* lock,
@@ -5199,9 +5303,9 @@ LIBXS_API int libxs_predict_prob_observe(libxs_lock_t* lock,
       /**
        * Nothing to report but the outcome to learn from: the caller asked for no
        * values, no probs, no novel and no info, so the distribution is never
-       * read and only the bank update needs anything.  That update reads the
+       * read and only the bank update needs anything. That update reads the
        * local evidence at ONE index, so the sparse form computes the same
-       * weights in O(k log n) instead of O(NESCAPE * n).  This is the warm-up
+       * weights in O(k log n) instead of O(NESCAPE * n). This is the warm-up
        * shape - converge the bank over a training split - which at a large
        * support was the dominant cost of getting an order-independent figure.
        */

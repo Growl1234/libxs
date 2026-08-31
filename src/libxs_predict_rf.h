@@ -348,10 +348,8 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build_tasks(
     const int total_trees = ntrees * n;
     const int min_leaf = 5;
     const int max_nodes = LIBXS_MIN(p / min_leaf * 2 + 1, 65536);
-    const int chunk = (total_trees + ntasks - 1) / ntasks;
-    const int begin = tid * chunk;
-    const int end = LIBXS_MIN(begin + chunk, total_trees);
-    int bootstrap_pool = 0;
+    int begin, end, bootstrap_pool = 0;
+    internal_libxs_predict_split(total_trees, tid, ntasks, &begin, &end);
     int* bootstrap = (int*)LIBXS_PREDICT_MALLOC(
       (size_t)p * sizeof(int), bootstrap_pool);
     if (NULL != bootstrap) {
