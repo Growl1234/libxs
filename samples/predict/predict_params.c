@@ -18,6 +18,7 @@
 #if defined(__XGBOOST)
 # include "predict_xgb.h"
 #endif
+#include "predict_args.h"
 
 static const char input_names[] = "M,N,K";
 static const char output_names[] =
@@ -43,42 +44,31 @@ int main(int argc, char* argv[])
   double eval_fraction = 0.8;
   const char *filename, *modelfile, *confidence_prefix;
   int result = EXIT_FAILURE;
-  if (argi < argc && '0' <= argv[argi][0] && '9' >= argv[argi][0]) {
-    eval_fraction = atof(argv[argi]);
-    ++argi;
-  }
-  while (argi < argc && 'a' <= argv[argi][0] && argv[argi][0] <= 'z') {
-    if ('a' == argv[argi][0]) mode = LIBXS_PREDICT_AUTO;
-    else if ('c' == argv[argi][0] && 'a' == argv[argi][1]) {
-      mode = LIBXS_PREDICT_CLASSIFY;
+  /**
+   * Keywords lead and the file names follow, because a file name and a keyword
+   * cannot be told apart by shape.  What can be told apart is whether a token
+   * is a keyword at all, so matching the whole word rather than its first
+   * letter is what keeps `results.csv` from being read as `rf` and shifting
+   * every file name one place along.
+   */
+  while (argi < argc) {
+    const char* arg = argv[argi];
+    if (0 != predict_isnum(arg)) eval_fraction = atof(arg);
+    else if (0 != predict_iskey(arg, "auto")) mode = LIBXS_PREDICT_AUTO;
+    else if (0 != predict_iskey(arg, "cat")) mode = LIBXS_PREDICT_CLASSIFY;
+    else if (0 != predict_iskey(arg, "interp")) {
+      mode = LIBXS_PREDICT_INTERPOLATE;
     }
-    else if ('c' == argv[argi][0] && 'o' == argv[argi][1]
-      && 'n' == argv[argi][2])
+    else if (0 != predict_iskey(arg, "mix")) shuffle_split = 1;
+    else if (0 != predict_iskey(arg, "rf")) use_rf = 1;
+    else if (0 != predict_iskey(arg, "hknn")) use_hknn = 1;
+    else if (0 != predict_iskey(arg, "xgb")) use_xgb = 1;
+    else if (0 != predict_keyval(arg, "compress", 0.9, &quality)
+      || 0 != predict_keyval(arg, "consist", 0.9, &consistency)
+      || 0 != predict_keyval(arg, "quantile", 0.1, &quantile)
+      || 0 != predict_keyval(arg, "smooth", -1.0, &smooth))
     {
-      const char* p = argv[argi];
-      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
-      consistency = ('\0' != *p) ? atof(p) : 0.9;
-    }
-    else if ('c' == argv[argi][0] && 'o' == argv[argi][1]) {
-      const char* p = argv[argi];
-      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
-      quality = ('\0' != *p) ? atof(p) : 0.9;
-    }
-    else if ('i' == argv[argi][0]) mode = LIBXS_PREDICT_INTERPOLATE;
-    else if ('m' == argv[argi][0]) shuffle_split = 1;
-    else if ('r' == argv[argi][0]) use_rf = 1;
-    else if ('h' == argv[argi][0]) use_hknn = 1;
-    else if ('x' == argv[argi][0]) use_xgb = 1;
-    else if ('q' == argv[argi][0]) {
-      const char* p = argv[argi];
-      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
-      quantile = ('\0' != *p) ? atof(p) : 0.1;
-    }
-    else if ('s' == argv[argi][0]) {
-      const char* p = argv[argi];
-      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p
-        && '-' != *p) ++p;
-      smooth = ('\0' != *p) ? atof(p) : -1.0;
+      /* the keyword that matched has already assigned its own value */
     }
     else break;
     ++argi;

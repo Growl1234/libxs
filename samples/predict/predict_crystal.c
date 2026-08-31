@@ -17,6 +17,7 @@
 #if defined(__XGBOOST)
 # include "predict_xgb.h"
 #endif
+#include "predict_args.h"
 
 enum { NFEAT = 37, NGATE = 16 };
 
@@ -55,40 +56,42 @@ static void blank_inputs(double inputs[], int n, double fraction, unsigned int s
 int main(int argc, char* argv[])
 {
   const char* filename = (argc > 1) ? argv[1] : NULL;
-  const double split = (argc > 2) ? atof(argv[2]) : 0.8;
-  const int order = (argc > 3) ? atoi(argv[3]) : 2;
-  const int nclusters = (argc > 4) ? atoi(argv[4]) : 0;
+  double split = 0.8, quality = 0, consistency = 0, gaps = 0;
+  int order = 2, nclusters = 0;
   int decompose = LIBXS_PREDICT_AUTO_DECOMPOSE;
-  double quality = 0, consistency = 0, gaps = 0;
-  int argi = 5, use_xgb = 0, result = EXIT_FAILURE;
-  while (argi < argc) {
-    if ('c' == argv[argi][0] && 'o' == argv[argi][1]
-      && 'n' == argv[argi][2])
+  int argi, npos = 0, use_xgb = 0, bad = 0, result = EXIT_FAILURE;
+  for (argi = 2; argi < argc; ++argi) {
+    const char* arg = argv[argi];
+    if (0 != predict_isnum(arg)) {
+      if (0 == npos) split = atof(arg);
+      else if (1 == npos) order = atoi(arg);
+      else if (2 == npos) nclusters = atoi(arg);
+      else bad = argi;
+      ++npos;
+    }
+    else if (0 != predict_keyval(arg, "consist", 0.9, &consistency)
+      || 0 != predict_keyval(arg, "compress", 0.9, &quality)
+      || 0 != predict_keyval(arg, "gaps", 0.1, &gaps))
     {
-      const char* p = argv[argi];
-      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
-      consistency = ('\0' != *p) ? atof(p) : 0.9;
+      /* the keyword that matched has already assigned its own value */
     }
-    else if ('c' == argv[argi][0]) {
-      const char* p = argv[argi];
-      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
-      quality = ('\0' != *p) ? atof(p) : 0.9;
+    else if (0 != predict_iskey(arg, "fisher")) {
+      decompose = LIBXS_PREDICT_FISHER;
     }
-    else if ('f' == argv[argi][0]) decompose = LIBXS_PREDICT_FISHER;
-    else if ('h' == argv[argi][0]) decompose = LIBXS_PREDICT_HKNN;
-    else if ('s' == argv[argi][0]) decompose = LIBXS_PREDICT_SETDIFF;
-    else if ('r' == argv[argi][0]) decompose = LIBXS_PREDICT_RF;
-    else if ('n' == argv[argi][0]) decompose = LIBXS_PREDICT_RAW;
-    else if ('p' == argv[argi][0]) decompose = LIBXS_PREDICT_PCA;
-    else if ('g' == argv[argi][0]) {
-      const char* p = argv[argi];
-      while ('\0' != *p && (*p < '0' || *p > '9') && '.' != *p) ++p;
-      gaps = ('\0' != *p) ? atof(p) : 0.1;
+    else if (0 != predict_iskey(arg, "hknn")) decompose = LIBXS_PREDICT_HKNN;
+    else if (0 != predict_iskey(arg, "setdiff")) {
+      decompose = LIBXS_PREDICT_SETDIFF;
     }
-    else if ('x' == argv[argi][0]) use_xgb = 1;
-    ++argi;
+    else if (0 != predict_iskey(arg, "rf")) decompose = LIBXS_PREDICT_RF;
+    else if (0 != predict_iskey(arg, "none")) decompose = LIBXS_PREDICT_RAW;
+    else if (0 != predict_iskey(arg, "pca")) decompose = LIBXS_PREDICT_PCA;
+    else if (0 != predict_iskey(arg, "xgb")) use_xgb = 1;
+    else bad = argi;
   }
-  if (NULL == filename) {
+  if (0 != bad) {
+    fprintf(stderr, "Unrecognized argument \"%s\".\n", argv[bad]);
+  }
+  if (NULL == filename || 0 != bad) {
     fprintf(stdout,
       "Usage: %s <crystal_csv> [train_fraction] [order] [nclusters]"
       " [compress[Q]] [fisher|hknn|setdiff|rf|pca|none] [gaps[F]] [xgb]\n"

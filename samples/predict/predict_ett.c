@@ -18,6 +18,7 @@
 #if defined(__XGBOOST)
 # include "predict_xgb.h"
 #endif
+#include "predict_args.h"
 
 enum { WINDOW_DEF = 96, HORIZON = 96, MAXCOLS = 7, WMAX = 512 };
 static const char* col_names[MAXCOLS] = {
@@ -41,7 +42,7 @@ static const char* mode_name(int decompose)
 int main(int argc, char* argv[])
 {
   const char* filename = (argc > 1) ? argv[1] : NULL;
-  int nseries = (argc > 2) ? atoi(argv[2]) : 1;
+  int nseries = 1;
   const double split = 0.661;
   const char* wenv = getenv("WINDOW");
   const int window_req = (NULL != wenv) ? atoi(wenv) : LIBXS_PREDICT_AUTO_WINDOW;
@@ -49,23 +50,35 @@ int main(int argc, char* argv[])
   int decompose = LIBXS_PREDICT_AUTO_DECOMPOSE;
   int attend = 0;
   double quality = 0.9;
-  int argi, use_xgb = 0, result = EXIT_FAILURE;
+  int argi, npos = 0, use_xgb = 0, bad = 0, result = EXIT_FAILURE;
   double* data = NULL;
   int total = 0, ncols = 0;
-  for (argi = 3; argi < argc; ++argi) {
-    if ('a' == argv[argi][0]) attend = 1;
-    else if ('h' == argv[argi][0]) decompose = LIBXS_PREDICT_HKNN;
-    else if ('r' == argv[argi][0]) decompose = LIBXS_PREDICT_RF;
-    else if ('s' == argv[argi][0]) decompose = LIBXS_PREDICT_SPREAD;
-    else if ('p' == argv[argi][0]) decompose = LIBXS_PREDICT_PCA;
-    else if ('n' == argv[argi][0]) quality = 0;
-    else if ('x' == argv[argi][0]) use_xgb = 1;
+  for (argi = 2; argi < argc; ++argi) {
+    const char* arg = argv[argi];
+    if (0 != predict_isnum(arg)) {
+      if (0 == npos) nseries = atoi(arg);
+      else bad = argi;
+      ++npos;
+    }
+    else if (0 != predict_iskey(arg, "attend")) attend = 1;
+    else if (0 != predict_iskey(arg, "hknn")) decompose = LIBXS_PREDICT_HKNN;
+    else if (0 != predict_iskey(arg, "rf")) decompose = LIBXS_PREDICT_RF;
+    else if (0 != predict_iskey(arg, "spread")) {
+      decompose = LIBXS_PREDICT_SPREAD;
+    }
+    else if (0 != predict_iskey(arg, "pca")) decompose = LIBXS_PREDICT_PCA;
+    else if (0 != predict_iskey(arg, "nocompress")) quality = 0;
+    else if (0 != predict_iskey(arg, "xgb")) use_xgb = 1;
+    else bad = argi;
+  }
+  if (0 != bad) {
+    fprintf(stderr, "Unrecognized argument \"%s\".\n", argv[bad]);
   }
   if (nseries < 1) nseries = 1;
   if (nseries > MAXCOLS) nseries = MAXCOLS;
   /* the comparison reads the built windows back, which compression prunes */
   if (0 != use_xgb) quality = 0;
-  if (NULL == filename) {
+  if (NULL == filename || 0 != bad) {
     fprintf(stdout,
       "Usage: %s <ett_csv> [nseries=1..7]"
       " [attend|spread|pca|hknn|rf|nocompress|xgb]\n"

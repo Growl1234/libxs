@@ -48,6 +48,14 @@ library only):
 Requesting `xgb` from a binary built without it is an error, not a silent
 LIBXS-only run.
 
+Keywords may be written anywhere on the command line and numbers fill the
+positional slots in order, so `predict_crystal.x data.csv xgb` and
+`predict_crystal.x data.csv 0.8 2 0 xgb` are the same run.  A token that is
+neither a number nor a known keyword is refused: it used to land in the next
+numeric slot as `atof("xgb") == 0`, which trained on two rows and reported an
+accuracy for them.  `predict_params` is the exception in that its keywords must
+still precede the file names, which cannot be told from keywords by shape.
+
 Per-output, XGBoost is posed the same task LIBXS chose for itself: a
 classification over the attested value set where LIBXS classifies, a regression
 where it interpolates.  An output with a single attested value is reported as
