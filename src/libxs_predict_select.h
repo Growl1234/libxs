@@ -77,6 +77,19 @@ LIBXS_API_INLINE int internal_libxs_predict_decompose_ok(
   if (LIBXS_PREDICT_SPREAD == mode && 2 > model->nseries) {
     result = 0;
   }
+  /**
+   * Both weighting modes derive their scores from a single output's classes and
+   * assign no weights at all unless there is exactly one output, which leaves
+   * the model bit-identical to RAW. Building them anyway is how four of seven
+   * candidates came to produce the same score to four decimals on every tuning
+   * corpus: the trial was not measuring a near-tie, it was measuring one model
+   * four times.
+   */
+  else if ((LIBXS_PREDICT_FISHER == mode || LIBXS_PREDICT_SETDIFF == mode)
+    && 1 != model->noutputs)
+  {
+    result = 0;
+  }
   else if (0 != model->has_missing
     && 0 == internal_libxs_predict_gaps_ok(mode))
   {
