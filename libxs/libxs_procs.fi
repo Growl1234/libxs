@@ -86,6 +86,25 @@
           END IF
         END FUNCTION
 
+        !> Check SIMD alignment, optionally for the next access
+        !> (inc, Bytes) and yielding the actual alignment.
+        FUNCTION libxs_aligned(ptr, inc, alignment)
+          TYPE(C_PTR), INTENT(IN) :: ptr
+          INTEGER(C_SIZE_T), INTENT(IN), OPTIONAL,                      &
+     &      TARGET :: inc
+          INTEGER(C_INT), INTENT(OUT), OPTIONAL,                        &
+     &      TARGET :: alignment
+          INTEGER(C_INT) :: libxs_aligned
+          TYPE(C_PTR) :: pinc, palign
+          IF (PRESENT(inc)) THEN; pinc = C_LOC(inc)
+          ELSE; pinc = C_NULL_PTR; END IF
+          IF (PRESENT(alignment)) THEN
+            palign = C_LOC(alignment)
+          ELSE; palign = C_NULL_PTR; END IF
+          libxs_aligned =                                               &
+     &      internal_aligned(ptr, pinc, palign)
+        END FUNCTION
+
         ! matdiff wrapper with OPTIONAL arguments
         SUBROUTINE libxs_matdiff(info, datatype, m, n,                  &
      &  ref, tst, ldref, ldtst)
@@ -351,6 +370,29 @@
      &      m, n, ldi, lo, ss, tid, ntasks)
         END SUBROUTINE
 
+        !> In-place transpose: batch variant. A NULL stride
+        !> transposes batchsize consecutive matrices.
+        SUBROUTINE libxs_itrans_batch(inout, typesize,                  &
+     &  m, n, ldi, ldo, index_base, index_stride,                       &
+     &  stride, batchsize, tid, ntasks)
+          TYPE(C_PTR), INTENT(IN) :: inout
+          INTEGER(C_INT), INTENT(IN) :: typesize
+          INTEGER(C_INT), INTENT(IN) ::                                 &
+     &      m, n, ldi, index_base, index_stride,                        &
+     &      batchsize, tid, ntasks
+          INTEGER(C_INT), INTENT(IN), OPTIONAL :: ldo
+          TYPE(C_PTR), INTENT(IN), OPTIONAL :: stride
+          INTEGER(C_INT) :: lo
+          TYPE(C_PTR) :: ps
+          IF (PRESENT(ldo)) THEN; lo = ldo
+          ELSE; lo = n; END IF
+          IF (PRESENT(stride)) THEN; ps = stride
+          ELSE; ps = C_NULL_PTR; END IF
+          CALL internal_itrans_batch(inout, typesize,                   &
+     &      m, n, ldi, lo, index_base, index_stride,                    &
+     &      ps, batchsize, tid, ntasks)
+        END SUBROUTINE
+
         ! hash variants by element type
         PURE FUNCTION libxs_hash_xchar(key, seed)
           CHARACTER(C_CHAR), INTENT(IN), CONTIGUOUS,                    &
@@ -580,6 +622,38 @@
           libxs_registry_extract = internal_registry_extract_c(         &
      &      registry, key, key_size,                                    &
      &      value_out, value_size, libxs_registry_lock(registry))
+        END FUNCTION
+
+        !> Stored value size (Bytes); zero if not found.
+        FUNCTION libxs_registry_value_size(registry,                    &
+     &  key, key_size)
+          TYPE(C_PTR), INTENT(IN) :: registry
+          TYPE(C_PTR), INTENT(IN) :: key
+          INTEGER(C_SIZE_T), INTENT(IN) :: key_size
+          INTEGER(C_SIZE_T) ::                                          &
+     &      libxs_registry_value_size
+          libxs_registry_value_size =                                   &
+     &      internal_registry_value_size_c(registry,                    &
+     &      key, key_size, libxs_registry_lock(registry))
+        END FUNCTION
+
+        !> Deserialize a registry. Without fixup the values are
+        !> read lazily, i.e., buffer has to outlive the registry.
+        FUNCTION libxs_registry_load(buffer, size,                      &
+     &  fixup, udata)
+          TYPE(C_PTR), INTENT(IN) :: buffer
+          INTEGER(C_SIZE_T), INTENT(IN) :: size
+          TYPE(C_FUNPTR), INTENT(IN), OPTIONAL :: fixup
+          TYPE(C_PTR), INTENT(IN), OPTIONAL :: udata
+          TYPE(C_PTR) :: libxs_registry_load
+          TYPE(C_FUNPTR) :: pfix
+          TYPE(C_PTR) :: pdata
+          IF (PRESENT(fixup)) THEN; pfix = fixup
+          ELSE; pfix = C_NULL_FUNPTR; END IF
+          IF (PRESENT(udata)) THEN; pdata = udata
+          ELSE; pdata = C_NULL_PTR; END IF
+          libxs_registry_load =                                         &
+     &      internal_registry_load(buffer, size, pfix, pdata)
         END FUNCTION
 
         !> Call the dispatched GEMM kernel.

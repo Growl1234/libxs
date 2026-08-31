@@ -25,9 +25,16 @@
         PUBLIC :: LIBXS_AARCH64, LIBXS_AARCH64_SVE128
         PUBLIC :: LIBXS_AARCH64_SVE256, LIBXS_AARCH64_SVE512
         PUBLIC :: LIBXS_AARCH64_ALLFEAT
+        PUBLIC :: LIBXS_RV64_MVL128, LIBXS_RV64_MVL256
+        PUBLIC :: LIBXS_RV64_MVL128_LMUL
+        PUBLIC :: LIBXS_RV64_MVL256_LMUL
+        PUBLIC :: LIBXS_RV64_ALLFEAT
 
         PUBLIC :: libxs_matdiff_t
         PUBLIC :: libxs_fprint_t, libxs_timer_info_t
+        PUBLIC :: libxs_malloc_info_t
+        PUBLIC :: libxs_malloc_pool_hist_t
+        PUBLIC :: libxs_malloc_pool_info_t
         PUBLIC :: libxs_registry_info_t
         PUBLIC :: libxs_init, libxs_finalize
         PUBLIC :: libxs_timer_tick, libxs_timer_duration
@@ -36,6 +43,8 @@
         PUBLIC :: libxs_malloc, libxs_free
         PUBLIC :: libxs_malloc_pool, libxs_malloc_xpool
         PUBLIC :: libxs_malloc_arg, libxs_free_pool
+        PUBLIC :: libxs_default_pool
+        PUBLIC :: libxs_malloc_info, libxs_malloc_pool_info
         PUBLIC :: libxs_hash, libxs_hash_string
         PUBLIC :: libxs_hash_iso3309, libxs_adler32
         PUBLIC :: libxs_diff
@@ -61,11 +70,16 @@
         PUBLIC :: libxs_registry_begin_length
         PUBLIC :: libxs_registry_next_length
         PUBLIC :: libxs_registry_info
+        PUBLIC :: libxs_registry_size
+        PUBLIC :: libxs_registry_value_size
+        PUBLIC :: libxs_registry_save, libxs_registry_load
         PUBLIC :: libxs_memcmp
+        PUBLIC :: libxs_aligned
         PUBLIC :: libxs_matcopy, libxs_matcopy_task
         PUBLIC :: libxs_otrans, libxs_otrans_task
 
         PUBLIC :: libxs_itrans, libxs_itrans_task
+        PUBLIC :: libxs_itrans_batch
         PUBLIC :: libxs_typesize
         PUBLIC :: libxs_cpuid_t
         PUBLIC :: libxs_cpuid, libxs_cpuid_name
@@ -82,6 +96,8 @@
         PUBLIC :: libxs_gemm_batch, libxs_gemm_batch_task
         PUBLIC :: libxs_gemm_index, libxs_gemm_index_task
         PUBLIC :: libxs_syr2k, libxs_syrk
+        PUBLIC :: libxs_syr2k_task, libxs_syrk_task
+        PUBLIC :: libxs_gemm_release_registry
 
         PUBLIC :: libxs_predict_info_t, libxs_predict_query_t
         PUBLIC :: LIBXS_PREDICT_AUTO, LIBXS_PREDICT_INTERPOLATE
@@ -91,6 +107,9 @@
         PUBLIC :: LIBXS_PREDICT_RAW, LIBXS_PREDICT_SPREAD
         PUBLIC :: LIBXS_PREDICT_PCA, LIBXS_PREDICT_SETDIFF
         PUBLIC :: LIBXS_PREDICT_FISHER, LIBXS_PREDICT_RF
+        PUBLIC :: LIBXS_PREDICT_HKNN
+        PUBLIC :: LIBXS_PREDICT_AUTO_DECOMPOSE
+        PUBLIC :: LIBXS_PREDICT_AUTO_WINDOW
         PUBLIC :: libxs_predict_create, libxs_predict_destroy
         PUBLIC :: libxs_predict_lock
         PUBLIC :: libxs_predict_set_mode
@@ -98,13 +117,22 @@
         PUBLIC :: libxs_predict_set_transform
         PUBLIC :: libxs_predict_set_refine
         PUBLIC :: libxs_predict_set_smooth
+        PUBLIC :: libxs_predict_set_consistency
+        PUBLIC :: libxs_predict_set_quantile
+        PUBLIC :: libxs_predict_set_central
+        PUBLIC :: libxs_predict_set_neighbors
+        PUBLIC :: libxs_predict_set_floor
+        PUBLIC :: libxs_predict_set_missing
+        PUBLIC :: libxs_predict_set_forest
         PUBLIC :: libxs_predict_set_series
         PUBLIC :: libxs_predict_set_series_deriv
         PUBLIC :: libxs_predict_set_series_aux
+        PUBLIC :: libxs_predict_set_series_bank
         PUBLIC :: libxs_predict_set_target
         PUBLIC :: libxs_predict_set_decompose
         PUBLIC :: libxs_predict_set_diff
         PUBLIC :: libxs_predict_push
+        PUBLIC :: libxs_predict_push_weighted
         PUBLIC :: libxs_predict_build, libxs_predict_build_task
         PUBLIC :: libxs_predict_eval, libxs_predict_inverse
         PUBLIC :: libxs_predict_query
@@ -166,7 +194,12 @@
      &    LIBXS_AARCH64_SVE128        = 2201,                           &
      &    LIBXS_AARCH64_SVE256        = 2301,                           &
      &    LIBXS_AARCH64_SVE512        = 2401,                           &
-     &    LIBXS_AARCH64_ALLFEAT       = 2999
+     &    LIBXS_AARCH64_ALLFEAT       = 2999,                           &
+     &    LIBXS_RV64_MVL128           = 3001,                           &
+     &    LIBXS_RV64_MVL256           = 3002,                           &
+     &    LIBXS_RV64_MVL128_LMUL      = 3003,                           &
+     &    LIBXS_RV64_MVL256_LMUL      = 3004,                           &
+     &    LIBXS_RV64_ALLFEAT          = 3999
 
         !> Prediction mode flags (ORable).
         INTEGER(C_INT), PARAMETER ::                                    &
@@ -183,12 +216,18 @@
 
         !> Prediction input decomposition mode.
         INTEGER(C_INT), PARAMETER ::                                    &
+     &    LIBXS_PREDICT_AUTO_DECOMPOSE = -1,                            &
      &    LIBXS_PREDICT_RAW     = 0,                                    &
      &    LIBXS_PREDICT_SPREAD  = 1,                                    &
      &    LIBXS_PREDICT_PCA     = 2,                                    &
      &    LIBXS_PREDICT_SETDIFF = 3,                                    &
      &    LIBXS_PREDICT_FISHER  = 4,                                    &
-     &    LIBXS_PREDICT_RF      = 5
+     &    LIBXS_PREDICT_RF      = 5,                                    &
+     &    LIBXS_PREDICT_HKNN    = 6
+
+        !> Sentinel: select the window at build (set_series).
+        INTEGER(C_INT), PARAMETER ::                                    &
+     &    LIBXS_PREDICT_AUTO_WINDOW = 0
 
         !> Matrix difference norms (LAPACK conventions).
         TYPE, BIND(C) :: libxs_matdiff_t
@@ -203,6 +242,24 @@
           REAL(C_DOUBLE) :: v_ref, v_tst
           REAL(C_DOUBLE) :: w
           INTEGER(C_INT) :: m, n, i, r
+        END TYPE
+
+        !> Information about an allocated pointer.
+        TYPE, BIND(C) :: libxs_malloc_info_t
+          INTEGER(C_SIZE_T) :: size
+        END TYPE
+
+        !> Per-bucket allocation statistics.
+        TYPE, BIND(C) :: libxs_malloc_pool_hist_t
+          INTEGER(C_SIZE_T) :: count, nreuses, ngrows
+          INTEGER(C_SIZE_T) :: nevicts_age, nevicts_limit
+        END TYPE
+
+        !> Buckets are <1M, 1-4M, 4-16M, 16-64M, 64-256M, >=256M.
+        TYPE, BIND(C) :: libxs_malloc_pool_info_t
+          INTEGER(C_SIZE_T) :: used, size, peak
+          INTEGER(C_SIZE_T) :: nactive, nmallocs
+          TYPE(libxs_malloc_pool_hist_t) :: hist(6)
         END TYPE
 
         !> Registry capacity and usage.
@@ -288,6 +345,8 @@
           TYPE(C_PTR) :: error = C_NULL_PTR
           TYPE(C_PTR) :: confidence = C_NULL_PTR
           TYPE(C_PTR) :: variance = C_NULL_PTR
+          TYPE(C_PTR) :: lower = C_NULL_PTR
+          TYPE(C_PTR) :: upper = C_NULL_PTR
           TYPE(C_PTR) :: interpolated = C_NULL_PTR
           INTEGER(C_INT) :: noutputs = 0
           INTEGER(C_INT) :: cluster = -1
@@ -301,6 +360,12 @@
           INTEGER(C_INT) :: nclusters = 0
           INTEGER(C_INT) :: nentries = 0
           INTEGER(C_INT) :: iterations = 0
+          INTEGER(C_INT) :: diff_order = 0
+          INTEGER(C_INT) :: window = 0
+          INTEGER(C_INT) :: nbank = 0
+          INTEGER(C_INT) :: nscan = 0
+          REAL(C_DOUBLE) :: escan = 0
+          INTEGER(C_INT) :: decompose = 0
         END TYPE
 
         INTERFACE libxs_gemm_call
@@ -424,6 +489,33 @@
             TYPE(C_PTR), INTENT(IN), VALUE :: extra
           END SUBROUTINE
 
+          !> Access the default pool (created at libxs_init).
+          FUNCTION libxs_default_pool() BIND(C)
+            IMPORT :: C_PTR
+            TYPE(C_PTR) :: libxs_default_pool
+          END FUNCTION
+
+          !> Query the size of an allocated pointer.
+          FUNCTION libxs_malloc_info(pointer, info)                     &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_INT, libxs_malloc_info_t
+            TYPE(C_PTR), INTENT(IN), VALUE :: pointer
+            TYPE(libxs_malloc_info_t), INTENT(OUT) ::                   &
+     &        info
+            INTEGER(C_INT) :: libxs_malloc_info
+          END FUNCTION
+
+          !> Query usage of a pool (NULL selects the default).
+          FUNCTION libxs_malloc_pool_info(pool, info)                   &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_INT,                                     &
+     &        libxs_malloc_pool_info_t
+            TYPE(C_PTR), INTENT(IN), VALUE :: pool
+            TYPE(libxs_malloc_pool_info_t), INTENT(OUT) ::              &
+     &        info
+            INTEGER(C_INT) :: libxs_malloc_pool_info
+          END FUNCTION
+
           !> 64-bit hash for a null-terminated string.
           PURE FUNCTION libxs_hash_string(string) BIND(C)
             IMPORT :: C_CHAR, C_LONG_LONG
@@ -470,6 +562,15 @@
             INTEGER(C_INT) :: diff
           END FUNCTION
 
+          ! internal (use libxs_aligned)
+          FUNCTION internal_aligned(ptr, inc, alignment)                &
+     &    BIND(C, NAME="libxs_aligned")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE ::                           &
+     &        ptr, inc, alignment
+            INTEGER(C_INT) :: internal_aligned
+          END FUNCTION
+
           !> Reduce matdiff (max); initialize output with _clear.
           PURE SUBROUTINE libxs_matdiff_reduce(output, input)           &
      &    BIND(C)
@@ -508,6 +609,13 @@
             IMPORT :: C_PTR
             TYPE(C_PTR), INTENT(IN), VALUE :: registry
             TYPE(C_PTR) :: libxs_registry_lock
+          END FUNCTION
+          !> Number of entries (without inspecting entries).
+          FUNCTION libxs_registry_size(registry)                        &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_SIZE_T
+            TYPE(C_PTR), INTENT(IN), VALUE :: registry
+            INTEGER(C_SIZE_T) :: libxs_registry_size
           END FUNCTION
           ! internal C bindings for registry (lock argument)
           FUNCTION internal_registry_set_c(registry,                    &
@@ -620,6 +728,18 @@
             TYPE(C_PTR), INTENT(IN), VALUE :: lock
             INTEGER(C_INT) :: internal_registry_extract_c
           END FUNCTION
+
+          FUNCTION internal_registry_value_size_c(registry,             &
+     &    key, key_size, lock)                                          &
+     &    BIND(C, NAME="libxs_registry_value_size")
+            IMPORT :: C_PTR, C_SIZE_T
+            TYPE(C_PTR), INTENT(IN), VALUE ::                           &
+     &        registry, key, lock
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE ::                     &
+     &        key_size
+            INTEGER(C_SIZE_T) ::                                        &
+     &        internal_registry_value_size_c
+          END FUNCTION
           !> Enumerate registry; initialize cursor to 0 before the
           !> first call. Returns C_NULL_PTR when the registry is empty.
           !> Only the first key_size Bytes of key are meaningful; use
@@ -669,6 +789,31 @@
             TYPE(C_PTR), INTENT(IN), VALUE :: registry
             TYPE(libxs_registry_info_t), INTENT(OUT) :: info
             INTEGER(C_INT) :: libxs_registry_info
+          END FUNCTION
+
+          !> Serialize the registry; buffer may be NULL to query
+          !> the required size. Returns EXIT_SUCCESS on success.
+          FUNCTION libxs_registry_save(registry,                        &
+     &    buffer, size) BIND(C)
+            IMPORT :: C_PTR, C_SIZE_T, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE ::                           &
+     &        registry, buffer
+            INTEGER(C_SIZE_T), INTENT(INOUT) ::                         &
+     &        size
+            INTEGER(C_INT) :: libxs_registry_save
+          END FUNCTION
+
+          ! internal (use libxs_registry_load)
+          FUNCTION internal_registry_load(buffer, size,                 &
+     &    fixup, udata)                                                 &
+     &    BIND(C, NAME="libxs_registry_load")
+            IMPORT :: C_PTR, C_FUNPTR, C_SIZE_T
+            TYPE(C_PTR), INTENT(IN), VALUE :: buffer
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE ::                     &
+     &        size
+            TYPE(C_FUNPTR), INTENT(IN), VALUE :: fixup
+            TYPE(C_PTR), INTENT(IN), VALUE :: udata
+            TYPE(C_PTR) :: internal_registry_load
           END FUNCTION
 
           ! internal (use libxs_matcopy)
@@ -824,6 +969,51 @@
             TYPE(C_PTR), VALUE :: c
           END SUBROUTINE
 
+          !> Symmetric rank-2k update (per-thread).
+          SUBROUTINE libxs_syr2k_task(config, uplo,                     &
+     &    alpha, beta, a, b, c, tid, ntasks)                            &
+     &    BIND(C)
+            IMPORT :: libxs_gemm_config_t,                              &
+     &        C_PTR, C_DOUBLE, C_CHAR, C_INT
+            TYPE(libxs_gemm_config_t), INTENT(IN) ::                    &
+     &        config
+            CHARACTER(C_CHAR), INTENT(IN), VALUE ::                     &
+     &        uplo
+            REAL(C_DOUBLE), INTENT(IN), VALUE ::                        &
+     &        alpha, beta
+            TYPE(C_PTR), INTENT(IN), VALUE :: a, b
+            TYPE(C_PTR), VALUE :: c
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &        tid, ntasks
+          END SUBROUTINE
+
+          !> Symmetric rank-k update (per-thread).
+          SUBROUTINE libxs_syrk_task(config, uplo,                      &
+     &    alpha, beta, a, c, tid, ntasks)                               &
+     &    BIND(C)
+            IMPORT :: libxs_gemm_config_t,                              &
+     &        C_PTR, C_DOUBLE, C_CHAR, C_INT
+            TYPE(libxs_gemm_config_t), INTENT(IN) ::                    &
+     &        config
+            CHARACTER(C_CHAR), INTENT(IN), VALUE ::                     &
+     &        uplo
+            REAL(C_DOUBLE), INTENT(IN), VALUE ::                        &
+     &        alpha, beta
+            TYPE(C_PTR), INTENT(IN), VALUE :: a
+            TYPE(C_PTR), VALUE :: c
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &        tid, ntasks
+          END SUBROUTINE
+
+          !> Release all GEMM configs cached in a registry,
+          !> then destroy the registry itself.
+          SUBROUTINE libxs_gemm_release_registry(registry)              &
+     &    BIND(C)
+            IMPORT :: C_PTR
+            TYPE(C_PTR), INTENT(IN), VALUE ::                           &
+     &        registry
+          END SUBROUTINE
+
           !> Combine two matdiffs into a meta-diff.
           FUNCTION libxs_matdiff_combine(output, input)                 &
      &    BIND(C)
@@ -920,6 +1110,21 @@
      &      m, n, ldi, ldo, tid, ntasks
           END SUBROUTINE
 
+          ! internal (use libxs_itrans_batch)
+          SUBROUTINE internal_itrans_batch(inout,                       &
+     &    typesize, m, n, ldi, ldo, index_base,                         &
+     &    index_stride, stride, batchsize, tid, ntasks)                 &
+     &    BIND(C, NAME="libxs_itrans_batch")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE ::                           &
+     &        inout, stride
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &        typesize
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &        m, n, ldi, ldo, index_base, index_stride,                 &
+     &        batchsize, tid, ntasks
+          END SUBROUTINE
+
           FUNCTION internal_syr2k_dispatch_cpy(config, datatype,        &
      &    n, k, lda, ldb, ldc, backend, registry)                       &
      &    BIND(C, NAME="libxs_syr2k_dispatch_cpy_rt")
@@ -995,6 +1200,58 @@
             REAL(C_DOUBLE), INTENT(IN), VALUE :: amount
           END SUBROUTINE
 
+          SUBROUTINE libxs_predict_set_consistency(model,               &
+     &    amount) BIND(C)
+            IMPORT :: C_PTR, C_DOUBLE
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            REAL(C_DOUBLE), INTENT(IN), VALUE ::                        &
+     &        amount
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_quantile(model,                  &
+     &    quantile) BIND(C)
+            IMPORT :: C_PTR, C_DOUBLE
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            REAL(C_DOUBLE), INTENT(IN), VALUE ::                        &
+     &        quantile
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_central(model, mode)             &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE :: mode
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_neighbors(model, k)              &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE :: k
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_floor(model, floor)              &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_DOUBLE
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            REAL(C_DOUBLE), INTENT(IN), VALUE :: floor
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_missing(model, enable)           &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE :: enable
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_forest(model, ntrees,            &
+     &    max_depth) BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE ::                        &
+     &        ntrees, max_depth
+          END SUBROUTINE
+
           SUBROUTINE libxs_predict_set_series(model, nseries,           &
      &    window) BIND(C)
             IMPORT :: C_PTR, C_INT
@@ -1014,6 +1271,13 @@
             IMPORT :: C_PTR, C_INT
             TYPE(C_PTR), INTENT(IN), VALUE :: model
             INTEGER(C_INT), INTENT(IN), VALUE :: naux
+          END SUBROUTINE
+
+          SUBROUTINE libxs_predict_set_series_bank(model,               &
+     &    nbank) BIND(C)
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            INTEGER(C_INT), INTENT(IN), VALUE :: nbank
           END SUBROUTINE
 
           SUBROUTINE libxs_predict_set_target(model, target)            &
@@ -1045,6 +1309,19 @@
             REAL(C_DOUBLE), INTENT(IN) :: inputs(*)
             REAL(C_DOUBLE), INTENT(IN) :: outputs(*)
             INTEGER(C_INT) :: libxs_predict_push
+          END FUNCTION
+
+          FUNCTION libxs_predict_push_weighted(lock, model,             &
+     &    inputs, outputs, weight)                                      &
+     &    BIND(C)
+            IMPORT :: C_PTR, C_INT, C_DOUBLE
+            TYPE(C_PTR), INTENT(IN), VALUE :: lock
+            TYPE(C_PTR), INTENT(IN), VALUE :: model
+            REAL(C_DOUBLE), INTENT(IN) :: inputs(*)
+            REAL(C_DOUBLE), INTENT(IN) :: outputs(*)
+            REAL(C_DOUBLE), INTENT(IN), VALUE :: weight
+            INTEGER(C_INT) ::                                           &
+     &        libxs_predict_push_weighted
           END FUNCTION
 
           FUNCTION libxs_predict_build(model, nclusters, order,         &

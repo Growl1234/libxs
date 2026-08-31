@@ -143,7 +143,6 @@
      &      registry=registry)
         END FUNCTION
 
-
         !> Dispatch a GEMM kernel with auto-detected backends.
         FUNCTION libxs_gemm_dispatch(config,                            &
      &  datatype, transa, transb,                                       &
@@ -190,7 +189,6 @@
      &      registry=registry)
         END FUNCTION
 
-
         !> Dispatch a SYR2K config with auto-detected backends.
         FUNCTION libxs_syr2k_dispatch(datatype,                         &
      &  n, k, lda, ldb, ldc, registry)
@@ -232,7 +230,6 @@
      &      registry=registry)
         END FUNCTION
 
-
         !> Dispatch a SYRK config with auto-detected backends.
         FUNCTION libxs_syrk_dispatch(datatype,                          &
      &  n, k, lda, ldc, registry)
@@ -243,7 +240,6 @@
           libxs_syrk_dispatch = libxs_syr2k_dispatch(datatype,          &
      &      n, k, lda, lda, ldc, registry)
         END FUNCTION
-
 
         !> Dispatch a SYR2K config with auto-detected backends into a
         !> caller-owned config.
@@ -288,7 +284,6 @@
      &      registry=registry)
         END FUNCTION
 
-
         !> Dispatch a SYRK config with auto-detected backends into a
         !> caller-owned config.
         FUNCTION libxs_syrk_dispatch_cpy(config, datatype,              &
@@ -301,10 +296,51 @@
           libxs_syrk_dispatch_cpy = libxs_syr2k_dispatch_cpy(config,    &
      &      datatype, n, k, lda, lda, ldc, registry)
         END FUNCTION
-
 #else
 ! Fallback: BLAS-only (no LIBXS library required)
-        INCLUDE 'libxs_jit_spec.fi'
+        USE, INTRINSIC :: ISO_C_BINDING, ONLY:                          &
+     &    C_DOUBLE, C_FLOAT, C_INT,                                     &
+     &    C_CHAR, C_NULL_CHAR, C_PTR, C_NULL_PTR,                       &
+     &    C_FUNPTR, C_NULL_FUNPTR,                                      &
+     &    C_F_POINTER, C_ASSOCIATED, C_LOC
+        IMPLICIT NONE
+        PRIVATE
+
+        INTEGER(C_INT), PARAMETER, PUBLIC ::                            &
+     &    LIBXS_DATATYPE_F64 = IOR(0, ISHFT(8, 4)),                     &
+     &    LIBXS_DATATYPE_F32 = IOR(1, ISHFT(4, 4))
+
+        TYPE, PUBLIC, BIND(C) :: libxs_gemm_shape_t
+          INTEGER(C_INT) :: datatype = 0
+          CHARACTER(C_CHAR) :: transa = C_NULL_CHAR
+          CHARACTER(C_CHAR) :: transb = C_NULL_CHAR
+          INTEGER(C_INT) :: m = 0, n = 0, k = 0
+          INTEGER(C_INT) :: lda = 0, ldb = 0, ldc = 0
+          REAL(C_DOUBLE) :: alpha = 0, beta = 0
+        END TYPE
+
+        TYPE, PUBLIC, BIND(C) :: libxs_gemm_config_t
+          TYPE(C_FUNPTR) :: dgemm_blas = C_NULL_FUNPTR
+          TYPE(C_FUNPTR) :: sgemm_blas = C_NULL_FUNPTR
+          TYPE(C_FUNPTR) :: dgemm_jit = C_NULL_FUNPTR
+          TYPE(C_FUNPTR) :: sgemm_jit = C_NULL_FUNPTR
+          TYPE(C_FUNPTR) :: xgemm = C_NULL_FUNPTR
+          TYPE(C_PTR) :: jitter = C_NULL_PTR
+          INTEGER(C_INT) :: flags = 0
+          INTEGER(C_INT) :: warmup = 0
+          TYPE(libxs_gemm_shape_t) :: shape
+        END TYPE
+
+        INTERFACE libxs_gemm_call
+          MODULE PROCEDURE libxs_gemm_call_config
+          MODULE PROCEDURE libxs_gemm_call_direct
+        END INTERFACE
+
+        PUBLIC :: libxs_init, libxs_finalize
+        PUBLIC :: libxs_gemm_dispatch
+        PUBLIC :: libxs_gemm_call
+        PUBLIC :: libxs_syr2k, libxs_syrk
+        PUBLIC :: C_INT, C_DOUBLE, C_LOC
 
       CONTAINS
         SUBROUTINE libxs_init()
