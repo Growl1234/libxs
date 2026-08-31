@@ -30,7 +30,7 @@
  * 1 (v1.0.0), so the reader gates each field on the version it appeared in.
  */
 #if !defined(LIBXS_PREDICT_VERSION)
-#  define LIBXS_PREDICT_VERSION 4
+#  define LIBXS_PREDICT_VERSION 5
 #endif
 #if !defined(LIBXS_PREDICT_KNN)
 #  define LIBXS_PREDICT_KNN 32
@@ -155,6 +155,9 @@ typedef struct internal_libxs_predict_order_ctx_t {
 typedef struct internal_libxs_predict_rf_node_t {
   int feature;
   double threshold;
+  /** Leaf read-out. Carries the subset mean for a real-valued output and the
+   *  majority label for a folded one, so a leaf serves either read-out. */
+  double value;
   int left, right;
   int label;
 } internal_libxs_predict_rf_node_t;
@@ -167,6 +170,15 @@ typedef struct internal_libxs_predict_rf_tree_t {
 typedef struct internal_libxs_predict_rf_t {
   internal_libxs_predict_rf_tree_t* trees;
   int* label_offset;
+  /**
+   * Per-output read-out: non-zero where the output is real-valued and the
+   * forest averages leaf means, zero where it folds to a class label and the
+   * forest takes a majority vote. Decided once at build from the corpus: an
+   * output all of whose values are integral and whose range fits the fold is a
+   * class, anything else is a quantity. Without this every output was a class,
+   * which capped a continuous output at the resolution of its own rounding.
+   */
+  int* regress;
   /** Per-output tree depth, chosen at build. Not serialized: the stored nodes
    *  already encode the depth they were grown to, and nothing reads it again. */
   int* depth;
@@ -1332,6 +1344,7 @@ LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
       for (ti = 0; ti < total_trees; ++ti) free(model->rf->trees[ti].nodes);
       free(model->rf->trees);
       free(model->rf->label_offset);
+      free(model->rf->regress);
       free(model->rf->depth);
       free(model->rf);
     }
@@ -3428,12 +3441,11 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
     }
     else if (NULL != model->rf) {
       for (j = 0; j < n; ++j) {
-        double rf_conf = 0;
-        const int rf_label = internal_libxs_predict_rf_eval_output(
-          model->rf, j, inputs, &rf_conf);
-        vals[j] = (double)rf_label;
+        double rf_conf = 0, rf_var = 0;
+        vals[j] = internal_libxs_predict_rf_eval_output(
+          model->rf, j, inputs, &rf_conf, &rf_var);
         conf[j] = rf_conf;
-        var[j] = 0;
+        var[j] = rf_var;
         errs[j] = 0;
         rels[j] = 0;
         if (NULL != src) src[j] = NULL;

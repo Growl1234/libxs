@@ -9,7 +9,7 @@ LIBXS_API_INLINE int internal_libxs_predict_crc(const void* buffer,
 
 
 /**
- * Derive per-output variance from the serialized raw outputs.  Loaded models
+ * Derive per-output variance from the serialized raw outputs. Loaded models
  * carry raw_outputs but not out_var, and eval reads out_var to score the
  * confidence of many-valued outputs; without this a loaded model would report
  * a constant confidence where a built one reports neighbor concentration.
@@ -43,10 +43,10 @@ LIBXS_API_INLINE int internal_libxs_predict_load_var(
 
 
 /**
- * Rebuild the global entry set from the per-cluster data.  A loaded model
+ * Rebuild the global entry set from the per-cluster data. A loaded model
  * otherwise has no entries, which silently disables libxs_predict_inverse (it
  * abstains), the refinement loop, and the local-error diagnostic - so a saved
- * model answered differently from the model it was saved from.  kd_pts holds
+ * model answered differently from the model it was saved from. kd_pts holds
  * normalized inputs, so they are mapped back through input_min/input_rng;
  * sorted_idx supplies the global position of each cluster-local entry.
  */
@@ -59,7 +59,7 @@ LIBXS_API_INLINE int internal_libxs_predict_load_entries(libxs_predict_t* model)
   if (0 != recoverable) {
     /**
      * sorted_idx supplies the global position of each cluster-local entry, so
-     * without it no entry can be placed.  A version-1 flat file carries none;
+     * without it no entry can be placed. A version-1 flat file carries none;
      * allocating the entry set anyway would leave every entry with NULL inputs,
      * which libxs_predict_inverse would dereference instead of abstaining.
      */
@@ -73,7 +73,7 @@ LIBXS_API_INLINE int internal_libxs_predict_load_entries(libxs_predict_t* model)
     /**
      * Feature selection (Fisher, setdiff, PCA) zeroes the weight of a dropped
      * input, and kd_pts stores the weighted value, so that coordinate cannot be
-     * recovered.  Reconstructing it as garbage would be worse than abstaining:
+     * recovered. Reconstructing it as garbage would be worse than abstaining:
      * inverse would return plausible-looking wrong inputs instead of signalling
      * no result.
      */
@@ -130,7 +130,7 @@ LIBXS_API_INLINE int internal_libxs_predict_load_entries(libxs_predict_t* model)
 
 
 /**
- * Outputs served by one per-output partition.  A per-output cluster stores its
+ * Outputs served by one per-output partition. A per-output cluster stores its
  * outputs strided by this, so the writer, the reader, and eval must agree on it
  * or the payload is truncated and then read past its end - the clamp mirrors
  * what eval applies (see libxs_predict_eval).
@@ -268,7 +268,7 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
        * The group count is emitted because outputs may share a partition, in
        * which case ng < n and a reader that assumed one group per output would
        * consume the wrong number of assignment blocks and desynchronize for the
-       * remainder of the payload.  The per-output group map follows for the
+       * remainder of the payload. The per-output group map follows for the
        * same reason: eval indexes it to find an output's partition.
        */
       WRITE_U16(ng);
@@ -355,7 +355,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
     const int has_ew = (0 != model->has_eweight) ? 1 : 0;
     /**
      * A model loaded from a version-1 flat file has no sorted_idx to write, so
-     * its presence is a flag rather than an invariant.  Fabricating indices
+     * its presence is a flag rather than an invariant. Fabricating indices
      * instead would silently enable recency weighting on an invented order.
      */
     for (c = 0; c < model->nclusters; ++c) {
@@ -395,16 +395,18 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       const int total_trees = model->rf->ntrees * n;
       required += sizeof(uint16_t) + sizeof(uint16_t);
       required += (size_t)n * sizeof(int16_t);
+      /** One read-out kind per output, one leaf value per node. */
+      required += (size_t)n * sizeof(uint8_t);
       for (c = 0; c < total_trees; ++c) {
         required += sizeof(uint16_t);
-        required += (size_t)model->rf->trees[c].nnodes * (2 + 8 + 2 + 2 + 1);
+        required += (size_t)model->rf->trees[c].nnodes * (2 + 8 + 8 + 2 + 2 + 1);
       }
     }
     /**
-     * Converged escape weights, when the probability API has been used.  These
+     * Converged escape weights, when the probability API has been used. These
      * are an optimization, not model state: a fresh bank re-learns them within a
-     * few hundred queries, at a measured cost of 0.004-0.03 bits.  Carrying them
-     * means a rebuilt or reloaded model does not re-pay that transient.  Written
+     * few hundred queries, at a measured cost of 0.004-0.03 bits. Carrying them
+     * means a rebuilt or reloaded model does not re-pay that transient. Written
      * last and guarded by a presence flag so a reader that predates them, or a
      * model that never scored a probability, is unaffected.
      */
@@ -491,7 +493,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
         /**
          * sorted_idx is what recency weighting and the local-error diagnostic
          * read; without it a loaded model silently takes a different path from
-         * the model it was saved from.  U32 because it indexes the global entry
+         * the model it was saved from. U32 because it indexes the global entry
          * set, which is not bounded by 64K like a per-cluster count.
          */
         if (0 != has_sidx) {
@@ -511,6 +513,9 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
           const int16_t off = (int16_t)model->rf->label_offset[j];
           memcpy(dst, &off, 2); dst += 2;
         }
+        for (j = 0; j < model->rf->noutputs; ++j) {
+          WRITE_U8(model->rf->regress[j]);
+        }
         for (c = 0; c < total_trees; ++c) {
           const internal_libxs_predict_rf_tree_t* tree = &model->rf->trees[c];
           int k;
@@ -521,6 +526,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
               memcpy(dst, &f, 2); dst += 2;
             }
             WRITE_F64(nd->threshold);
+            WRITE_F64(nd->value);
             { const int16_t l = (int16_t)nd->left;
               const int16_t r = (int16_t)nd->right;
               memcpy(dst, &l, 2); dst += 2;
@@ -587,7 +593,7 @@ LIBXS_API_INLINE int internal_libxs_predict_avail(const unsigned char* src,
  * Optional trailing escape-weight block, shared by both container formats.
  * Absence is normal - an older file, or a model that never scored a
  * probability - so a missing or mismatched block leaves the bank at its
- * uniform prior rather than failing the load.  A different expert count means
+ * uniform prior rather than failing the load. A different expert count means
  * the grid changed, in which case the stored weights describe experts that no
  * longer exist and must be ignored.
  */
@@ -770,7 +776,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
       }
     }
     /**
-     * out_rms arrived with version 2.  A version-1 file carries no fit residual,
+     * out_rms arrived with version 2. A version-1 file carries no fit residual,
      * and every consumer reads it as "no calibration" when it is zero and falls
      * back to out_var, which is derived below - what version 1 itself did.
      */
@@ -827,7 +833,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     model->nentries = p;
     /**
      * Version 1 has no group count and no group map: outputs never share a
-     * partition, so the assignment blocks that follow are per-output.  The
+     * partition, so the assignment blocks that follow are per-output. The
      * identity map is materialized rather than left NULL so that eval's group
      * filtering stays on one path for both versions.
      */
@@ -963,9 +969,9 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
   if (EXIT_SUCCESS == ok) {
     /**
      * The escape block is fixed-length and written last, so it is located from
-     * the end rather than by having consumed every preceding field.  The hknn
+     * the end rather than by having consumed every preceding field. The hknn
      * reader tolerates a short read of optional sections, which would otherwise
-     * leave src mid-payload and skip the block silently.  Version 1 has no such
+     * leave src mid-payload and skip the block silently. Version 1 has no such
      * block, and probing from the end would read model payload as weights.
      */
     const size_t esclen = 2 * sizeof(uint8_t)
@@ -1272,7 +1278,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         }
         /**
          * A version-1 flat file has no sorted_idx, and so has no global order to
-         * recover.  It is left NULL: eval already treats that as "no recency
+         * recover. It is left NULL: eval already treats that as "no recency
          * weighting" and the entry set stays unrecoverable, which is what such a
          * model did before - an invented order would be worse than none.
          */
@@ -1325,14 +1331,26 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
           rf->ntrees = (int)rf_ntrees;
           rf->noutputs = (int)rf_nouts;
           rf->label_offset = (int*)malloc((size_t)rf_nouts * sizeof(int));
+          rf->regress = (int*)calloc((size_t)rf_nouts, sizeof(int));
           rf->trees = (internal_libxs_predict_rf_tree_t*)calloc(
             (size_t)total_trees, sizeof(internal_libxs_predict_rf_tree_t));
-          if (NULL != rf->label_offset && NULL != rf->trees) {
+          if (NULL != rf->label_offset && NULL != rf->trees
+            && NULL != rf->regress)
+          {
             int ti;
             for (j = 0; j < (int)rf_nouts && EXIT_SUCCESS == ok; ++j) {
               int16_t off = 0;
               ok = internal_libxs_predict_read(&src, end, &off, 2);
               rf->label_offset[j] = (int)off;
+            }
+            /** Before version 5 every output was folded to a class, and the
+             *  leaf carried no value of its own; the label stands in for it. */
+            for (j = 0; j < (int)rf_nouts && EXIT_SUCCESS == ok
+              && 4 < version; ++j)
+            {
+              uint8_t reg = 0;
+              ok = internal_libxs_predict_read(&src, end, &reg, 1);
+              rf->regress[j] = (0 != reg) ? 1 : 0;
             }
             for (ti = 0; ti < total_trees && EXIT_SUCCESS == ok; ++ti) {
               uint16_t nn = 0;
@@ -1340,7 +1358,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
               ok = internal_libxs_predict_read(&src, end, &nn, 2);
               if (EXIT_SUCCESS == ok && nn > 0) {
                 ok = internal_libxs_predict_avail(src, end, (size_t)nn,
-                  2 + 8 + 2 + 2 + 1);
+                  (4 < version) ? (2 + 8 + 8 + 2 + 2 + 1) : (2 + 8 + 2 + 2 + 1));
                 if (EXIT_SUCCESS == ok) {
                   rf->trees[ti].nodes = (internal_libxs_predict_rf_node_t*)malloc(
                     (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
@@ -1355,6 +1373,10 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
                     ok = internal_libxs_predict_read(&src, end,
                       &rf->trees[ti].nodes[k].threshold, 8);
                   }
+                  if (EXIT_SUCCESS == ok && 4 < version) {
+                    ok = internal_libxs_predict_read(&src, end,
+                      &rf->trees[ti].nodes[k].value, 8);
+                  }
                   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &l, 2);
                   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &r, 2);
                   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &lab, 1);
@@ -1368,6 +1390,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
                     rf->trees[ti].nodes[k].left = (int)l;
                     rf->trees[ti].nodes[k].right = (int)r;
                     rf->trees[ti].nodes[k].label = (int)lab;
+                    if (4 >= version) rf->trees[ti].nodes[k].value = (double)lab;
                   }
                 }
               }
@@ -1382,6 +1405,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
               free(rf->trees);
             }
             free(rf->label_offset);
+            free(rf->regress);
             free(rf);
           }
         }
