@@ -395,11 +395,17 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       const int total_trees = model->rf->ntrees * n;
       required += sizeof(uint16_t) + sizeof(uint16_t);
       required += (size_t)n * sizeof(int16_t);
-      /** One read-out kind per output, one leaf value per node. */
-      required += (size_t)n * sizeof(uint8_t);
+      /** One read-out kind and one score width per output, one leaf value per
+       *  node, and a correction per node and class where a stage was kept. */
+      required += (size_t)n * (sizeof(uint8_t) + sizeof(uint8_t));
       for (c = 0; c < total_trees; ++c) {
-        required += sizeof(uint16_t);
+        required += sizeof(uint16_t) + sizeof(uint8_t);
         required += (size_t)model->rf->trees[c].nnodes * (2 + 8 + 8 + 2 + 2 + 1);
+        if (NULL != model->rf->trees[c].incr) {
+          required += (size_t)model->rf->trees[c].nnodes
+            * (size_t)model->rf->nclass[c / model->rf->ntrees]
+            * sizeof(double);
+        }
       }
     }
     /**
@@ -516,10 +522,14 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
         for (j = 0; j < model->rf->noutputs; ++j) {
           WRITE_U8(model->rf->regress[j]);
         }
+        for (j = 0; j < model->rf->noutputs; ++j) {
+          WRITE_U8(model->rf->nclass[j]);
+        }
         for (c = 0; c < total_trees; ++c) {
           const internal_libxs_predict_rf_tree_t* tree = &model->rf->trees[c];
           int k;
           WRITE_U16(tree->nnodes);
+          WRITE_U8(NULL != tree->incr ? 1 : 0);
           for (k = 0; k < tree->nnodes; ++k) {
             const internal_libxs_predict_rf_node_t* nd = &tree->nodes[k];
             { const int16_t f = (int16_t)nd->feature;
@@ -533,6 +543,10 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
               memcpy(dst, &r, 2); dst += 2;
             }
             WRITE_U8(nd->label);
+          }
+          if (NULL != tree->incr) {
+            const int nk = tree->nnodes * model->rf->nclass[c / model->rf->ntrees];
+            for (k = 0; k < nk; ++k) WRITE_F64(tree->incr[k]);
           }
         }
       }
@@ -1332,10 +1346,11 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
           rf->noutputs = (int)rf_nouts;
           rf->label_offset = (int*)malloc((size_t)rf_nouts * sizeof(int));
           rf->regress = (int*)calloc((size_t)rf_nouts, sizeof(int));
+          rf->nclass = (int*)malloc((size_t)rf_nouts * sizeof(int));
           rf->trees = (internal_libxs_predict_rf_tree_t*)calloc(
             (size_t)total_trees, sizeof(internal_libxs_predict_rf_tree_t));
           if (NULL != rf->label_offset && NULL != rf->trees
-            && NULL != rf->regress)
+            && NULL != rf->regress && NULL != rf->nclass)
           {
             int ti;
             for (j = 0; j < (int)rf_nouts && EXIT_SUCCESS == ok; ++j) {
@@ -1352,10 +1367,27 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
               ok = internal_libxs_predict_read(&src, end, &reg, 1);
               rf->regress[j] = (0 != reg) ? 1 : 0;
             }
+            for (j = 0; j < (int)rf_nouts; ++j) rf->nclass[j] = 1;
+            for (j = 0; j < (int)rf_nouts && EXIT_SUCCESS == ok
+              && 4 < version; ++j)
+            {
+              uint8_t ncl = 0;
+              ok = internal_libxs_predict_read(&src, end, &ncl, 1);
+              /* the correction is indexed by node and class, so a width of
+                 zero or beyond the fold would leave that indexing unbounded */
+              if (EXIT_SUCCESS == ok && (0 == ncl || 128 < ncl)) {
+                ok = EXIT_FAILURE;
+              }
+              else rf->nclass[j] = (int)ncl;
+            }
             for (ti = 0; ti < total_trees && EXIT_SUCCESS == ok; ++ti) {
               uint16_t nn = 0;
+              uint8_t hasincr = 0;
               int k;
               ok = internal_libxs_predict_read(&src, end, &nn, 2);
+              if (EXIT_SUCCESS == ok && 4 < version) {
+                ok = internal_libxs_predict_read(&src, end, &hasincr, 1);
+              }
               if (EXIT_SUCCESS == ok && nn > 0) {
                 ok = internal_libxs_predict_avail(src, end, (size_t)nn,
                   (4 < version) ? (2 + 8 + 8 + 2 + 2 + 1) : (2 + 8 + 2 + 2 + 1));
@@ -1393,6 +1425,19 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
                     if (4 >= version) rf->trees[ti].nodes[k].value = (double)lab;
                   }
                 }
+                if (EXIT_SUCCESS == ok && 0 != hasincr) {
+                  const int nk = (int)nn * rf->nclass[ti / (int)rf_ntrees];
+                  ok = internal_libxs_predict_avail(src, end, (size_t)nk, 8);
+                  if (EXIT_SUCCESS == ok) {
+                    rf->trees[ti].incr = (double*)malloc(
+                      (size_t)nk * sizeof(double));
+                    if (NULL == rf->trees[ti].incr) ok = EXIT_FAILURE;
+                  }
+                  for (k = 0; k < nk && EXIT_SUCCESS == ok; ++k) {
+                    ok = internal_libxs_predict_read(&src, end,
+                      &rf->trees[ti].incr[k], 8);
+                  }
+                }
               }
             }
           }
@@ -1401,11 +1446,15 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
           else {
             if (NULL != rf->trees) {
               int ti;
-              for (ti = 0; ti < total_trees; ++ti) free(rf->trees[ti].nodes);
+              for (ti = 0; ti < total_trees; ++ti) {
+                free(rf->trees[ti].nodes);
+                free(rf->trees[ti].incr);
+              }
               free(rf->trees);
             }
             free(rf->label_offset);
             free(rf->regress);
+            free(rf->nclass);
             free(rf);
           }
         }

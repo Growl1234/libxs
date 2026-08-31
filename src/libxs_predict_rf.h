@@ -363,11 +363,12 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build(libxs_predict_t* model)
       (size_t)ntrees * (size_t)n, sizeof(internal_libxs_predict_rf_tree_t));
     rf->label_offset = (int*)malloc((size_t)n * sizeof(int));
     rf->regress = (int*)malloc((size_t)n * sizeof(int));
+    rf->nclass = (int*)malloc((size_t)n * sizeof(int));
     rf->depth = (int*)malloc((size_t)n * sizeof(int));
     rf->ntrees = ntrees;
     rf->noutputs = n;
     if (NULL != rf->trees && NULL != rf->label_offset && NULL != rf->depth
-      && NULL != rf->regress)
+      && NULL != rf->regress && NULL != rf->nclass)
     {
       const int derived = (int)(2.0 * log((double)p) / log(2.0));
       const int min_leaf = 5;
@@ -406,6 +407,8 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build(libxs_predict_t* model)
         /** Only a class has an offset, and only a class is in range for it. */
         rf->label_offset[oi] = (0 == rf->regress[oi])
           ? -LIBXS_ROUNDX(int, vmin) : 0;
+        rf->nclass[oi] = (0 == rf->regress[oi])
+          ? (LIBXS_ROUNDX(int, vmax) - LIBXS_ROUNDX(int, vmin) + 1) : 1;
       }
       if (0 < model->rf_depth) {
         for (oi = 0; oi < n; ++oi) rf->depth[oi] = model->rf_depth;
@@ -453,6 +456,7 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build(libxs_predict_t* model)
       free(rf->trees);
       free(rf->label_offset);
       free(rf->regress);
+      free(rf->nclass);
       free(rf->depth);
       free(rf);
     }
@@ -516,46 +520,380 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build_tasks(
 }
 
 
+/** Index of the leaf the inputs descend to, or negative if the tree is empty
+ *  or its links leave the node array. */
+LIBXS_API_INLINE int internal_libxs_predict_rf_leafof(
+  const internal_libxs_predict_rf_tree_t* tree, const double* inputs)
+{
+  int result = 0;
+  if (NULL == tree->nodes || 0 == tree->nnodes) {
+    result = -1;
+  }
+  else {
+    while (0 <= result && result < tree->nnodes
+      && 0 <= tree->nodes[result].feature)
+    {
+      const internal_libxs_predict_rf_node_t* nd = &tree->nodes[result];
+      result = (inputs[nd->feature] <= nd->threshold) ? nd->left : nd->right;
+    }
+    if (result >= tree->nnodes) result = -1;
+  }
+  return result;
+}
+
+
+/** Shrinkage applied to each boosted stage. The leaf basis is large enough
+ *  that an unshrunk read-out over it fits the sample rather than the signal. */
+#if !defined(LIBXS_PREDICT_RF_RATE)
+#  define LIBXS_PREDICT_RF_RATE 0.1
+#endif
+/** Consecutive stages allowed not to improve before boosting stops. Each stage
+ *  scores on its own tree's out-of-bag rows, a different subset every time, so
+ *  a single stage that fails to improve is noise rather than a trend. */
+#if !defined(LIBXS_PREDICT_RF_PATIENCE)
+#  define LIBXS_PREDICT_RF_PATIENCE 3
+#endif
+/** One row in this many is held back from every stage's leaf means, to be the
+ *  only honest witness of whether the stages are still generalizing. */
+#if !defined(LIBXS_PREDICT_RF_HOLD)
+#  define LIBXS_PREDICT_RF_HOLD 5
+#endif
+#if !defined(LIBXS_PREDICT_RF_SEED)
+#  define LIBXS_PREDICT_RF_SEED 1013
+#endif
+
+
+/**
+ * Fits the additive read-out over the partitions the forest already grew.
+ *
+ * The two read-outs combine rather than compete: eval answers with the bagged
+ * mean plus the sum of the corrections, so the stages correct a
+ * variance-reduced base instead of rebuilding it. Nothing here grows a tree,
+ * and eval pays one array lookup per descent it was making anyway.
+ *
+ * One choice carries the honesty of the whole fit: what the residual is taken
+ * against. It has to be the out-of-bag forest mean, averaging each row over
+ * only the trees whose bootstrap left that row out. The tempting alternative
+ * is the full forest mean, on the grounds that it is exactly what eval starts
+ * from and the corrections ought to be fitted against the base they will be
+ * added to. That is wrong, and measurably so: on a training row the forest is
+ * nearly unbiased because most of its trees memorized that row, so the leaf
+ * means come out as noise rather than as bias, and summing a hundred stages of
+ * noise is a random walk that degrades the read-out in proportion to the
+ * learning rate. The out-of-bag mean is a few trees' worth noisier than the
+ * one eval uses but carries the same bias, and bias is the only thing the
+ * stages can correct.
+ *
+ * Applies to real-valued outputs alone. A folded output answers with a class,
+ * and a class plus a real correction is not a class; boosting one needs a
+ * correction per class per leaf, which is a different structure.
+ */
+/**
+ * Held-back score of the read-out as it currently stands: how many rows it gets
+ * wrong, and how far its scores sit from the truth. The count is what the
+ * read-out promises, so it decides; the distance breaks its ties, so a stage
+ * that sharpens the scores without yet flipping any row still counts as
+ * progress. A real-valued output has no rows to get wrong and is judged on the
+ * distance alone, which is its absolute error.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_rf_hold_score(
+  const internal_libxs_predict_entry_t* entries, int p, int output_idx,
+  const unsigned char* hold, const double* pred, int nclass, int label_off,
+  int regress, int* miss, double* dist)
+{
+  int i, n = 0;
+  *miss = 0;
+  *dist = 0;
+  for (i = 0; i < p; ++i) {
+    if (0 != hold[i]) {
+      if (0 != regress) {
+        *dist += LIBXS_FABS(entries[i].outputs[output_idx] - pred[i]);
+      }
+      else {
+        const int lab = (LIBXS_ROUNDX(int,
+          entries[i].outputs[output_idx]) + label_off) & 127;
+        const double* row = pred + (size_t)i * nclass;
+        int best = 0, c;
+        for (c = 1; c < nclass; ++c) {
+          if (row[c] > row[best]) best = c;
+        }
+        if (best != lab) ++*miss;
+        for (c = 0; c < nclass; ++c) {
+          const double d = ((c == lab) ? 1.0 : 0.0) - row[c];
+          *dist += d * d;
+        }
+      }
+      ++n;
+    }
+  }
+  if (0 < n) *dist /= n;
+}
+
+
+/**
+ * Fits the additive read-out over the partitions the forest already grew.
+ *
+ * The two read-outs combine rather than compete: eval answers with the bagged
+ * read-out plus the sum of the corrections, so the stages correct a
+ * variance-reduced base instead of rebuilding it. Nothing here grows a tree,
+ * and eval pays one array lookup per descent it was making anyway.
+ *
+ * Real-valued and folded outputs are the same procedure at two widths. A
+ * real-valued output carries one score, the leaf mean, and its correction is
+ * the mean residual. A folded one carries a score per class, the share of the
+ * trees voting for it, and its correction is the mean residual of each class
+ * indicator. Setting nclass to one for the former makes the second case the
+ * general one and the first its degenerate width, so there is a single fit, a
+ * single stopping rule, and a single stored correction.
+ *
+ * One choice carries the honesty of the whole fit: what the residual is taken
+ * against. It has to be the out-of-bag forest read-out, averaging each row
+ * over only the trees whose bootstrap left that row out. The tempting
+ * alternative is the full forest read-out, on the grounds that it is exactly
+ * what eval starts from and the corrections ought to be fitted against the base
+ * they will be added to. That is wrong, and measurably so: on a training row
+ * the forest is nearly unbiased because most of its trees memorized that row,
+ * so the leaf means come out as noise rather than as bias, and summing a
+ * hundred stages of noise is a random walk that degrades the read-out in
+ * proportion to the learning rate. The out-of-bag read-out is a few trees'
+ * worth noisier than the one eval uses but carries the same bias, and bias is
+ * the only thing the stages can correct.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_rf_boost(libxs_predict_t* model)
+{
+  internal_libxs_predict_rf_t* rf = model->rf;
+  if (NULL != rf && 0 < model->nentries && NULL != rf->regress
+    && NULL != rf->nclass)
+  {
+    const internal_libxs_predict_entry_t* entries = model->entries;
+    const int p = model->nentries;
+    const int ntrees = rf->ntrees;
+    const char* renv = getenv("LIBXS_PREDICT_RF_RATE");
+    const double rate = (NULL != renv) ? atof(renv) : LIBXS_PREDICT_RF_RATE;
+    int maxn = 0, ncmax = 1, ti;
+    for (ti = 0; ti < ntrees * rf->noutputs; ++ti) {
+      if (maxn < rf->trees[ti].nnodes) maxn = rf->trees[ti].nnodes;
+    }
+    for (ti = 0; ti < rf->noutputs; ++ti) {
+      if (ncmax < rf->nclass[ti]) ncmax = rf->nclass[ti];
+    }
+    if (0 < maxn && 0 < rate) {
+      double* pred = (double*)malloc((size_t)p * ncmax * sizeof(double));
+      double* sum = (double*)malloc((size_t)maxn * ncmax * sizeof(double));
+      int* cnt = (int*)malloc((size_t)maxn * ncmax * sizeof(int));
+      unsigned char* oob = (unsigned char*)malloc((size_t)p);
+      int* cover = (int*)malloc((size_t)p * sizeof(int));
+      unsigned char* hold = (unsigned char*)malloc((size_t)p);
+      if (NULL != pred && NULL != sum && NULL != cnt && NULL != oob
+        && NULL != cover && NULL != hold)
+      {
+        const size_t boot_n = (size_t)p * 2 + 1;
+        const size_t boot_coprime = libxs_coprime2(boot_n);
+        const size_t hold_coprime = libxs_coprime2((size_t)p);
+        int oi, h;
+        /** Spread over the corpus by the shuffle rather than taken as a block,
+         *  so a held-back row exists in every region the trees partition. */
+        memset(hold, 0, (size_t)p);
+        for (h = 0; h < p / LIBXS_PREDICT_RF_HOLD; ++h) {
+          hold[(int)LIBXS_SHUFFLE_INDEX((size_t)h, (size_t)p, hold_coprime,
+            LIBXS_PREDICT_RF_SEED)] = 1;
+        }
+        for (oi = 0; oi < rf->noutputs; ++oi) {
+          const int tbase = oi * ntrees;
+          const int nc = rf->nclass[oi];
+          const int reg = rf->regress[oi];
+          const int loff = rf->label_offset[oi];
+          int stale = 0, miss0 = 0, miss1 = 0, t, i, k, c;
+          double dist0 = 0, dist1 = 0;
+          if (1 > nc) continue;
+          memset(pred, 0, (size_t)p * nc * sizeof(double));
+          for (i = 0; i < p; ++i) cover[i] = 0;
+          for (t = 0; t < ntrees; ++t) {
+            const internal_libxs_predict_rf_tree_t* tr = &rf->trees[tbase + t];
+            if (NULL == tr->nodes || 0 == tr->nnodes) continue;
+            memset(oob, 1, (size_t)p);
+            for (i = 0; i < p; ++i) {
+              oob[(int)(LIBXS_SHUFFLE_INDEX(i, boot_n, boot_coprime,
+                (size_t)(tbase + t) * 7 + 13) % (size_t)p)] = 0;
+            }
+            for (i = 0; i < p; ++i) {
+              if (0 != oob[i]) {
+                const int li = internal_libxs_predict_rf_leafof(tr,
+                  entries[i].inputs);
+                if (0 <= li) {
+                  if (0 != reg) pred[i] += tr->nodes[li].value;
+                  else {
+                    const int lc = tr->nodes[li].label & 127;
+                    if (lc < nc) pred[(size_t)i * nc + lc] += 1.0;
+                  }
+                  ++cover[i];
+                }
+              }
+            }
+          }
+          for (i = 0; i < p; ++i) {
+            if (0 < cover[i]) {
+              for (c = 0; c < nc; ++c) pred[(size_t)i * nc + c] /= cover[i];
+            }
+          }
+          for (t = 0; t < ntrees; ++t) {
+            internal_libxs_predict_rf_tree_t* tr = &rf->trees[tbase + t];
+            if (NULL == tr->nodes || 0 == tr->nnodes) continue;
+            /** The bootstrap is regenerated rather than stored: it is a pure
+             *  function of the tree index, and holding p indices per tree to
+             *  avoid recomputing them would cost more than the forest. */
+            memset(oob, 1, (size_t)p);
+            for (i = 0; i < p; ++i) {
+              oob[(int)(LIBXS_SHUFFLE_INDEX(i, boot_n, boot_coprime,
+                (size_t)(tbase + t) * 7 + 13) % (size_t)p)] = 0;
+            }
+            /**
+             * Judged on the held-back rows alone. Judging on this tree's
+             * out-of-bag rows instead looks natural and is worthless: those
+             * rows were fitted by every earlier stage that had them out of
+             * bag, roughly a third of them, so the score falls whether or not
+             * the stages generalize and the rule never fires.
+             */
+            internal_libxs_predict_rf_hold_score(entries, p, oi, hold, pred,
+              nc, loff, reg, &miss0, &dist0);
+            memset(sum, 0, (size_t)tr->nnodes * nc * sizeof(double));
+            memset(cnt, 0, (size_t)tr->nnodes * nc * sizeof(int));
+            for (i = 0; i < p; ++i) {
+              if (0 != oob[i] && 0 == hold[i]) {
+                const int li = internal_libxs_predict_rf_leafof(tr,
+                  entries[i].inputs);
+                if (0 <= li) {
+                  if (0 != reg) {
+                    sum[li] += entries[i].outputs[oi] - pred[i];
+                    ++cnt[li];
+                  }
+                  else {
+                    const int lab = (LIBXS_ROUNDX(int,
+                      entries[i].outputs[oi]) + loff) & 127;
+                    for (c = 0; c < nc; ++c) {
+                      sum[(size_t)li * nc + c] += ((c == lab) ? 1.0 : 0.0)
+                        - pred[(size_t)i * nc + c];
+                      ++cnt[(size_t)li * nc + c];
+                    }
+                  }
+                }
+              }
+            }
+            tr->incr = (double*)calloc((size_t)tr->nnodes * nc, sizeof(double));
+            if (NULL == tr->incr) break;
+            for (k = 0; k < tr->nnodes * nc; ++k) {
+              if (0 < cnt[k]) tr->incr[k] = rate * sum[k] / cnt[k];
+            }
+            /** Carried into the score for every row, not only the ones that
+             *  fitted it: the next stage sees what this one actually left. */
+            for (i = 0; i < p; ++i) {
+              const int li = internal_libxs_predict_rf_leafof(tr,
+                entries[i].inputs);
+              if (0 <= li) {
+                for (c = 0; c < nc; ++c) {
+                  pred[(size_t)i * nc + c] += tr->incr[(size_t)li * nc + c];
+                }
+              }
+            }
+            internal_libxs_predict_rf_hold_score(entries, p, oi, hold, pred,
+              nc, loff, reg, &miss1, &dist1);
+            /**
+             * A stage is fitted before it is judged, and discarded unless it
+             * improved the held-back rows. Deciding in advance cannot work -
+             * whether a correction generalizes is not knowable until it has
+             * been made - and letting an unhelpful stage stand while waiting
+             * for a later one to redeem it is how the read-out came to degrade
+             * in proportion to the learning rate. Discarding instead makes the
+             * combined read-out no worse than the bagged one it corrects,
+             * which is the property that lets it be on by default.
+             */
+            if (miss1 < miss0 || (miss1 == miss0 && dist1 < dist0)) {
+              stale = 0;
+            }
+            else {
+              for (i = 0; i < p; ++i) {
+                const int li = internal_libxs_predict_rf_leafof(tr,
+                  entries[i].inputs);
+                if (0 <= li) {
+                  for (c = 0; c < nc; ++c) {
+                    pred[(size_t)i * nc + c] -= tr->incr[(size_t)li * nc + c];
+                  }
+                }
+              }
+              free(tr->incr);
+              tr->incr = NULL;
+              if (LIBXS_PREDICT_RF_PATIENCE <= ++stale) break;
+            }
+          }
+        }
+      }
+      free(hold);
+      free(cover);
+      free(oob);
+      free(cnt);
+      free(sum);
+      free(pred);
+    }
+  }
+}
+
+
 /**
  * Forest read-out for one output: the mean of the leaves reached for a
  * real-valued output, the majority of the labels reached for a folded one.
  * Both descend the same trees, so the read-out is a choice of what to
- * accumulate rather than a second traversal.
+ * accumulate rather than a second traversal, and the boosted correction rides
+ * along on the same descent again.
  */
 LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output(
   const internal_libxs_predict_rf_t* rf, int output_idx,
   const double* inputs, double* confidence, double* variance)
 {
   const int regress = (NULL != rf->regress) ? rf->regress[output_idx] : 0;
+  const int nc = (NULL != rf->nclass) ? rf->nclass[output_idx] : 1;
   const int base = output_idx * rf->ntrees;
   int votes[128];
+  double bscore[128];
   int best_label = 0, best_count = 0, nvalid = 0, t, k;
-  double sum = 0, sqr = 0, result;
-  if (0 == regress) memset(votes, 0, sizeof(votes));
+  double sum = 0, sqr = 0, boost = 0, result;
+  if (0 == regress) {
+    memset(votes, 0, sizeof(votes));
+    memset(bscore, 0, sizeof(bscore));
+  }
   for (t = 0; t < rf->ntrees; ++t) {
     const internal_libxs_predict_rf_tree_t* tree = &rf->trees[base + t];
-    int ni = 0;
-    if (NULL == tree->nodes || 0 == tree->nnodes) continue;
-    while (ni >= 0 && ni < tree->nnodes && tree->nodes[ni].feature >= 0) {
-      const internal_libxs_predict_rf_node_t* nd = &tree->nodes[ni];
-      ni = (inputs[nd->feature] <= nd->threshold) ? nd->left : nd->right;
-    }
-    if (ni >= 0 && ni < tree->nnodes) {
+    const int ni = internal_libxs_predict_rf_leafof(tree, inputs);
+    if (0 <= ni) {
       if (0 != regress) {
         const double v = tree->nodes[ni].value;
         sum += v;
         sqr += v * v;
         ++nvalid;
+        if (NULL != tree->incr) boost += tree->incr[ni];
       }
-      else ++votes[tree->nodes[ni].label & 127];
+      else {
+        ++votes[tree->nodes[ni].label & 127];
+        ++nvalid;
+        if (NULL != tree->incr) {
+          for (k = 0; k < nc && k < 128; ++k) {
+            bscore[k] += tree->incr[(size_t)ni * nc + k];
+          }
+        }
+      }
     }
   }
   if (0 != regress) {
-    result = (0 < nvalid) ? (sum / nvalid) : 0.0;
+    const double mean = (0 < nvalid) ? (sum / nvalid) : 0.0;
+    result = mean + boost;
     if (NULL != variance) {
-      /** Clamped because the closed form can fall below zero by rounding when
-       *  the trees agree; it never can mathematically. */
-      const double v = (0 < nvalid) ? (sqr / nvalid - result * result) : 0.0;
+      /**
+       * The spread of the trees about their own mean, not about the boosted
+       * result: the correction is one deterministic quantity added to every
+       * tree alike, so it shifts the read-out without telling us anything
+       * about how much the trees disagreed. Clamped because the closed form
+       * can fall below zero by rounding when they agree closely.
+       */
+      const double v = (0 < nvalid) ? (sqr / nvalid - mean * mean) : 0.0;
       *variance = (0 < v) ? v : 0.0;
     }
     /**
@@ -566,9 +904,22 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output(
     if (NULL != confidence) *confidence = 1.0;
   }
   else {
+    /**
+     * The class score is the share of the trees that voted for it plus the
+     * corrections the stages fitted. With no stages the corrections are zero
+     * and the shares rank exactly as the raw counts do, so the answer is the
+     * majority vote unchanged.
+     */
+    double best_score = 0;
     for (k = 0; k < 128; ++k) {
-      if (votes[k] > best_count) { best_count = votes[k]; best_label = k; }
+      const double s = ((0 < nvalid) ? ((double)votes[k] / nvalid) : 0.0)
+        + ((k < nc) ? bscore[k] : 0.0);
+      if (0 == k || s > best_score) {
+        best_score = s;
+        best_label = k;
+      }
     }
+    best_count = votes[best_label];
     if (NULL != confidence) {
       *confidence = (rf->ntrees > 0) ? (double)best_count / rf->ntrees : 0.0;
     }

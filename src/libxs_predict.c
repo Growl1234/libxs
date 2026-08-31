@@ -164,6 +164,14 @@ typedef struct internal_libxs_predict_rf_node_t {
 
 typedef struct internal_libxs_predict_rf_tree_t {
   internal_libxs_predict_rf_node_t* nodes;
+  /**
+   * Boosted correction per node, fitted after the tree was grown, on the rows
+   * this tree's bootstrap left out. Kept beside the nodes rather than in them:
+   * it is a second read-out over the same partition, read only where boosting
+   * ran, and the descent should not carry it through cache. NULL where the
+   * output is folded, or where the stopping rule ended the stages first.
+   */
+  double* incr;
   int nnodes;
 } internal_libxs_predict_rf_tree_t;
 
@@ -179,6 +187,13 @@ typedef struct internal_libxs_predict_rf_t {
    * which capped a continuous output at the resolution of its own rounding.
    */
   int* regress;
+  /**
+   * Score width per output: the number of classes a folded output votes over,
+   * one for a real-valued output. It is the stride of the boosted correction,
+   * and making the real-valued case a width of one leaves a single fit and a
+   * single stored form rather than two of each.
+   */
+  int* nclass;
   /** Per-output tree depth, chosen at build. Not serialized: the stored nodes
    *  already encode the depth they were grown to, and nothing reads it again. */
   int* depth;
@@ -1341,10 +1356,14 @@ LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
     if (NULL != model->rf) {
       int ti;
       const int total_trees = model->rf->ntrees * model->rf->noutputs;
-      for (ti = 0; ti < total_trees; ++ti) free(model->rf->trees[ti].nodes);
+      for (ti = 0; ti < total_trees; ++ti) {
+        free(model->rf->trees[ti].nodes);
+        free(model->rf->trees[ti].incr);
+      }
       free(model->rf->trees);
       free(model->rf->label_offset);
       free(model->rf->regress);
+      free(model->rf->nclass);
       free(model->rf->depth);
       free(model->rf);
     }
@@ -1887,7 +1906,6 @@ LIBXS_API_INLINE void internal_libxs_predict_fisher_build(libxs_predict_t* model
    */
   int class_dn[128][128];
   double class_mean[128][128], class_var[128][128];
-  double scores[128], sorted_scores[128], thr;
   LIBXS_ASSERT(m <= 128);
   memset(class_count, 0, sizeof(class_count));
   memset(class_dn, 0, sizeof(class_dn));
@@ -1932,6 +1950,7 @@ LIBXS_API_INLINE void internal_libxs_predict_fisher_build(libxs_predict_t* model
     }
   }
   if (nclasses >= 2 && 1 == model->noutputs) {
+    double scores[128] = { 0.0 }, sorted_scores[128], thr;
     for (j = 0; j < m; ++j) {
       double between = 0, within = 0, grand_mean = 0;
       int total_n = 0;
@@ -1949,7 +1968,7 @@ LIBXS_API_INLINE void internal_libxs_predict_fisher_build(libxs_predict_t* model
           between += class_dn[ci][j] * d * d;
         }
       }
-      scores[j] = (within > 0) ? between / within : 0.0;
+      scores[j] = (within > 0 ? (between / within) : 0.0);
     }
     memcpy(sorted_scores, scores, (size_t)m * sizeof(double));
     libxs_sort(sorted_scores, m, sizeof(double), libxs_cmp_f64, NULL);
@@ -1959,7 +1978,7 @@ LIBXS_API_INLINE void internal_libxs_predict_fisher_build(libxs_predict_t* model
     }
     if (NULL != model->weights) {
       for (j = 0; j < m; ++j) {
-        model->weights[j] = (scores[j] >= thr) ? sqrt(scores[j]) : 0.0;
+        model->weights[j] = (scores[j] >= thr ? sqrt(scores[j]) : 0.0);
       }
     }
   }
@@ -2061,7 +2080,7 @@ LIBXS_API_INLINE void internal_libxs_predict_setdiff_build(libxs_predict_t* mode
  * Ceiling division gives every task the same rounded-up share and leaves the
  * remainder to the last one, which is the task that then decides when everybody
  * is finished: at 100 trees over 16 tasks it hands fourteen tasks seven trees,
- * one task two, and the last none at all.  Spreading the remainder over the
+ * one task two, and the last none at all. Spreading the remainder over the
  * leading tasks instead costs one item of imbalance at most, keeps each task's
  * range contiguous, and leaves no task idle while another still works.
  */
@@ -2899,6 +2918,7 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_predict_t* model,
     internal_libxs_predict_rf_build(model);
     if (0 == collective) {
       internal_libxs_predict_rf_build_tasks(model, 0, 1);
+      internal_libxs_predict_rf_boost(model);
     }
   }
   if (EXIT_SUCCESS != result || NULL == model || 0 >= model->nentries) {
@@ -3277,6 +3297,14 @@ LIBXS_API int libxs_predict_build_task(libxs_lock_t* lock,
   if (0 != tid) result = (0 != model->built) ? EXIT_SUCCESS : EXIT_FAILURE;
   if (EXIT_SUCCESS == result && NULL != model->rf) {
     internal_libxs_predict_rf_build_tasks(model, tid, ntasks);
+    /**
+     * The stages are sequential by construction - each fits what the previous
+     * one left - so this is the builder's alone, and it needs every tree to
+     * exist before the first residual can be taken.
+     */
+    internal_libxs_predict_sync(model, ntasks);
+    if (0 == tid) internal_libxs_predict_rf_boost(model);
+    internal_libxs_predict_sync(model, ntasks);
   }
   LIBXS_UNUSED(lock);
   return result;
@@ -3790,7 +3818,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
              * better answer for j, but substituting it here moves the inputs
              * that j's neighbors are refined from, which measured as a real
              * loss on them (GPU-tuning AL: 99.4% gated precision to 97.9%)
-             * for no gain on j.  What the caller receives is unaffected -
+             * for no gain on j. What the caller receives is unaffected -
              * only the point the refinement pass inverts through.
              */
             const double vj = (0 == internal_libxs_predict_central(model, j))
