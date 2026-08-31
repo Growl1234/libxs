@@ -104,14 +104,14 @@ typedef uint8_t oz2_res_t;
 #endif
 
 /** Fast modular reduction: x mod oz2_moduli[pidx] (table-indexed wrapper). */
-LIBXS_API_INLINE unsigned int oz2_mod(uint32_t x, int pidx)
+LIBXS_INLINE unsigned int oz2_mod(uint32_t x, int pidx)
 {
   return libxs_mod_u32(x, oz2_moduli[pidx], oz2_rcp[pidx]);
 }
 
 
 /** Fast 64-bit modular reduction: x mod oz2_moduli[pidx] (table-indexed wrapper). */
-LIBXS_API_INLINE unsigned int oz2_mod64(uint64_t x, int pidx)
+LIBXS_INLINE unsigned int oz2_mod64(uint64_t x, int pidx)
 {
   return libxs_mod_u64(x, oz2_moduli[pidx], oz2_rcp[pidx], oz2_pow18[pidx], oz2_pow36[pidx]);
 }
@@ -122,7 +122,7 @@ LIBXS_API_INLINE unsigned int oz2_mod64(uint64_t x, int pidx)
  * delta = max_exp - element_exp (>= 0); mantissa is right-shifted
  * by delta bits for exponent alignment before reduction.
  */
-LIBXS_API_INLINE void oz2_reduce(uint64_t mantissa, int delta, uint8_t residues[OZ2_NPRIMES_MAX], int nprimes)
+LIBXS_INLINE void oz2_reduce(uint64_t mantissa, int delta, uint8_t residues[OZ2_NPRIMES_MAX], int nprimes)
 {
   int i;
   nprimes = LIBXS_CLMP(nprimes, 0, OZ2_NPRIMES_MAX);
@@ -146,7 +146,7 @@ LIBXS_API_INLINE void oz2_reduce(uint64_t mantissa, int delta, uint8_t residues[
 #define HIER_NGROUPS_MAX ((OZ2_NPRIMES_MAX + HIER_GS - 1) / HIER_GS)
 #define HIER_L2_HORNER_GROUP 2
 
-LIBXS_API_INLINE unsigned int oz2_mod_l2(uint64_t x, uint32_t m, uint64_t barrett)
+LIBXS_INLINE unsigned int oz2_mod_l2(uint64_t x, uint32_t m, uint64_t barrett)
 {
 #if defined(__SIZEOF_INT128__)
   const uint64_t q = (uint64_t)(((__uint128_t)x * barrett) >> 64);
@@ -160,7 +160,7 @@ LIBXS_API_INLINE unsigned int oz2_mod_l2(uint64_t x, uint32_t m, uint64_t barret
   }
 }
 
-LIBXS_API_INLINE unsigned int oz2_hier_l1_garner(const unsigned int group_residues[], int g,
+LIBXS_INLINE unsigned int oz2_hier_l1_garner(const unsigned int group_residues[], int g,
   uint8_t garner_inv[OZ2_NPRIMES_MAX][OZ2_NPRIMES_MAX], int nprimes)
 {
   const int lo = g * HIER_GS;
@@ -193,7 +193,7 @@ LIBXS_API_INLINE unsigned int oz2_hier_l1_garner(const unsigned int group_residu
   return (uint32_t)hval;
 }
 
-LIBXS_API_INLINE int oz2_hier_l2_garner(const unsigned int gval[], unsigned int d[],
+LIBXS_INLINE int oz2_hier_l2_garner(const unsigned int gval[], unsigned int d[],
   const uint32_t* l2_garner_inv, const uint32_t* gprod, const uint64_t* l2_barrett, int ngroups)
 {
   int i, j, is_negative;
@@ -233,7 +233,7 @@ LIBXS_API_INLINE int oz2_hier_l2_garner(const unsigned int gval[], unsigned int 
   return is_negative;
 }
 
-LIBXS_API_INLINE double oz2_hier_horner(const unsigned int d[], const uint32_t* gprod, int ngroups)
+LIBXS_INLINE double oz2_hier_horner(const unsigned int d[], const uint32_t* gprod, int ngroups)
 {
   const int nsuper = LIBXS_UPDIV(ngroups, HIER_L2_HORNER_GROUP);
   double result;
@@ -262,7 +262,7 @@ LIBXS_API_INLINE double oz2_hier_horner(const unsigned int d[], const uint32_t* 
   return result;
 }
 
-LIBXS_API_INLINE void oz2_reconstruct_batch(unsigned int batch_res[OZ2_BATCH][OZ2_NPRIMES_MAX],
+LIBXS_INLINE void oz2_reconstruct_batch(unsigned int batch_res[OZ2_BATCH][OZ2_NPRIMES_MAX],
   uint8_t garner_inv[OZ2_NPRIMES_MAX][OZ2_NPRIMES_MAX],
   const uint32_t* l2_garner_inv, const uint32_t* gprod, const uint64_t* l2_barrett,
   int nprimes, int bsz, double result[OZ2_BATCH])
@@ -303,7 +303,7 @@ LIBXS_API_INLINE void oz2_reconstruct_batch(unsigned int batch_res[OZ2_BATCH][OZ
  * Level 1: vectorized Garner across 16 batch elements per group.
  * Level 2: scalar Garner + Horner per element (only HIER_NGROUPS_MAX steps).
  */
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void oz2_reconstruct_batch_avx512(
+LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void oz2_reconstruct_batch_avx512(
   unsigned int batch_res[OZ2_BATCH][OZ2_NPRIMES_MAX],
   uint8_t garner_inv[OZ2_NPRIMES_MAX][OZ2_NPRIMES_MAX],
   const uint32_t* l2_garner_inv, const uint32_t* gprod, const uint64_t* l2_barrett,
@@ -383,7 +383,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void oz2_reconstruct_batch_a
 #endif /* LIBXS_INTRINSICS_AVX512 && OZ2_BATCH == 16 */
 
 
-LIBXS_API_INLINE void gemm_oz2_diff(const char* transa, const char* transb, const GEMM_INT_TYPE* m, const GEMM_INT_TYPE* n,
+LIBXS_INLINE void gemm_oz2_diff(const char* transa, const char* transb, const GEMM_INT_TYPE* m, const GEMM_INT_TYPE* n,
   const GEMM_INT_TYPE* k, const GEMM_REAL_TYPE* alpha, const GEMM_REAL_TYPE* a, const GEMM_INT_TYPE* lda, const GEMM_REAL_TYPE* b,
   const GEMM_INT_TYPE* ldb, const GEMM_REAL_TYPE* beta, GEMM_REAL_TYPE* c, const GEMM_INT_TYPE* ldc, libxs_matdiff_t* diff)
 {

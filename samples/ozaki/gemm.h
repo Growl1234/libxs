@@ -115,7 +115,7 @@ typedef struct gemm_mhd_settings_t {
  * If settings is non-NULL, fills it from extension (zeros if absent).
  * All output pointers may be NULL. Returns EXIT_SUCCESS on success.
  */
-LIBXS_API_INLINE int gemm_mhd_read(const char* filename, GEMM_INT_TYPE* rows, GEMM_INT_TYPE* cols, char* trans, GEMM_INT_TYPE* ld,
+LIBXS_INLINE int gemm_mhd_read(const char* filename, GEMM_INT_TYPE* rows, GEMM_INT_TYPE* cols, char* trans, GEMM_INT_TYPE* ld,
   GEMM_REAL_TYPE scalar[2], size_t* ncomp, gemm_mhd_settings_t* settings, GEMM_REAL_TYPE* data)
 {
   char ext[sizeof(char) + sizeof(GEMM_INT_TYPE) + 2 * sizeof(GEMM_REAL_TYPE) + GEMM_MHD_SETTINGS_SIZE];
@@ -183,7 +183,7 @@ LIBXS_API_INLINE int gemm_mhd_read(const char* filename, GEMM_INT_TYPE* rows, GE
  * Extension: [trans:char][ld:int][scalar:ncomp*real][settings(opt)].
  * If settings is non-NULL, the Ozaki settings are appended.
  */
-LIBXS_API_INLINE int gemm_mhd_write(const char* filename, const GEMM_REAL_TYPE* data, GEMM_INT_TYPE rows, GEMM_INT_TYPE cols,
+LIBXS_INLINE int gemm_mhd_write(const char* filename, const GEMM_REAL_TYPE* data, GEMM_INT_TYPE rows, GEMM_INT_TYPE cols,
   GEMM_INT_TYPE ld, char trans, const GEMM_REAL_TYPE* scalar, size_t ncomp, const gemm_mhd_settings_t* settings)
 {
   char ext[sizeof(char) + sizeof(GEMM_INT_TYPE) + 2 * sizeof(GEMM_REAL_TYPE) + GEMM_MHD_SETTINGS_SIZE];

@@ -17,10 +17,6 @@
 #include <libxs/libxs_timer.h>
 #include <libxs/libxs_math.h>
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <inttypes.h>
 #if defined(_OPENMP)
 # include <omp.h>
 #endif

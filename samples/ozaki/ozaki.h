@@ -300,7 +300,7 @@ OZAKI_APIVAR_PRIVATE(int gemm_threshold);
 
 OZAKI_API_INTERN void gemm_init(void);
 
-LIBXS_API_INLINE int ozaki_count_pairs(int nslices, int co, int flags)
+LIBXS_INLINE int ozaki_count_pairs(int nslices, int co, int flags)
 {
   int sa, n = 0;
   for (sa = 0; sa < nslices && sa <= co; ++sa) {
@@ -321,7 +321,7 @@ LIBXS_API_INLINE int ozaki_count_pairs(int nslices, int co, int flags)
  * at the first call would follow whichever GEMM happened to arrive first.
  * An explicit OZAKI_FLAGS wins, which is what makes the sweep measurable.
  */
-LIBXS_API_INLINE int ozaki_flags_eff(GEMM_INT_TYPE m, GEMM_INT_TYPE n, GEMM_INT_TYPE k)
+LIBXS_INLINE int ozaki_flags_eff(GEMM_INT_TYPE m, GEMM_INT_TYPE n, GEMM_INT_TYPE k)
 {
   int result = ozaki_flags;
   if (0 > result) { /* auto: OZAKI_FLAGS unset */
@@ -332,7 +332,7 @@ LIBXS_API_INLINE int ozaki_flags_eff(GEMM_INT_TYPE m, GEMM_INT_TYPE n, GEMM_INT_
 }
 
 
-LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t ncomponents, libxs_matdiff_t* diff);
+LIBXS_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t ncomponents, libxs_matdiff_t* diff);
 
 extern LIBXS_TLS int gemm_nozaki; /* not precision-prefixed: bypass must cover all precisions */
 extern LIBXS_TLS int gemm_dump_inhibit;
@@ -353,7 +353,7 @@ void ozaki_ocl_finalize(void);
 #endif
 
 /* Scalar int8 dot product fallback (auto-vectorizable). */
-LIBXS_API_INLINE int32_t ozaki_dot_i8_sw(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
+LIBXS_INLINE int32_t ozaki_dot_i8_sw(const int8_t a[BLOCK_K], const int8_t b[BLOCK_K])
 {
   int32_t dot = 0;
   int kk;
@@ -364,7 +364,7 @@ LIBXS_API_INLINE int32_t ozaki_dot_i8_sw(const int8_t a[BLOCK_K], const int8_t b
 }
 
 /* Scalar u8 dot product fallback (auto-vectorizable). */
-LIBXS_API_INLINE int32_t ozaki_dot_u8_sw(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
+LIBXS_INLINE int32_t ozaki_dot_u8_sw(const uint8_t a[BLOCK_K], const uint8_t b[BLOCK_K])
 {
   int32_t dot = 0;
   int kk;
@@ -386,7 +386,7 @@ LIBXS_API_INLINE int32_t ozaki_dot_u8_sw(const uint8_t a[BLOCK_K], const uint8_t
 
 /* s8*s8 panel via DPBSSD (AVX-VNNI-INT8, 512-bit EVEX). */
 # if (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_i8_bssd(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_i8_bssd(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const int8_t* a, GEMM_INT_TYPE lda, const int32_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
   __m512i acc[BLOCK_M];
@@ -410,7 +410,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_i8_bss
   }
 }
 
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_i8_bssd_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N,
+LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_i8_bssd_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N,
   GEMM_INT_TYPE K, const int8_t* a1, GEMM_INT_TYPE lda1, const int32_t* b1, GEMM_INT_TYPE ldb1,
   const int8_t* a2, GEMM_INT_TYPE lda2, const int32_t* b2, GEMM_INT_TYPE ldb2,
   int beta, int32_t* c, GEMM_INT_TYPE ldc)
@@ -447,7 +447,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_i8_bss
  * subtract 128 * column_sum(B) to correct. Column sum is computed
  * once across all K using DPBUSD(ones, B).
  */
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_panel_i8_vnni(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_panel_i8_vnni(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const int8_t* a, GEMM_INT_TYPE lda, const int32_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
   const __m512i bias = _mm512_set1_epi32((int32_t)0x80808080);
@@ -479,7 +479,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_panel_i8_vnni(GEM
   }
 }
 
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_panel_i8_vnni_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_panel_i8_vnni_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const int8_t* a1, GEMM_INT_TYPE lda1, const int32_t* b1, GEMM_INT_TYPE ldb1,
   const int8_t* a2, GEMM_INT_TYPE lda2, const int32_t* b2, GEMM_INT_TYPE ldb2,
   int beta, int32_t* c, GEMM_INT_TYPE ldc)
@@ -522,7 +522,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_panel_i8_vnni_fus
 
 /* u8*u8 panel via DPBUUD (AVX-VNNI-INT8, 512-bit EVEX). */
 # if (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_u8_buud(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_u8_buud(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const uint8_t* a, GEMM_INT_TYPE lda, const int32_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
   __m512i acc[BLOCK_M];
@@ -546,7 +546,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_u8_buu
   }
 }
 
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_u8_buud_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N,
+LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_u8_buud_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N,
   GEMM_INT_TYPE K, const uint8_t* a1, GEMM_INT_TYPE lda1, const int32_t* b1, GEMM_INT_TYPE ldb1,
   const uint8_t* a2, GEMM_INT_TYPE lda2, const int32_t* b2, GEMM_INT_TYPE ldb2,
   int beta, int32_t* c, GEMM_INT_TYPE ldc)
@@ -582,7 +582,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_u8_buu
  * DPBUSD is u8*s8; XOR B with 0x80 converts u8 to s8 during reformat,
  * then add 128 * row_sum(A) to correct.
  */
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_panel_u8_vnni(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_panel_u8_vnni(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const uint8_t* a, GEMM_INT_TYPE lda, const int32_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
   __m512i acc[BLOCK_M];
@@ -610,7 +610,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_panel_u8_vnni(GEM
   }
 }
 
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_panel_u8_vnni_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_panel_u8_vnni_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const uint8_t* a1, GEMM_INT_TYPE lda1, const int32_t* b1, GEMM_INT_TYPE ldb1,
   const uint8_t* a2, GEMM_INT_TYPE lda2, const int32_t* b2, GEMM_INT_TYPE ldb2,
   int beta, int32_t* c, GEMM_INT_TYPE ldc)
@@ -667,7 +667,7 @@ typedef struct {
   uint8_t data[64];
 } ozaki_amx_tilecfg_t;
 
-LIBXS_API_INLINE void ozaki_amx_tilecfg_init(ozaki_amx_tilecfg_t* cfg, int m_rows, int k_bytes)
+LIBXS_INLINE void ozaki_amx_tilecfg_init(ozaki_amx_tilecfg_t* cfg, int m_rows, int k_bytes)
 {
   memset(cfg, 0, sizeof(*cfg));
   cfg->data[0] = 1; /* palette_id */
@@ -689,7 +689,7 @@ LIBXS_API_INLINE void ozaki_amx_tilecfg_init(ozaki_amx_tilecfg_t* cfg, int m_row
  * Reformats 16 columns x 64 K-bytes into VNNI tile with XOR 0x80,
  * then TDPBUSD (u8*s8). Correct via +128*row_sum(A).
  */
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_u8_amx(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_u8_amx(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const uint8_t* a, GEMM_INT_TYPE lda, const int32_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
   ozaki_amx_tilecfg_t cfg;
@@ -749,7 +749,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_u8_amx(
  * AMX s8*s8 panel via TDPBUSD with on-the-fly A XOR + B reformat.
  * XOR A with 0x80 for TDPBUSD (u8*s8); subtract 128*column_sum(B).
  */
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const int8_t* a, GEMM_INT_TYPE lda, const int32_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
   ozaki_amx_tilecfg_t cfg;
@@ -815,7 +815,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx(
 }
 
 
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_u8_amx_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N,
+LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_u8_amx_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N,
   GEMM_INT_TYPE K, const uint8_t* a1, GEMM_INT_TYPE lda1, const int32_t* b1, GEMM_INT_TYPE ldb1,
   const uint8_t* a2, GEMM_INT_TYPE lda2, const int32_t* b2, GEMM_INT_TYPE ldb2,
   int beta, int32_t* c, GEMM_INT_TYPE ldc)
@@ -881,7 +881,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_u8_amx_
 }
 
 
-LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N,
+LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N,
   GEMM_INT_TYPE K, const int8_t* a1, GEMM_INT_TYPE lda1, const int32_t* b1, GEMM_INT_TYPE ldb1,
   const int8_t* a2, GEMM_INT_TYPE lda2, const int32_t* b2, GEMM_INT_TYPE ldb2,
   int beta, int32_t* c, GEMM_INT_TYPE ldc)
@@ -980,7 +980,7 @@ LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void ozaki_panel_i8_amx_
 #endif
 
 /* u8*u8 -> s32 GEMM. */
-LIBXS_API_INLINE void ozaki_gemm_u8u8s32(char transa, char transb, GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+LIBXS_INLINE void ozaki_gemm_u8u8s32(char transa, char transb, GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const uint8_t* a, GEMM_INT_TYPE lda, const uint8_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
@@ -1003,7 +1003,7 @@ LIBXS_API_INLINE void ozaki_gemm_u8u8s32(char transa, char transb, GEMM_INT_TYPE
 }
 
 /* s8*s8 -> s32 GEMM. With __DNNL: delegates to dnnl_gemm_s8s8s32. */
-LIBXS_API_INLINE void ozaki_gemm_s8s8s32(char transa, char transb, GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+LIBXS_INLINE void ozaki_gemm_s8s8s32(char transa, char transb, GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const int8_t* a, GEMM_INT_TYPE lda, const int8_t* b, GEMM_INT_TYPE ldb, int beta, int32_t* c, GEMM_INT_TYPE ldc)
 {
 #if defined(__DNNL)
@@ -1031,7 +1031,7 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32(char transa, char transb, GEMM_INT_TYPE
 }
 
 /* Fused u8*u8 -> s32 GEMM: c += A1*B1 + A2*B2 in one kernel call. */
-LIBXS_API_INLINE void ozaki_gemm_u8u8s32_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+LIBXS_INLINE void ozaki_gemm_u8u8s32_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const uint8_t* a1, GEMM_INT_TYPE lda1, const uint8_t* b1, GEMM_INT_TYPE ldb1,
   const uint8_t* a2, GEMM_INT_TYPE lda2, const uint8_t* b2, GEMM_INT_TYPE ldb2,
   int beta, int32_t* c, GEMM_INT_TYPE ldc)
@@ -1063,7 +1063,7 @@ LIBXS_API_INLINE void ozaki_gemm_u8u8s32_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N,
 }
 
 /* Fused s8*s8 -> s32 GEMM: c += A1*B1 + A2*B2 in one kernel call. */
-LIBXS_API_INLINE void ozaki_gemm_s8s8s32_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
+LIBXS_INLINE void ozaki_gemm_s8s8s32_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
   const int8_t* a1, GEMM_INT_TYPE lda1, const int8_t* b1, GEMM_INT_TYPE ldb1,
   const int8_t* a2, GEMM_INT_TYPE lda2, const int8_t* b2, GEMM_INT_TYPE ldb2,
   int beta, int32_t* c, GEMM_INT_TYPE ldc)
@@ -1096,7 +1096,7 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N,
 
 
 /* s8*s8 -> s32 GEMM with pre-packed VNNI B (ldb=BLOCK_N). */
-LIBXS_API_INLINE void ozaki_gemm_s8s8s32_packed(GEMM_INT_TYPE M, GEMM_INT_TYPE K,
+LIBXS_INLINE void ozaki_gemm_s8s8s32_packed(GEMM_INT_TYPE M, GEMM_INT_TYPE K,
   const int8_t* a, GEMM_INT_TYPE lda, const int32_t* b, int32_t* c, GEMM_INT_TYPE ldc)
 {
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
@@ -1118,7 +1118,7 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32_packed(GEMM_INT_TYPE M, GEMM_INT_TYPE K
 }
 
 /* Fused s8*s8 -> s32 GEMM with pre-packed VNNI B (ldb=BLOCK_N). */
-LIBXS_API_INLINE void ozaki_gemm_s8s8s32_packed_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE K,
+LIBXS_INLINE void ozaki_gemm_s8s8s32_packed_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE K,
   const int8_t* a1, GEMM_INT_TYPE lda1, const int32_t* b1,
   const int8_t* a2, GEMM_INT_TYPE lda2, const int32_t* b2,
   int32_t* c, GEMM_INT_TYPE ldc)
@@ -1152,7 +1152,7 @@ LIBXS_API_INLINE void ozaki_gemm_s8s8s32_packed_fused(GEMM_INT_TYPE M, GEMM_INT_
  * incorrect for double precision (finite doubles > ~3.4e38 overflow
  * to float-Inf, producing a false positive).
  */
-LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value, int16_t* exp_biased, uint64_t* mantissa)
+LIBXS_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value, int16_t* exp_biased, uint64_t* mantissa)
 {
   uint64_t bits;
   uint64_t frac;
@@ -1209,7 +1209,7 @@ LIBXS_API_INLINE int ozaki_extract_ieee(GEMM_REAL_TYPE value, int16_t* exp_biase
 
 
 /** Check whether a per-call diff exceeds configured thresholds. */
-LIBXS_API_INLINE int ozaki_diff_exceeds(const libxs_matdiff_t* diff)
+LIBXS_INLINE int ozaki_diff_exceeds(const libxs_matdiff_t* diff)
 {
   return (NULL != diff && (diff->rsq < ozaki_rsq || (1 == ozaki_idx && ozaki_eps < diff->linf_abs) ||
                             (2 == ozaki_idx && ozaki_eps < diff->linf_rel) || (3 == ozaki_idx && ozaki_eps < diff->l2_rel) ||
@@ -1218,7 +1218,7 @@ LIBXS_API_INLINE int ozaki_diff_exceeds(const libxs_matdiff_t* diff)
 
 
 /** Run reference BLAS on c_ref, compute matdiff vs c, repair c if diff exceeds threshold. */
-LIBXS_API_INLINE void ozaki_diff_reference(GEMM_ARGDECL, GEMM_REAL_TYPE* c_ref, size_t c_size, libxs_matdiff_t* diff)
+LIBXS_INLINE void ozaki_diff_reference(GEMM_ARGDECL, GEMM_REAL_TYPE* c_ref, size_t c_size, libxs_matdiff_t* diff)
 {
   gemm_nozaki = 1;
   if (NULL != gemm_original) {
@@ -1239,7 +1239,7 @@ LIBXS_API_INLINE void ozaki_diff_reference(GEMM_ARGDECL, GEMM_REAL_TYPE* c_ref, 
  * Uses gemm_diff.r as the dump ID and updates ozaki_eps/ozaki_rsq thresholds
  * to avoid repeated dumps.
  */
-LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
+LIBXS_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
 {
   char fname[64];
   const char* const env_slurm = getenv("SLURM_JOBID");
@@ -1322,7 +1322,7 @@ LIBXS_API_INLINE int gemm_dump_matrices(GEMM_ARGDECL, size_t ncomponents)
  * Post-diff processing: accumulate into global diff, verbose output,
  * matrix dumps, and conditional exit. Called after a _diff kernel returns.
  */
-LIBXS_API_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t ncomponents, libxs_matdiff_t* diff)
+LIBXS_INLINE void ozaki_post_diff(GEMM_ARGDECL, const char* label, size_t ncomponents, libxs_matdiff_t* diff)
 {
   libxs_matdiff_t call_diff = *diff;
   LIBXS_ATOMIC_ACQUIRE(&gemm_lock, LIBXS_SYNC_NPAUSE, LIBXS_ATOMIC_LOCKORDER);

@@ -67,7 +67,7 @@ OZAKI_API void zgemm_reference(GEMM_ARGDECL)
  * In both cases, op(A_hat) = [op(Ar), -op(Ai); op(Ai), op(Ar)]
  * so that op(A_hat) * [op(Br); op(Bi)] = [Re(C); Im(C)].
  */
-LIBXS_API_INLINE void zgemm_block_construct_a(const GEMM_REAL_TYPE* LIBXS_RESTRICT a, GEMM_INT_TYPE lda,
+LIBXS_INLINE void zgemm_block_construct_a(const GEMM_REAL_TYPE* LIBXS_RESTRICT a, GEMM_INT_TYPE lda,
   GEMM_REAL_TYPE* LIBXS_RESTRICT a_hat, GEMM_INT_TYPE a_rows, GEMM_INT_TYPE a_cols, int ta)
 {
   const GEMM_INT_TYPE lda_hat = 2 * a_rows;
@@ -96,7 +96,7 @@ LIBXS_API_INLINE void zgemm_block_construct_a(const GEMM_REAL_TYPE* LIBXS_RESTRI
  *
  * In both cases, op(B_hat) = [op(Br); op(Bi)] (2K x N).
  */
-LIBXS_API_INLINE void zgemm_block_construct_b(const GEMM_REAL_TYPE* LIBXS_RESTRICT b, GEMM_INT_TYPE ldb,
+LIBXS_INLINE void zgemm_block_construct_b(const GEMM_REAL_TYPE* LIBXS_RESTRICT b, GEMM_INT_TYPE ldb,
   GEMM_REAL_TYPE* LIBXS_RESTRICT b_hat, GEMM_INT_TYPE b_rows, GEMM_INT_TYPE b_cols, int tb, int conj)
 {
   const GEMM_REAL_TYPE sign_im = (0 != conj) ? (GEMM_REAL_TYPE)-1 : (GEMM_REAL_TYPE)1;
@@ -137,7 +137,7 @@ LIBXS_API_INLINE void zgemm_block_construct_b(const GEMM_REAL_TYPE* LIBXS_RESTRI
  *   Rows 0..m-1   = Re(A*B)
  *   Rows m..2m-1  = Im(A*B)
  */
-LIBXS_API_INLINE void zgemm_block_finalize(GEMM_REAL_TYPE* LIBXS_RESTRICT c, GEMM_INT_TYPE ldc,
+LIBXS_INLINE void zgemm_block_finalize(GEMM_REAL_TYPE* LIBXS_RESTRICT c, GEMM_INT_TYPE ldc,
   const GEMM_REAL_TYPE* LIBXS_RESTRICT c_hat, GEMM_INT_TYPE m, GEMM_INT_TYPE n, GEMM_REAL_TYPE ar, GEMM_REAL_TYPE ai,
   GEMM_REAL_TYPE br, GEMM_REAL_TYPE bi)
 {
@@ -297,7 +297,7 @@ OZAKI_API_INTERN void gemm_complex(GEMM_ARGDECL)
 
 
 /* complex GEMM diff: save C, block-embed, reference ZGEMM, matdiff C64/C32 */
-LIBXS_API_INLINE void gemm_complex_diff(GEMM_ARGDECL, libxs_matdiff_t* diff)
+LIBXS_INLINE void gemm_complex_diff(GEMM_ARGDECL, libxs_matdiff_t* diff)
 {
   GEMM_REAL_TYPE* c_ref = NULL;
   size_t c_size = 0;

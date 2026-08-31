@@ -10,13 +10,6 @@
 #include <libxs/libxs_perm.h>
 #include <libxs/libxs_timer.h>
 
-#include <assert.h>
-#include <float.h>
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
 #if defined(_OPENMP)
 # include <omp.h>
 #endif

@@ -33,11 +33,6 @@
 #include <libxs/libxs_mhd.h>
 #include <libxs/libxs_perm.h>
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-
 #define NROWS   64
 #define NFIELDS 6
 #define ROSETTA_PATH_MAX 1024
