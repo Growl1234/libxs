@@ -267,7 +267,7 @@ endif
 
 $(foreach OBJ,$(OBJFILES),$(eval $(call DEFINE_COMPILE_RULE, \
   $(OBJ),$(patsubst %.o,$(ROOTSRC)/%.c,$(notdir $(OBJ))), \
-  $(HEADERS_MAIN) $(INCDIR)/$(PROJECT)_version.h, \
+  $(HEADERS) $(INCDIR)/$(PROJECT)_version.h, \
   $(DFLAGS) $(if $(filter $(BLDDIR)/intel64/$(PROJECT)_main.o,$(OBJ)), \
     -DLIBXS_BUILD_STATE=\"$(LIBXS_BUILD_STATE)\") \
   $(IFLAGS) $(CTARGET) $(CFLAGS))))

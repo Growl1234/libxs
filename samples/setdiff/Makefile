@@ -33,6 +33,7 @@ IFLAGS += -I$(call quote,$(DEPDIR)/libxs)
 OUTNAME := $(shell basename "$(ROOTDIR)")
 HEADERS := $(wildcard $(INCDIR)/*.h) \
            $(wildcard $(SRCDIR)/*.h) \
+           $(wildcard $(DEPDIR)/libxs/*.h) \
            $(DEPDIR)/libxs/libxs_source.h
 CSOURCS := $(wildcard $(SRCDIR)/*.c)
 COBJCTS := $(patsubst %,$(BLDDIR)/%,$(notdir $(CSOURCS:.c=-c.o)))

@@ -55,6 +55,7 @@ MEDMNIST3D_METRICS_INPUT_ARG = $(if $(MEDMNIST3D_NPZ),--medmnist3d-npz "$(MEDMNI
 
 HEADERS := $(wildcard $(INCDIR)/*.h) \
            $(wildcard $(SRCDIR)/*.h) \
+           $(wildcard $(DEPDIR)/libxs/*.h) \
            $(DEPDIR)/libxs/libxs_source.h
 CSOURCS := $(wildcard $(SRCDIR)/paircnt_*.c)
 COBJCTS := $(patsubst %,$(BLDDIR)/%,$(notdir $(CSOURCS:.c=-c.o)))
