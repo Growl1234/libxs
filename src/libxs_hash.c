@@ -42,11 +42,11 @@
 #define LIBXS_HASH_CRC32_U16(SEED, PVALUE) _mm_crc32_u16(SEED, *(const uint16_t*)(PVALUE))
 #define LIBXS_HASH_CRC32_U32(SEED, PVALUE) _mm_crc32_u32(SEED, *(const uint32_t*)(PVALUE))
 
-#if (64 > (LIBXS_BITS)) || !defined(LIBXS_INTEL_COMPILER)
+#if (64 <= (LIBXS_BITS)) && (defined(LIBXS_INTEL_COMPILER) || 1)
+# define LIBXS_HASH_CRC32_U64(SEED, PVALUE) _mm_crc32_u64(SEED, *(const uint64_t*)(PVALUE))
+#else /* legacy GCC declared an incorrect prototype */
 # define LIBXS_HASH_CRC32_U64(SEED, PVALUE) \
   LIBXS_HASH_CRC32_U32(LIBXS_HASH_CRC32_U32((uint32_t)(SEED), PVALUE), (const uint32_t*)(PVALUE) + 1)
-#else /* _mm_crc32_u64: potentially incorrect prototype */
-# define LIBXS_HASH_CRC32_U64(SEED, PVALUE) _mm_crc32_u64(SEED, *(const uint64_t*)(PVALUE))
 #endif
 
 #define LIBXS_HASH(FN64, FN32, FN16, FN8, SEED, DATA, SIZE) do { \

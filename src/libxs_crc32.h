@@ -36,6 +36,13 @@ LIBXS_EXTERN_C typedef unsigned int (*libxs_hash_function)(
 LIBXS_API_INTERN void internal_libxs_hash_init(int target_arch);
 LIBXS_API_INTERN void internal_libxs_hash_finalize(void);
 
+/**
+ * The fixed-size flavours load their operand at full width and do not peel:
+ * value must be aligned to the smaller of the size and eight Bytes. Only
+ * libxs_crc32 aligns before widening, hence only it accepts any alignment.
+ * The variadic signature merely matches libxs_hash_function; the size is
+ * implied by the name and is never retrieved.
+ */
 LIBXS_API_INTERN unsigned int libxs_crc32_u8(unsigned int seed, const void* value, ...);
 LIBXS_API_INTERN unsigned int libxs_crc32_u16(unsigned int seed, const void* value, ...);
 LIBXS_API_INTERN unsigned int libxs_crc32_u32(unsigned int seed, const void* value, ...);
