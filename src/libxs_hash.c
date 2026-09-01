@@ -39,14 +39,14 @@
 } while(0)
 
 #define LIBXS_HASH_CRC32_U8(SEED, PVALUE) _mm_crc32_u8(SEED, *(const uint8_t*)(PVALUE))
-#define LIBXS_HASH_CRC32_U16(SEED, PVALUE) _mm_crc32_u16(SEED, *(const uint16_t*)(PVALUE))
-#define LIBXS_HASH_CRC32_U32(SEED, PVALUE) _mm_crc32_u32(SEED, *(const uint32_t*)(PVALUE))
+#define LIBXS_HASH_CRC32_U16(SEED, PVALUE) _mm_crc32_u16(SEED, *(const internal_libxs_hash_u16_type*)(PVALUE))
+#define LIBXS_HASH_CRC32_U32(SEED, PVALUE) _mm_crc32_u32(SEED, *(const internal_libxs_hash_u32_type*)(PVALUE))
 
 #if (64 <= (LIBXS_BITS)) && (defined(LIBXS_INTEL_COMPILER) || 1)
-# define LIBXS_HASH_CRC32_U64(SEED, PVALUE) _mm_crc32_u64(SEED, *(const uint64_t*)(PVALUE))
+# define LIBXS_HASH_CRC32_U64(SEED, PVALUE) _mm_crc32_u64(SEED, *(const internal_libxs_hash_u64_type*)(PVALUE))
 #else /* legacy GCC declared an incorrect prototype */
 # define LIBXS_HASH_CRC32_U64(SEED, PVALUE) \
-  LIBXS_HASH_CRC32_U32(LIBXS_HASH_CRC32_U32((uint32_t)(SEED), PVALUE), (const uint32_t*)(PVALUE) + 1)
+  LIBXS_HASH_CRC32_U32(LIBXS_HASH_CRC32_U32((uint32_t)(SEED), PVALUE), (const internal_libxs_hash_u32_type*)(PVALUE) + 1)
 #endif
 
 #define LIBXS_HASH(FN64, FN32, FN16, FN8, SEED, DATA, SIZE) do { \
@@ -102,6 +102,21 @@
 } while(0)
 
 
+/**
+ * Types the widened loads below read the caller's bytes through. The bytes hold
+ * objects of any type, and an lvalue of a wider type is then exactly what
+ * -ansi-alias (or GCC's -fstrict-aliasing) is allowed to reorder against the
+ * stores that produced them: hashing a freshly written int array through one
+ * 8-Byte load returned the wrong digest at -O2 and -O3, while -O0, -O1 and the
+ * two-Bytes-at-a-time path all agreed. uint32_t reading an int object is
+ * permitted, but the same load also sees doubles and structs, so every width
+ * above a Byte needs this. Non-GNU compilers get a plain type back, which is
+ * correct for the ones that do not infer from types in the first place.
+ */
+typedef uint16_t internal_libxs_hash_u16_type LIBXS_MAY_ALIAS;
+typedef uint32_t internal_libxs_hash_u32_type LIBXS_MAY_ALIAS;
+typedef uint64_t internal_libxs_hash_u64_type LIBXS_MAY_ALIAS;
+
 typedef uint32_t internal_libxs_crc32_entry_type[256];
 typedef const internal_libxs_crc32_entry_type* internal_libxs_crc32_table_type;
 LIBXS_APIVAR_DEFINE(internal_libxs_crc32_table_type internal_libxs_crc32_table);
@@ -139,7 +154,8 @@ LIBXS_API_INLINE unsigned int internal_libxs_crc32_sw_u16(internal_libxs_crc32_t
 LIBXS_API_INLINE unsigned int internal_libxs_crc32_sw_u32(internal_libxs_crc32_table_type table,
   unsigned int seed, const void* value)
 {
-  const uint32_t *const pu32 = (const uint32_t*)value;
+  const internal_libxs_hash_u32_type *const pu32 =
+    (const internal_libxs_hash_u32_type*)value;
   uint32_t c0, c1, c2, c3, s;
   LIBXS_ASSERT(NULL != pu32 && NULL != table);
   s = seed ^ (*pu32);
@@ -154,7 +170,8 @@ LIBXS_API_INLINE unsigned int internal_libxs_crc32_sw_u32(internal_libxs_crc32_t
 LIBXS_API_INLINE unsigned int internal_libxs_crc32_sw_u64(internal_libxs_crc32_table_type table,
   unsigned int seed, const void* value)
 {
-  const uint32_t *const pu32 = (const uint32_t*)value;
+  const internal_libxs_hash_u32_type *const pu32 =
+    (const internal_libxs_hash_u32_type*)value;
   LIBXS_ASSERT(NULL != pu32);
   seed = internal_libxs_crc32_sw_u32(table, seed, pu32 + 0);
   seed = internal_libxs_crc32_sw_u32(table, seed, pu32 + 1);

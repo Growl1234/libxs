@@ -28,10 +28,20 @@
     + (size_t)(TS) * ((size_t)(I) * (LDI) + (J))); \
   TYPE *const DST = (TYPE*)(((char*)(OUT)) \
     + (size_t)(TS) * ((size_t)(I) * (LDO) + (J)))
-/* xcopy kernel: zero stores (matzero) */
+/**
+ * xcopy kernel: zero stores (matzero). Three constraints meet in the zero
+ * source. The read member is a character array, which keeps the load out of
+ * type-based aliasing for every TYPE: reading a typed array through a wider or
+ * narrower TYPE is the violation that made libxs_crc32_u64 return a stale digest
+ * at -O2. It holds 256 Bytes because libxs_matcopy_task admits typesize < 256
+ * and the byte-loop fallback reads that many. And it is a union with a double so
+ * that the alignment TYPE needs comes from the type system, rather than from
+ * LIBXS_ALIGNED, which expands to nothing outside MSVC and GNU.
+ */
 #define LIBXS_MZERO_KERNEL(TYPE, TS, OUT, IN, LDI, LDO, I, J, SRC, DST) \
-  static const double libxs_mzero_zero_[32] = { 0 }; \
-  const TYPE *const SRC = (const TYPE*)libxs_mzero_zero_; \
+  static const union { double align; unsigned char byte[256]; } \
+    libxs_mzero_zero_ = { 0 }; \
+  const TYPE *const SRC = (const TYPE*)libxs_mzero_zero_.byte; \
   TYPE *const DST = (TYPE*)(((char*)(OUT)) \
     + (size_t)(TS) * ((size_t)(I) * (LDO) + (J)))
 /* xcopy kernel: strided loads, consecutive stores (transpose) */
@@ -723,7 +733,6 @@ LIBXS_API int libxs_memcmp(const void* a, const void* b, size_t size)
 # endif
 #endif
 }
-
 
 
 LIBXS_API_INLINE void internal_libxs_itrans_scratch(

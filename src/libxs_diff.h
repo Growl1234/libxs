@@ -16,15 +16,15 @@
 # define LIBXS_DIFF_AVX512_ENABLED
 #endif
 
-#define LIBXS_DIFF_4_DECL(A) const uint32_t */*const*/ A = NULL
+#define LIBXS_DIFF_4_DECL(A) const internal_libxs_diff_u32_type */*const*/ A = NULL
 #define LIBXS_DIFF_4_ASSIGN(A, B) (A) = (B)
-#define LIBXS_DIFF_4_LOAD(A, SRC) A = (const uint32_t*)(SRC)
-#define LIBXS_DIFF_4(A, B, ...) ((unsigned char)(0 != (*(A) ^ (*(const uint32_t*)(B)))))
+#define LIBXS_DIFF_4_LOAD(A, SRC) A = (const internal_libxs_diff_u32_type*)(SRC)
+#define LIBXS_DIFF_4(A, B, ...) ((unsigned char)(0 != (*(A) ^ (*(const internal_libxs_diff_u32_type*)(B)))))
 
-#define LIBXS_DIFF_8_DECL(A) const uint64_t */*const*/ A = NULL
+#define LIBXS_DIFF_8_DECL(A) const internal_libxs_diff_u64_type */*const*/ A = NULL
 #define LIBXS_DIFF_8_ASSIGN(A, B) (A) = (B)
-#define LIBXS_DIFF_8_LOAD(A, SRC) A = (const uint64_t*)(SRC)
-#define LIBXS_DIFF_8(A, B, ...) ((unsigned char)(0 != (*(A) ^ (*(const uint64_t*)(B)))))
+#define LIBXS_DIFF_8_LOAD(A, SRC) A = (const internal_libxs_diff_u64_type*)(SRC)
+#define LIBXS_DIFF_8(A, B, ...) ((unsigned char)(0 != (*(A) ^ (*(const internal_libxs_diff_u64_type*)(B)))))
 
 #define LIBXS_DIFF_SSE_DECL(A) __m128i A = LIBXS_INTRINSICS_MM_UNDEFINED_SI128()
 #define LIBXS_DIFF_SSE_ASSIGN(A, B) (A) = (B)
@@ -38,11 +38,12 @@
 # define LIBXS_DIFF_16_LOAD LIBXS_DIFF_SSE_LOAD
 # define LIBXS_DIFF_16 LIBXS_DIFF_SSE
 #else
-# define LIBXS_DIFF_16_DECL(A) const uint64_t */*const*/ A = NULL
+# define LIBXS_DIFF_16_DECL(A) const internal_libxs_diff_u64_type */*const*/ A = NULL
 # define LIBXS_DIFF_16_ASSIGN(A, B) (A) = (B)
-# define LIBXS_DIFF_16_LOAD(A, SRC) A = (const uint64_t*)(SRC)
-# define LIBXS_DIFF_16(A, B, ...) ((unsigned char)(0 != (((A)[0] ^ (*(const uint64_t*)(B))) | \
-    ((A)[1] ^ ((const uint64_t*)(B))[1]))))
+# define LIBXS_DIFF_16_LOAD(A, SRC) A = (const internal_libxs_diff_u64_type*)(SRC)
+# define LIBXS_DIFF_16(A, B, ...) ((unsigned char)(0 != (((A)[0] \
+    ^ (*(const internal_libxs_diff_u64_type*)(B))) \
+    | ((A)[1] ^ ((const internal_libxs_diff_u64_type*)(B))[1]))))
 #endif
 
 #define LIBXS_DIFF_AVX2_DECL(A) __m256i A = LIBXS_INTRINSICS_MM256_UNDEFINED_SI256()
@@ -121,6 +122,18 @@
   } \
 } while(0)
 
+
+/**
+ * Types the scalar comparisons above read the compared blocks through. A key can
+ * hold objects of any type, and an lvalue of a wider type is then what
+ * -ansi-alias (or GCC's -fstrict-aliasing) may reorder against the stores that
+ * built the key: the same violation made libxs_crc32_u64 return a stale digest
+ * at -O2. Only the widths that are dereferenced need this, hence the casts that
+ * merely advance a pointer by 16 or 32 Bytes are left alone, and the SSE, AVX2
+ * and AVX-512 paths need nothing because a vector type already may alias.
+ */
+typedef uint32_t internal_libxs_diff_u32_type LIBXS_MAY_ALIAS;
+typedef uint64_t internal_libxs_diff_u64_type LIBXS_MAY_ALIAS;
 
 /** Function type representing the diff-functionality. */
 LIBXS_EXTERN_C typedef unsigned char (*libxs_diff_function)(
