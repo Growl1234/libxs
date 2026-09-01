@@ -7,8 +7,8 @@ prints the resulting logical metatokens, and verifies exact decoding.
 
 ```bash
 cd ../..
-make GNU=1 PEDANTIC=2
-make -C samples/tokenizer GNU=1 PEDANTIC=2
+make PEDANTIC=2
+make -C samples/tokenizer PEDANTIC=2
 ```
 
 ## Usage

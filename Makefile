@@ -371,7 +371,7 @@ $(DOCDIR)/$(PROJECT)_samples.md: $(DOCDIR)/.make $(DOCDIR)/$(SPLDIR)/.make $(ROO
 		$(SED) $(DOC_MD_SED) \
 			<$${MD} >$(DOCDIR)/$(SPLDIR)/$(PROJECT)_$$(basename $$(dirname $${MD})).md; \
 	done
-	@cat $(SPLMDS) | $(SED) \
+	@for MD in $(SPLMDS); do cat $${MD} && echo; done | $(SED) \
 		-e 's/^#/##/' \
 		$(DOC_HTML_SED) \
 		-e '/^----*$$/d' \

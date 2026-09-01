@@ -10,7 +10,7 @@ PARAMS_DIR="${LIBXSTREAM_ROOT}/samples/smm/params"
 
 if [ ! -x "${HERE}/predict_params.x" ]; then
   echo "predict_params.x not found in ${HERE}, building..."
-  make -C "${HERE}" GNU=1 predict_params.x 2>&1 | tail -3
+  make -C "${HERE}" predict_params.x 2>&1 | tail -3
 fi
 
 ARGS="${@:-hknn compress}"
