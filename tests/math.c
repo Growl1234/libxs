@@ -548,6 +548,35 @@ int main(int argc, char* argv[])
     if (libxs_mod_inverse_u32(3, 128) != 43) exit(EXIT_FAILURE); /* 3*43=129, 129%128=1 */
     if (libxs_mod_inverse_u32(128, 125) != 42) exit(EXIT_FAILURE); /* 128*42=5376, 5376%125=1 */
     if (libxs_mod_inverse_u32(7, 81) != 58) exit(EXIT_FAILURE);  /* 7*58=406, 406%81=1 */
+    { /**
+       * Moduli above 2^30, which no case above reaches. The coefficient leaves
+       * 32-bit there long before the modulus does, so a narrow accumulator is
+       * undefined rather than merely wide, and the product of two of these does
+       * not fit 32-bit either: the verification below has to be 64-bit. The
+       * first five are products of four moduli each, which is how a caller
+       * inverting one group of moduli against another arrives at this range.
+       */
+      static const unsigned int large[] = {
+        1752116992u, 1841455727u, 1799186337u, 1823610127u, 1804203113u,
+        2147483647u, 3221225473u, 4294967291u
+      };
+      const int nlarge = (int)(sizeof(large) / sizeof(*large));
+      for (i = 0; i < nlarge; ++i) {
+        for (j = 0; j < nlarge; ++j) {
+          const unsigned int m = large[j], a = large[i] % m;
+          unsigned int g = a, h = m;
+          while (0 != h) { const unsigned int t = h; h = g % h; g = t; }
+          if (i == j || 0 == a || 1 != g) continue;
+          { const unsigned int inv = libxs_mod_inverse_u32(a, m);
+            if (1 != (unsigned int)(((unsigned long long)a * inv) % m)) {
+              FPRINTF(stderr, "ERROR line #%i: %u * modinv(%u,%u)=%u != 1 (mod %u)\n",
+                __LINE__, a, a, m, inv, m);
+              exit(EXIT_FAILURE);
+            }
+          }
+        }
+      }
+    }
   }
 
   { /* check libxs_mod_u32/ libxs_mod_u64: Barrett and radix-split reduction */

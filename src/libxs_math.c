@@ -547,16 +547,21 @@ LIBXS_API double libxs_pow2(int n)
 
 LIBXS_API unsigned int libxs_mod_inverse_u32(unsigned int a, unsigned int m)
 {
-  int t = 0, newt = 1;
+  /**
+   * The coefficient is carried 64-bit though argument, modulus and result are
+   * 32-bit: the recurrence subtracts q times the coefficient, and that product
+   * reaches twice the modulus, hence it leaves int for any m above 2^30.
+   */
+  int64_t t = 0, newt = 1;
   unsigned int r = m, newr = a % m;
   LIBXS_ASSERT(0 != m && 0 != a);
   while (0 != newr) {
     const unsigned int q = r / newr;
-    { const int tmp = t - (int)(q) * newt; t = newt; newt = tmp; }
+    { const int64_t tmp = t - (int64_t)q * newt; t = newt; newt = tmp; }
     { const unsigned int tmp = r - q * newr; r = newr; newr = tmp; }
   }
   LIBXS_ASSERT(1 == r); /* gcd(a, m) must be 1 */
-  return (unsigned int)(t < 0 ? t + (int)m : t);
+  return (unsigned int)(t < 0 ? t + (int64_t)m : t);
 }
 
 
