@@ -53,13 +53,9 @@ LIBXS_API unsigned int libxs_pid(void)
 LIBXS_API unsigned int libxs_tid(void)
 {
 #if (0 != LIBXS_SYNC)
-# if defined(_OPENMP) && defined(LIBXS_SYNC_OMP)
-  return (unsigned int)omp_get_thread_num();
-# else
   static LIBXS_TLS unsigned int tid = 0xFFFFFFFF;
   if (0xFFFFFFFF == tid) tid = LIBXS_ATOMIC_ADD_FETCH(&libxs_thread_count, 1, LIBXS_ATOMIC_RELAXED) - 1;
   return tid;
-# endif
 #else
   return 0;
 #endif

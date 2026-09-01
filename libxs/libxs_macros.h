@@ -1090,12 +1090,6 @@
 #else
 # define LIBXS_EXPECT_DEBUG LIBXS_EXPECT_ELIDE
 #endif
-#if defined(_OPENMP) /*&& defined(LIBXS_SYNC_OMP)*/
-LIBXS_PRAGMA_DIAG_PUSH()
-LIBXS_PRAGMA_DIAG_OFF_PEDANTIC()
-# include <omp.h>
-LIBXS_PRAGMA_DIAG_POP()
-#endif
 #include <inttypes.h>
 #include <stdint.h>
 #include <stddef.h>
