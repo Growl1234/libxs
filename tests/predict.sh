@@ -23,8 +23,17 @@ SAMPLES="${HERE}/../samples/predict"
 cd "${SAMPLES}" 2>/dev/null || exit 1
 if [ ! -e ./predict_crystal.x ] || [ ! -e ./predict_crystal.csv ]; then exit 0; fi
 
-# a small training split keeps the run short; the contract does not depend on it
-RUN="./predict_crystal.x ./predict_crystal.csv 0.2 2 0"
+# a small training split and a capped corpus keep the run short; the contract
+# does not depend on either. Scoring costs one pass over the test split per
+# training point, so the cap is quadratic where the split is linear: it is what
+# brings the whole script from minutes to seconds and keeps it affordable under
+# a sanitizer. The rows are not ordered by label, hence the head keeps the mix.
+NROWS=6000
+CSV=$(mktemp)
+trap 'rm -f ${CSV}' EXIT
+head -n $((NROWS + 1)) ./predict_crystal.csv >"${CSV}"
+
+RUN="./predict_crystal.x ${CSV} 0.2 2 0"
 
 for MODE in none fisher setdiff; do
   OUT=$(${RUN} "${MODE}" gaps0.15 2>&1) || true
@@ -46,23 +55,41 @@ for MODE in pca rf hknn; do
 done
 
 # the sentinel resolves to a real mode and the model reports which one, so a
-# caller can tell what was chosen; a mode named on the command line is reported
-# as requested rather than selected
+# caller can tell what was chosen
 OUT=$(${RUN} 2>&1) || true
 if ! echo "${OUT}" | grep -q "^Decomposition: .* (selected at build)$"; then
   echo "the default did not select a decomposition"
   echo "${OUT}" | tail -3
   exit 1
 fi
-if ! ${RUN} none 2>&1 | grep -q "^Decomposition: RAW (requested)$"; then
-  echo "a requested decomposition was not reported as requested"
-  exit 1
-fi
+AUTO=$(echo "${OUT}" | sed -n 's|^Accuracy: [0-9]*/[0-9]* = \([0-9.]*\)%$|\1|p')
+
+# every mode answers the same corpus without gaps, gaps being the only variable.
+# Each run is read more than once rather than repeated: a mode named on the
+# command line is reported as requested rather than selected, and pca is the
+# baseline the selection is measured against below.
+PCA=""
+for MODE in none fisher setdiff pca rf hknn; do
+  OUT=$(${RUN} "${MODE}" 2>&1) || true
+  if ! echo "${OUT}" | grep -q "^Accuracy:"; then
+    echo "${MODE} failed on a corpus with no gaps at all"
+    echo "${OUT}" | tail -3
+    exit 1
+  fi
+  if [ "none" = "${MODE}" ] &&
+     ! echo "${OUT}" | grep -q "^Decomposition: RAW (requested)$"
+  then
+    echo "a requested decomposition was not reported as requested"
+    echo "${OUT}" | tail -3
+    exit 1
+  fi
+  if [ "pca" = "${MODE}" ]; then
+    PCA=$(echo "${OUT}" | sed -n 's|^Accuracy: [0-9]*/[0-9]* = \([0-9.]*\)%$|\1|p')
+  fi
+done
 
 # selecting is worth what it costs: the choice beats the mode this corpus
 # punishes, which is the whole claim behind making it the default
-AUTO=$(${RUN} 2>&1 | sed -n 's|^Accuracy: [0-9]*/[0-9]* = \([0-9.]*\)%$|\1|p')
-PCA=$(${RUN} pca 2>&1 | sed -n 's|^Accuracy: [0-9]*/[0-9]* = \([0-9.]*\)%$|\1|p')
 if [ -z "${AUTO}" ] || [ -z "${PCA}" ]; then
   echo "could not read an accuracy back from the sample"
   exit 1
@@ -71,15 +98,5 @@ if [ "$(echo "${AUTO} ${PCA}" | awk '{print ($1 >= $2)}')" != "1" ]; then
   echo "the selected mode (${AUTO}%) lost to a fixed one (${PCA}%)"
   exit 1
 fi
-
-# every mode answers the same corpus without gaps, gaps being the only variable
-for MODE in none fisher setdiff pca rf hknn; do
-  OUT=$(${RUN} "${MODE}" 2>&1) || true
-  if ! echo "${OUT}" | grep -q "^Accuracy:"; then
-    echo "${MODE} failed on a corpus with no gaps at all"
-    echo "${OUT}" | tail -3
-    exit 1
-  fi
-done
 
 echo "OK"

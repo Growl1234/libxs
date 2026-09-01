@@ -23,6 +23,14 @@ jobs:
         flags: [DBG=0, DBG=1 PEDANTIC=2 UPLOAD=0]
         libxstream: [prebuilt]
         include:
+          # UndefinedBehaviorSanitizer on one combination rather than a job of
+          # its own. It rides the optimized one because -O0 hides what the
+          # optimizer does with undefined behaviour: a strict-aliasing bug in
+          # libxs_crc32_u64 failed only from -O2 up. SANITIZE implies SYM=1, so
+          # the reports carry file and line without DBG=1.
+          - gcc: 14
+            flags: DBG=0
+            sanitize: undefined
           - gcc: 14
             flags: DBG=1 PEDANTIC=2 FORCE_CXX=1 FORTRAN=0
             libxstream: header-only
@@ -30,6 +38,12 @@ jobs:
       CC: gcc-${{ matrix.gcc }}
       CXX: g++-${{ matrix.gcc }}
       FC: gfortran-${{ matrix.gcc }}
+      # picked up by Makefile.inc through "SANITIZE ?=", hence no step below
+      # needs to know about it; empty for every other combination
+      SANITIZE: ${{ matrix.sanitize }}
+      # a finding prints and continues by default, which would keep the job
+      # green; stop at the first one so it is the job that reports it
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
     steps:
     - uses: actions/checkout@v5
 
