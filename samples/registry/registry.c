@@ -189,23 +189,25 @@ int main(int argc, char* argv[])
 #if defined(_OPENMP)
   if (1 < nthreads) {
     libxs_timer_tick_t total_cycles = 0;
+    int nerr = 0; /* counted per thread, folded into result after the region */
     for (n = 0; n < nrepeat; ++n) {
 #     pragma omp parallel num_threads(nthreads) private(i)
       {
 #       pragma omp master
         start = libxs_timer_tick();
 #       pragma omp barrier
-#       pragma omp for schedule(static)
+#       pragma omp for schedule(static) reduction(+ : nerr)
         for (i = 0; i < size_total; ++i) {
           const int j = (int)((shuffle * (size_t)i) % (size_t)size_total);
           const bench_value_t* v = (const bench_value_t*)libxs_registry_get(
             registry, &keys[j], sizeof(bench_key_t), libxs_registry_lock(registry));
-          if (NULL == v) result = EXIT_FAILURE;
+          if (NULL == v) ++nerr;
         }
 #       pragma omp master
         total_cycles += libxs_timer_ncycles(start, libxs_timer_tick());
       }
     }
+    if (0 != nerr) result = EXIT_FAILURE;
     duration_ns = 1E9 * libxs_timer_duration(0, total_cycles);
     print_duration("parallel read (all thr):",
       duration_ns, size_total * nrepeat, total_cycles);
@@ -219,19 +221,21 @@ int main(int argc, char* argv[])
 #if defined(_OPENMP)
   if (1 < nthreads) {
     libxs_timer_tick_t total_cycles = 0;
+    int nerr = 0; /* counted per thread, folded into result after the region */
     registry = libxs_registry_create();
     if (NULL == registry) { result = EXIT_FAILURE; goto cleanup; }
     start = libxs_timer_tick();
 #   pragma omp parallel num_threads(nthreads) private(i)
     {
-#     pragma omp for schedule(static)
+#     pragma omp for schedule(static) reduction(+ : nerr)
       for (i = 0; i < size_total; ++i) {
         bench_value_t* v = (bench_value_t*)libxs_registry_set(
           registry, &keys[i], sizeof(bench_key_t),
           &vals[i], sizeof(bench_value_t), libxs_registry_lock(registry));
-        if (NULL == v) result = EXIT_FAILURE;
+        if (NULL == v) ++nerr;
       }
     }
+    if (0 != nerr) result = EXIT_FAILURE;
     total_cycles = libxs_timer_ncycles(start, libxs_timer_tick());
     duration_ns = 1E9 * libxs_timer_duration(0, total_cycles);
     print_duration("contended write (all thr):",

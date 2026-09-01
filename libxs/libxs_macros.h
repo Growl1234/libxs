@@ -748,7 +748,8 @@
 #endif
 
 #if defined(_OPENMP) && (200805/*v3.0*/ <= _OPENMP) \
- && defined(NDEBUG) /* CCE complains for debug builds */
+  /* legacy CCE complains about collapse for debug builds */ \
+  && (!defined(_CRAYC) || defined(__GNUC__) || defined(NDEBUG))
 # define LIBXS_OPENMP_COLLAPSE(N) collapse(N)
 #else
 # define LIBXS_OPENMP_COLLAPSE(N)
