@@ -1,3 +1,12 @@
+/**
+ * Per-dimension bit budget derived from the code width. A coordinate is 32-bit,
+ * hence a single dimension cannot carry the full 64 Bits: shifting by 32 or
+ * more is undefined, and masking the count (what x86 does) silently aliases the
+ * upper levels onto the lower ones instead of failing.
+ */
+#define INTERNAL_LIBXS_SFC_BITS(NDIMS) LIBXS_MIN(64 / (NDIMS), 32)
+
+
 LIBXS_API_INLINE uint64_t internal_libxs_hilbert_bits(
   const unsigned int coords[], int ndims, int bits_per_dim)
 {
@@ -42,7 +51,8 @@ LIBXS_API uint64_t libxs_hilbert(const unsigned int coords[], int ndims)
 {
   uint64_t result = 0;
   if (NULL != coords && 0 < ndims && ndims <= 64) {
-    result = internal_libxs_hilbert_bits(coords, ndims, 64 / ndims);
+    result = internal_libxs_hilbert_bits(coords, ndims,
+      INTERNAL_LIBXS_SFC_BITS(ndims));
   }
   return result;
 }
@@ -80,7 +90,8 @@ LIBXS_API uint64_t libxs_morton(const unsigned int coords[], int ndims)
 {
   uint64_t result = 0;
   if (NULL != coords && 0 < ndims && ndims <= 64) {
-    result = internal_libxs_morton_bits(coords, ndims, 64 / ndims);
+    result = internal_libxs_morton_bits(coords, ndims,
+      INTERNAL_LIBXS_SFC_BITS(ndims));
   }
   return result;
 }
@@ -104,7 +115,7 @@ LIBXS_API void libxs_morton_decode(
   uint64_t code, unsigned int coords[], int ndims)
 {
   if (NULL != coords && 0 < ndims && ndims <= 64) {
-    const int bpd = 64 / ndims;
+    const int bpd = INTERNAL_LIBXS_SFC_BITS(ndims);
     int bit, d;
     for (d = 0; d < ndims; ++d) coords[d] = 0;
     for (bit = 0; bit < bpd; ++bit) {
@@ -146,7 +157,7 @@ LIBXS_API void libxs_hilbert_decode(
   uint64_t code, unsigned int coords[], int ndims)
 {
   if (NULL != coords && 0 < ndims && ndims <= 64) {
-    const int bpd = 64 / ndims;
+    const int bpd = INTERNAL_LIBXS_SFC_BITS(ndims);
     int i, level;
     for (i = 0; i < ndims; ++i) coords[i] = 0;
     for (level = 0; level < bpd; ++level) {
@@ -246,7 +257,7 @@ LIBXS_API_INLINE int internal_libxs_stratify(
     result = EXIT_SUCCESS;
 #else
     if (NULL != decode_bits) {
-      const int src_bits = 64 / src_ndims;
+      const int src_bits = INTERNAL_LIBXS_SFC_BITS(src_ndims);
       const int rank_bits = src_bits * src_ndims;
       const int dst_bits = (rank_bits + dst_ndims - 1) / dst_ndims;
       if (0 < dst_bits && dst_bits <= 32) {

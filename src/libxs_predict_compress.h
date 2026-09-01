@@ -1,5 +1,5 @@
 LIBXS_API_INLINE void internal_libxs_predict_compress(
-  libxs_predict_t* model, int nclusters, int order, double quality)
+  libxs_predict_t* model, int order, double quality)
 {
   const int p = model->nentries;
   const int m = model->ninputs;

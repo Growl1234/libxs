@@ -24,6 +24,14 @@
 {
   const LIBXS_SORT_TEMPLATE_ELEM_TYPE *const real_mat =
     (const LIBXS_SORT_TEMPLATE_ELEM_TYPE*)mat;
+  /**
+   * Dimensions the curve methods below can order by. A code is carried in a
+   * double, hence 53 Bits in total, and past 53 columns not even one Bit per
+   * column fits: the per-column budget truncates to zero, every coordinate
+   * quantizes to zero, and the sort silently degenerates into a no-op. Ordering
+   * by the leading columns is a weaker ordering, but it is one.
+   */
+  const int ndims = LIBXS_MIN(n, 53);
   int ii, jj;
 
   for (ii = 0; ii < m; ++ii) perm[ii] = ii;
@@ -119,10 +127,10 @@
     }
   }
   else if (LIBXS_SORT_MORTON == method) {
-    const int bpd = LIBXS_MIN(53 / LIBXS_MAX(n, 1), 21);
+    const int bpd = LIBXS_MIN(53 / LIBXS_MAX(ndims, 1), 21);
     const unsigned int levels = (1u << bpd) - 1;
     double col_min[64], col_range[64];
-    for (jj = 0; jj < n && jj < 64; ++jj) {
+    for (jj = 0; jj < ndims; ++jj) {
       double lo, hi;
       lo = hi = LIBXS_SORT_TEMPLATE_TYPE2FP64(real_mat[(size_t)jj * ld]);
       for (ii = 1; ii < m; ++ii) {
@@ -136,23 +144,23 @@
     }
     for (ii = 0; ii < m; ++ii) {
       unsigned int coords[64];
-      for (jj = 0; jj < n && jj < 64; ++jj) {
+      for (jj = 0; jj < ndims; ++jj) {
         const double v = LIBXS_SORT_TEMPLATE_TYPE2FP64(
           real_mat[(size_t)jj * ld + ii]);
         unsigned int q = (unsigned int)((v - col_min[jj]) * levels / col_range[jj]);
         if (q > levels) q = levels;
         coords[jj] = q;
       }
-      scores[ii] = (double)libxs_morton(coords, n);
+      scores[ii] = (double)libxs_morton(coords, ndims);
     }
     libxs_sort(perm, m, sizeof(int),
       internal_libxs_sort_smooth_cmp, (void*)scores);
   }
   else if (LIBXS_SORT_HILBERT == method) {
-    const int bpd = LIBXS_MIN(53 / LIBXS_MAX(n, 1), 21);
+    const int bpd = LIBXS_MIN(53 / LIBXS_MAX(ndims, 1), 21);
     const unsigned int levels = (1u << bpd) - 1;
     double col_min[64], col_range[64];
-    for (jj = 0; jj < n && jj < 64; ++jj) {
+    for (jj = 0; jj < ndims; ++jj) {
       double lo, hi;
       lo = hi = LIBXS_SORT_TEMPLATE_TYPE2FP64(real_mat[(size_t)jj * ld]);
       for (ii = 1; ii < m; ++ii) {
@@ -166,14 +174,14 @@
     }
     for (ii = 0; ii < m; ++ii) {
       unsigned int coords[64];
-      for (jj = 0; jj < n && jj < 64; ++jj) {
+      for (jj = 0; jj < ndims; ++jj) {
         const double v = LIBXS_SORT_TEMPLATE_TYPE2FP64(
           real_mat[(size_t)jj * ld + ii]);
         unsigned int q = (unsigned int)((v - col_min[jj]) * levels / col_range[jj]);
         if (q > levels) q = levels;
         coords[jj] = q;
       }
-      scores[ii] = (double)libxs_hilbert(coords, n);
+      scores[ii] = (double)libxs_hilbert(coords, ndims);
     }
     libxs_sort(perm, m, sizeof(int),
       internal_libxs_sort_smooth_cmp, (void*)scores);

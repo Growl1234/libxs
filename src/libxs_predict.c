@@ -100,6 +100,16 @@
  * would be a change in behaviour and wants its own measurement.
  */
 #define LIBXS_PREDICT_LOCAL_RADIUS 4
+#define LIBXS_PREDICT_CTX_MAGIC 0x58535043U /* "XSPC" */
+
+/**
+ * Bytes taken by N ints inside a carved-up block, padded so that whatever
+ * follows is still aligned. An odd noutputs makes an unpadded group of three
+ * leave the cursor at four modulo eight, and the pointer or double array behind
+ * it is then misaligned: undefined, and silently fine on x86 until it is not.
+ * Every int group is sized with this, so appending to the layout stays safe.
+ */
+#define INTERNAL_LIBXS_PREDICT_NBINT(N) LIBXS_UP2((size_t)(N) * sizeof(int), sizeof(double))
 
 
 typedef struct internal_libxs_predict_entry_t {
@@ -308,6 +318,42 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   volatile int sync_count, sync_epoch;
   /** Per-candidate scores of a collective trial, indexed by candidate. */
   double sync_score[8];
+};
+
+/**
+ * Layout of a caller-owned scoring context. Everything a call mutates lives
+ * here rather than in the model, so concurrent streams cannot interfere and the
+ * model stays read-only while scoring. The escape weights are per output
+ * because the rate that suits one output does not suit another: within a single
+ * PVC model the best rate was measured at 0.55, 0.80 and 0.20 for three of its
+ * outputs, and one shared bank can only converge to a compromise none of them
+ * wants.
+ */
+typedef struct internal_libxs_predict_ctx_t {
+  uint32_t magic;
+  /**
+   * Which model and which build this context was sized for. The size depends
+   * on the largest support, which grows when a model is rebuilt after more
+   * entries are pushed, so a context outliving a rebuild is undersized rather
+   * than merely stale. Stamping both lets scoring refuse it instead of
+   * re-initializing into a buffer that is too small.
+   */
+  const void* model;
+  int nbuild;
+  int noutputs;
+  int maxsup;
+  /* followed by: escape weights [n * NESCAPE], dist p, norm scratch,
+     local evidence, the per-output reporting arrays, the int arrays, then the
+     per-call dispatch buffers */
+} internal_libxs_predict_ctx_t;
+
+
+/** Candidate rates of the escape-rate bank; see LIBXS_PREDICT_NESCAPE. */
+static const double internal_libxs_predict_escape_rate[
+  LIBXS_PREDICT_NESCAPE] =
+{
+  0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02,
+  0.05, 0.10, 0.20, 0.35, 0.55, 0.80
 };
 
 
@@ -1524,7 +1570,6 @@ LIBXS_API void libxs_predict_set_mode(libxs_predict_t* model, int mode)
 }
 
 
-
 LIBXS_API void libxs_predict_set_central(libxs_predict_t* model, int mode)
 {
   LIBXS_ASSERT(NULL != model);
@@ -1762,7 +1807,6 @@ LIBXS_API void libxs_predict_set_neighbors(libxs_predict_t* model, int k)
     model->k_sel = NULL;
   }
 }
-
 
 
 LIBXS_API_INLINE void internal_libxs_predict_decompose_apply(
@@ -3389,7 +3433,7 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_predict_t* model,
       if (quality > 0 && NULL == model->rf
         && NULL != model->entries && NULL != model->assignments)
       {
-        internal_libxs_predict_compress(model, nclusters, order, quality);
+        internal_libxs_predict_compress(model, order, quality);
       }
     }
     else {
@@ -4329,7 +4373,6 @@ LIBXS_API void libxs_predict_inverse(libxs_lock_t* lock,
 }
 
 
-
 /**
  * Sorted distinct values and counts for one output, built from the clusters'
  * raw_outputs so a loaded model works without entries. This is the support the
@@ -4479,15 +4522,6 @@ LIBXS_API_INLINE void internal_libxs_predict_escape_update(double weight[],
     }
   }
 }
-
-
-
-static const double internal_libxs_predict_escape_rate[
-  LIBXS_PREDICT_NESCAPE] =
-{
-  0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02,
-  0.05, 0.10, 0.20, 0.35, 0.55, 0.80
-};
 
 
 /**
@@ -4797,37 +4831,11 @@ LIBXS_API_INLINE void internal_libxs_predict_dist_learn(
 }
 
 
-
 /**
- * Layout of a caller-owned scoring context. Everything a call mutates lives
- * here rather than in the model, so concurrent streams cannot interfere and the
- * model stays read-only while scoring. The escape weights are per output
- * because the rate that suits one output does not suit another: within a single
- * PVC model the best rate was measured at 0.55, 0.80 and 0.20 for three of its
- * outputs, and one shared bank can only converge to a compromise none of them
- * wants.
+ * Layout of one context. Within a region the pointer and double arrays precede
+ * the int arrays, hence no member relies on the padding NBINT adds to be
+ * aligned.
  */
-typedef struct internal_libxs_predict_ctx_t {
-  uint32_t magic;
-  /**
-   * Which model and which build this context was sized for. The size depends
-   * on the largest support, which grows when a model is rebuilt after more
-   * entries are pushed, so a context outliving a rebuild is undersized rather
-   * than merely stale. Stamping both lets scoring refuse it instead of
-   * re-initializing into a buffer that is too small.
-   */
-  const void* model;
-  int nbuild;
-  int noutputs;
-  int maxsup;
-  /* followed by: escape weights [n * NESCAPE], dist p, norm scratch,
-     local evidence, the per-output reporting arrays, the int arrays, then the
-     per-call dispatch buffers */
-} internal_libxs_predict_ctx_t;
-
-#define LIBXS_PREDICT_CTX_MAGIC 0x58535043U /* "XSPC" */
-
-
 LIBXS_API_INLINE size_t internal_libxs_predict_ctx_size(int n, int maxsup)
 {
   const size_t stride = (size_t)maxsup + 2;
@@ -4835,15 +4843,15 @@ LIBXS_API_INLINE size_t internal_libxs_predict_ctx_size(int n, int maxsup)
   bytes += (size_t)n * LIBXS_PREDICT_NESCAPE * sizeof(double);
   bytes += 3 * stride * sizeof(double);  /* p, norm scratch, local */
   bytes += 4 * (size_t)n * sizeof(double); /* prob, logprob, zscore, novel */
-  bytes += 3 * (size_t)n * sizeof(int);  /* kind, attested, support */
+  bytes += INTERNAL_LIBXS_PREDICT_NBINT(3 * n); /* kind, attested, support */
   /**
    * The dispatch buffers eval_ex fills, and the values it writes, live here
    * too: they are noutputs-sized with a lifetime of one call, so allocating
    * them per call would put a malloc/free pair on every scored position.
    */
   bytes += (size_t)n * sizeof(void*);   /* src */
-  bytes += 3 * (size_t)n * sizeof(int); /* smode, sout, snout */
   bytes += (size_t)n * sizeof(double);  /* vals */
+  bytes += INTERNAL_LIBXS_PREDICT_NBINT(3 * n); /* smode, sout, snout */
   return bytes;
 }
 
@@ -5150,7 +5158,7 @@ LIBXS_API_INLINE void* internal_libxs_predict_ctx_disp(
   const size_t stride = (size_t)ctx->maxsup + 2;
   double* base = internal_libxs_predict_ctx_scratch(ctx);
   return (void*)((unsigned char*)(base + 3 * stride + 4 * ctx->noutputs)
-    + 3 * (size_t)ctx->noutputs * sizeof(int));
+    + INTERNAL_LIBXS_PREDICT_NBINT(3 * ctx->noutputs));
 }
 
 
@@ -5257,25 +5265,26 @@ LIBXS_API void libxs_predict_prob(libxs_lock_t* lock,
       unsigned char* d = (unsigned char*)internal_libxs_predict_ctx_disp(ctx);
       src = (const internal_libxs_predict_cluster_t**)d;
       d += (size_t)n * sizeof(void*);
+      vals = (double*)d; d += (size_t)n * sizeof(double);
       smode = (int*)d; d += (size_t)n * sizeof(int);
       sout = (int*)d; d += (size_t)n * sizeof(int);
-      snout = (int*)d; d += (size_t)n * sizeof(int);
-      vals = (double*)d;
+      snout = (int*)d;
     }
     else {
       const size_t nb = (size_t)n * sizeof(void*)
-        + 3 * (size_t)n * sizeof(int) + (size_t)n * sizeof(double)
-        + (size_t)3 * stride * sizeof(double);
+        + (size_t)n * sizeof(double)
+        + (size_t)3 * stride * sizeof(double)
+        + INTERNAL_LIBXS_PREDICT_NBINT(3 * n);
       unsigned char* d = (unsigned char*)LIBXS_PREDICT_MALLOC(nb,
         scratch_pool);
       src = (const internal_libxs_predict_cluster_t**)d;
       if (NULL != d) {
         d += (size_t)n * sizeof(void*);
+        vals = (double*)d; d += (size_t)n * sizeof(double);
+        local = (double*)d; d += (size_t)3 * stride * sizeof(double);
         smode = (int*)d; d += (size_t)n * sizeof(int);
         sout = (int*)d; d += (size_t)n * sizeof(int);
-        snout = (int*)d; d += (size_t)n * sizeof(int);
-        vals = (double*)d; d += (size_t)n * sizeof(double);
-        local = (double*)d;
+        snout = (int*)d;
       }
       else { smode = NULL; sout = NULL; snout = NULL; vals = NULL; }
     }
@@ -5446,24 +5455,25 @@ LIBXS_API int libxs_predict_prob_observe(libxs_lock_t* lock,
     if (NULL != ctx) {
       unsigned char* d = (unsigned char*)internal_libxs_predict_ctx_disp(ctx);
       src = (const internal_libxs_predict_cluster_t**)d;
-      d += (size_t)n * sizeof(void*);
+      /* the values slot is part of the layout even though nothing is reported */
+      d += (size_t)n * sizeof(void*) + (size_t)n * sizeof(double);
       smode = (int*)d; d += (size_t)n * sizeof(int);
       sout = (int*)d; d += (size_t)n * sizeof(int);
       snout = (int*)d;
     }
     else {
       const size_t nb = (size_t)n * sizeof(void*)
-        + 3 * (size_t)n * sizeof(int)
-        + (size_t)3 * stride * sizeof(double);
+        + (size_t)3 * stride * sizeof(double)
+        + INTERNAL_LIBXS_PREDICT_NBINT(3 * n);
       unsigned char* d = (unsigned char*)LIBXS_PREDICT_MALLOC(nb,
         scratch_pool);
       src = (const internal_libxs_predict_cluster_t**)d;
       if (NULL != d) {
         d += (size_t)n * sizeof(void*);
+        local = (double*)d; d += (size_t)3 * stride * sizeof(double);
         smode = (int*)d; d += (size_t)n * sizeof(int);
         sout = (int*)d; d += (size_t)n * sizeof(int);
-        snout = (int*)d; d += (size_t)n * sizeof(int);
-        local = (double*)d;
+        snout = (int*)d;
       }
       else { smode = NULL; sout = NULL; snout = NULL; }
     }
