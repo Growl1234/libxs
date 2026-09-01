@@ -3995,6 +3995,17 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
         if (conf[j] < min_conf) min_conf = conf[j];
       }
       if (0 >= model->refine && min_conf >= 0.9) max_iter = 0;
+      /**
+       * A forest answers from the raw inputs, and this pass would replace that
+       * answer with a cluster's on a comparison between a vote over ntrees and
+       * a vote over k neighbours. The second reaches 1.0 whenever the neighbors
+       * agree, which a hundred trees over seven classes rarely does, so the
+       * substitution is close to unconditional: it cost the crystal corpus 2.7
+       * points (82.3% against 79.6%) and made the gated precision worse too.
+       * It also made a forest depend on the input coordinate, which it reads
+       * none of, because the point inverted here is re-normalized to find it.
+       */
+      if (NULL != model->rf) max_iter = 0;
       for (; iter_count < max_iter && NULL != model->entries; ++iter_count) {
         double target[128];
         int canon_pool = 0;
