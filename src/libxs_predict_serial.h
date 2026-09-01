@@ -47,7 +47,7 @@ LIBXS_API_INLINE int internal_libxs_predict_load_var(
  * otherwise has no entries, which silently disables libxs_predict_inverse (it
  * abstains), the refinement loop, and the local-error diagnostic - so a saved
  * model answered differently from the model it was saved from. kd_pts holds
- * normalized inputs, so they are mapped back through input_min/input_rng;
+ * normalized inputs, so they are mapped back through the model's coordinate;
  * sorted_idx supplies the global position of each cluster-local entry.
  */
 LIBXS_API_INLINE int internal_libxs_predict_load_entries(libxs_predict_t* model)
@@ -159,8 +159,9 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
   size_t required = 0;
   int c, j;
   required += sizeof(uint32_t) + sizeof(uint16_t);
-  required += 4 * sizeof(uint16_t) + sizeof(double);
+  required += 5 * sizeof(uint16_t) + sizeof(double);
   required += (size_t)m * 2 * sizeof(double);
+  if (NULL != model->input_knot) required += (size_t)m * LIBXS_PREDICT_KNOTS * sizeof(double);
   if (NULL != model->weights) required += (size_t)m * sizeof(double);
   for (c = 0; c < model->nclusters; ++c) {
     const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
@@ -174,7 +175,7 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     required += (size_t)cl->nentries * sizeof(uint16_t);
   }
   required += 1;
-  /* the entry-weight flag, introduced with version 3 */
+  /* the entry-weight flag, introduced with version 2 */
   required += sizeof(uint8_t);
   /* the resolved neighbour counts, one byte each behind a flag */
   required += sizeof(uint8_t);
@@ -228,16 +229,21 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     WRITE_U16(n);
     WRITE_U16(model->nclusters);
     WRITE_U16(NULL != model->weights ? 1 : 0);
-    /* introduced with version 3; an older file simply has no weights */
+    /* introduced with version 2; an older file simply has no weights */
     WRITE_U8(0 != model->has_eweight ? 1 : 0);
     WRITE_U8(NULL != model->k_sel ? 1 : 0);
     if (NULL != model->k_sel) {
       int ks;
       for (ks = 0; ks < model->noutputs; ++ks) WRITE_U8(model->k_sel[ks]);
     }
+    /* introduced with version 2; an older file has no rank coordinate */
+    WRITE_U16(NULL != model->input_knot ? LIBXS_PREDICT_KNOTS : 0);
     WRITE_F64(model->quality);
     WRITE_BLK(model->input_min, (size_t)m * sizeof(double));
     WRITE_BLK(model->input_rng, (size_t)m * sizeof(double));
+    if (NULL != model->input_knot) {
+      WRITE_BLK(model->input_knot, (size_t)m * LIBXS_PREDICT_KNOTS * sizeof(double));
+    }
     if (NULL != model->weights) {
       WRITE_BLK(model->weights, (size_t)m * sizeof(double));
     }
@@ -363,11 +369,14 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       if (0 < cl->nentries && NULL == cl->sorted_idx) has_sidx = 0;
     }
     required += sizeof(uint32_t) + 4 * sizeof(uint16_t) + 2 * sizeof(uint8_t);
-    required += 7 * sizeof(uint16_t) + 8 * sizeof(uint8_t) + sizeof(uint32_t)
+    required += 8 * sizeof(uint16_t) + 8 * sizeof(uint8_t) + sizeof(uint32_t)
       + sizeof(double);
     /* the resolved neighbour counts, one byte each behind a flag */
     if (NULL != model->k_sel) required += (size_t)model->noutputs;
     required += (size_t)model->ninputs * 2 * sizeof(double);
+    if (NULL != model->input_knot) {
+      required += (size_t)model->ninputs * LIBXS_PREDICT_KNOTS * sizeof(double);
+    }
     if (NULL != model->weights) required += (size_t)model->ninputs * sizeof(double);
     if (NULL != model->transforms) required += (size_t)model->noutputs * sizeof(uint8_t);
     if (NULL != model->decompose_mat) {
@@ -455,9 +464,9 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       WRITE_U8(model->refine);
       WRITE_U8(NULL != model->decompose_mat ? 1 : 0);
       WRITE_U8(has_sidx);
-      /* introduced with version 3; an older file simply has no weights */
+      /* introduced with version 2; an older file simply has no weights */
       WRITE_U8(has_ew);
-      /* introduced with version 4; an older file derives the count instead */
+      /* introduced with version 2; an older file derives the count instead */
       WRITE_U8(NULL != model->k_sel ? 1 : 0);
       if (NULL != model->k_sel) {
         for (j = 0; j < model->noutputs; ++j) WRITE_U8(model->k_sel[j]);
@@ -465,9 +474,15 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       WRITE_U16(model->order);
       WRITE_U8(model->iterations);
       WRITE_U32(model->nentries);
+      /* introduced with version 2; an older file has no rank coordinate */
+      WRITE_U16(NULL != model->input_knot ? LIBXS_PREDICT_KNOTS : 0);
       WRITE_F64(model->quality);
       WRITE_BLK(model->input_min, (size_t)model->ninputs * sizeof(double));
       WRITE_BLK(model->input_rng, (size_t)model->ninputs * sizeof(double));
+      if (NULL != model->input_knot) {
+        WRITE_BLK(model->input_knot,
+          (size_t)model->ninputs * LIBXS_PREDICT_KNOTS * sizeof(double));
+      }
       if (NULL != model->weights) {
         WRITE_BLK(model->weights, (size_t)model->ninputs * sizeof(double));
       }
@@ -645,19 +660,19 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
   const unsigned char* src, const unsigned char* end, int version)
 {
   libxs_predict_t* model = NULL;
-  uint16_t ninp = 0, nout = 0, nclust = 0, has_weights = 0;
+  uint16_t ninp = 0, nout = 0, nclust = 0, has_weights = 0, nknots = 0;
   int ok = EXIT_SUCCESS, c, j, has_ew = 0;
   uint8_t* ksel = NULL;
   ok = internal_libxs_predict_read(&src, end, &ninp, 2);
   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &nout, 2);
   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &nclust, 2);
   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &has_weights, 2);
-  if (EXIT_SUCCESS == ok && 2 < version) {
+  if (EXIT_SUCCESS == ok && 1 < version) {
     uint8_t v = 0;
     ok = internal_libxs_predict_read(&src, end, &v, 1);
     if (EXIT_SUCCESS == ok) has_ew = (0 != v);
   }
-  if (EXIT_SUCCESS == ok && 3 < version) {
+  if (EXIT_SUCCESS == ok && 1 < version) {
     uint8_t v = 0;
     ok = internal_libxs_predict_read(&src, end, &v, 1);
     if (EXIT_SUCCESS == ok && 0 != v) {
@@ -692,6 +707,9 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     model->input_rng = (double*)malloc((size_t)ninp * sizeof(double));
     if (NULL == model->input_min || NULL == model->input_rng) ok = EXIT_FAILURE;
   }
+  if (EXIT_SUCCESS == ok && 1 < version) {
+    ok = internal_libxs_predict_read(&src, end, &nknots, 2);
+  }
   { double quality = 0;
     if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &quality, 8);
     if (EXIT_SUCCESS == ok) model->quality = quality;
@@ -703,6 +721,18 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
   if (EXIT_SUCCESS == ok) {
     ok = internal_libxs_predict_read(&src, end,
       model->input_rng, (size_t)ninp * sizeof(double));
+  }
+  if (EXIT_SUCCESS == ok && 0 != nknots) {
+    if (LIBXS_PREDICT_KNOTS == nknots) {
+      model->input_knot = (double*)malloc(
+        (size_t)ninp * LIBXS_PREDICT_KNOTS * sizeof(double));
+      if (NULL == model->input_knot) ok = EXIT_FAILURE;
+      else {
+        ok = internal_libxs_predict_read(&src, end, model->input_knot,
+          (size_t)ninp * LIBXS_PREDICT_KNOTS * sizeof(double));
+      }
+    }
+    else ok = EXIT_FAILURE;
   }
   if (EXIT_SUCCESS == ok && 0 != has_weights) {
     model->weights = (double*)malloc((size_t)ninp * sizeof(double));
@@ -1060,7 +1090,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
       uint8_t eval_mode = 0, diff_order = 0, refine = 0, iterations = 0;
       uint16_t ts_nseries = 0, ts_window = 0, ts_target = 0, ts_decompose = 0;
       uint16_t ts_naux = 0, ts_nderiv = 0;
-      uint16_t order = 0;
+      uint16_t order = 0, nknots = 0;
       ok = internal_libxs_predict_read(&src, end, &has_weights, 1);
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &has_transforms, 1);
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &ts_nseries, 2);
@@ -1081,12 +1111,12 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         ok = internal_libxs_predict_read(&src, end, &v, 1);
         if (EXIT_SUCCESS == ok) has_sidx = (0 != v);
       }
-      if (EXIT_SUCCESS == ok && 2 < version) {
+      if (EXIT_SUCCESS == ok && 1 < version) {
         uint8_t v = 0;
         ok = internal_libxs_predict_read(&src, end, &v, 1);
         if (EXIT_SUCCESS == ok) has_ew = (0 != v);
       }
-      if (EXIT_SUCCESS == ok && 3 < version) {
+      if (EXIT_SUCCESS == ok && 1 < version) {
         uint8_t v = 0;
         ok = internal_libxs_predict_read(&src, end, &v, 1);
         if (EXIT_SUCCESS == ok && 0 != v) {
@@ -1107,6 +1137,9 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
       { uint32_t nentries = 0;
         double quality = 0;
         if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &nentries, 4);
+        if (EXIT_SUCCESS == ok && 1 < version) {
+          ok = internal_libxs_predict_read(&src, end, &nknots, 2);
+        }
         if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &quality, 8);
         if (EXIT_SUCCESS == ok) model->nentries = (int)nentries;
         if (EXIT_SUCCESS == ok) model->quality = quality;
@@ -1135,6 +1168,18 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
       if (EXIT_SUCCESS == ok) {
         ok = internal_libxs_predict_read(&src, end,
           model->input_rng, (size_t)ninp * sizeof(double));
+      }
+      if (EXIT_SUCCESS == ok && 0 != nknots) {
+        if (LIBXS_PREDICT_KNOTS == nknots) {
+          model->input_knot = (double*)malloc(
+            (size_t)ninp * LIBXS_PREDICT_KNOTS * sizeof(double));
+          if (NULL == model->input_knot) ok = EXIT_FAILURE;
+          else {
+            ok = internal_libxs_predict_read(&src, end, model->input_knot,
+              (size_t)ninp * LIBXS_PREDICT_KNOTS * sizeof(double));
+          }
+        }
+        else ok = EXIT_FAILURE;
       }
       if (EXIT_SUCCESS == ok && 0 != has_weights) {
         model->weights = (double*)malloc((size_t)ninp * sizeof(double));
@@ -1358,10 +1403,10 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
               ok = internal_libxs_predict_read(&src, end, &off, 2);
               rf->label_offset[j] = (int)off;
             }
-            /** Before version 5 every output was folded to a class, and the
+            /** Before version 2 every output was folded to a class, and the
              *  leaf carried no value of its own; the label stands in for it. */
             for (j = 0; j < (int)rf_nouts && EXIT_SUCCESS == ok
-              && 4 < version; ++j)
+              && 1 < version; ++j)
             {
               uint8_t reg = 0;
               ok = internal_libxs_predict_read(&src, end, &reg, 1);
@@ -1369,7 +1414,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
             }
             for (j = 0; j < (int)rf_nouts; ++j) rf->nclass[j] = 1;
             for (j = 0; j < (int)rf_nouts && EXIT_SUCCESS == ok
-              && 4 < version; ++j)
+              && 1 < version; ++j)
             {
               uint8_t ncl = 0;
               ok = internal_libxs_predict_read(&src, end, &ncl, 1);
@@ -1385,12 +1430,12 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
               uint8_t hasincr = 0;
               int k;
               ok = internal_libxs_predict_read(&src, end, &nn, 2);
-              if (EXIT_SUCCESS == ok && 4 < version) {
+              if (EXIT_SUCCESS == ok && 1 < version) {
                 ok = internal_libxs_predict_read(&src, end, &hasincr, 1);
               }
               if (EXIT_SUCCESS == ok && nn > 0) {
                 ok = internal_libxs_predict_avail(src, end, (size_t)nn,
-                  (4 < version) ? (2 + 8 + 8 + 2 + 2 + 1) : (2 + 8 + 2 + 2 + 1));
+                  (1 < version) ? (2 + 8 + 8 + 2 + 2 + 1) : (2 + 8 + 2 + 2 + 1));
                 if (EXIT_SUCCESS == ok) {
                   rf->trees[ti].nodes = (internal_libxs_predict_rf_node_t*)malloc(
                     (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
@@ -1405,7 +1450,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
                     ok = internal_libxs_predict_read(&src, end,
                       &rf->trees[ti].nodes[k].threshold, 8);
                   }
-                  if (EXIT_SUCCESS == ok && 4 < version) {
+                  if (EXIT_SUCCESS == ok && 1 < version) {
                     ok = internal_libxs_predict_read(&src, end,
                       &rf->trees[ti].nodes[k].value, 8);
                   }
@@ -1422,7 +1467,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
                     rf->trees[ti].nodes[k].left = (int)l;
                     rf->trees[ti].nodes[k].right = (int)r;
                     rf->trees[ti].nodes[k].label = (int)lab;
-                    if (4 >= version) rf->trees[ti].nodes[k].value = (double)lab;
+                    if (1 >= version) rf->trees[ti].nodes[k].value = (double)lab;
                   }
                 }
                 if (EXIT_SUCCESS == ok && 0 != hasincr) {

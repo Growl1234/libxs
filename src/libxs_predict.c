@@ -30,10 +30,14 @@
  * 1 (v1.0.0), so the reader gates each field on the version it appeared in.
  */
 #if !defined(LIBXS_PREDICT_VERSION)
-#  define LIBXS_PREDICT_VERSION 5
+#  define LIBXS_PREDICT_VERSION 2
 #endif
 #if !defined(LIBXS_PREDICT_KNN)
 #  define LIBXS_PREDICT_KNN 32
+#endif
+/* Quantile knots per input axis when the rank coordinate is in use. */
+#if !defined(LIBXS_PREDICT_KNOTS)
+#  define LIBXS_PREDICT_KNOTS 256
 #endif
 /* Outputs a window bank can average without allocating (see libxs_predict_eval). */
 #if !defined(LIBXS_PREDICT_HMAX)
@@ -219,6 +223,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   double* eval_buf;
   double* input_min;
   double* input_rng;
+  double* input_knot;
   double* weights;
   int* transforms;
   double* ts_buf;
@@ -475,14 +480,89 @@ LIBXS_API_INLINE int internal_libxs_predict_gaps_ok(int mode)
 }
 
 
+LIBXS_API_INLINE int internal_libxs_predict_cmpval(const void* a, const void* b)
+{
+  const double x = *(const double*)a, y = *(const double*)b;
+  int result;
+  if (x < y) result = -1;
+  else if (x > y) result = 1;
+  else result = 0;
+  return result;
+}
+
+
+/**
+ * Position of a value in its own axis distribution: the empirical CDF, sampled
+ * at LIBXS_PREDICT_KNOTS uniform probabilities and interpolated between them.
+ * A degenerate axis carries knot[last] == knot[0] and every caller must fall
+ * back to the extent, because the position is not defined without a spread.
+ */
+LIBXS_API_INLINE double internal_libxs_predict_rank(const double* knot, double v)
+{
+  const int last = LIBXS_PREDICT_KNOTS - 1;
+  double result;
+  if (v <= knot[0]) result = 0;
+  else if (v >= knot[last]) result = 1;
+  else {
+    int lo = 0, hi = last;
+    while (lo + 1 < hi) {
+      const int mid = (lo + hi) / 2;
+      if (v < knot[mid]) hi = mid;
+      else lo = mid;
+    }
+    result = (knot[hi] > knot[lo])
+      ? ((lo + (v - knot[lo]) / (knot[hi] - knot[lo])) / last)
+      : ((double)lo / last);
+  }
+  return result;
+}
+
+
+/** Inverse of internal_libxs_predict_rank. */
+LIBXS_API_INLINE double internal_libxs_predict_unrank(const double* knot, double u)
+{
+  const int last = LIBXS_PREDICT_KNOTS - 1;
+  double result;
+  if (u <= 0) result = knot[0];
+  else if (u >= 1) result = knot[last];
+  else {
+    const double t = u * last;
+    const int lo = (int)t;
+    const int hi = (lo < last) ? (lo + 1) : last;
+    result = knot[lo] + (t - lo) * (knot[hi] - knot[lo]);
+  }
+  return result;
+}
+
+
+/** Knots of one axis, or NULL where the extent is to be used instead. */
+LIBXS_API_INLINE const double* internal_libxs_predict_knot(
+  const libxs_predict_t* model, int j)
+{
+  const double* result = NULL;
+  if (NULL != model->input_knot) {
+    const double* knot = model->input_knot + (size_t)j * LIBXS_PREDICT_KNOTS;
+    if (knot[LIBXS_PREDICT_KNOTS - 1] > knot[0]) result = knot;
+  }
+  return result;
+}
+
+
 LIBXS_API_INLINE void internal_libxs_predict_normalize(
   const libxs_predict_t* model, const double* inputs, double* norm)
 {
   const int m = model->ninputs;
   int i;
   for (i = 0; i < m; ++i) {
-    norm[i] = (NULL != model->input_rng && model->input_rng[i] > 0)
-      ? (inputs[i] - model->input_min[i]) / model->input_rng[i] : inputs[i];
+    const double* knot = internal_libxs_predict_knot(model, i);
+    const double v = inputs[i];
+    if (NULL != knot && LIBXS_NOTNAN(v)) {
+      norm[i] = internal_libxs_predict_rank(knot, v);
+    }
+    else {
+      norm[i] = (NULL != model->input_rng && model->input_rng[i] > 0)
+        ? (v - model->input_min[i]) / model->input_rng[i] : v;
+    }
     if (NULL != model->weights) norm[i] *= model->weights[i];
   }
 }
@@ -499,11 +579,69 @@ LIBXS_API_INLINE void internal_libxs_predict_denormalize(
   const int m = model->ninputs;
   int i;
   for (i = 0; i < m; ++i) {
+    const double* knot = internal_libxs_predict_knot(model, i);
     double v = norm[i];
     if (NULL != model->weights && 0 != model->weights[i]) v /= model->weights[i];
-    inputs[i] = (NULL != model->input_rng && model->input_rng[i] > 0)
-      ? (v * model->input_rng[i] + model->input_min[i]) : v;
+    if (NULL != knot && LIBXS_NOTNAN(v)) {
+      inputs[i] = internal_libxs_predict_unrank(knot, v);
+    }
+    else {
+      inputs[i] = (NULL != model->input_rng && model->input_rng[i] > 0)
+        ? (v * model->input_rng[i] + model->input_min[i]) : v;
+    }
   }
+}
+
+
+/**
+ * Fits the per-axis quantile knots the rank coordinate reads. Absent values are
+ * excluded rather than sorted: a NaN compares false against everything, so it
+ * would land wherever the sort happens to leave it and displace every knot
+ * after it. An axis without a spread is zeroed, which internal_libxs_predict_knot
+ * reports as "use the extent".
+ */
+LIBXS_API_INLINE int internal_libxs_predict_fit_knots(libxs_predict_t* model)
+{
+  const int m = model->ninputs, p = model->nentries;
+  const int last = LIBXS_PREDICT_KNOTS - 1;
+  double* scratch = (double*)malloc((size_t)p * sizeof(double));
+  int result = EXIT_SUCCESS;
+  free(model->input_knot);
+  model->input_knot = (double*)malloc(
+    (size_t)m * LIBXS_PREDICT_KNOTS * sizeof(double));
+  if (NULL != scratch && NULL != model->input_knot) {
+    int i, j, k;
+    for (j = 0; j < m; ++j) {
+      double* knot = model->input_knot + (size_t)j * LIBXS_PREDICT_KNOTS;
+      int nval = 0;
+      for (i = 0; i < p; ++i) {
+        const double v = model->entries[i].inputs[j];
+        if (LIBXS_NOTNAN(v)) scratch[nval++] = v;
+      }
+      if (1 < nval) {
+        qsort(scratch, (size_t)nval, sizeof(double),
+          internal_libxs_predict_cmpval);
+      }
+      if (1 < nval && scratch[nval - 1] > scratch[0]) {
+        for (k = 0; k <= last; ++k) {
+          const double t = (double)k * (nval - 1) / last;
+          const int lo = (int)t;
+          const int hi = (lo < nval - 1) ? (lo + 1) : (nval - 1);
+          knot[k] = scratch[lo] + (t - lo) * (scratch[hi] - scratch[lo]);
+        }
+      }
+      else {
+        for (k = 0; k <= last; ++k) knot[k] = 0;
+      }
+    }
+  }
+  else {
+    free(model->input_knot);
+    model->input_knot = NULL;
+    result = EXIT_FAILURE;
+  }
+  free(scratch);
+  return result;
 }
 
 
@@ -1301,6 +1439,7 @@ LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
     }
     free(model->input_min);
     free(model->input_rng);
+    free(model->input_knot);
     free(model->weights);
     free(model->transforms);
     free(model->ts_buf);
@@ -2950,6 +3089,7 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_predict_t* model,
     model->quality = quality;
     internal_libxs_predict_free_clusters(model);
     free(model->input_min); free(model->input_rng);
+    free(model->input_knot); model->input_knot = NULL;
     model->input_min = (double*)malloc((size_t)m * sizeof(double));
     model->input_rng = (double*)malloc((size_t)m * sizeof(double));
     if (NULL != model->input_min && NULL != model->input_rng) {
@@ -2985,6 +3125,14 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_predict_t* model,
       for (j = 0; j < m; ++j) {
         model->input_rng[j] -= model->input_min[j];
       }
+      /**
+       * The rank coordinate is for axes that measure different quantities. A
+       * window feeds lags of one series, which share a scale by construction,
+       * and ranking each lag on its own distribution discards exactly the level
+       * relationship that makes two windows comparable.
+       */
+      if (0 >= model->nseries) internal_libxs_predict_fit_knots(model);
+      else { free(model->input_knot); model->input_knot = NULL; }
     }
     if (0 >= nclusters) {
       nclusters = (int)(sqrt((double)p) + 0.5);
@@ -5535,17 +5683,7 @@ LIBXS_API void libxs_predict_get(const libxs_predict_t* model, int index,
         const int local = index - offset;
         if (NULL != inputs) {
           const double* pt = cl->kd_pts + (size_t)local * model->ninputs;
-          int i;
-          for (i = 0; i < model->ninputs; ++i) {
-            double v = pt[i];
-            if (NULL != model->weights && model->weights[i] != 0) {
-              v /= model->weights[i];
-            }
-            if (NULL != model->input_rng && model->input_rng[i] > 0) {
-              v = v * model->input_rng[i] + model->input_min[i];
-            }
-            inputs[i] = v;
-          }
+          internal_libxs_predict_denormalize(model, pt, inputs);
           if (NULL != model->decompose_mat) {
             double* tmp = (double*)malloc((size_t)model->ninputs * sizeof(double));
             if (NULL != tmp) {

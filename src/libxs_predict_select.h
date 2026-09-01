@@ -177,6 +177,13 @@ LIBXS_API_INLINE double internal_libxs_predict_decompose_probe(
     probe->missing_mode = model->missing_mode;
     probe->rf_ntrees = model->rf_ntrees;
     probe->rf_depth = model->rf_depth;
+    /**
+     * The neighbour count reaches the probe too. Without it every count-bearing
+     * mode was scored at the derived count while the model it stands for
+     * resolves its own, and a forest, having no count, was the only candidate
+     * measured as it would be built.
+     */
+    probe->kreq = model->kreq;
     { int nfit = 0, stride, seen = 0;
       for (i = 0; i < model->nentries; ++i) {
         if (0 == role[i]) ++nfit;
