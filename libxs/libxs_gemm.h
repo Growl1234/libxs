@@ -409,7 +409,7 @@ LIBXS_API_INLINE void libxs_gemm_call(
     }
     else if (NULL != config->xgemm) {
       libxs_gemm_param_t xparam;
-      LIBXS_MEMZERO(&xparam);
+      memset(&xparam, 0, sizeof(xparam)); /* exceeds LIBXS_MEMZERO scope */
       xparam.a[0] = a;
       xparam.b[0] = b;
       xparam.c[0] = c;

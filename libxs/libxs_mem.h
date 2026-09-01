@@ -36,7 +36,7 @@
 #define LIBXS_MEMCPY(DST, SRC, SIZE) \
   LIBXS_MEM_LOOP(DST, SRC, SIZE, LIBXS_MEMCPY_RHS, LIBXS_MEM_NTS)
 #define LIBXS_ASSIGN(DST, SRC) do { \
-  LIBXS_ASSERT(sizeof(*(SRC)) <= sizeof(*(DST))); \
+  LIBXS_STATIC_ASSERT(sizeof(*(SRC)) <= sizeof(*(DST))); \
   LIBXS_MEMCPY(DST, SRC, sizeof(*(SRC))); \
 } while(0)
 
@@ -55,7 +55,7 @@
 #define LIBXS_VALUE_ASSIGN(DST, SRC) LIBXS_ASSIGN(&(DST), &(SRC))
 /** Swap two arbitrary-sized values (must be L-values) */
 #define LIBXS_VALUE_SWAP(A, B) do { \
-  LIBXS_ASSERT(sizeof(A) == sizeof(B)); \
+  LIBXS_STATIC_ASSERT(sizeof(A) == sizeof(B)); \
   LIBXS_MEMSWP(&(A), &(B), sizeof(A)); \
 } while (0)
 

@@ -7,6 +7,13 @@ buffer comparison, and matrix copy/transposition.
 
 ## Memory Macros
 
+The `LIBXS_MEM*` macros are deliberately non-generic: they unroll a
+byte-loop whose count is a `signed char`, so SIZE must not exceed 127
+bytes. A larger SIZE is truncated (silently, outside of debug builds)
+and zeroes or copies the wrong number of bytes — or none at all. Use
+plain `memset`/`memcpy` beyond that limit; `sizeof` of a struct grows
+past 127 bytes easily.
+
 ```C
 LIBXS_MEMSET(DST, SRC, SIZE)
 ```
@@ -29,7 +36,7 @@ Copy SIZE bytes from SRC to DST, unrolled at compile time.
 LIBXS_ASSIGN(DST, SRC)
 ```
 
-Copy sizeof(*SRC) bytes from SRC to DST. Asserts
+Copy sizeof(*SRC) bytes from SRC to DST. Statically asserts
 sizeof(*SRC) <= sizeof(*DST).
 
 ```C
@@ -45,8 +52,8 @@ LIBXS_VALUE_SWAP(A, B)
 ```
 
 Operate on L-values directly (address-of is taken internally).
-VALUE_ASSIGN can cast away const qualifiers. VALUE_SWAP asserts
-equal size.
+VALUE_ASSIGN can cast away const qualifiers. VALUE_SWAP statically
+asserts equal size.
 
 ## Offset and Alignment
 

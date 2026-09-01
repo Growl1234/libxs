@@ -335,7 +335,7 @@ LIBXS_API double libxs_fprint_decay(const libxs_fprint_t* info)
 {
   LIBXS_ASSERT(NULL != info);
   if (0 < info->order && 0 < info->l2[0] && 1 < info->n) {
-    const int k = info->order;
+    const int k = LIBXS_MIN(info->order, LIBXS_FPRINT_MAXORDER);
     return pow(info->l2[k] / info->l2[0], 1.0 / k) / (info->n - 1);
   }
   return 1e30;
@@ -356,7 +356,7 @@ LIBXS_API int libxs_fprint_partial(libxs_fprint_t* info,
     }
     kmax = LIBXS_MIN(order, LIBXS_FPRINT_MAXORDER);
     if (kmax > info->order || 0 != first) info->order = kmax;
-    else kmax = info->order;
+    else kmax = LIBXS_CLMP(info->order, 0, LIBXS_FPRINT_MAXORDER);
     buf = (double*)LIBXS_MATH_MALLOC(2 * (size_t)(n + 1) * sizeof(double), pool);
     if (NULL != buf) {
       cur = buf;

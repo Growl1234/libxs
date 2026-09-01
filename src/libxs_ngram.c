@@ -330,7 +330,7 @@ LIBXS_API int libxs_ngram_stats(const libxs_ngram_t* model,
     size_t cursor = 0;
     void* value;
     int n;
-    LIBXS_MEMZERO(stats);
+    memset(stats, 0, sizeof(*stats)); /* exceeds LIBXS_MEMZERO scope */
     value = libxs_registry_begin(model->store, &key, &cursor);
     while (NULL != value) {
       const libxs_ngram_entry_t* entry = (const libxs_ngram_entry_t*)value;

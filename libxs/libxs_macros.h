@@ -1039,6 +1039,15 @@
 #   define LIBXS_ASSERT_MSG(EXPR, MSG) assert((EXPR) && *MSG)
 # endif
 #endif
+/**
+ * Compile-time assertion (expression form, usable wherever a void
+ * expression is allowed). EXPR must be a constant expression: a
+ * non-constant silently degrades to a VLA and checks nothing.
+ * Unlike LIBXS_ASSERT, this holds in release builds as well.
+ */
+#if !defined(LIBXS_STATIC_ASSERT)
+# define LIBXS_STATIC_ASSERT(EXPR) ((void)sizeof(char[1-2*!(EXPR)]))
+#endif
 
 /** Assign SRC to DST via a union with explicit member types. */
 #if !defined(LIBXS_UNION_ASSIGN)
