@@ -51,7 +51,19 @@ LIBXS_EXTERN_C typedef struct internal_libxs_regentry_t {
   size_t value_size;    /* allocated value size in Bytes */
   unsigned char state;  /* INTERNAL_REG_EMPTY|USED|TOMB */
   unsigned char ext;    /* non-zero: value points into external buffer (no free) */
-  char key[LIBXS_REGKEY_MAXSIZE];
+  /**
+   * The iterators hand this buffer out, and callers cast it to their own key
+   * type, so it must satisfy that type's alignment. A plain char array would
+   * inherit whatever offset the preceding members leave (it was 26, i.e. two
+   * bytes past an 8-aligned boundary), and every key in the table would be
+   * misaligned. The union pins the alignment to the type rather than to the
+   * offset, so reordering the members above cannot reintroduce this.
+   */
+  union {
+    char c[LIBXS_REGKEY_MAXSIZE];
+    void* p;
+    double d;
+  } key;
 } internal_libxs_regentry_t;
 
 struct libxs_registry_t {
@@ -139,7 +151,7 @@ LIBXS_API_INLINE unsigned int internal_libxs_registry_probe(
     }
     if (INTERNAL_REG_USED == e->state
       && e->key_size == key_size
-      && 0 == memcmp(e->key, key, key_size))
+      && 0 == memcmp(e->key.c, key, key_size))
     {
       *found = 1;
       result = i;
@@ -184,8 +196,8 @@ LIBXS_API_INLINE int internal_libxs_registry_grow(libxs_registry_t* registry)
       if (INTERNAL_REG_USED == e->state) {
         int found = 0;
         const unsigned int j = internal_libxs_registry_probe(
-          new_entries, new_cap, e->key, e->key_size,
-          internal_libxs_regkey_hash(e->key, e->key_size, registry->seed),
+          new_entries, new_cap, e->key.c, e->key_size,
+          internal_libxs_regkey_hash(e->key.c, e->key_size, registry->seed),
           &found);
         LIBXS_ASSERT(0 == found);
         new_entries[j] = *e; /* shallow copy (value pointer transfers) */
@@ -270,7 +282,7 @@ LIBXS_API_INLINE void* internal_libxs_registry_set_impl(
       else {
         memset(value_buf, 0, value_size);
       }
-      memcpy(e->key, key, key_size);
+      memcpy(e->key.c, key, key_size);
       e->key_size = key_size;
       e->state = INTERNAL_REG_USED;
       ++registry->size;
@@ -613,7 +625,7 @@ LIBXS_API void* libxs_registry_begin_length(const libxs_registry_t* registry,
     unsigned int i;
     for (i = 0; i < registry->capacity; ++i) {
       if (INTERNAL_REG_USED == registry->entries[i].state) {
-        if (NULL != key) *key = registry->entries[i].key;
+        if (NULL != key) *key = registry->entries[i].key.c;
         if (NULL != key_size) *key_size = registry->entries[i].key_size;
         if (NULL != cursor) *cursor = (size_t)i;
         result = internal_value_ptr(registry->entries + i);
@@ -638,7 +650,7 @@ LIBXS_API void* libxs_registry_next_length(const libxs_registry_t* registry,
     unsigned int i;
     for (i = (unsigned int)(*cursor) + 1; i < registry->capacity; ++i) {
       if (INTERNAL_REG_USED == registry->entries[i].state) {
-        if (NULL != key) *key = registry->entries[i].key;
+        if (NULL != key) *key = registry->entries[i].key.c;
         if (NULL != key_size) *key_size = registry->entries[i].key_size;
         *cursor = (size_t)i;
         result = internal_value_ptr(registry->entries + i);
@@ -815,7 +827,7 @@ LIBXS_API int libxs_registry_save(const libxs_registry_t* registry,
         if (INTERNAL_REG_USED == registry->entries[i].state) {
           internal_libxs_regentry_t* e = registry->entries + i;
           val = (uint32_t)e->key_size; memcpy(dst, &val, 4); dst += 4;
-          memcpy(dst, e->key, e->key_size); dst += e->key_size;
+          memcpy(dst, e->key.c, e->key_size); dst += e->key_size;
           val = (uint32_t)value_offset; memcpy(dst, &val, 4); dst += 4;
           val = (uint32_t)e->value_size; memcpy(dst, &val, 4); dst += 4;
           memcpy(values_start + value_offset,
@@ -896,7 +908,7 @@ LIBXS_API libxs_registry_t* libxs_registry_load(const void* buffer, size_t size,
             internal_libxs_regkey_hash(key_ptr, ks, result->seed), &found);
           LIBXS_ASSERT(0 == found);
           e = result->entries + idx;
-          memcpy(e->key, key_ptr, ks);
+          memcpy(e->key.c, key_ptr, ks);
           e->key_size = ks;
           e->value_size = vs;
           e->state = INTERNAL_REG_USED;

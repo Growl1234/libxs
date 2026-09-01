@@ -53,7 +53,7 @@ void* libxs_registry_next(libxs_registry_t* registry,
   const void** key, size_t* cursor);
 ```
 
-Enumerate entries. Initialize `*cursor` to 0 before the first `begin` call. Each call returns the value pointer and writes the key pointer to `*key`, or returns NULL when iteration is complete.
+Enumerate entries. Initialize `*cursor` to 0 before the first `begin` call. Each call returns the value pointer and writes the key pointer to `*key`, or returns NULL when iteration is complete. The key pointer is suitably aligned to be cast to the caller's key type.
 
 ## Access
 

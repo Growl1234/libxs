@@ -55,6 +55,7 @@ LIBXS_API libxs_lock_t* libxs_registry_lock(libxs_registry_t* registry);
  * Only the first key_size Bytes of *key are meaningful; a registry
  * holding keys of differing size must be enumerated with
  * libxs_registry_begin_length to recover each entry's key size.
+ * *key is suitably aligned to be cast to the caller's key type.
  */
 LIBXS_API void* libxs_registry_begin(const libxs_registry_t* registry,
   const void** key, size_t* cursor);
