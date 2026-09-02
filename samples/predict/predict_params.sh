@@ -13,7 +13,7 @@ if [ ! -x "${HERE}/predict_params.x" ]; then
   make -C "${HERE}" predict_params.x 2>&1 | tail -3
 fi
 
-ARGS="${@:-hknn compress}"
+#ARGS="${@:-hknn compress}"
 
 for csv in "${PARAMS_DIR}"/tune_multiply_*.csv; do
   if [ -f "${csv}" ]; then

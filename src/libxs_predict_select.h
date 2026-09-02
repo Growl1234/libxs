@@ -433,9 +433,22 @@ LIBXS_API_INLINE void internal_libxs_predict_neighbors_select(
         && EXIT_SUCCESS == libxs_predict_build(probe, 0, 2, 0.0))
       {
         double* err = (double*)malloc(
-          (size_t)LIBXS_PREDICT_NNEIGHBORS * (size_t)n * sizeof(double));
+          (size_t)LIBXS_PREDICT_NNEIGHBORS * (size_t)n * 3 * sizeof(double));
+        double* cmin = err + (size_t)LIBXS_PREDICT_NNEIGHBORS * n;
+        double* cmax = cmin + (size_t)LIBXS_PREDICT_NNEIGHBORS * n;
         if (NULL != err) {
           int c, j;
+          /**
+           * Every slot starts unreachable, because the scan below abandons the
+           * grid as soon as a candidate finds nothing to score and leaves the
+           * remaining slots untouched. A zero there reads as a perfect score
+           * and would win the reduction outright.
+           */
+          for (c = 0; c < LIBXS_PREDICT_NNEIGHBORS * n; ++c) {
+            err[c] = 1e30;
+            cmin[c] = 1e30;
+            cmax[c] = -1e30;
+          }
           for (c = 0; c < LIBXS_PREDICT_NNEIGHBORS; ++c) {
             int nval = 0;
             probe->kreq = internal_libxs_predict_neighbors_cand(c);
@@ -443,10 +456,16 @@ LIBXS_API_INLINE void internal_libxs_predict_neighbors_select(
             for (j = 0; j < n; ++j) err[c * n + j] = 0;
             for (i = 0; i < p; ++i) {
               if (1 == role[i]) {
+                libxs_predict_info_t info;
+                memset(&info, 0, sizeof(info));
                 libxs_predict_eval(NULL, probe, model->entries[i].inputs,
-                  pred, NULL, 1);
+                  pred, &info, 1);
                 for (j = 0; j < n; ++j) {
                   const double actual = model->entries[i].outputs[j];
+                  const double cf = (NULL != info.confidence)
+                    ? info.confidence[j] : 1.0;
+                  if (cf < cmin[c * n + j]) cmin[c * n + j] = cf;
+                  if (cf > cmax[c * n + j]) cmax[c * n + j] = cf;
                   err[c * n + j] += (0 != kind[j])
                     ? ((LIBXS_ROUNDX(int, pred[j])
                       == LIBXS_ROUNDX(int, actual)) ? 0.0 : 1.0)
@@ -459,12 +478,46 @@ LIBXS_API_INLINE void internal_libxs_predict_neighbors_select(
           }
           model->k_sel = (int*)malloc((size_t)n * sizeof(int));
           if (NULL != model->k_sel) {
+          /**
+           * A count whose confidence never moves is refused rather than traded
+           * against: one neighbour votes unanimously whatever it holds, so the
+           * confidence is 1.0 everywhere and carries no information, and a gate
+           * reading it selects every query. Scoring the confidence instead (a
+           * Brier score over the reported value) was measured and is worse in
+           * the other direction, taking the crystal corpus to the widest count
+           * in the grid and 57.2% where the miss rate alone reaches 68.2%:
+           * calibration improves with a wide neighbourhood and accuracy does
+           * not. Excluding the degenerate end costs nothing that carries
+           * information.
+           */
+          for (c = 0; c < LIBXS_PREDICT_NNEIGHBORS; ++c) {
+            for (j = 0; j < n; ++j) {
+              if (0 != kind[j] && cmax[c * n + j] <= cmin[c * n + j]) {
+                err[c * n + j] = 1e30;
+              }
+            }
+          }
             for (j = 0; j < n; ++j) {
               int best = 0;
+              /**
+               * A tie goes to the larger count. A strict comparison kept the
+               * first candidate, which is one neighbour, and a corpus of
+               * near-duplicate inputs ties often enough that the grid order
+               * decided the count rather than the evidence.
+               */
               for (c = 1; c < LIBXS_PREDICT_NNEIGHBORS; ++c) {
-                if (err[c * n + j] < err[best * n + j]) best = c;
+                if (err[c * n + j] <= err[best * n + j]) best = c;
               }
               model->k_sel[j] = internal_libxs_predict_neighbors_cand(best);
+              /**
+               * A discrete output answers by vote, and a vote of one is
+               * unanimous whatever the neighbourhood holds: it pins the
+               * confidence at 1.0, which leaves a gate nothing to select on,
+               * and it makes the compression test vacuous (see
+               * libxs_predict_compress.h). Three is the fewest that leaves
+               * room for a minority. The count is still chosen by the trial;
+               * this only refuses the degenerate end of the grid.
+               */
             }
           }
           free(err);

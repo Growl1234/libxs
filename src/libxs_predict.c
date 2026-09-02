@@ -35,6 +35,16 @@
 #if !defined(LIBXS_PREDICT_KNN)
 #  define LIBXS_PREDICT_KNN 32
 #endif
+/**
+ * Fewest neighbours a vote needs to carry information: below this a
+ * neighbourhood is unanimous by construction, so its confidence is 1.0
+ * whatever it holds. The neighbour-count trial refuses such a count outright
+ * (see libxs_predict_select.h); compression uses this as the point at which a
+ * cluster stops giving entries up.
+ */
+#if !defined(LIBXS_PREDICT_KMIN)
+#  define LIBXS_PREDICT_KMIN 3
+#endif
 /* Quantile knots per input axis when the rank coordinate is in use. */
 #if !defined(LIBXS_PREDICT_KNOTS)
 #  define LIBXS_PREDICT_KNOTS 256
@@ -1103,7 +1113,7 @@ LIBXS_API_INLINE double internal_libxs_predict_viewdist2(const double* a,
 LIBXS_API_INLINE void internal_libxs_predict_evidence(
   const internal_libxs_predict_cluster_t* cl,
   int m, const double* inputs, int output_j, int nouts,
-  int extrapolate, int skip_local,
+  int extrapolate, int skip_local, const char* skip_set,
   const int* po_groups, int query_group,
   double* candidates, double* dists, int* out_nfound,
   int* out_exact, int* out_exact_nearest, double* out_best,
@@ -1148,6 +1158,7 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
   for (i = 0; i < nc; ++i) {
     double d2;
     if (i == skip_local) continue;
+    if (NULL != skip_set && 0 != skip_set[i]) continue;
     d2 = internal_libxs_predict_dist2(qpts, dpts + (size_t)i * dm, dm,
       missing);
     if (NULL != view && view->w < view->full && qpts == inputs) {
@@ -1238,7 +1249,7 @@ LIBXS_API_INLINE int internal_libxs_predict_central(
 LIBXS_API_INLINE double internal_libxs_predict_classify2(
   const internal_libxs_predict_cluster_t* cl,
   int m, const double* inputs, int output_j, int nouts,
-  int ndistinct, int extrapolate, int skip_local,
+  int ndistinct, int extrapolate, int skip_local, const char* skip_set,
   const int* po_groups, int query_group,
   double* confidence, double* out_variance,
   double quantile, double* out_lower, double* out_upper,
@@ -1258,7 +1269,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
   if (nc > 0 && NULL != cl->raw_outputs) {
     best_val = cl->raw_outputs[output_j];
     internal_libxs_predict_evidence(cl, m, inputs, output_j, nouts,
-      extrapolate, skip_local, po_groups, query_group,
+      extrapolate, skip_local, skip_set, po_groups, query_group,
       candidates, dists, &nfound, &exact, &exact_nearest, &best_val, view,
       missing, iw);
     if (NULL != out_variance) {
@@ -1427,7 +1438,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify(
   const internal_libxs_predict_view_t* view, int missing)
 {
   return internal_libxs_predict_classify2(cl, m, inputs,
-    output_j, nouts, ndistinct, extrapolate, skip_local,
+    output_j, nouts, ndistinct, extrapolate, skip_local, NULL,
     NULL, -1, confidence, out_variance, 0, NULL, NULL, central, view,
     missing);
 }
@@ -3714,7 +3725,8 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                 if (pcl->nentries > 0 && NULL != pcl->kd_pts) {
                   vals[j] = internal_libxs_predict_classify2(
                     pcl, m, norm_inputs,
-                    lj, gsz, pcl->ndistinct[lj], extrapolate, -1, NULL, -1,
+                    lj, gsz, pcl->ndistinct[lj], extrapolate, -1, NULL,
+                    NULL, -1,
                     &po_conf, &po_var, qi, &lo[j], &hi[j],
                     internal_libxs_predict_central(model, j), view,
                     model->has_missing);
@@ -3725,7 +3737,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                 else {
                   vals[j] = internal_libxs_predict_classify2(
                     cl, m, norm_inputs, j, n,
-                    cl->ndistinct[j], extrapolate, -1, NULL, -1,
+                    cl->ndistinct[j], extrapolate, -1, NULL, NULL, -1,
                     &po_conf, &po_var, qi, &lo[j], &hi[j],
                     internal_libxs_predict_central(model, j), view,
                     model->has_missing);
@@ -3746,7 +3758,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
             else {
               vals[j] = internal_libxs_predict_classify2(
                 cl, m, norm_inputs, j, n,
-                cl->ndistinct[j], extrapolate, -1, NULL, -1,
+                cl->ndistinct[j], extrapolate, -1, NULL, NULL, -1,
                 &conf[j], &var[j], qi, &lo[j], &hi[j],
                 internal_libxs_predict_central(model, j), view,
                 model->has_missing);
@@ -3761,7 +3773,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
           else if (0 != use_classify) {
             vals[j] = internal_libxs_predict_classify2(
               cl, m, norm_inputs, j, n,
-              cl->ndistinct[j], extrapolate, -1, NULL, -1,
+              cl->ndistinct[j], extrapolate, -1, NULL, NULL, -1,
               &conf[j], &var[j], qi, &lo[j], &hi[j],
               internal_libxs_predict_central(model, j), view,
               model->has_missing);
@@ -3909,7 +3921,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                 double cj_conf = 1.0, cj_var = 0, cj_lo = 0, cj_hi = 0;
                 const double v = internal_libxs_predict_classify2(
                   cl2, m, norm_inputs, j, n,
-                  cl2->ndistinct[j], extrapolate, -1, NULL, -1,
+                  cl2->ndistinct[j], extrapolate, -1, NULL, NULL, -1,
                   &cj_conf, &cj_var, qi, &cj_lo, &cj_hi,
                   internal_libxs_predict_central(model, j), view,
                   model->has_missing);
@@ -4566,8 +4578,8 @@ LIBXS_API_INLINE int internal_libxs_predict_dist(
   const int nvoc = (vocabulary > ns) ? vocabulary : ns;
   const int outside = nvoc - ns;
   internal_libxs_predict_evidence(cl,
-    model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL, -1,
-    candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL,
+    model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL,
+    NULL, -1, candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL,
     model->has_missing, NULL);
   for (i = 0; i < ns; ++i) local[i] = 0;
   for (i = 0; i < nfound; ++i) {
@@ -4661,8 +4673,8 @@ LIBXS_API_INLINE int internal_libxs_predict_point(
   const double den = tot + (double)nvoc;
   const int si = internal_libxs_predict_support_index(sv, ns, v);
   internal_libxs_predict_evidence(cl,
-    model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL, -1,
-    candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL,
+    model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL,
+    NULL, -1, candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL,
     model->has_missing, NULL);
   /* Accumulate evidence per DISTINCT support entry, as the dense path does by
      indexing into local[]; a value can be returned by several neighbors. */

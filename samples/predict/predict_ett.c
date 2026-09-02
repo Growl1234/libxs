@@ -49,7 +49,7 @@ int main(int argc, char* argv[])
   int window = (0 < window_req) ? window_req : WINDOW_DEF;
   int decompose = LIBXS_PREDICT_AUTO_DECOMPOSE;
   int attend = 0;
-  double quality = 0.9;
+  double quality = 0;
   int argi, npos = 0, use_xgb = 0, bad = 0, result = EXIT_FAILURE;
   double* data = NULL;
   int total = 0, ncols = 0;
@@ -67,6 +67,9 @@ int main(int argc, char* argv[])
       decompose = LIBXS_PREDICT_SPREAD;
     }
     else if (0 != predict_iskey(arg, "pca")) decompose = LIBXS_PREDICT_PCA;
+    else if (0 != predict_keyval(arg, "compress", 0.9, &quality)) {
+      /* the keyword that matched has already assigned its own value */
+    }
     else if (0 != predict_iskey(arg, "nocompress")) quality = 0;
     else if (0 != predict_iskey(arg, "xgb")) use_xgb = 1;
     else bad = argi;
@@ -81,12 +84,14 @@ int main(int argc, char* argv[])
   if (NULL == filename || 0 != bad) {
     fprintf(stdout,
       "Usage: %s <ett_csv> [nseries=1..7]"
-      " [attend|spread|pca|hknn|rf|nocompress|xgb]\n"
+      " [attend|spread|pca|hknn|rf|compress[Q]|xgb]\n"
       "  Multivariate ETT forecasting: predict OT from nseries channels.\n"
       "  Channels (in order): HUFL,HULL,MUFL,MULL,LUFL,LULL,OT.\n"
       "  attend: per-query local-correlation channel weighting.\n"
+      "  compress[Q]: drop redundant entries (Q: threshold, default 0.9);\n"
+      "    off unless asked, as in every other sample.\n"
       "  xgb: also train XGBoost on the same windows and compare\n"
-      "    (implies nocompress; plain configuration only).\n"
+      "    (implies no compression; plain configuration only).\n"
       "  nseries=1: univariate (OT only).\n"
       "  nseries=7: all channels as co-inputs to predict OT.\n"
       "  Window=%d, Horizon=%d, split=0.661 (standard ETTh1).\n",

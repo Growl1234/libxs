@@ -36,6 +36,40 @@ static int write_confidence_maps(const char* prefix, const void* buffer,
 static double deployment_confidence(const libxs_predict_info_t* info);
 
 
+/**
+ * Confidence thresholds to report, from GATE (comma separated). The first
+ * drives the gated table; more than one adds a sweep, because precision at one
+ * threshold is a single point on a curve and two modes rarely sit at the same
+ * coverage there.
+ */
+static int gate_list(double gates[], int capacity)
+{
+  const char* const env = getenv("GATE");
+  int result = 0;
+  if (NULL != env && '\0' != *env) {
+    int len = 0;
+    const char* token = libxs_strtoken(env, ",", result, &len);
+    while (NULL != token && result < capacity) {
+      gates[result++] = atof(token);
+      token = libxs_strtoken(env, ",", result, &len);
+    }
+  }
+  if (0 == result) {
+    gates[0] = 0.9;
+    result = 1;
+  }
+  return result;
+}
+
+
+static const char* mode_name(int decompose)
+{
+  static const char* names[] = { "RAW", "SPREAD", "PCA", "SETDIFF", "FISHER",
+    "RF", "hKNN" };
+  return (0 <= decompose && 7 > decompose) ? names[decompose] : "?";
+}
+
+
 int main(int argc, char* argv[])
 {
   int argi = 1, mode = LIBXS_PREDICT_AUTO, use_rf = 0, use_hknn = 0;
@@ -159,6 +193,10 @@ int main(int argc, char* argv[])
             { libxs_predict_query_t qi;
               memset(&qi, 0, sizeof(qi));
               libxs_predict_query(model, &qi);
+              fprintf(stdout, "Decomposition: %s (%s)\n",
+                mode_name(qi.decompose),
+                (0 == use_rf && 0 == use_hknn)
+                  ? "selected at build" : "requested");
               fprintf(stdout, "Built: %d clusters, %.1fx compression, order=%d"
                 " (%d entries, %.2f s)\n", qi.nclusters, qi.compression,
                 qi.order, qi.nentries, dt_build);
@@ -292,7 +330,11 @@ static void evaluate(const libxs_predict_t* model,
     fprintf(stdout, "Eval: %d queries (%.2f s)\n", ntotal, dt_eval);
     { const int nconf = (int)(sizeof(confidence_outputs)
         / sizeof(confidence_outputs[0]));
-      const double threshold = 0.9;
+      double gates[8];
+      const int ngates = gate_list(gates, 8);
+      const double threshold = gates[0];
+      double* swconf = (double*)malloc((size_t)ntotal * nconf * sizeof(double));
+      char* swok = (char*)malloc((size_t)ntotal * nconf);
       int gated_correct[5] = {0}, gated_wrong[5] = {0}, deferred[5] = {0};
       int split_acted[5][2], split_correct[5][2], split_n[2];
       int ci;
@@ -319,6 +361,13 @@ static void evaluate(const libxs_predict_t* model,
         }
         for (ci = 0; ci < nconf; ++ci) {
           const int oi = confidence_outputs[ci];
+          if (NULL != swconf && NULL != swok) {
+            swconf[(size_t)i * nconf + ci] = (NULL != info.confidence)
+              ? info.confidence[oi] : 0.0;
+            swok[(size_t)i * nconf + ci] = (char)((NULL != info.values
+              && LIBXS_ROUNDX(int, info.values[oi]) == (int)expected[oi])
+                ? 1 : 0);
+          }
           if (NULL != info.confidence && info.confidence[oi] >= threshold) {
             const int ok = (NULL != info.values
               && LIBXS_ROUNDX(int, info.values[oi]) == (int)expected[oi]);
@@ -349,6 +398,34 @@ static void evaluate(const libxs_predict_t* model,
           (ntotal > 0) ? 100.0 * acted / ntotal : 0.0,
           (acted > 0) ? 100.0 * gated_correct[ci] / acted : 100.0);
       }
+      if (1 < ngates && NULL != swconf && NULL != swok) {
+        int gi;
+        fprintf(stdout, "Gate sweep (coverage%% / precision%%):\n");
+        fprintf(stdout, "  param ");
+        for (gi = 0; gi < ngates; ++gi) fprintf(stdout, "  %11.2f", gates[gi]);
+        fprintf(stdout, "\n");
+        for (ci = 0; ci < nconf; ++ci) {
+          const int oi = confidence_outputs[ci];
+          int len = 0;
+          const char* name = libxs_strtoken(output_names, ",", oi, &len);
+          fprintf(stdout, "  %-4.*s ", len, name);
+          for (gi = 0; gi < ngates; ++gi) {
+            int acted = 0, ok = 0;
+            for (i = 0; i < ntotal; ++i) {
+              if (swconf[(size_t)i * nconf + ci] >= gates[gi]) {
+                ++acted;
+                if (0 != swok[(size_t)i * nconf + ci]) ++ok;
+              }
+            }
+            fprintf(stdout, "  %5.1f/%5.1f",
+              (0 < ntotal) ? 100.0 * acted / ntotal : 0.0,
+              (0 < acted) ? 100.0 * ok / acted : 100.0);
+          }
+          fprintf(stdout, "\n");
+        }
+      }
+      free(swok);
+      free(swconf);
       fprintf(stdout, "Attested-entry split: attested %d (%.1f%%)"
         " | novel %d (%.1f%%)\n", split_n[0],
         (ntotal > 0) ? 100.0 * split_n[0] / ntotal : 0.0, split_n[1],

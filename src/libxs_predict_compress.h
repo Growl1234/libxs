@@ -4,26 +4,37 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
   const int p = model->nentries;
   const int m = model->ninputs;
   const int n = model->noutputs;
-  int local_idx_pool = 0;
-  int* local_idx = (int*)LIBXS_PREDICT_MALLOC(
-    (size_t)p * sizeof(int), local_idx_pool);
-  if (NULL != local_idx) {
+  int maxn = 0, ci;
+  int dropped_pool = 0;
+  char* dropped;
+  for (ci = 0; ci < model->nclusters; ++ci) {
+    if (model->clusters[ci].nentries > maxn) maxn = model->clusters[ci].nentries;
+  }
+  dropped = (char*)LIBXS_PREDICT_MALLOC((size_t)(0 < maxn ? maxn : 1),
+    dropped_pool);
+  if (NULL != dropped) {
     int keep_pool = 0;
     int* keep = (int*)LIBXS_PREDICT_MALLOC(
       (size_t)p * sizeof(int), keep_pool);
     if (NULL != keep) {
       int i, c, nkeep = 0;
+      /**
+       * Entries are dropped as the scan proceeds, and every later test reads
+       * the set that is left. Judging each entry against the whole corpus and
+       * removing the flagged ones together was the defect: redundancy is a
+       * property of a neighbourhood, so entries that are individually
+       * recoverable are jointly load-bearing, and removing them all destroys
+       * the density that made each one redundant. It measured as a retained
+       * set worse than a random subset of the same size (crystal: 41.1%
+       * against 58.3% at ~7200 entries).
+       */
+      for (i = 0; i < p; ++i) keep[i] = 1;
       for (c = 0; c < model->nclusters; ++c) {
         const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
-        int k;
-        for (k = 0; k < cl->nentries; ++k) {
-          local_idx[cl->sorted_idx[k]] = k;
-        }
-      }
-      for (i = 0; i < p; ++i) {
-        const int ci = model->assignments[i];
-        const internal_libxs_predict_cluster_t* cl = &model->clusters[ci];
-        const int li = local_idx[i];
+        int nsurv = cl->nentries, li;
+        for (li = 0; li < cl->nentries; ++li) dropped[li] = 0;
+        for (li = 0; li < cl->nentries; ++li) {
+        const int gi = cl->sorted_idx[li];
         double min_conf = 1.0;
         int j, mismatch = 0, nchecked = 0;
         for (j = 0; j < n && 0 == mismatch; ++j) {
@@ -34,9 +45,10 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
           if (0 != use_classify) {
             double conf = 0, var = 0;
             const double actual = cl->raw_outputs[(size_t)li * n + j];
-            const double predicted = internal_libxs_predict_classify(
+            const double predicted = internal_libxs_predict_classify2(
               cl, m, cl->kd_pts + (size_t)li * m, j, n,
-              cl->ndistinct[j], 0, li, &conf, &var,
+              cl->ndistinct[j], 0, li, dropped, NULL, -1, &conf, &var,
+              0, NULL, NULL,
               internal_libxs_predict_central(model, j), NULL,
               model->has_missing);
             /**
@@ -51,7 +63,18 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
              * neighbourhood still recovers exactly.  The threshold's documented
              * meaning is the wrong rule; this is the right one.
              */
-            if (predicted != actual || var > 0) {
+            /**
+             * The test needs a neighbourhood that can disagree. One neighbour
+             * cannot: it has no variance to report and no vote to be short of,
+             * so var and conf read 0 and 1 whatever it holds, and every entry
+             * whose nearest neighbour shares its label looks redundant. That
+             * measured as 80% of the entries dropped and held-out accuracy from
+             * 0.68 to 0.30. The trial no longer selects such a count, so this
+             * guards a count a caller pinned; declining to drop is the safe
+             * answer, leaving compression a no-op rather than destructive.
+             */
+            const int keff = (NULL != cl->k_out) ? cl->k_out[j] : cl->k_eff;
+            if (2 > keff || predicted != actual || var > 0) {
               mismatch = 1;
             }
             else if (conf < min_conf) {
@@ -71,8 +94,22 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
           }
           ++nchecked;
         }
-        keep[i] = (0 == nchecked || 0 != mismatch || min_conf < quality)
-          ? 1 : 0;
+        /**
+         * A cluster keeps enough entries to answer with: below the vote floor
+         * the neighbourhood degenerates exactly as a one-neighbour vote does,
+         * and the test that decides the next drop stops meaning anything.
+         */
+        if (0 == nchecked || 0 != mismatch || min_conf < quality
+          || LIBXS_PREDICT_KMIN >= nsurv)
+        {
+          keep[gi] = 1;
+        }
+        else {
+          keep[gi] = 0;
+          dropped[li] = 1;
+          --nsurv;
+        }
+        }
       }
       for (i = 0; i < p; ++i) nkeep += keep[i];
       if (nkeep > 0 && nkeep < p) {
@@ -155,6 +192,6 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
       }
       LIBXS_PREDICT_FREE(keep, keep_pool);
     }
-    LIBXS_PREDICT_FREE(local_idx, local_idx_pool);
+    LIBXS_PREDICT_FREE(dropped, dropped_pool);
   }
 }
