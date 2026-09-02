@@ -67,6 +67,7 @@ int main(int argc, char* argv[])
       decompose = LIBXS_PREDICT_SPREAD;
     }
     else if (0 != predict_iskey(arg, "pca")) decompose = LIBXS_PREDICT_PCA;
+    else if (0 != predict_iskey(arg, "none")) decompose = LIBXS_PREDICT_RAW;
     else if (0 != predict_keyval(arg, "compress", 0.9, &quality)) {
       /* the keyword that matched has already assigned its own value */
     }
@@ -84,10 +85,12 @@ int main(int argc, char* argv[])
   if (NULL == filename || 0 != bad) {
     fprintf(stdout,
       "Usage: %s <ett_csv> [nseries=1..7]"
-      " [attend|spread|pca|hknn|rf|compress[Q]|xgb]\n"
+      " [attend|spread|pca|hknn|rf|none|compress[Q]|xgb]\n"
       "  Multivariate ETT forecasting: predict OT from nseries channels.\n"
       "  Channels (in order): HUFL,HULL,MUFL,MULL,LUFL,LULL,OT.\n"
       "  attend: per-query local-correlation channel weighting.\n"
+      "  none: no decomposition. Without it the mode is selected at build,\n"
+      "    which costs one full build per candidate per fold on a series.\n"
       "  compress[Q]: drop redundant entries (Q: threshold, default 0.9);\n"
       "    off unless asked, as in every other sample.\n"
       "  xgb: also train XGBoost on the same windows and compare\n"
