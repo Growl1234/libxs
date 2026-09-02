@@ -14,14 +14,14 @@ knows when a safe rule should stay in charge.
 CP2K and DBCSR use tuned GPU kernels for known matrix shapes.  
 However, deployment sees new shapes between tuned points.
 
-| Choice | Risk |
-| --- | --- |
-| Fixed rules only | Miss local tuning opportunities |
-| Predict everything | Silent slowdowns |
-| Confidence-gated | Override only with evidence |
+| Choice             | Risk                            |
+| ------------------ | ------------------------------- |
+| Fixed rules only   | Miss local tuning opportunities |
+| Predict everything | Silent slowdowns                |
+| Confidence-gated   | Override only with evidence     |
 
 <span style="opacity: 0.4; font-size: 50%;">Prior work predicted offline
-based on hardware-occupancy features using XGBoost [Jakobovits 2019].</span>
+based on hardware-occupancy features using XGBoost \[Jakobovits 2019\].</span>
 
 ---
 
@@ -58,9 +58,9 @@ Some parameters encode hidden hardware constraints.
 
 Nearby shapes can agree on a value that is wrong for the query.
 
-| Shape | Predicted BK | Rule BK | Result |
-| --- | ---: | ---: | ---: |
-| 21 × 22 × 23 | 4 | 21 | 487 vs. 991 GF/s |
+| Shape        | Predicted BK | Rule BK | Result           |
+| ------------ | -----------: | ------: | ---------------: |
+| 21 × 22 × 23 |            4 |      21 | 487 vs. 991 GF/s |
 
 Average error is not the operational risk, e.g., Mean Absolute Error.
 
@@ -73,11 +73,11 @@ evidence is summarized later.
 
 Separate ownership from prediction.
 
-| Rule controlled | Confidence gated |
-| --- | --- |
-| `BS`, `BM`, `BN`, `BK`, `WS` | `WG`, `LU`, `AL`, `AA`, `AB` |
-| structural safety | preference/access choices |
-| source rules stay authoritative | override near-unanimously |
+| Rule controlled                 | Confidence gated             |
+| ------------------------------- | ---------------------------- |
+| `BS`, `BM`, `BN`, `BK`, `WS`    | `WG`, `LU`, `AL`, `AA`, `AB` |
+| structural safety               | preference/access choices    |
+| source rules stay authoritative | override near-unanimously    |
 
 SMM kernel parameters: BS batch-size, BM/BN/BK block extents,  
 WS work-sharing, WG workgroup shape, LU unroll,  
@@ -87,10 +87,10 @@ AL/AA/AB access modes.
 
 ## Confidence Signals
 
-| Signal | Time | Used for |
-| --- | --- | --- |
-| Fingerprint decay | Build | constant, smooth, categorical, erratic |
-| *k*NN vote fraction | Query | per-output deployment confidence |
+| Signal              | Time  | Used for                               |
+| ------------------- | ----- | -------------------------------------- |
+| Fingerprint decay   | Build | constant, smooth, categorical, erratic |
+| *k*NN vote fraction | Query | per-output deployment confidence       |
 
 Fingerprint behavior chooses the output mode.
 
@@ -131,7 +131,7 @@ values).  Other bins are near neutral — the rules are already strong.
 
 Over the M × N × K cube (739k queries), 42% fall below the 0.9
 threshold (defer to rules).  58% sit at or above it, but the rest is
-graded rather than split: 22% lands in [0.8, 0.9) — just short of the
+graded rather than split: 22% lands in \[0.8, 0.9) — just short of the
 gate.  The threshold is a policy choice on a continuum.
 
 ---
@@ -140,11 +140,11 @@ gate.  The threshold is a policy choice on a continuum.
 
 It changes the failure mode.
 
-| Without gating | With gating |
-| --- | --- |
-| Wrong values silently deploy | Low evidence defers |
-| Average error hides risk | Per-output confidence is visible |
-| Outliers look like bugs | Outliers identify missing data |
+| Without gating               | With gating                      |
+| ---------------------------- | -------------------------------- |
+| Wrong values silently deploy | Low evidence defers              |
+| Average error hides risk     | Per-output confidence is visible |
+| Outliers look like bugs      | Outliers identify missing data   |
 
 How to know if a parameter is confidently predicted?  
 Well, if you know how to predict...
@@ -183,7 +183,7 @@ The sample is a mixed classification problem
 where confidence decides whether to act.
 
 <span style="opacity: 0.4; font-size: 50%;">AFLOW: An Automatic Framework
-for High-Throughput Materials Discovery [Curtarolo 2012].</span>
+for High-Throughput Materials Discovery \[Curtarolo 2012\].</span>
 
 Note: This is the key slide for computational chemistry audience.
 Structure initialization in CP2K/FHI-aims requires symmetry information;
@@ -195,11 +195,11 @@ a confidence-gated predictor can provide it or abstain.
 
 Same corpus, same split, same metric — `xgb` in the samples.
 
-| PVC exact-match | Ours | XGBoost |
-| --- | ---: | ---: |
-| Gated outputs | 24–87% | 28–88% |
-| Rule-owned `BM`, `WS` | 35%, 49% | 86%, 88% |
-| Largest shapes held out: `WS` | 12.7% | 1.1% |
+| PVC exact-match               | Ours     | XGBoost  |
+| ----------------------------- | -------: | -------: |
+| Gated outputs                 |   24–87% |   28–88% |
+| Rule-owned `BM`, `WS`         | 35%, 49% | 86%, 88% |
+| Largest shapes held out: `WS` |    12.7% |     1.1% |
 
 Boosting's margin sits on rule-owned outputs, which never act —  
 and it collapses where it has to extrapolate.
@@ -215,12 +215,12 @@ so that split holds out the largest shapes. The others use `mix`.
 
 ## Matched Metric, Three Domains
 
-| Same split, same metric | Ours | XGBoost |
-| --- | ---: | ---: |
-| Crystals, precision at 58% coverage | 94.3% | 94.3% |
-| Earthquakes, MAE | 0.241 | 0.237 |
-| ETTh1, MSE at window 6 | 0.245 | **0.225** |
-| ETTh1, MSE at window 96 | **0.320** | 0.436 |
+| Same split, same metric             | Ours      | XGBoost   |
+| ----------------------------------- | --------: | --------: |
+| Crystals, precision at 58% coverage | 94.3%     | 94.3%     |
+| Earthquakes, MAE                    | 0.241     | 0.237     |
+| ETTh1, MSE at window 6              | 0.245     | **0.225** |
+| ETTh1, MSE at window 96             | **0.320** | 0.436     |
 
 Window choice moves more than the model choice does —  
 and our sizer picks 6 over the conventional 96.
@@ -241,11 +241,11 @@ no counterpart on that side short of an external grid search.
 `set_decompose(LIBXS_PREDICT_AUTO_DECOMPOSE)` builds each applicable mode on part
 of the corpus and keeps the one that wins on a part held back.
 
-| Corpus | Default (RAW) | Selected | Selected mode |
-| --- | ---: | ---: | --- |
-| Crystals, held-out accuracy | 67.8% | **79.6%** | RF |
-| River discharge, MAE | 868 | **791** | hkNN |
-| Tuned GPU parameters, miss rate | 0.306 | **0.253** | RF |
+| Corpus                          | Default (RAW) | Selected  | Selected mode |
+| ------------------------------- | ------------: | --------: | ------------- |
+| Crystals, held-out accuracy     |         67.8% | **79.6%** |          RF   |
+| River discharge, MAE            |           868 |   **791** |          hkNN |
+| Tuned GPU parameters, miss rate |         0.306 | **0.253** |          RF   |
 
 A fixed default costs 22% on average, and the worst candidate on discharge is
 2.8x worse than the best - the right mode moves with the corpus.
@@ -267,11 +267,11 @@ that averaging is what makes the estimate stable.
 `set_neighbors(-1)` resolves the count per output at build, on entries held back
 from a probe build.
 
-| Corpus | Derived count | Selected | Change |
-| --- | ---: | ---: | ---: |
-| Crystals, held-out accuracy | 67.8% | **74.8%** | +10.4% |
-| Crystals, miss rate | 0.3223 | **0.2520** | -21.8% |
-| Tuned GPU parameters, miss rate | 0.3062 | **0.2826** | -7.7% |
+| Corpus                          | Derived count | Selected   | Change |
+| ------------------------------- | ------------: | ---------: | -----: |
+| Crystals, held-out accuracy     |         67.8% |  **74.8%** | +10.4% |
+| Crystals, miss rate             |        0.3223 | **0.2520** | -21.8% |
+| Tuned GPU parameters, miss rate |        0.3062 | **0.2826** |  -7.7% |
 
 The derived `max(5, cluster/3)` is too large everywhere, and the right count is
 not a function of cluster size: hold the cluster at 56 entries and vary only the
@@ -291,25 +291,25 @@ serves the whole grid.
 
 ## Secondary Evidence
 
-| Domain | Ours | Literature | Confidence |
-| --- | ---: | ---: | --- |
-| ETT** (H=96) | MSE 0.244 | 0.370–0.449 | 0 parameters, 1 CPU core |
-| Sunspots | MAE 16.8 (20.3 at t+6) | MAE 19.8–45.5 | 1.0 (dense cycles) |
-| Discharge | 0.22 err/σ | 0.10–0.47 err/σ | 1.0 (seasonal) |
-| SOI* | nRMSE 0.11 (0.07 hKNN) | 0.23–0.55 | 1.0 (spread modes) |
-| Earthquakes | MAE 0.249 (0.241 hKNN) | 0.184–0.283 | 0.702 (ambiguous) |
-| Crystals | 79.6% → 95.2% (conf ≥ 0.9) | ≈75–80% | 53% gated coverage |
+| Domain         | Ours                       | Literature      | Confidence               |
+| -------------- | -------------------------: | --------------: | ------------------------ |
+| ETT\*\* (H=96) | MSE 0.244                  | 0.370–0.449     | 0 parameters, 1 CPU core |
+| Sunspots       | MAE 16.8 (20.3 at t+6)     | MAE 19.8–45.5   | 1.0 (dense cycles)       |
+| Discharge      | 0.22 err/σ                 | 0.10–0.47 err/σ | 1.0 (seasonal)           |
+| SOI\*          | nRMSE 0.11 (0.07 hKNN)     | 0.23–0.55       | 1.0 (spread modes)       |
+| Earthquakes    | MAE 0.249 (0.241 hKNN)     | 0.184–0.283     | 0.702 (ambiguous)        |
+| Crystals       | 79.6% → 95.2% (conf ≥ 0.9) | ≈75–80%         | 53% gated coverage       |
 
 Confidence separates dense-coverage domains from genuinely ambiguous
 ones.  Literature comparisons are orienting — different features, splits,
 metrics.  ETT is the exception: same dataset, same split, same horizon.
 
-<span style="opacity: 0.4; font-size: 50%;">Results for comparison from
-[Dang2022], [Akkala2025], [Kratzert2018], [Kratzert2019], [Simatupang2025],
-[Ahmed2024], [Kaftan2025], [Nie2023], [Zeng2023], [Zhou2022], [Wu2021]</span>
+<span style="opacity: 0.4; font-size: 50%;">Results for comparison
+\[Dang2022\], \[Akkala2025\], \[Kratzert2018\], \[Kratzert2019\], \[Simatupang2025\],
+\[Ahmed2024\], \[Kaftan2025\], \[Nie2023\], \[Zeng2023\], \[Zhou2022\], \[Wu2021\]</span>
 
-<span style="opacity: 0.4; font-size: 50%;">* SOI: Southern Oscillation Index —
-** ETT: Electricity Transformer Temperature (ETTh1), the standard timeseries
+<span style="opacity: 0.4; font-size: 50%;">\* SOI: Southern Oscillation Index,
+\*\* ETT: Electricity Transformer Temperature (ETTh1), standard timeseries
 benchmark; baselines are PatchTST, DLinear, FEDformer, Autoformer</span>
 
 Note: The Southern Oscillation Index (SOI) measures the difference in air pressure between
@@ -334,12 +334,12 @@ A confidence-gated predictor can say:
 
 No Python, no framework dependency — links into your Fortran binary.
 
-| Running application moment | LIBXS call | Effect |
-| --- | --- | --- |
-| Load existing knowledge | `libxs_predict_load_csv` | seed model from file |
-| New measured case | `libxs_predict_push` | append evidence 𝒪(1) |
-| Checkpoint or idle point | `libxs_predict_build` | rebuild model cheaply |
-| Next query | `libxs_predict_eval` | value + confidence |
+| Running application moment | LIBXS call               | Effect                |
+| -------------------------- | ------------------------ | --------------------- |
+| Load existing knowledge    | `libxs_predict_load_csv` | seed model from file  |
+| New measured case          | `libxs_predict_push`     | append evidence 𝒪(1)  |
+| Checkpoint or idle point   | `libxs_predict_build`    | rebuild model cheaply |
+| Next query                 | `libxs_predict_eval`     | value + confidence    |
 
 Start from a CSV of prior runs or start empty — learn from completed  
 work, and let later decisions use the stronger local evidence.
