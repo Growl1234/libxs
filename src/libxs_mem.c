@@ -99,7 +99,6 @@
         { \
           XKERNEL(char, TS, OUT, IN, LDI, LDO, libxs_xcopy_tile_i_, libxs_xcopy_tile_j_, \
             libxs_xcopy_tile_src_, libxs_xcopy_tile_dst_); \
-          LIBXS_PRAGMA_UNROLL \
           for (libxs_xcopy_tile_k_ = 0; libxs_xcopy_tile_k_ < (unsigned int)(TS); \
             ++libxs_xcopy_tile_k_) \
           { \
@@ -174,7 +173,6 @@
             + (size_t)(TS) * ((size_t)(LD) * libxs_itrans_tile_i_ + libxs_itrans_tile_j_); \
           char *const libxs_itrans_tile_b_ = ((char*)(INOUT)) \
             + (size_t)(TS) * ((size_t)(LD) * libxs_itrans_tile_j_ + libxs_itrans_tile_i_); \
-          LIBXS_PRAGMA_UNROLL \
           for (libxs_itrans_tile_k_ = 0; libxs_itrans_tile_k_ < (unsigned int)(TS); \
             ++libxs_itrans_tile_k_) \
           { \
@@ -217,7 +215,6 @@
           + (size_t)(TS) * ((size_t)(LD) * (ROW) + (COL)); \
         char *const libxs_itrans_range_b_ = ((char*)(INOUT)) \
           + (size_t)(TS) * ((size_t)(LD) * (COL) + (ROW)); \
-        LIBXS_PRAGMA_UNROLL \
         for (libxs_itrans_range_k_ = 0; libxs_itrans_range_k_ < (unsigned int)(TS); \
           ++libxs_itrans_range_k_) \
         { \
@@ -347,7 +344,6 @@ unsigned char internal_libxs_diff_sw(const void* a, const void* b, unsigned char
 #else
   const uint8_t *const a8 = (const uint8_t*)a, *const b8 = (const uint8_t*)b;
   unsigned char result = 0, i;
-  LIBXS_PRAGMA_UNROLL/*_N(2)*/
   for (i = 0; i < (unsigned char)(size & (unsigned char)0xF0); i += 16) {
     LIBXS_DIFF_16_DECL(aa);
     LIBXS_DIFF_16_LOAD(aa, a8 + i);
@@ -367,7 +363,6 @@ unsigned char internal_libxs_diff_sse(const void* a, const void* b, unsigned cha
 #if defined(LIBXS_INTRINSICS_X86) && !defined(LIBXS_MEM_SW)
   const uint8_t *const a8 = (const uint8_t*)a, *const b8 = (const uint8_t*)b;
   unsigned char result = 0, i;
-  LIBXS_PRAGMA_UNROLL/*_N(2)*/
   for (i = 0; i < (unsigned char)(size & (unsigned char)0xF0); i += 16) {
     LIBXS_DIFF_SSE_DECL(aa);
     LIBXS_DIFF_SSE_LOAD(aa, a8 + i);
@@ -389,7 +384,6 @@ unsigned char internal_libxs_diff_avx2(const void* a, const void* b, unsigned ch
 #if defined(LIBXS_INTRINSICS_AVX2) && !defined(LIBXS_MEM_SW)
   const uint8_t *const a8 = (const uint8_t*)a, *const b8 = (const uint8_t*)b;
   unsigned char result = 0, i;
-  LIBXS_PRAGMA_UNROLL/*_N(2)*/
   for (i = 0; i < (unsigned char)(size & (unsigned char)0xE0); i += 32) {
     LIBXS_DIFF_AVX2_DECL(aa);
     LIBXS_DIFF_AVX2_LOAD(aa, a8 + i);
@@ -412,7 +406,6 @@ unsigned char internal_libxs_diff_avx512(const void* a, const void* b, unsigned 
 #if defined(LIBXS_INTRINSICS_AVX512) && !defined(LIBXS_MEM_SW)
   const uint8_t *const a8 = (const uint8_t*)a, *const b8 = (const uint8_t*)b;
   unsigned char result = 0, i;
-  LIBXS_PRAGMA_UNROLL/*_N(2)*/
   for (i = 0; i < (unsigned char)(size & (unsigned char)0xC0); i += 64) {
     LIBXS_DIFF_AVX512_DECL(aa);
     LIBXS_DIFF_AVX512_LOAD(aa, a8 + i);

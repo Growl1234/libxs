@@ -13,10 +13,10 @@
 #include "libxs.h"
 
 #define LIBXS_MEM_LOOP(DST, SRC, SIZE, RHS, NTS) do { \
-  const signed char libxs_memory_loop_size_ = LIBXS_CAST_ICHAR(SIZE); \
+  const int libxs_memory_loop_size_ = (int)(SIZE); \
   unsigned char *const LIBXS_RESTRICT libxs_memory_loop_dst_ = (unsigned char*)(DST); \
-  signed char libxs_memory_loop_i_; \
-  NTS(libxs_memory_loop_dst_) LIBXS_PRAGMA_UNROLL \
+  int libxs_memory_loop_i_; \
+  NTS(libxs_memory_loop_dst_) \
   for (libxs_memory_loop_i_ = 0; libxs_memory_loop_i_ < libxs_memory_loop_size_; \
     ++libxs_memory_loop_i_) \
   { \
