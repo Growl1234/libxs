@@ -9,6 +9,8 @@
 ******************************************************************************/
 #include <libxs/libxs_reg.h>
 #include <libxs/libxs_mem.h>
+#include "libxs_crc32.h"
+#include "libxs_main.h"
 
 #if !defined(LIBXS_LOCK)
 # define LIBXS_LOCK LIBXS_LOCK_DEFAULT
@@ -49,6 +51,7 @@ LIBXS_EXTERN_C typedef struct internal_libxs_regentry_t {
   void* value;          /* heap pointer or inline storage */
   size_t key_size;      /* actual key size in Bytes */
   size_t value_size;    /* allocated value size in Bytes */
+  unsigned int hash;    /* seeded hash of the key */
   unsigned char state;  /* INTERNAL_REG_EMPTY|USED|TOMB */
   unsigned char ext;    /* non-zero: value points into external buffer (no free) */
   /**
@@ -115,18 +118,10 @@ LIBXS_API_INLINE void* internal_value_ptr(internal_libxs_regentry_t* e)
 }
 
 
-/** FNV-1a hash; the seed makes the mapping registry-specific. */
 LIBXS_API_INLINE unsigned int internal_libxs_regkey_hash(
   const void* key, size_t key_size, unsigned int seed)
 {
-  const unsigned char* data = (const unsigned char*)key;
-  unsigned int hash = seed;
-  size_t i;
-  for (i = 0; i < key_size; ++i) {
-    hash ^= (unsigned int)data[i];
-    hash *= INTERNAL_REG_HASH_PRIME;
-  }
-  return hash;
+  return libxs_crc32(seed, key, key_size);
 }
 
 
@@ -150,7 +145,7 @@ LIBXS_API_INLINE unsigned int internal_libxs_registry_probe(
       result = (tomb < capacity) ? tomb : i;
       break;
     }
-    if (INTERNAL_REG_USED == e->state
+    if (INTERNAL_REG_USED == e->state && e->hash == hash
       && e->key_size == key_size
       && 0 == memcmp(e->key.c, key, key_size))
     {
@@ -197,9 +192,7 @@ LIBXS_API_INLINE int internal_libxs_registry_grow(libxs_registry_t* registry)
       if (INTERNAL_REG_USED == e->state) {
         int found = 0;
         const unsigned int j = internal_libxs_registry_probe(
-          new_entries, new_cap, e->key.c, e->key_size,
-          internal_libxs_regkey_hash(e->key.c, e->key_size, registry->seed),
-          &found);
+          new_entries, new_cap, e->key.c, e->key_size, e->hash, &found);
         LIBXS_ASSERT(0 == found);
         new_entries[j] = *e; /* shallow copy (value pointer transfers) */
       }
@@ -285,6 +278,7 @@ LIBXS_API_INLINE void* internal_libxs_registry_set_impl(
         }
         memcpy(e->key.c, key, key_size);
         e->key_size = key_size;
+        e->hash = hash;
         e->state = INTERNAL_REG_USED;
         ++registry->size;
         result = value_buf;
@@ -353,6 +347,10 @@ LIBXS_API libxs_registry_t* libxs_registry_create(void)
       (unsigned int)LIBXS_UP2POT(LIBXS_REGISTRY_NBUCKETS);
   libxs_registry_t* result =
       (libxs_registry_t*)calloc(1, sizeof(libxs_registry_t));
+#if (LIBXS_X86_SSE42 > LIBXS_STATIC_TARGET_ARCH)
+  /* a registry can precede libxs_init (malloc registry), and the CRC dispatch is lazy */
+  internal_libxs_hash_init(libxs_cpuid(NULL));
+#endif
   if (NULL != result) {
     result->entries = (internal_libxs_regentry_t*)calloc(
       nbuckets, sizeof(internal_libxs_regentry_t));
@@ -904,16 +902,18 @@ LIBXS_API libxs_registry_t* libxs_registry_load(const void* buffer, size_t size,
           }
         }
         if (EXIT_SUCCESS == ok) {
+          const unsigned int hash =
+            internal_libxs_regkey_hash(key_ptr, ks, result->seed);
           int found = 0;
           unsigned int idx;
           internal_libxs_regentry_t* e;
           idx = internal_libxs_registry_probe(
-            result->entries, result->capacity, key_ptr, ks,
-            internal_libxs_regkey_hash(key_ptr, ks, result->seed), &found);
+            result->entries, result->capacity, key_ptr, ks, hash, &found);
           LIBXS_ASSERT(0 == found);
           e = result->entries + idx;
           memcpy(e->key.c, key_ptr, ks);
           e->key_size = ks;
+          e->hash = hash;
           e->value_size = vs;
           e->state = INTERNAL_REG_USED;
           if (NULL != fixup) {

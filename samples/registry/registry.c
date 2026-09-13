@@ -10,7 +10,7 @@
 
 /**
  * Microbenchmark for the registry (key-value store) dispatch path.
- * Measures: registration, cold lookup, cached lookup, multi-threaded
+ * Measures: registration, cold lookup, locked lookup, multi-threaded
  * reads, contended writes, and mixed read/write scenarios. The
  * single-threaded phases are swept over a range of key sizes, since
  * hashing and key comparison both scale with the size of the key.
@@ -41,8 +41,8 @@ typedef struct bench_value_t {
 
 /** Per-operation timings of the single-threaded phases. */
 typedef struct bench_serial_t {
-  double reg_ns, cold_ns, cached_ns;
-  uintptr_t reg_cyc, cold_cyc, cached_cyc;
+  double reg_ns, cold_ns, locked_ns;
+  uintptr_t reg_cyc, cold_cyc, locked_cyc;
   size_t size, capacity, nbytes;
 } bench_serial_t;
 
@@ -99,7 +99,7 @@ int main(int argc, char* argv[])
     if (EXIT_SUCCESS == result) {
       print_perop("registration (write):", timing.reg_ns, size_total, timing.reg_cyc);
       print_perop("cold lookup (shuffled):", timing.cold_ns, size_total * nrepeat, timing.cold_cyc);
-      print_perop("cached lookup (local):", timing.cached_ns, size_total * nrepeat, timing.cached_cyc);
+      print_perop("locked lookup (local):", timing.locked_ns, size_total * nrepeat, timing.locked_cyc);
       printf("\tregistry: size=%" PRIuPTR " capacity=%" PRIuPTR
         " nbytes=%" PRIuPTR "\n", (uintptr_t)timing.size,
         (uintptr_t)timing.capacity, (uintptr_t)timing.nbytes);
@@ -110,7 +110,7 @@ int main(int argc, char* argv[])
   }
   else { /* sweep: one row per key size */
     printf("\nSingle-threaded key-size sweep:\n");
-    printf("\t         registration     cold lookup      cached lookup\n");
+    printf("\t         registration     cold lookup      locked lookup\n");
     printf("\tBytes    ns/op  cyc/op    ns/op  cyc/op    ns/op  cyc/op\n");
     for (i = 0; i < nsizes && EXIT_SUCCESS == result; ++i) {
       const size_t key_size = bench_keysizes[i];
@@ -120,7 +120,7 @@ int main(int argc, char* argv[])
           printf("\t%5" PRIuPTR "  %7.1f %7" PRIuPTR "  %7.1f %7" PRIuPTR
             "  %7.1f %7" PRIuPTR "\n", (uintptr_t)key_size,
             timing.reg_ns, timing.reg_cyc, timing.cold_ns, timing.cold_cyc,
-            timing.cached_ns, timing.cached_cyc);
+            timing.locked_ns, timing.locked_cyc);
         }
         else {
           fprintf(stderr, "ERROR: %" PRIuPTR "-Byte keys failed\n",
@@ -207,10 +207,10 @@ static bench_value_t* bench_vals(int size_total)
 /**
  * Single-threaded phases, which are the ones sensitive to the key size:
  *   (1) cold registration of size_total unique keys (write),
- *   (2) cold lookup: shuffled access pattern defeating the TLS cache,
- *   (3) cached lookup: repeated access to a small set (TLS-cache-friendly).
- * A TLS cache hit takes neither the lock nor a probe, hence phase (3) is
- * the purest measure of hashing the key and comparing it.
+ *   (2) cold lookup: shuffled access pattern,
+ *   (3) locked lookup: repeated access to a small set.
+ * A lookup under the registry's lock never consults the TLS cache, hence
+ * phase (3) is the lock, the hash, and a probe of a cache-warm table.
  */
 static int bench_serial(size_t key_size, int size_total, int nrepeat,
   bench_serial_t* timing)
@@ -257,7 +257,7 @@ static int bench_serial(size_t key_size, int size_total, int nrepeat,
     timing->cold_ns = 1E9 * libxs_timer_duration(0, total_cycles) / count;
     timing->cold_cyc = (uintptr_t)(total_cycles / (libxs_timer_tick_t)count);
   }
-  if (EXIT_SUCCESS == result) { /* (3) cached lookup: small working set */
+  if (EXIT_SUCCESS == result) { /* (3) locked lookup: small working set */
     const int local_size = LIBXS_MIN(LIBXS_REGCACHE_NENTRIES, size_total);
     const int count = size_total * nrepeat;
     libxs_timer_tick_t total_cycles = 0;
@@ -274,8 +274,8 @@ static int bench_serial(size_t key_size, int size_total, int nrepeat,
       }
       total_cycles += libxs_timer_ncycles(start, libxs_timer_tick());
     }
-    timing->cached_ns = 1E9 * libxs_timer_duration(0, total_cycles) / count;
-    timing->cached_cyc = (uintptr_t)(total_cycles / (libxs_timer_tick_t)count);
+    timing->locked_ns = 1E9 * libxs_timer_duration(0, total_cycles) / count;
+    timing->locked_cyc = (uintptr_t)(total_cycles / (libxs_timer_tick_t)count);
   }
   if (EXIT_SUCCESS == result) {
     libxs_registry_info_t info;

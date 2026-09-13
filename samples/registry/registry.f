@@ -9,7 +9,7 @@
 !=======================================================================!
 
 ! Microbenchmark for the registry (key-value store).
-! Measures registration (write) and cold/cached lookup.
+! Measures registration (write) and cold/locked lookup.
 ! This is a simplified Fortran version of registry.c.
 !
       PROGRAM registry
@@ -38,7 +38,7 @@
         TYPE(bench_key_t),   TARGET :: keys(ntotal)
         TYPE(bench_value_t), TARGET :: vals(ntotal)
         TYPE(libxs_registry_info_t) :: info
-        DOUBLE PRECISION :: start, twrite, tcold, tcached
+        DOUBLE PRECISION :: start, twrite, tcold, tlocked
         INTEGER :: i, j, n, result
 
         result = 0
@@ -92,7 +92,7 @@
      &      " nbytes=", info%nbytes
         END IF
 
-      ! (2) Cold lookup: sequential (defeats TLS cache by spread)
+      ! (2) Cold lookup: spread access pattern
         CALL CPU_TIME(start)
         DO n = 1, nrepeat
           DO i = 1, ntotal
@@ -110,7 +110,7 @@
         CALL CPU_TIME(tcold)
         tcold = tcold - start
 
-      ! (3) Cached lookup: cycle through a small set
+      ! (3) Locked lookup: cycle through a small set
         CALL CPU_TIME(start)
         DO n = 1, nrepeat
           DO i = 1, ntotal
@@ -125,8 +125,8 @@
           END DO
           IF (result .NE. 0) EXIT
         END DO
-        CALL CPU_TIME(tcached)
-        tcached = tcached - start
+        CALL CPU_TIME(tlocked)
+        tlocked = tlocked - start
 
       ! (4) Verify some entries via libxs_registry_has
         DO i = 1, ntotal
@@ -156,10 +156,10 @@
      &      CHAR(9), "cold lookup:    ",                                &
      &      1D9 * tcold / DBLE(ntotal * nrepeat), " ns/op"
         END IF
-        IF (0.LT.tcached) THEN
+        IF (0.LT.tlocked) THEN
           WRITE(*, "(1A,A,F10.1,A)")                                    &
-     &      CHAR(9), "cached lookup:  ",                                &
-     &      1D9 * tcached / DBLE(ntotal * nrepeat), " ns/op"
+     &      CHAR(9), "locked lookup:  ",                                &
+     &      1D9 * tlocked / DBLE(ntotal * nrepeat), " ns/op"
         END IF
 
         CALL libxs_finalize()

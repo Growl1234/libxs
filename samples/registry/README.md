@@ -20,8 +20,8 @@ dispatch path under different access patterns and concurrency levels.
 Measurements:
 
 - Duration to register (insert) all keys into the registry.
-- Cold lookup with shuffled access pattern (defeats thread-local cache).
-- Cached lookup with sequential/repeating pattern (hits thread-local cache).
+- Cold lookup with shuffled access pattern.
+- Locked lookup with sequential/repeating pattern (small working set).
 - Multi-threaded parallel reads across all threads.
 - Contended parallel writes (each thread registers its own key range).
 - Mixed read/write: one writer thread while remaining threads read.
@@ -36,10 +36,10 @@ skipped when running single-threaded.
 ```
 
 Fortran variant with hardcoded parameters (10000 keys, 10 repeats).
-Measures registration, cold lookup, and cached lookup.
+Measures registration, cold lookup, and locked lookup.
 
 ## Scaling Behavior
 
-Read-only accesses stay roughly constant in per-op duration due to
-the thread-local cache. Write accesses are serialized and duration
-scales with the number of threads.
+All phases pass the registry's lock, which bypasses the thread-local
+cache. Reads and writes are hence serialized, and their per-op duration
+grows with the number of threads contending for the lock.
