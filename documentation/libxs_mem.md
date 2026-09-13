@@ -147,3 +147,18 @@ void libxs_itrans_batch(void* inout, unsigned int typesize,
 ```
 
 Batch of in-place matrix transpositions (per-thread form).
+
+```C
+int libxs_mem_ntasks(libxs_mem_op_t op, int m, int n,
+  unsigned int typesize, int nthreads);
+```
+
+Number of tasks worth splitting a `_task` call into, given `nthreads`
+available: 1 below a minimum size of the operation, otherwise one task
+per so many bytes. The operation (`LIBXS_MEM_OP_MATCOPY`, `_MATZERO`,
+`_OTRANS`, `_ITRANS`) matters: zeroing needs the most data to pay for a
+team. In Fortran, compiled with OpenMP, `libxs_matcopy`, `libxs_otrans`,
+and `libxs_itrans` use it to run over an OpenMP team unless called from
+within a parallel region; a non-square `libxs_itrans` then runs two
+teams (copy into scratch, transpose back). These Fortran routines are no
+longer `PURE`, whereas their `_task` forms remain `PURE`.

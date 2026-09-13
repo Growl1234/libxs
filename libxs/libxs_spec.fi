@@ -79,6 +79,9 @@
         PUBLIC :: libxs_otrans, libxs_otrans_task
 
         PUBLIC :: libxs_itrans, libxs_itrans_task
+        PUBLIC :: libxs_mem_ntasks
+        PUBLIC :: LIBXS_MEM_OP_MATCOPY, LIBXS_MEM_OP_MATZERO
+        PUBLIC :: LIBXS_MEM_OP_OTRANS, LIBXS_MEM_OP_ITRANS
         PUBLIC :: libxs_itrans_batch
         PUBLIC :: libxs_typesize
         PUBLIC :: libxs_cpuid_t
@@ -229,6 +232,13 @@
         !> Sentinel: select the window at build (set_series).
         INTEGER(C_INT), PARAMETER ::                                    &
      &    LIBXS_PREDICT_AUTO_WINDOW = 0
+
+        !> Operations libxs_mem_ntasks sizes a team for.
+        INTEGER(C_INT), PARAMETER ::                                    &
+     &    LIBXS_MEM_OP_MATCOPY = 0,                                     &
+     &    LIBXS_MEM_OP_MATZERO = 1,                                     &
+     &    LIBXS_MEM_OP_OTRANS  = 2,                                     &
+     &    LIBXS_MEM_OP_ITRANS  = 3
 
         !> Matrix difference norms (LAPACK conventions).
         TYPE, BIND(C) :: libxs_matdiff_t
@@ -1106,6 +1116,15 @@
             TYPE(libxs_fprint_t), INTENT(OUT) :: output
             TYPE(libxs_fprint_t), INTENT(IN)  :: a, b
             INTEGER(C_INT) :: libxs_fprint_join
+          END FUNCTION
+
+          !> Tasks worth splitting a matrix copy/transpose into.
+          FUNCTION libxs_mem_ntasks(op, m, n, typesize, nthreads)       &
+     &    BIND(C)
+            IMPORT :: C_INT
+            INTEGER(C_INT), INTENT(IN), VALUE :: op, m, n
+            INTEGER(C_INT), INTENT(IN), VALUE :: typesize, nthreads
+            INTEGER(C_INT) :: libxs_mem_ntasks
           END FUNCTION
 
           ! internal (use libxs_itrans)

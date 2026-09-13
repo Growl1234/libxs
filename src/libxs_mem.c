@@ -21,6 +21,12 @@
 #if !defined(LIBXS_MEM_SW) && 0
 # define LIBXS_MEM_SW
 #endif
+#if !defined(LIBXS_TCOPY_BLOCK)
+# define LIBXS_TCOPY_BLOCK 32
+#endif
+#if !defined(LIBXS_ITRANS_BLOCK)
+# define LIBXS_ITRANS_BLOCK 8
+#endif
 
 /* xcopy kernel: consecutive loads and stores (matcopy) */
 #define LIBXS_MCOPY_KERNEL(TYPE, TS, OUT, IN, LDI, LDO, I, J, SRC, DST) \
@@ -112,9 +118,25 @@
 /* matzero tile: outer=N, inner=M for consecutive stores */
 #define LIBXS_MZERO_TILE(TS, OUT, LDO, M0, M1, N0, N1) \
   LIBXS_XCOPY_TILE(LIBXS_MZERO_KERNEL, TS, OUT, NULL, 0, LDO, N0, N1, M0, M1)
-/* transpose tile: outer=M, inner=N for consecutive stores */
-#define LIBXS_TCOPY_TILE(TS, OUT, IN, LDI, LDO, M0, M1, N0, N1) \
-  LIBXS_XCOPY_TILE(LIBXS_TCOPY_KERNEL, TS, OUT, IN, LDI, LDO, M0, M1, N0, N1)
+/* transpose tile: outer=M, inner=N for consecutive stores, in blocks keeping the strided loads resident */
+#define LIBXS_TCOPY_TILE(TS, OUT, IN, LDI, LDO, M0, M1, N0, N1) do { \
+  unsigned int libxs_tcopy_tile_i0_, libxs_tcopy_tile_j0_; \
+  for (libxs_tcopy_tile_i0_ = (M0); libxs_tcopy_tile_i0_ < (unsigned int)(M1); \
+    libxs_tcopy_tile_i0_ += LIBXS_TCOPY_BLOCK) \
+  { \
+    const unsigned int libxs_tcopy_tile_i1_ = LIBXS_MIN( \
+      libxs_tcopy_tile_i0_ + LIBXS_TCOPY_BLOCK, (unsigned int)(M1)); \
+    for (libxs_tcopy_tile_j0_ = (N0); libxs_tcopy_tile_j0_ < (unsigned int)(N1); \
+      libxs_tcopy_tile_j0_ += LIBXS_TCOPY_BLOCK) \
+    { \
+      const unsigned int libxs_tcopy_tile_j1_ = LIBXS_MIN( \
+        libxs_tcopy_tile_j0_ + LIBXS_TCOPY_BLOCK, (unsigned int)(N1)); \
+      LIBXS_XCOPY_TILE(LIBXS_TCOPY_KERNEL, TS, OUT, IN, LDI, LDO, \
+        libxs_tcopy_tile_i0_, libxs_tcopy_tile_i1_, \
+        libxs_tcopy_tile_j0_, libxs_tcopy_tile_j1_); \
+    } \
+  } \
+} while(0)
 
 /* in-place transpose of square region (typed swap) */
 #define LIBXS_ITRANS_LOOP(TYPE, INOUT, LD, M) do { \
@@ -204,6 +226,47 @@
         } \
         if (++(COL) >= (ROW)) { ++(ROW); (COL) = 0; } \
       } \
+    } break; \
+  } \
+} while(0)
+
+/* typed swap of whole triangle rows [RA,RB) for in-place square transpose, columns in blocks */
+#define LIBXS_ITRANS_ROWS_LOOP(TYPE, INOUT, LD, RA, RB) do { \
+  unsigned int libxs_itrans_rows_c0_, libxs_itrans_rows_row_, libxs_itrans_rows_col_; \
+  for (libxs_itrans_rows_c0_ = 0; libxs_itrans_rows_c0_ + 1 < (unsigned int)(RB); \
+    libxs_itrans_rows_c0_ += LIBXS_ITRANS_BLOCK) \
+  { \
+    const unsigned int libxs_itrans_rows_c1_ = libxs_itrans_rows_c0_ + LIBXS_ITRANS_BLOCK; \
+    for (libxs_itrans_rows_row_ = LIBXS_MAX((unsigned int)(RA), libxs_itrans_rows_c0_ + 1); \
+      libxs_itrans_rows_row_ < (unsigned int)(RB); ++libxs_itrans_rows_row_) \
+    { \
+      const unsigned int libxs_itrans_rows_cend_ = LIBXS_MIN( \
+        libxs_itrans_rows_c1_, libxs_itrans_rows_row_); \
+      for (libxs_itrans_rows_col_ = libxs_itrans_rows_c0_; \
+        libxs_itrans_rows_col_ < libxs_itrans_rows_cend_; ++libxs_itrans_rows_col_) \
+      { \
+        TYPE *const libxs_itrans_rows_a_ = ((TYPE*)(INOUT)) \
+          + (size_t)(LD) * libxs_itrans_rows_row_ + libxs_itrans_rows_col_; \
+        TYPE *const libxs_itrans_rows_b_ = ((TYPE*)(INOUT)) \
+          + (size_t)(LD) * libxs_itrans_rows_col_ + libxs_itrans_rows_row_; \
+        LIBXS_ISWAP(*libxs_itrans_rows_a_, *libxs_itrans_rows_b_); \
+      } \
+    } \
+  } \
+} while(0)
+
+#define LIBXS_ITRANS_ROWS(TS, INOUT, LD, RA, RB) do { \
+  switch(TS) { \
+    case 1: { LIBXS_ITRANS_ROWS_LOOP(char, INOUT, LD, RA, RB); } break; \
+    case 2: { LIBXS_ITRANS_ROWS_LOOP(short, INOUT, LD, RA, RB); } break; \
+    case 4: { LIBXS_ITRANS_ROWS_LOOP(int, INOUT, LD, RA, RB); } break; \
+    case 8: { LIBXS_ITRANS_ROWS_LOOP(int64_t, INOUT, LD, RA, RB); } break; \
+    default: { \
+      unsigned int libxs_itrans_rows_r_ = (RA), libxs_itrans_rows_c_ = 0; \
+      const unsigned int libxs_itrans_rows_begin_ = libxs_itrans_rows_r_ * (libxs_itrans_rows_r_ - 1) / 2; \
+      const unsigned int libxs_itrans_rows_end_ = (unsigned int)(RB) * ((unsigned int)(RB) - 1) / 2; \
+      LIBXS_ITRANS_RANGE(TS, INOUT, LD, libxs_itrans_rows_begin_, libxs_itrans_rows_end_, \
+        libxs_itrans_rows_r_, libxs_itrans_rows_c_); \
     } break; \
   } \
 } while(0)
@@ -853,6 +916,14 @@ LIBXS_API void libxs_otrans(void* out, const void* in, unsigned int typesize,
 }
 
 
+LIBXS_API_INLINE unsigned int internal_libxs_itrans_row(unsigned int index)
+{
+  unsigned int result = (unsigned int)((1 + libxs_isqrt_u64(1 + 8 * (unsigned long long)index)) / 2);
+  if (0 < result && result * (result - 1) / 2 > index) --result;
+  return result;
+}
+
+
 LIBXS_API void libxs_itrans_task(void* inout, unsigned int typesize,
   int m, int n, int ldi, int ldo, void* scratch,
   int tid, int ntasks)
@@ -866,12 +937,22 @@ LIBXS_API void libxs_itrans_task(void* inout, unsigned int typesize,
       const unsigned int tasksize = LIBXS_UPDIV(ntriangles, (unsigned int)ntasks);
       const unsigned int begin = LIBXS_MIN((unsigned int)tid * tasksize, ntriangles);
       const unsigned int end = LIBXS_MIN(begin + tasksize, ntriangles);
-      unsigned int row, col;
       /* map linear index to triangular (i,j) pair where j < i */
-      row = (unsigned int)((1 + libxs_isqrt_u64(1 + 8 * (unsigned long long)begin)) / 2);
-      if (row * (row - 1) / 2 > begin && 0 < row) --row;
-      col = begin - row * (row - 1) / 2;
-      LIBXS_ITRANS_RANGE(typesize, inout, (unsigned int)ldi, begin, end, row, col);
+      const unsigned int rend = internal_libxs_itrans_row(end);
+      unsigned int row = internal_libxs_itrans_row(begin);
+      unsigned int col = begin - row * (row - 1) / 2;
+      if (row == rend) {
+        LIBXS_ITRANS_RANGE(typesize, inout, (unsigned int)ldi, begin, end, row, col);
+      }
+      else { /* whole rows in column blocks, a partial row at either end in row order */
+        const unsigned int head = (row + 1) * row / 2, tail = rend * (rend - 1) / 2;
+        if (0 != col) { /* the range macro advances row, hence the bound is fixed first */
+          LIBXS_ITRANS_RANGE(typesize, inout, (unsigned int)ldi, begin, head, row, col);
+        }
+        LIBXS_ITRANS_ROWS(typesize, inout, (unsigned int)ldi, row, rend);
+        row = rend; col = 0;
+        LIBXS_ITRANS_RANGE(typesize, inout, (unsigned int)ldi, tail, end, row, col);
+      }
     }
     else if (0 == tid) {
       if (NULL != scratch) {
@@ -896,6 +977,26 @@ LIBXS_API void libxs_itrans(void* inout, unsigned int typesize,
   int m, int n, int ldi, int ldo, void* scratch)
 {
   libxs_itrans_task(inout, typesize, m, n, ldi, ldo, scratch, 0, 1);
+}
+
+
+LIBXS_API int libxs_mem_ntasks(libxs_mem_op_t op, int m, int n,
+  unsigned int typesize, int nthreads)
+{
+  /* per call, below min_total a team loses to the unsplit operation */
+  static const size_t min_total[] = { 1U << 20, 4U << 20, 64U << 10, 512U << 10 };
+  static const size_t per_task[] = { 128U << 10, 256U << 10, 32U << 10, 128U << 10 };
+  int result = 1;
+  if (1 < nthreads && 0 < m && 0 < n && 0 < typesize
+    && LIBXS_MEM_OP_MATCOPY <= op && op <= LIBXS_MEM_OP_ITRANS)
+  {
+    const size_t nbytes = (size_t)m * (size_t)n * typesize;
+    if (min_total[op] <= nbytes) {
+      const size_t ntasks = nbytes / per_task[op];
+      result = (int)LIBXS_MAX(LIBXS_MIN((size_t)nthreads, ntasks), 1);
+    }
+  }
+  return result;
 }
 
 

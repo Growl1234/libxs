@@ -33,7 +33,7 @@
         REAL(T), POINTER :: an(:,:,:), bn(:,:,:)
         INTEGER(LIBXS_TIMER_TICK_KIND) :: start
         DOUBLE PRECISION :: d, duration(9)
-        INTEGER :: m, n, ldi, ldo, h, i, j, k
+        INTEGER :: m, n, ldi, ldo, h, i, j, k, tid, nt
         INTEGER :: argc, nrepeat, nmb, nbytes, ncount
         INTEGER :: error
         CHARACTER(32) :: argv
@@ -150,11 +150,12 @@
           ! (3) LIBXS matcopy_task (threaded copy)
           start = libxs_timer_tick()
           DO h = 1, k
-!$OMP PARALLEL DEFAULT(NONE)                                            &
+!$OMP PARALLEL DEFAULT(NONE) PRIVATE(tid, nt)                           &
 !$OMP&  SHARED(h, m, n, ldi, ldo, an, bn)
+            tid = 0; nt = 1
+!$          tid = omp_get_thread_num(); nt = omp_get_num_threads()
             CALL libxs_matcopy_task(C_LOC(bn(1,1,h)),                   &
-     &        C_LOC(an(1,1,h)), S, m, n, ldi, ldo,                      &
-     &        omp_get_thread_num(), omp_get_num_threads())
+     &        C_LOC(an(1,1,h)), S, m, n, ldi, ldo, tid, nt)
 !$OMP END PARALLEL
           END DO
           d = libxs_timer_duration(start, libxs_timer_tick())
@@ -201,11 +202,12 @@
           ! (6) LIBXS matcopy_task zero (threaded)
           start = libxs_timer_tick()
           DO h = 1, k
-!$OMP PARALLEL DEFAULT(NONE)                                            &
+!$OMP PARALLEL DEFAULT(NONE) PRIVATE(tid, nt)                           &
 !$OMP&  SHARED(h, m, n, ldi, ldo, bn)
+            tid = 0; nt = 1
+!$          tid = omp_get_thread_num(); nt = omp_get_num_threads()
             CALL libxs_matcopy_task(C_LOC(bn(1,1,h)),                   &
-     &        C_NULL_PTR, S, m, n, ldi, ldo,                            &
-     &        omp_get_thread_num(), omp_get_num_threads())
+     &        C_NULL_PTR, S, m, n, ldi, ldo, tid, nt)
 !$OMP END PARALLEL
           END DO
           d = libxs_timer_duration(start, libxs_timer_tick())
@@ -254,11 +256,12 @@
             ! (9) LIBXS otrans_task (threaded)
             start = libxs_timer_tick()
             DO h = 1, k
-!$OMP PARALLEL DEFAULT(NONE)                                            &
+!$OMP PARALLEL DEFAULT(NONE) PRIVATE(tid, nt)                           &
 !$OMP&  SHARED(h, m, n, ldi, ldo, an, bn)
+              tid = 0; nt = 1
+!$            tid = omp_get_thread_num(); nt = omp_get_num_threads()
               CALL libxs_otrans_task(C_LOC(bn(1,1,h)),                  &
-     &          C_LOC(an(1,1,h)), S, m, n, ldi, ldo,                    &
-     &          omp_get_thread_num(), omp_get_num_threads())
+     &          C_LOC(an(1,1,h)), S, m, n, ldi, ldo, tid, nt)
 !$OMP END PARALLEL
             END DO
             d = libxs_timer_duration(start, libxs_timer_tick())

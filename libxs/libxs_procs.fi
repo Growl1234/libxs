@@ -5,19 +5,35 @@
           libxs_typesize = ISHFT(datatype, -4)
         END FUNCTION
 
-        !> Copy a matrix (or zero if source is NULL).
-        PURE SUBROUTINE libxs_matcopy(outm, inm, typesize,              &
+        !> Copy a matrix (or zero if source is NULL), split over an
+        !> OpenMP team unless serial or already in a parallel region.
+        SUBROUTINE libxs_matcopy(outm, inm, typesize,                   &
      &  m, n, ldi, ldo)
+!$        USE OMP_LIB, ONLY: omp_in_parallel, omp_get_max_threads,      &
+!$   &      omp_get_thread_num, omp_get_num_threads
           TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
           INTEGER(C_INT), INTENT(IN), VALUE :: typesize
           INTEGER(C_INT), INTENT(IN), VALUE :: m, n, ldi
           INTEGER(C_INT), INTENT(IN), VALUE, OPTIONAL :: ldo
-          IF (PRESENT(ldo)) THEN
-            CALL internal_matcopy(outm, inm, typesize,                  &
-     &        m, n, ldi, ldo)
+          INTEGER(C_INT) :: lo, ntasks, op
+          IF (PRESENT(ldo)) THEN; lo = ldo
+          ELSE; lo = m; END IF
+          op = LIBXS_MEM_OP_MATZERO
+          IF (C_ASSOCIATED(inm)) op = LIBXS_MEM_OP_MATCOPY
+          ntasks = 1
+!$        IF (.NOT. omp_in_parallel()) THEN
+!$          ntasks = libxs_mem_ntasks(op, m, n, typesize,               &
+!$   &        INT(omp_get_max_threads(), C_INT))
+!$        END IF
+          IF (1 .LT. ntasks) THEN
+!$OMP PARALLEL NUM_THREADS(ntasks) DEFAULT(NONE)                        &
+!$OMP&  SHARED(outm, inm, typesize, m, n, ldi, lo)
+!$          CALL internal_matcopy_task(outm, inm, typesize,             &
+!$   &        m, n, ldi, lo, INT(omp_get_thread_num(), C_INT),          &
+!$   &        INT(omp_get_num_threads(), C_INT))
+!$OMP END PARALLEL
           ELSE
-            CALL internal_matcopy(outm, inm, typesize,                  &
-     &        m, n, ldi, m)
+            CALL internal_matcopy(outm, inm, typesize, m, n, ldi, lo)
           END IF
         END SUBROUTINE
 
@@ -39,18 +55,31 @@
         END SUBROUTINE
 
         !> Out-of-place matrix transpose.
-        PURE SUBROUTINE libxs_otrans(outm, inm, typesize,               &
+        SUBROUTINE libxs_otrans(outm, inm, typesize,                    &
      &  m, n, ldi, ldo)
+!$        USE OMP_LIB, ONLY: omp_in_parallel, omp_get_max_threads,      &
+!$   &      omp_get_thread_num, omp_get_num_threads
           TYPE(C_PTR), INTENT(IN), VALUE :: outm, inm
           INTEGER(C_INT), INTENT(IN), VALUE :: typesize
           INTEGER(C_INT), INTENT(IN), VALUE :: m, n, ldi
           INTEGER(C_INT), INTENT(IN), VALUE, OPTIONAL :: ldo
-          IF (PRESENT(ldo)) THEN
-            CALL internal_otrans(outm, inm, typesize,                   &
-     &        m, n, ldi, ldo)
+          INTEGER(C_INT) :: lo, ntasks
+          IF (PRESENT(ldo)) THEN; lo = ldo
+          ELSE; lo = n; END IF
+          ntasks = 1
+!$        IF (.NOT. omp_in_parallel()) THEN
+!$          ntasks = libxs_mem_ntasks(LIBXS_MEM_OP_OTRANS,              &
+!$   &        m, n, typesize, INT(omp_get_max_threads(), C_INT))
+!$        END IF
+          IF (1 .LT. ntasks) THEN
+!$OMP PARALLEL NUM_THREADS(ntasks) DEFAULT(NONE)                        &
+!$OMP&  SHARED(outm, inm, typesize, m, n, ldi, lo)
+!$          CALL internal_otrans_task(outm, inm, typesize,              &
+!$   &        m, n, ldi, lo, INT(omp_get_thread_num(), C_INT),          &
+!$   &        INT(omp_get_num_threads(), C_INT))
+!$OMP END PARALLEL
           ELSE
-            CALL internal_otrans(outm, inm, typesize,                   &
-     &        m, n, ldi, n)
+            CALL internal_otrans(outm, inm, typesize, m, n, ldi, lo)
           END IF
         END SUBROUTINE
 
@@ -359,22 +388,73 @@
      &      C_LOC(data), INT(SIZE(data), C_INT), oo)
         END FUNCTION
 
-        !> In-place matrix transpose.
+        !> In-place matrix transpose, split over an OpenMP team unless
+        !> serial or already in a parallel region.
         SUBROUTINE libxs_itrans(inout, typesize,                        &
      &  m, n, ldi, ldo, scratch)
+!$        USE OMP_LIB, ONLY: omp_in_parallel, omp_get_max_threads,      &
+!$   &      omp_get_thread_num, omp_get_num_threads
           TYPE(C_PTR), INTENT(IN) :: inout
           INTEGER(C_INT), INTENT(IN) :: typesize
           INTEGER(C_INT), INTENT(IN) :: m, n, ldi
           INTEGER(C_INT), INTENT(IN), OPTIONAL :: ldo
           TYPE(C_PTR), INTENT(IN), OPTIONAL :: scratch
-          INTEGER(C_INT) :: lo
+          INTEGER(C_INT) :: lo, nt1, nt2
           TYPE(C_PTR) :: ss
+          CHARACTER(C_CHAR), ALLOCATABLE, TARGET :: buffer(:)
           IF (PRESENT(ldo)) THEN; lo = ldo
           ELSE; lo = n; END IF
           IF (PRESENT(scratch)) THEN; ss = scratch
           ELSE; ss = C_NULL_PTR; END IF
-          CALL internal_itrans(inout, typesize,                         &
-     &      m, n, ldi, lo, ss)
+          nt1 = 1; nt2 = 1
+          IF (m .EQ. n .AND. ldi .EQ. lo) THEN
+!$          IF (.NOT. omp_in_parallel()) THEN
+!$            nt1 = libxs_mem_ntasks(LIBXS_MEM_OP_ITRANS,               &
+!$   &          m, n, typesize, INT(omp_get_max_threads(), C_INT))
+!$          END IF
+            IF (1 .LT. nt1) THEN
+!$OMP PARALLEL NUM_THREADS(nt1) DEFAULT(NONE)                           &
+!$OMP&  SHARED(inout, typesize, m, n, ldi, lo, ss)
+!$            CALL internal_itrans_task(inout, typesize,                &
+!$   &          m, n, ldi, lo, ss, INT(omp_get_thread_num(), C_INT),    &
+!$   &          INT(omp_get_num_threads(), C_INT))
+!$OMP END PARALLEL
+            ELSE
+              CALL internal_itrans(inout, typesize,                     &
+     &          m, n, ldi, lo, ss)
+            END IF
+          ELSE
+            ! itrans_task splits only the square case, hence two teams:
+            ! copy into scratch, then transpose back from it
+!$          IF (.NOT. omp_in_parallel()) THEN
+!$            nt1 = libxs_mem_ntasks(LIBXS_MEM_OP_MATCOPY,              &
+!$   &          m, n, typesize, INT(omp_get_max_threads(), C_INT))
+!$            nt2 = libxs_mem_ntasks(LIBXS_MEM_OP_OTRANS,               &
+!$   &          m, n, typesize, INT(omp_get_max_threads(), C_INT))
+!$          END IF
+            IF (1 .LT. nt1 .OR. 1 .LT. nt2) THEN
+              IF (.NOT. C_ASSOCIATED(ss)) THEN
+                ALLOCATE(buffer(INT(m, C_SIZE_T) * INT(n, C_SIZE_T)     &
+     &            * INT(typesize, C_SIZE_T)))
+                ss = C_LOC(buffer)
+              END IF
+!$OMP PARALLEL NUM_THREADS(nt1) DEFAULT(NONE)                           &
+!$OMP&  SHARED(inout, typesize, m, n, ldi, ss)
+!$            CALL internal_matcopy_task(ss, inout, typesize,           &
+!$   &          m, n, ldi, m, INT(omp_get_thread_num(), C_INT),         &
+!$   &          INT(omp_get_num_threads(), C_INT))
+!$OMP END PARALLEL
+!$OMP PARALLEL NUM_THREADS(nt2) DEFAULT(NONE)                           &
+!$OMP&  SHARED(inout, typesize, m, n, lo, ss)
+!$            CALL internal_otrans_task(inout, ss, typesize,            &
+!$   &          m, n, m, lo, INT(omp_get_thread_num(), C_INT),          &
+!$   &          INT(omp_get_num_threads(), C_INT))
+!$OMP END PARALLEL
+            ELSE
+              CALL internal_itrans(inout, typesize,                     &
+     &          m, n, ldi, lo, ss)
+            END IF
+          END IF
         END SUBROUTINE
 
         !> In-place transpose: task variant.

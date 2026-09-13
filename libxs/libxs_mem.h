@@ -59,6 +59,20 @@
   LIBXS_MEMSWP(&(A), &(B), sizeof(A)); \
 } while (0)
 
+
+/** Operations libxs_mem_ntasks sizes a team for. */
+typedef enum libxs_mem_op_t {
+  /** libxs_matcopy_task with a source. */
+  LIBXS_MEM_OP_MATCOPY = 0,
+  /** libxs_matcopy_task without source (zeroing). */
+  LIBXS_MEM_OP_MATZERO = 1,
+  /** libxs_otrans_task. */
+  LIBXS_MEM_OP_OTRANS = 2,
+  /** libxs_itrans_task, square with ldi == ldo (other shapes run on tid 0). */
+  LIBXS_MEM_OP_ITRANS = 3
+} libxs_mem_op_t;
+
+
 /**
  * Calculate the linear offset of the n-dimensional (ndims) offset (can be NULL),
  * and the (optional) linear size of the corresponding shape.
@@ -118,6 +132,16 @@ LIBXS_API void libxs_itrans(void* inout, unsigned int typesize,
 LIBXS_API void libxs_itrans_task(void* inout, unsigned int typesize,
   int m, int n, int ldi, int ldo, void* scratch,
   int tid, int ntasks);
+
+/**
+ * Number of tasks worth splitting an m-by-n operation into, given nthreads available.
+ * Returns 1 below a minimum size of the operation, and otherwise one task per so many
+ * bytes (never more than nthreads). Both depend on op: zeroing needs the most data to
+ * pay for a team, the out-of-place transpose the least. The Fortran module uses it to
+ * parallelize libxs_matcopy, libxs_otrans, and libxs_itrans when compiled with OpenMP.
+ */
+LIBXS_API int libxs_mem_ntasks(libxs_mem_op_t op, int m, int n,
+  unsigned int typesize, int nthreads);
 
 /** Batch of in-place matrix transpositions (per-thread form). */
 LIBXS_API void libxs_itrans_batch(void* inout, unsigned int typesize,
