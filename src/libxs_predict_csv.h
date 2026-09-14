@@ -142,7 +142,7 @@ LIBXS_API int libxs_predict_load_csv_opts(libxs_predict_t* model,
     const char* output_tokens[64];
     char tokbuf[2048];
     int idx[128];
-    int i, resolved = 1;
+    int i, named = 0, resolved = 1;
     int ni = 0, no = 0;
     LIBXS_UNUSED(ni); LIBXS_UNUSED(no);
     LIBXS_ASSERT(ninputs + noutputs <= 128);
@@ -175,73 +175,43 @@ LIBXS_API int libxs_predict_load_csv_opts(libxs_predict_t* model,
       memcpy(header, line, hlen);
       header[hlen] = '\0';
     }
-    if (NULL == inputs || NULL == outputs) {
-      for (i = 0; i < ninputs; ++i) {
-        idx[i] = (NULL != inputs)
-          ? (int)strtol(input_tokens[i], NULL, 10) : i;
+    { size_t len = strlen(line);
+      while (0 < len && ('\n' == line[len - 1] || '\r' == line[len - 1])) {
+        line[--len] = '\0';
       }
-      for (i = 0; i < noutputs; ++i) {
-        idx[ninputs + i] = (NULL != outputs)
-          ? (int)strtol(output_tokens[i], NULL, 10) : ninputs + i;
-      }
-      if (NULL == sep && '\0' != line[0]) {
-        size_t len = strlen(line);
-        if (0 < len && '\n' == line[len - 1]) line[--len] = '\0';
-        if (0 < len && '\r' == line[len - 1]) line[--len] = '\0';
-        sep = internal_libxs_predict_detect_delims(line);
-      }
-      if (NULL == sep) sep = ",";
-      resolved = 0;
     }
-    if (0 != resolved && NULL == sep && '\0' != line[0]) {
-      size_t len = strlen(line);
-      if (0 < len && '\n' == line[len - 1]) line[--len] = '\0';
-      if (0 < len && '\r' == line[len - 1]) line[--len] = '\0';
+    if (NULL == sep && '\0' != line[0]) {
       sep = internal_libxs_predict_detect_delims(line);
-      { int ncols = 1, nextra = 0;
-        const char* cp = line;
-        while ('\0' != *cp) { if (NULL != strchr(sep, *cp)) ++ncols; ++cp; }
-        for (i = 0; i < ninputs && 0 != resolved; ++i) {
-          idx[i] = internal_libxs_predict_resolve_col(input_tokens[i], line, sep);
-          if (0 > idx[i]) resolved = 0;
-        }
-        for (i = 0; i < noutputs && 0 != resolved; ++i) {
-          idx[ninputs + i] = internal_libxs_predict_resolve_col(
-            output_tokens[i], line, sep);
-          if (0 > idx[ninputs + i]) {
-            idx[ninputs + i] = ncols + nextra;
-            ++nextra;
-          }
-        }
-      }
-      if (0 == resolved) {
-        rewind(file);
-        for (i = 0; i < ninputs; ++i) {
-          idx[i] = (NULL != inputs)
-            ? (int)strtol(input_tokens[i], NULL, 10) : i;
-        }
-        for (i = 0; i < noutputs; ++i) {
-          idx[ninputs + i] = (NULL != outputs)
-            ? (int)strtol(output_tokens[i], NULL, 10) : ninputs + i;
-        }
-      }
     }
-    else if (0 != resolved) {
-      if (NULL == sep) sep = ";";
-      for (i = 0; i < ninputs; ++i) {
-        idx[i] = (NULL != inputs)
-          ? (int)strtol(input_tokens[i], NULL, 10) : i;
+    if (NULL == sep) sep = ",";
+    for (i = 0; i < ninputs && 0 != resolved; ++i) {
+      if (NULL != inputs) {
+        char* endptr = NULL;
+        strtol(input_tokens[i], &endptr, 10);
+        if (endptr == input_tokens[i] || '\0' != *endptr) named = 1;
+        idx[i] = internal_libxs_predict_resolve_col(
+          input_tokens[i], line, sep);
+        if (0 > idx[i]) resolved = 0;
       }
-      for (i = 0; i < noutputs; ++i) {
-        idx[ninputs + i] = (NULL != outputs)
-          ? (int)strtol(output_tokens[i], NULL, 10) : ninputs + i;
-      }
+      else idx[i] = i;
     }
+    for (i = 0; i < noutputs && 0 != resolved; ++i) {
+      if (NULL != outputs) {
+        char* endptr = NULL;
+        strtol(output_tokens[i], &endptr, 10);
+        if (endptr == output_tokens[i] || '\0' != *endptr) named = 1;
+        idx[ninputs + i] = internal_libxs_predict_resolve_col(
+          output_tokens[i], line, sep);
+        if (0 > idx[ninputs + i]) resolved = 0;
+      }
+      else idx[ninputs + i] = ninputs + i;
+    }
+    if (0 == named || 0 == resolved) rewind(file);
     if (NULL != delim_out) {
       *delim_out = sep[0];
     }
     { int nadmit = 0; /* admissible rows seen, which stride/offset count */
-      while ((0 >= nrows || result < nrows)
+      while (0 != resolved && (0 >= nrows || result < nrows)
         && NULL != fgets(line, (int)sizeof(line), file))
       {
         size_t len;

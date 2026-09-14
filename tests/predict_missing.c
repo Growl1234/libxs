@@ -207,6 +207,37 @@ int main(void)
     }
     else result = EXIT_FAILURE;
   }
+  /* numeric columns describe a headerless file, so its first row is data */
+  if (EXIT_SUCCESS == result) {
+    FILE* out = fopen(CSVFILE, "w");
+    if (NULL != out) {
+      fprintf(out, "10,1,100\n20,2,200\n30,3,300\n");
+      fclose(out);
+      { libxs_predict_t* csv = libxs_predict_create(2, 1);
+        libxs_predict_csv_t opts;
+        double inputs[2], output;
+        int loaded = -1;
+        memset(&opts, 0, sizeof(opts));
+        opts.delims = ",";
+        opts.inputs = "0,1";
+        opts.outputs = "2";
+        opts.stride = 2;
+        if (NULL != csv) {
+          loaded = libxs_predict_load_csv_opts(csv, CSVFILE, &opts);
+          if (2 == loaded) libxs_predict_get(csv, 0, inputs, &output);
+        }
+        if (2 != loaded || 10.0 != inputs[0] || 1.0 != inputs[1]
+          || 100.0 != output)
+        {
+          fprintf(stderr, "loader dropped or shifted the first data row\n");
+          result = EXIT_FAILURE;
+        }
+        libxs_predict_destroy(csv);
+      }
+      remove(CSVFILE);
+    }
+    else result = EXIT_FAILURE;
+  }
   libxs_predict_destroy(rfmodel);
   libxs_predict_destroy(vmodel);
   libxs_predict_destroy(model);
