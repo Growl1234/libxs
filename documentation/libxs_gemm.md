@@ -478,6 +478,15 @@ therefore degrades to later JIT, never to a wrong kernel.
                             (default: 192).
     LIBXS_GEMM_BN=N         Column block size (default: 32).
     LIBXS_GEMM_BK=N         K-direction block size (default: 48).
+    LIBXS_GEMM_PANEL=N      Smallest column panel of a tiled SYRK or
+                            SYR2K; zero (default) takes
+                            LIBXS_GEMM_BN. A panel owns its
+                            columns, hence it is the unit of parallel
+                            work and its operand is packed once; the
+                            width grows to n/(2*ntasks) where fewer
+                            tasks allow it. The tile sizes above then
+                            apply to the diagonal block alone, and
+                            only where no BLAS SYRK is available.
     LIBXS_GEMM_BACKEND=N    Select runtime backend chain start:
                             0 auto (default), 1 MKL JIT,
                             2 LIBXSMM, 3 BLAS, 4 built-in fallback.
