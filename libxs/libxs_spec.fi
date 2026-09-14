@@ -1129,10 +1129,10 @@
 
           ! internal (use libxs_itrans)
           SUBROUTINE internal_itrans(inout, typesize,                   &
-     &    m, n, ldi, ldo, scratch)                                      &
+     &    m, n, ldi, ldo)                                               &
      &    BIND(C, NAME="libxs_itrans")
             IMPORT :: C_PTR, C_INT
-            TYPE(C_PTR), INTENT(IN), VALUE :: inout, scratch
+            TYPE(C_PTR), INTENT(IN), VALUE :: inout
             INTEGER(C_INT), INTENT(IN), VALUE :: typesize
             INTEGER(C_INT), INTENT(IN), VALUE ::                        &
      &      m, n, ldi, ldo
@@ -1140,10 +1140,10 @@
 
           ! internal (use libxs_itrans_task)
           SUBROUTINE internal_itrans_task(inout, typesize,              &
-     &    m, n, ldi, ldo, scratch, tid, ntasks)                         &
+     &    m, n, ldi, ldo, tid, ntasks)                                  &
      &    BIND(C, NAME="libxs_itrans_task")
             IMPORT :: C_PTR, C_INT
-            TYPE(C_PTR), INTENT(IN), VALUE :: inout, scratch
+            TYPE(C_PTR), INTENT(IN), VALUE :: inout
             INTEGER(C_INT), INTENT(IN), VALUE :: typesize
             INTEGER(C_INT), INTENT(IN), VALUE ::                        &
      &      m, n, ldi, ldo, tid, ntasks

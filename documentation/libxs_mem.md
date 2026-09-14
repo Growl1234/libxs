@@ -129,14 +129,15 @@ distributes work across ntasks threads.
 
 ```C
 void libxs_itrans(void* inout, unsigned int typesize,
-  int m, int n, int ldi, int ldo, void* scratch);
+  int m, int n, int ldi, int ldo);
 void libxs_itrans_task(void* inout, unsigned int typesize,
-  int m, int n, int ldi, int ldo, void* scratch,
+  int m, int n, int ldi, int ldo,
   int tid, int ntasks);
 ```
 
-In-place matrix transposition (square or via scratch buffer).
-scratch can be NULL (auto-allocated).
+In-place matrix transposition. A shape other than square with
+`ldi == ldo` needs a buffer of `m*n` elements, taken from the LIBXS
+memory pool; `libxs_itrans_batch` amortizes it over the batch.
 
 ```C
 void libxs_itrans_batch(void* inout, unsigned int typesize,

@@ -918,7 +918,7 @@ LIBXS_API_INLINE unsigned int internal_libxs_itrans_row(unsigned int index)
 
 
 LIBXS_API void libxs_itrans_task(void* inout, unsigned int typesize,
-  int m, int n, int ldi, int ldo, void* scratch,
+  int m, int n, int ldi, int ldo,
   int tid, int ntasks)
 {
   if (NULL != inout && 0 < typesize && m <= ldi && n <= ldo
@@ -948,18 +948,12 @@ LIBXS_API void libxs_itrans_task(void* inout, unsigned int typesize,
       }
     }
     else if (0 == tid) {
+      void *const scratch = libxs_malloc(NULL/*pool*/,
+        (size_t)m * n * typesize, LIBXS_MALLOC_AUTO);
       if (NULL != scratch) {
         internal_libxs_itrans_scratch(inout, scratch, typesize,
           (unsigned int)m, (unsigned int)n, (unsigned int)ldi, (unsigned int)ldo);
-      }
-      else {
-        const size_t scratchsize = (size_t)m * n * typesize;
-        void* scratch_alloc = libxs_malloc(NULL/*pool*/, scratchsize, LIBXS_MALLOC_AUTO);
-        if (NULL != scratch_alloc) {
-          internal_libxs_itrans_scratch(inout, scratch_alloc, typesize,
-            (unsigned int)m, (unsigned int)n, (unsigned int)ldi, (unsigned int)ldo);
-          libxs_free(scratch_alloc);
-        }
+        libxs_free(scratch);
       }
     }
   }
@@ -967,9 +961,9 @@ LIBXS_API void libxs_itrans_task(void* inout, unsigned int typesize,
 
 
 LIBXS_API void libxs_itrans(void* inout, unsigned int typesize,
-  int m, int n, int ldi, int ldo, void* scratch)
+  int m, int n, int ldi, int ldo)
 {
-  libxs_itrans_task(inout, typesize, m, n, ldi, ldo, scratch, 0, 1);
+  libxs_itrans_task(inout, typesize, m, n, ldi, ldo, 0, 1);
 }
 
 

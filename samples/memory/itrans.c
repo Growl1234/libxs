@@ -30,22 +30,18 @@ int main(int argc, char* argv[])
   const size_t size_in = (size_t)ldi * n;
   const size_t size_out = (size_t)ldo * m;
   const size_t size_max = LIBXS_MAX(size_in, size_out);
-  const size_t scratch_size = (size_t)m * n;
-  ELEM_TYPE *mat = NULL, *ref = NULL, *scratch = NULL;
+  ELEM_TYPE *mat = NULL, *ref = NULL;
   int result = EXIT_SUCCESS;
   int i, j;
 
   libxs_init();
 
   if (0 >= m || 0 >= n) {
-    libxs_itrans(NULL, sizeof(ELEM_TYPE), m, n, ldi, ldo, NULL);
+    libxs_itrans(NULL, sizeof(ELEM_TYPE), m, n, ldi, ldo);
   }
   else {
     mat = (ELEM_TYPE*)malloc(size_max * sizeof(ELEM_TYPE));
     ref = (ELEM_TYPE*)malloc(size_in * sizeof(ELEM_TYPE));
-    scratch = (m != n || ldi != ldo)
-      ? (ELEM_TYPE*)malloc(scratch_size * sizeof(ELEM_TYPE)) : NULL;
-
     if (NULL != mat && NULL != ref) {
       /* initialize: A(i,j) stored column-major with leading dim ldi */
       for (j = 0; j < n; ++j) {
@@ -57,7 +53,7 @@ int main(int argc, char* argv[])
       }
 
       /* serial itrans */
-      libxs_itrans(mat, sizeof(ELEM_TYPE), m, n, ldi, ldo, scratch);
+      libxs_itrans(mat, sizeof(ELEM_TYPE), m, n, ldi, ldo);
       result = check_itrans(mat, ref, m, n, ldi, ldo);
       if (EXIT_SUCCESS != result) {
         fprintf(stderr, "  (serial itrans, m=%i n=%i ldi=%i ldo=%i)\n",
@@ -75,14 +71,13 @@ int main(int argc, char* argv[])
 
         /* parallel itrans_task */
 #if defined(_OPENMP)
-#       pragma omp parallel default(none) shared(mat, scratch, m, n, ldi, ldo)
+#       pragma omp parallel default(none) shared(mat, m, n, ldi, ldo)
         {
           libxs_itrans_task(mat, sizeof(ELEM_TYPE), m, n, ldi, ldo,
-            scratch, omp_get_thread_num(), omp_get_num_threads());
+            omp_get_thread_num(), omp_get_num_threads());
         }
 #else
-        libxs_itrans_task(mat, sizeof(ELEM_TYPE), m, n, ldi, ldo,
-          scratch, 0, 1);
+        libxs_itrans_task(mat, sizeof(ELEM_TYPE), m, n, ldi, ldo, 0, 1);
 #endif
         result = check_itrans(mat, ref, m, n, ldi, ldo);
         if (EXIT_SUCCESS != result) {
@@ -95,7 +90,6 @@ int main(int argc, char* argv[])
       result = EXIT_FAILURE;
     }
 
-    free(scratch);
     free(ref);
     free(mat);
   }

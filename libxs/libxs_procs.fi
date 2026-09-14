@@ -391,20 +391,17 @@
         !> In-place matrix transpose, split over an OpenMP team unless
         !> serial or already in a parallel region.
         SUBROUTINE libxs_itrans(inout, typesize,                        &
-     &  m, n, ldi, ldo, scratch)
+     &  m, n, ldi, ldo)
 !$        USE OMP_LIB, ONLY: omp_in_parallel, omp_get_max_threads,      &
 !$   &      omp_get_thread_num, omp_get_num_threads
           TYPE(C_PTR), INTENT(IN) :: inout
           INTEGER(C_INT), INTENT(IN) :: typesize
           INTEGER(C_INT), INTENT(IN) :: m, n, ldi
           INTEGER(C_INT), INTENT(IN), OPTIONAL :: ldo
-          TYPE(C_PTR), INTENT(IN), OPTIONAL :: scratch
           INTEGER(C_INT) :: lo, nt1, nt2
-          TYPE(C_PTR) :: ss, sa
+          TYPE(C_PTR) :: ss
           IF (PRESENT(ldo)) THEN; lo = ldo
           ELSE; lo = n; END IF
-          IF (PRESENT(scratch)) THEN; ss = scratch
-          ELSE; ss = C_NULL_PTR; END IF
           nt1 = 1; nt2 = 1
           IF (m .EQ. n .AND. ldi .EQ. lo) THEN
 !$          IF (.NOT. omp_in_parallel()) THEN
@@ -413,14 +410,13 @@
 !$          END IF
             IF (1 .LT. nt1) THEN
 !$OMP PARALLEL NUM_THREADS(nt1) DEFAULT(NONE)                           &
-!$OMP&  SHARED(inout, typesize, m, n, ldi, lo, ss)
+!$OMP&  SHARED(inout, typesize, m, n, ldi, lo)
 !$            CALL internal_itrans_task(inout, typesize,                &
-!$   &          m, n, ldi, lo, ss, INT(omp_get_thread_num(), C_INT),    &
+!$   &          m, n, ldi, lo, INT(omp_get_thread_num(), C_INT),        &
 !$   &          INT(omp_get_num_threads(), C_INT))
 !$OMP END PARALLEL
             ELSE
-              CALL internal_itrans(inout, typesize,                     &
-     &          m, n, ldi, lo, ss)
+              CALL internal_itrans(inout, typesize, m, n, ldi, lo)
             END IF
           ELSE
             ! itrans_task splits only the square case, hence two teams:
@@ -431,16 +427,13 @@
 !$            nt2 = libxs_mem_ntasks(LIBXS_MEM_OP_OTRANS,               &
 !$   &          m, n, typesize, INT(omp_get_max_threads(), C_INT))
 !$          END IF
-            sa = C_NULL_PTR
-            IF ((1 .LT. nt1 .OR. 1 .LT. nt2)                            &
-     &        .AND. .NOT. C_ASSOCIATED(ss)) THEN
+            ss = C_NULL_PTR
+            IF (1 .LT. nt1 .OR. 1 .LT. nt2) THEN
               ! C allocator: ALLOCATE would pull in the Fortran runtime
-              sa = libxs_malloc_c(C_NULL_PTR, INT(m, C_SIZE_T)          &
+              ss = libxs_malloc_c(C_NULL_PTR, INT(m, C_SIZE_T)          &
      &          * INT(n, C_SIZE_T) * INT(typesize, C_SIZE_T), 0)
-              ss = sa
             END IF
-            IF ((1 .LT. nt1 .OR. 1 .LT. nt2)                            &
-     &        .AND. C_ASSOCIATED(ss)) THEN
+            IF (C_ASSOCIATED(ss)) THEN
 !$OMP PARALLEL NUM_THREADS(nt1) DEFAULT(NONE)                           &
 !$OMP&  SHARED(inout, typesize, m, n, ldi, ss)
 !$            CALL internal_matcopy_task(ss, inout, typesize,           &
@@ -454,30 +447,25 @@
 !$   &          INT(omp_get_num_threads(), C_INT))
 !$OMP END PARALLEL
             ELSE
-              CALL internal_itrans(inout, typesize,                     &
-     &          m, n, ldi, lo, ss)
+              CALL internal_itrans(inout, typesize, m, n, ldi, lo)
             END IF
-            IF (C_ASSOCIATED(sa)) CALL libxs_free(sa)
+            IF (C_ASSOCIATED(ss)) CALL libxs_free(ss)
           END IF
         END SUBROUTINE
 
         !> In-place transpose: task variant.
         SUBROUTINE libxs_itrans_task(inout, typesize,                   &
-     &  m, n, ldi, ldo, scratch, tid, ntasks)
+     &  m, n, ldi, ldo, tid, ntasks)
           TYPE(C_PTR), INTENT(IN) :: inout
           INTEGER(C_INT), INTENT(IN) :: typesize
           INTEGER(C_INT), INTENT(IN) ::                                 &
      &      m, n, ldi, tid, ntasks
           INTEGER(C_INT), INTENT(IN), OPTIONAL :: ldo
-          TYPE(C_PTR), INTENT(IN), OPTIONAL :: scratch
           INTEGER(C_INT) :: lo
-          TYPE(C_PTR) :: ss
           IF (PRESENT(ldo)) THEN; lo = ldo
           ELSE; lo = n; END IF
-          IF (PRESENT(scratch)) THEN; ss = scratch
-          ELSE; ss = C_NULL_PTR; END IF
           CALL internal_itrans_task(inout, typesize,                    &
-     &      m, n, ldi, lo, ss, tid, ntasks)
+     &      m, n, ldi, lo, tid, ntasks)
         END SUBROUTINE
 
         !> In-place transpose: batch variant. A NULL stride

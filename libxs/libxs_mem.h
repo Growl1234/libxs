@@ -122,15 +122,16 @@ LIBXS_API void libxs_otrans_task(void* out, const void* in, unsigned int typesiz
   int tid, int ntasks);
 
 /**
- * Matrix transposition; in-place (square or via scratch).
- * The "scratch" argument can be NULL (auto-allocate).
+ * Matrix transposition; in-place. A shape other than square with ldi == ldo
+ * needs a buffer of m*n elements, which is taken from the LIBXS memory pool
+ * (libxs_itrans_batch amortizes it over the batch).
  */
 LIBXS_API void libxs_itrans(void* inout, unsigned int typesize,
-  int m, int n, int ldi, int ldo, void* scratch);
+  int m, int n, int ldi, int ldo);
 
-/** Matrix transposition; in-place (per-thread form, square or via scratch). */
+/** Matrix transposition; in-place (per-thread form). */
 LIBXS_API void libxs_itrans_task(void* inout, unsigned int typesize,
-  int m, int n, int ldi, int ldo, void* scratch,
+  int m, int n, int ldi, int ldo,
   int tid, int ntasks);
 
 /**
