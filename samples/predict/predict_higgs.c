@@ -31,7 +31,7 @@
 int main(int argc, char* argv[])
 {
   const char* filename = CSVFILE;
-  int nrows = 200000, stride = 0, mode = LIBXS_PREDICT_HKNN, refine = 0;
+  int nrows = 200000, stride = 0, mode = LIBXS_PREDICT_RF, refine = 0;
   int nclusters = 0, order = 1, help = 0, i;
   int depth = 0, ntrees = 0, use_xgb = 0;
   double split = 0.8;
@@ -71,6 +71,8 @@ int main(int argc, char* argv[])
       "    instead of being its first rows. 0 or 1 reads consecutively.\n"
       "  xgb: also train XGBoost on the same split, for comparison.\n"
       "  depth<N>/trees<N>: forest depth and tree count (0: derived).\n"
+      "  RF calibrates confidence from out-of-bag trees during its build; no\n"
+      "    row is removed from RF training or from the reported test split.\n"
       "  order<N>: polynomial order. The label is discrete, so nothing is\n"
       "    interpolated and the order is immaterial - it is pinned to 1 to\n"
       "    skip the search over it, which would rebuild the model per order.\n"
@@ -78,9 +80,13 @@ int main(int argc, char* argv[])
       "    through the corpus, which is a scan of every entry per query, so\n"
       "    it is off here and eval cost stays with the cluster, not the\n"
       "    corpus. It also cannot discriminate on a discrete-only output.\n"
-      "  Default: hknn, which partitions by Gini on the label rather than by\n"
-      "    k-means, and costs one pass instead of a hundred Lloyd iterations.\n", argv[0]);
+      "  Default: rf. hknn is useful for sampled scaling studies but its full\n"
+      "    build is not intended for the 11M-row corpus. auto selects accuracy\n"
+      "    on a capped probe and does not account for full-build cost.\n", argv[0]);
     result = EXIT_SUCCESS;
+  }
+  else if (0.0 >= split || 1.0 <= split) {
+    fprintf(stderr, "split must be greater than zero and less than one\n");
   }
   else {
     libxs_predict_t* source = libxs_predict_create(NFEAT, 1);
@@ -97,7 +103,8 @@ int main(int argc, char* argv[])
       total = libxs_predict_load_csv_opts(source, filename, &opts);
       if (0 < total) {
         const double dt_load = libxs_timer_duration(tick, libxs_timer_tick());
-        const int train_end = LIBXS_MAX((int)(total * split + 0.5), 2);
+        const int train_end = LIBXS_MIN(
+          LIBXS_MAX((int)(total * split + 0.5), 2), total - 1);
         libxs_predict_t* model = libxs_predict_create(NFEAT, 1);
         fprintf(stdout, "Loaded %d entries (%d features) from %s in %.2f s\n",
           total, NFEAT, filename, dt_load);
@@ -135,16 +142,24 @@ int main(int argc, char* argv[])
 #endif
           dt_build = libxs_timer_duration(tick, libxs_timer_tick());
           if (EXIT_SUCCESS == build_ok) {
+            int test_begin = train_end, calibrated = 0;
+            double probability;
             libxs_predict_query(model, &q);
+            if (LIBXS_PREDICT_RF == q.decompose
+              && EXIT_SUCCESS == libxs_predict_probability(
+                model, 0, 0.5, &probability)) calibrated = 1;
             tick = libxs_timer_tick();
-            for (t = train_end; t < total; ++t) {
+            for (t = test_begin; t < total; ++t) {
               double pred[1];
               libxs_predict_info_t info;
               libxs_predict_get(source, t, in, out);
               libxs_predict_eval(NULL, model, in, pred, &info, 0);
               { const int ok = (0.5 > LIBXS_ABS(pred[0] - out[0]));
-                const double conf = (NULL != info.confidence)
+                double conf = (NULL != info.confidence)
                   ? info.confidence[0] : 0;
+                if (0 != calibrated) {
+                  libxs_predict_probability(model, 0, conf, &conf);
+                }
                 if (0 != ok) ++correct;
                 sum_conf += conf;
                 /* precision over accepted predictions, not over all */
@@ -177,7 +192,7 @@ int main(int argc, char* argv[])
               if (NULL != bin && NULL != bout && 0 < ntest) {
                 int differ = 0;
                 for (t = 0; t < ntest; ++t) {
-                  libxs_predict_get(source, train_end + t,
+                  libxs_predict_get(source, test_begin + t,
                     bin + (size_t)t * NFEAT, NULL);
                 }
                 tick = libxs_timer_tick();
@@ -219,12 +234,14 @@ int main(int argc, char* argv[])
                 1);
 #endif
             }
-            fprintf(stdout, "Accuracy: %.2f%% of %d, mean confidence %.2f\n",
+            fprintf(stdout, "Accuracy: %.2f%% of %d, mean %s %.2f\n",
               (0 < ntest) ? (100.0 * correct / ntest) : 0.0, ntest,
+              (0 != calibrated) ? "probability" : "confidence",
               (0 < ntest) ? (sum_conf / ntest) : 0.0);
             if (0 < gated) {
-              fprintf(stdout, "Gated (conf>=%.2f): %.2f%% precision over %.1f%%"
-                " of queries\n", gates[0], 100.0 * gated_correct / gated,
+              fprintf(stdout, "Gated (%s>=%.2f): %.2f%% precision over %.1f%%"
+                " of queries\n", (0 != calibrated) ? "prob" : "conf",
+                gates[0], 100.0 * gated_correct / gated,
                 100.0 * gated / ntest);
             }
 #if defined(__XGBOOST)
@@ -244,7 +261,7 @@ int main(int argc, char* argv[])
                     libxs_timer_duration(xt, libxs_timer_tick());
                   int xok = 0, xg = 0, xgok = 0;
                   char* xokv = (char*)calloc((size_t)total, 1);
-                  for (t = train_end; t < total; ++t) {
+                  for (t = test_begin; t < total; ++t) {
                     double expected;
                     int ok;
                     libxs_predict_get(source, t, NULL, &expected);
@@ -252,7 +269,7 @@ int main(int argc, char* argv[])
                       == LIBXS_ROUNDX(int, expected));
                     if (0 != ok) ++xok;
                     if (gates[0] <= xc[t]) { ++xg; if (0 != ok) ++xgok; }
-                    if (NULL != xokv) xokv[t - train_end] = (char)(0 != ok);
+                    if (NULL != xokv) xokv[t - test_begin] = (char)(0 != ok);
                   }
                   /* less what the per-query probe below cost, which is measured
                      inside the same call and is not part of the comparison */
@@ -285,7 +302,7 @@ int main(int argc, char* argv[])
                     && NULL != xokv)
                   {
                     gate_sweep(gates, ngates, ntest, lconf, lok,
-                      xc + train_end, xokv);
+                      xc + test_begin, xokv);
                     swept = 1;
                   }
                   free(xokv);

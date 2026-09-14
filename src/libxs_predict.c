@@ -269,13 +269,10 @@ typedef struct internal_libxs_predict_rf_t {
    *  already encode the depth they were grown to, and nothing reads it again. */
   int* depth;
   /**
-   * What a share of the trees agreeing is worth, as a probability that the
-   * answer is right: noutputs * LIBXS_PREDICT_RF_CALIB bins over that share,
-   * measured at build. Without it the reported confidence is the share itself,
-   * which is an ensemble statistic and not a probability - it falls as the trees
-   * are grown finer even though the answer gets more often right, so a caller
-   * gating at 0.9 loses coverage to a better model. NULL where the measurement
-   * could not be made, and the share is then reported unchanged.
+   * What native RF confidence is worth as the probability that the final hybrid
+   * class is right: noutputs * LIBXS_PREDICT_RF_CALIB bins, cross-fitted at
+   * build. NULL where the measurement could not be made; the native ranking is
+   * still reported unchanged by eval either way.
    */
   double* calib;
   int ntrees;
@@ -418,7 +415,9 @@ LIBXS_EXTERN_C struct libxs_predict_t {
    * verdicts became broadcasts through the barrier.
    */
   volatile int sync_moved;
-  /** Per-candidate scores of a collective trial, indexed by candidate. */
+  /* Set by any task whose RF tree slice could not be built. */
+  volatile int sync_failed;
+  /* Per-candidate scores of a collective trial, indexed by candidate. */
   double sync_score[8];
 };
 
@@ -3553,16 +3552,20 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
   {
     if (0 == tid) {
       internal_libxs_predict_rf_build(model);
-      if (1 >= ntasks) {
+      if (NULL == model->rf) result = EXIT_FAILURE;
+      else if (1 >= ntasks) {
         internal_libxs_predict_rf_bins_tasks(model, 0, 1);
-        internal_libxs_predict_rf_build_tasks(model, 0, 1);
+        result = internal_libxs_predict_rf_build_tasks(model, 0, 1);
         internal_libxs_predict_rf_bins_free(model);
-        internal_libxs_predict_rf_boost(model);
+        if (EXIT_SUCCESS == result) {
+          internal_libxs_predict_rf_boost(model);
+          internal_libxs_predict_rf_calibrate_oob(model);
+        }
       }
     }
   }
   /* as above: the test reads model->rf, which the stage itself sets */
-  libxs_barrier_wait(barrier);
+  result = libxs_barrier_bcast(barrier, tid, 0, result);
   if (EXIT_SUCCESS != result || NULL == model || 0 >= model->nentries) {
     result = EXIT_FAILURE;
   }
@@ -4068,11 +4071,17 @@ LIBXS_API int libxs_predict_build_task(libxs_predict_t* model,
   libxs_barrier_wait(team);
   if (0 != tid) result = (0 != model->built) ? EXIT_SUCCESS : EXIT_FAILURE;
   if (EXIT_SUCCESS == result && NULL != model->rf) {
+    if (0 == tid) model->sync_failed = 0;
+    libxs_barrier_wait(team);
     internal_libxs_predict_rf_bins_tasks(model, tid, ntasks);
     /* every task reads every row of the bins, so the fill is a stage of its own
        rather than something a task does to the rows it happens to need */
     libxs_barrier_wait(team);
-    internal_libxs_predict_rf_build_tasks(model, tid, ntasks);
+    if (EXIT_SUCCESS != internal_libxs_predict_rf_build_tasks(
+      model, tid, ntasks))
+    {
+      LIBXS_ATOMIC_STORE(&model->sync_failed, 1, LIBXS_ATOMIC_SEQ_CST);
+    }
     /**
      * The stages are sequential by construction - each fits what the previous
      * one left - so this is the builder's alone, and it needs every tree to
@@ -4081,9 +4090,20 @@ LIBXS_API int libxs_predict_build_task(libxs_predict_t* model,
     libxs_barrier_wait(team);
     if (0 == tid) {
       internal_libxs_predict_rf_bins_free(model);
-      internal_libxs_predict_rf_boost(model);
+      if (0 == LIBXS_ATOMIC_LOAD(
+        &model->sync_failed, LIBXS_ATOMIC_SEQ_CST))
+      {
+        internal_libxs_predict_rf_boost(model);
+        internal_libxs_predict_rf_calibrate_oob(model);
+      }
+      else model->built = 0;
     }
     libxs_barrier_wait(team);
+    if (0 != LIBXS_ATOMIC_LOAD(
+      &model->sync_failed, LIBXS_ATOMIC_SEQ_CST))
+    {
+      result = EXIT_FAILURE;
+    }
   }
   return result;
 }
@@ -4864,7 +4884,7 @@ LIBXS_API void libxs_predict_eval(libxs_lock_t* lock,
 }
 
 
-LIBXS_API int libxs_predict_calibrate(libxs_predict_t* model,
+LIBXS_API int libxs_predict_recalibrate(libxs_predict_t* model,
   const double* inputs, const double* outputs, int nentries)
 {
   int result = EXIT_FAILURE;
@@ -4877,10 +4897,6 @@ LIBXS_API int libxs_predict_calibrate(libxs_predict_t* model,
     double* hit = (double*)calloc((size_t)n * nbin, sizeof(double));
     double* cnt = (double*)calloc((size_t)n * nbin, sizeof(double));
     double* curve = (double*)malloc((size_t)n * nbin * sizeof(double));
-    /* the fit reads the share, so any curve already installed has to go first
-       or the second fit is measured through the first */
-    free(rf->calib);
-    rf->calib = NULL;
     if (NULL != hit && NULL != cnt && NULL != curve) {
       int i, j;
       for (i = 0; i < nentries; ++i) {
@@ -4904,6 +4920,7 @@ LIBXS_API int libxs_predict_calibrate(libxs_predict_t* model,
         internal_libxs_predict_rf_isotonic(hit + (size_t)j * nbin,
           cnt + (size_t)j * nbin, nbin, curve + (size_t)j * nbin);
       }
+      free(rf->calib);
       rf->calib = curve;
       curve = NULL;
       result = EXIT_SUCCESS;
@@ -4923,12 +4940,16 @@ LIBXS_API int libxs_predict_probability(const libxs_predict_t* model,
   if (NULL != probability) {
     *probability = confidence;
     if (NULL != model && NULL != model->rf && NULL != model->rf->calib
-      && 0 <= output && output < model->rf->noutputs)
+      && 0 <= output && output < model->rf->noutputs
+      && NULL != model->rf->regress && 0 == model->rf->regress[output])
     {
       const int nbin = LIBXS_PREDICT_RF_CALIB;
       const int b = internal_libxs_predict_rf_calib_bin(confidence, nbin);
-      *probability = model->rf->calib[(size_t)output * nbin + b];
-      result = EXIT_SUCCESS;
+      const double calibrated = model->rf->calib[(size_t)output * nbin + b];
+      if (0 <= calibrated) {
+        *probability = calibrated;
+        result = EXIT_SUCCESS;
+      }
     }
   }
   return result;

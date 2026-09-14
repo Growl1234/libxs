@@ -58,21 +58,22 @@ int main(void)
   for (i = 0; i < NCALIB && EXIT_SUCCESS == result; ++i) {
     fill(cin + (size_t)i * NFEAT, cout + i, NTRAIN + i);
   }
-  /* an uncalibrated model has to SAY it is uncalibrated, and hand the value
-     back unchanged rather than quietly report a ranking as a probability */
+  /* RF cross-fits a curve from rows that still participate in its trees. */
   if (EXIT_SUCCESS == result) {
     double p = -1.0;
-    if (EXIT_SUCCESS == libxs_predict_probability(model, 0, 0.75, &p)) {
-      fprintf(stderr, "an uncalibrated model claimed a probability\n");
+    if (EXIT_SUCCESS != libxs_predict_probability(model, 0, 0.75, &p)) {
+      fprintf(stderr, "the automatic OOB curve was not fitted\n");
       result = EXIT_FAILURE;
     }
-    else if (0.75 != p) {
-      fprintf(stderr, "the confidence was altered without a curve: %f\n", p);
+    else if (0.0 > p || 1.0 < p) {
+      fprintf(stderr, "the automatic probability is out of range: %f\n", p);
       result = EXIT_FAILURE;
     }
   }
+  /* Caller-owned rows replace the automatic curve when deployment data is
+     available, without changing the forest or its native confidence. */
   if (EXIT_SUCCESS == result) {
-    result = libxs_predict_calibrate(model, cin, cout, NCALIB);
+    result = libxs_predict_recalibrate(model, cin, cout, NCALIB);
     if (EXIT_SUCCESS != result) fprintf(stderr, "the curve was not fitted\n");
   }
   if (EXIT_SUCCESS == result) {

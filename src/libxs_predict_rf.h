@@ -54,8 +54,8 @@
 #if !defined(LIBXS_PREDICT_RF_PATIENCE)
 #  define LIBXS_PREDICT_RF_PATIENCE 3
 #endif
-/** One row in this many is held back from every stage's leaf means, to be the
- *  only honest witness of whether the stages are still generalizing. */
+/** One row in this many is held back from every stage's leaf means. Half select
+ *  corrections and half calibrate them; all still train ordinary RF trees. */
 #if !defined(LIBXS_PREDICT_RF_HOLD)
 #  define LIBXS_PREDICT_RF_HOLD 5
 #endif
@@ -94,10 +94,15 @@
 #if !defined(LIBXS_PREDICT_RF_PROBE)
 #  define LIBXS_PREDICT_RF_PROBE 12
 #endif
-/** Bins over the share of trees agreeing, each carrying what that share was
- *  worth. Few enough that every bin is populated on a small corpus. */
+/** Bins over native RF confidence, each carrying its empirical correctness.
+ *  Few enough that every bin is populated on a modest corpus. */
 #if !defined(LIBXS_PREDICT_RF_CALIB)
 #  define LIBXS_PREDICT_RF_CALIB 16
+#endif
+/** Rows used to fit the automatic OOB curve. Hundreds per bin are enough, and
+ *  a fixed bound keeps calibration independent of corpus size. */
+#if !defined(LIBXS_PREDICT_RF_CALIB_SAMPLE)
+#  define LIBXS_PREDICT_RF_CALIB_SAMPLE 8192
 #endif
 
 
@@ -768,6 +773,26 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_draw(size_t i, size_t boot_n,
 
 
 /**
+ * Whether row was omitted from the deterministic bootstrap. The shuffle is a
+ * bijection over 2*p+1, so row has only two modulo preimages (three for zero),
+ * and inverse-shuffling them avoids regenerating all p draws.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_rf_oob(
+  int row, int p, size_t boot_n, size_t boot_inv, size_t seed)
+{
+  size_t shuffled = (size_t)row;
+  int result = 1;
+  while (shuffled < boot_n && 0 != result) {
+    const size_t draw = LIBXS_UNSHUFFLE_INDEX(
+      shuffled, boot_n, boot_inv, seed);
+    if (draw < (size_t)p) result = 0;
+    shuffled += (size_t)p;
+  }
+  return result;
+}
+
+
+/**
  * Error of a small forest grown to max_depth over the first ntrain entries,
  * measured on the rest: the misclassification rate of a folded output, the mean
  * absolute error of a real-valued one. The two are never compared against each
@@ -1091,10 +1116,11 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build(libxs_predict_t* model)
 }
 
 
-LIBXS_API_INLINE void internal_libxs_predict_rf_build_tasks(
+LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks(
   libxs_predict_t* model, int tid, int ntasks)
 {
   const internal_libxs_predict_rf_t* rf = model->rf;
+  int result = EXIT_FAILURE;
   if (NULL != rf) {
     const int p = model->nentries;
     const int m = model->ninputs;
@@ -1115,12 +1141,17 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build_tasks(
     const int max_nodes = LIBXS_MIN(p / leaf_floor * 2 + 1,
       LIBXS_PREDICT_RF_MAXNODES);
     int begin, end, bootstrap_pool = 0;
-    int* bootstrap = (int*)LIBXS_PREDICT_MALLOC(
-      (size_t)p * sizeof(int), bootstrap_pool);
+    int* bootstrap = NULL;
     internal_libxs_predict_split(total_trees, tid, ntasks, &begin, &end);
+    result = EXIT_SUCCESS;
+    if (begin < end) {
+      bootstrap = (int*)LIBXS_PREDICT_MALLOC(
+        (size_t)p * sizeof(int), bootstrap_pool);
+      if (NULL == bootstrap) result = EXIT_FAILURE;
+    }
     if (NULL != bootstrap) {
       int ti;
-      for (ti = begin; ti < end; ++ti) {
+      for (ti = begin; ti < end && EXIT_SUCCESS == result; ++ti) {
         const int oi = ti / ntrees;
         const int t = ti % ntrees;
         const int max_depth = rf->depth[oi];
@@ -1163,12 +1194,15 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build_tasks(
               (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
             rf->trees[ti].nnodes = nn;
           }
+          else result = EXIT_FAILURE;
           LIBXS_PREDICT_FREE(nodes, nodes_pool);
         }
+        else result = EXIT_FAILURE;
       }
       LIBXS_PREDICT_FREE(bootstrap, bootstrap_pool);
     }
   }
+  return result;
 }
 
 
@@ -1211,7 +1245,7 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_hold_score(
   *miss = 0;
   *dist = 0;
   for (i = 0; i < p; ++i) {
-    if (0 != hold[i]) {
+    if (1 == hold[i]) {
       if (0 != regress) {
         *dist += LIBXS_FABS(entries[i].outputs[output_idx] - pred[i]);
       }
@@ -1237,15 +1271,12 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_hold_score(
 
 
 /**
- * Measure what a share of the trees agreeing is worth, so that the reported
- * confidence is a probability rather than an ensemble statistic.
+ * Measure what native RF confidence is worth as empirical correctness.
  *
- * The share is read out-of-bag: a row is voted on only by the trees whose
- * bootstrap left it out, exactly as the boosting stages are judged, and for the
- * same reason - on a training row most trees memorized the answer and the share
- * says nothing. That makes the share a few trees' worth noisier than the one
- * eval computes over the whole forest, so the bins are wide enough to absorb it
- * rather than narrow enough to model it.
+ * The score is read out-of-bag: a row is voted on only by trees whose bootstrap
+ * left it out, exactly as the boosting stages are judged. That makes the score
+ * a few trees' worth noisier than the one eval computes over the whole forest,
+ * so the bins are wide enough to absorb it rather than model the noise.
  *
  * The curve is forced non-decreasing. It is a statement about evidence - more
  * trees agreeing cannot mean a worse answer - and a bin that dips below its
@@ -1253,12 +1284,12 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_hold_score(
  * says. Bins nothing landed in inherit the value below them for the same
  * reason: they carry no evidence of their own.
  *
- * The bin a share falls in, as one rule: the curve is filled, read and refitted
+ * The bin a score falls in, as one rule: the curve is filled, read and refitted
  * in separate places and they have to agree on where a value belongs.
  */
-LIBXS_API_INLINE int internal_libxs_predict_rf_calib_bin(double share, int nbin)
+LIBXS_API_INLINE int internal_libxs_predict_rf_calib_bin(double score, int nbin)
 {
-  int result = (int)(share * nbin);
+  int result = (int)(score * nbin);
   if (result >= nbin) result = nbin - 1;
   if (0 > result) result = 0;
   return result;
@@ -1282,6 +1313,7 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_isotonic(
 {
   double wsum[LIBXS_PREDICT_RF_CALIB], vsum[LIBXS_PREDICT_RF_CALIB];
   int at[LIBXS_PREDICT_RF_CALIB], nblock = 0, b, k;
+  LIBXS_ASSERT(0 < nbin && LIBXS_PREDICT_RF_CALIB >= nbin);
   for (b = 0; b < nbin; ++b) {
     if (0 >= cnt[b]) continue; /* no evidence of its own */
     wsum[nblock] = cnt[b];
@@ -1370,12 +1402,13 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_boost(libxs_predict_t* model)
         const size_t boot_coprime = libxs_coprime2(boot_n);
         const size_t hold_coprime = libxs_coprime2((size_t)p);
         int oi, h;
-        /** Spread over the corpus by the shuffle rather than taken as a block,
-         *  so a held-back row exists in every region the trees partition. */
+        /** Spread over the corpus by the shuffle rather than taken as a block.
+         *  Even positions select corrections; odd positions calibrate later.
+         *  Neither role fits a correction, while both still train RF trees. */
         memset(hold, 0, (size_t)p);
         for (h = 0; h < p / LIBXS_PREDICT_RF_HOLD; ++h) {
           hold[(int)LIBXS_SHUFFLE_INDEX((size_t)h, (size_t)p, hold_coprime,
-            LIBXS_PREDICT_RF_SEED)] = 1;
+            LIBXS_PREDICT_RF_SEED)] = (unsigned char)(1 + (h & 1));
         }
         for (oi = 0; oi < rf->noutputs; ++oi) {
           const int tbase = oi * ntrees;
@@ -1526,9 +1559,10 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_boost(libxs_predict_t* model)
  * accumulate rather than a second traversal, and the boosted correction rides
  * along on the same descent again.
  */
-LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output(
+LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output_impl(
   const internal_libxs_predict_rf_t* rf, int output_idx,
-  const double* inputs, double* confidence, double* variance)
+  const double* inputs, double* confidence, double* variance,
+  int sample, int p, size_t boot_inv, int* evidence)
 {
   const int regress = (NULL != rf->regress) ? rf->regress[output_idx] : 0;
   const int nc = (NULL != rf->nclass) ? rf->nclass[output_idx] : 1;
@@ -1536,7 +1570,7 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output(
   int votes[128];
   double bscore[128], lscore[128];
   int best_label = 0, best_count = 0, nvalid = 0, t, k;
-  double sum = 0, sqr = 0, boost = 0, result;
+  double sum = 0, sqr = 0, boost = 0, result, scale = 1.0;
   if (0 == regress) {
     memset(votes, 0, sizeof(votes));
     memset(bscore, 0, sizeof(bscore));
@@ -1544,7 +1578,13 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output(
   }
   for (t = 0; t < rf->ntrees; ++t) {
     const internal_libxs_predict_rf_tree_t* tree = &rf->trees[base + t];
-    const int ni = internal_libxs_predict_rf_leafof(tree, inputs);
+    int ni;
+    if (0 <= sample && 0 == internal_libxs_predict_rf_oob(sample, p,
+      (size_t)p * 2 + 1, boot_inv, (size_t)(base + t) * 7 + 13))
+    {
+      continue;
+    }
+    ni = internal_libxs_predict_rf_leafof(tree, inputs);
     if (0 <= ni) {
       if (0 != regress) {
         const double v = tree->nodes[ni].value;
@@ -1566,9 +1606,10 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output(
       }
     }
   }
+  if (0 <= sample && 0 < nvalid) scale = (double)rf->ntrees / nvalid;
   if (0 != regress) {
     const double mean = (0 < nvalid) ? (sum / nvalid) : 0.0;
-    result = mean + boost;
+    result = mean + scale * boost;
     if (NULL != variance) {
       /**
        * The spread of the trees about their own mean, not about the boosted
@@ -1597,7 +1638,7 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output(
     double best_score = 0;
     for (k = 0; k < 128; ++k) {
       const double s = ((0 < nvalid) ? ((double)votes[k] / nvalid) : 0.0)
-        + ((k < nc) ? bscore[k] : 0.0);
+        + scale * ((k < nc) ? bscore[k] : 0.0);
       if (0 == k || s > best_score) {
         best_score = s;
         best_label = k;
@@ -1618,18 +1659,104 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output(
        * saved before they were recorded), so an older model keeps answering as
        * it did.
        *
-       * A RANKING still, on its own scale: libxs_predict_calibrate is what makes
+       * A RANKING still, on its own scale: libxs_predict_recalibrate is what makes
        * it a rate. The decision above is untouched - it is the same majority
        * vote - so this changes what is reported and not what is answered.
        */
-      const double share = (rf->ntrees > 0)
-        ? (double)best_count / rf->ntrees : 0.0;
-      const double soft = (rf->ntrees > 0)
-        ? (lscore[best_label] / rf->ntrees) : 0.0;
+      const double share = (0 < nvalid)
+        ? (double)best_count / nvalid : 0.0;
+      const double soft = (0 < nvalid)
+        ? (lscore[best_label] / nvalid) : 0.0;
       *confidence = (0 < soft) ? soft : share;
     }
     if (NULL != variance) *variance = 0;
     result = (double)(best_label - rf->label_offset[output_idx]);
   }
+  if (NULL != evidence) *evidence = nvalid;
   return result;
+}
+
+
+LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output(
+  const internal_libxs_predict_rf_t* rf, int output_idx,
+  const double* inputs, double* confidence, double* variance)
+{
+  return internal_libxs_predict_rf_eval_output_impl(rf, output_idx, inputs,
+    confidence, variance, -1, 0, 0, NULL);
+}
+
+
+/** Fit P(final hybrid prediction is correct | native RF confidence) from rows
+ *  excluded from correction fitting and selection. Every such row still trains
+ *  ordinary RF trees; its score uses only trees whose bootstrap omitted it and
+ *  rescales their additive sum to the full forest that deployment evaluates. */
+LIBXS_API_INLINE void internal_libxs_predict_rf_calibrate_oob(
+  libxs_predict_t* model)
+{
+  internal_libxs_predict_rf_t* rf = model->rf;
+  const int p = model->nentries;
+  const int nhold = p / LIBXS_PREDICT_RF_HOLD;
+  const int ncalib = nhold / 2;
+  const int nsample = LIBXS_MIN(ncalib, LIBXS_PREDICT_RF_CALIB_SAMPLE);
+  if (NULL != rf && 0 < nsample && 0 < rf->ntrees) {
+    const int nbin = LIBXS_PREDICT_RF_CALIB;
+    const int n = rf->noutputs;
+    const size_t boot_n = (size_t)p * 2 + 1;
+    const size_t boot_inv = libxs_mod_inverse(libxs_coprime2(boot_n), boot_n);
+    const size_t hold_coprime = libxs_coprime2((size_t)p);
+    const int step = LIBXS_MAX((ncalib + nsample - 1) / nsample, 1);
+    double* hit = (double*)calloc((size_t)n * nbin, sizeof(double));
+    double* cnt = (double*)calloc((size_t)n * nbin, sizeof(double));
+    double* curve = (double*)malloc((size_t)n * nbin * sizeof(double));
+    if (NULL != hit && NULL != cnt && NULL != curve) {
+      int ci, oi, any = 0;
+      for (ci = 0; ci < ncalib; ci += step) {
+        const int h = ci * 2 + 1;
+        const int row = (int)LIBXS_SHUFFLE_INDEX((size_t)h, (size_t)p,
+          hold_coprime, LIBXS_PREDICT_RF_SEED);
+        for (oi = 0; oi < n; ++oi) {
+          if (0 == rf->regress[oi] && 1 < rf->nclass[oi]
+            && 128 >= rf->nclass[oi])
+          {
+            double confidence = 0;
+            int evidence = 0;
+            const double predicted = internal_libxs_predict_rf_eval_output_impl(
+              rf, oi, model->entries[row].inputs, &confidence, NULL,
+              row, p, boot_inv, &evidence);
+            if (evidence >= LIBXS_MAX(rf->ntrees / 10, 3)) {
+              const int b = internal_libxs_predict_rf_calib_bin(
+                confidence, nbin);
+              ++cnt[(size_t)oi * nbin + b];
+              if (LIBXS_ROUNDX(int, predicted) == LIBXS_ROUNDX(int,
+                model->entries[row].outputs[oi]))
+              {
+                ++hit[(size_t)oi * nbin + b];
+              }
+            }
+          }
+        }
+      }
+      for (oi = 0; oi < n; ++oi) {
+        double total = 0;
+        int b;
+        for (b = 0; b < nbin; ++b) total += cnt[(size_t)oi * nbin + b];
+        if (5 * nbin <= total) {
+          internal_libxs_predict_rf_isotonic(hit + (size_t)oi * nbin,
+            cnt + (size_t)oi * nbin, nbin, curve + (size_t)oi * nbin);
+          any = 1;
+        }
+        else for (b = 0; b < nbin; ++b) {
+          curve[(size_t)oi * nbin + b] = -1.0;
+        }
+      }
+      if (0 != any) {
+        free(rf->calib);
+        rf->calib = curve;
+        curve = NULL;
+      }
+    }
+    free(curve);
+    free(cnt);
+    free(hit);
+  }
 }

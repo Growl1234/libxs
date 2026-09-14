@@ -66,18 +66,20 @@ LIBXS_EXTERN_C typedef struct libxs_predict_info_t {
    *
    * A RANKING rather than a probability. It orders the queries a model is surer
    * about ahead of those it is not, which is what taking the most confident
-   * fraction of a workload needs, and its scale is its own: for a forest it is
-   * the share of the trees that agreed, so it moves with how many trees there
-   * are and how finely they were grown. Reading it as "nine in ten of these are
-   * right" is what it does not support: a gate of 0.9 keeps a share of the
-   * queries that has nothing to do with 0.9, and returns a rate it never
-   * promised.
+   * fraction of a workload needs, and its scale is its own. For a forest it is
+   * the average Laplace-smoothed support of leaves voting for the final hybrid
+   * class, with the hard vote share as a fallback for older models. Reading it
+   * as "nine in ten of these are right" is what it does not support: a gate of
+   * 0.9 keeps a share of the queries that has nothing to do with 0.9, and
+   * returns a rate it never promised.
    *
-   * libxs_predict_calibrate measures what a forest's shares are worth, and
-   * libxs_predict_probability then reads this number as a probability that a
-   * threshold can be held to. It changes no ranking: the mapping is monotone, so
-   * what improves is what the number means and not what the model can tell
-   * apart.
+   * A forest cross-fits a calibration curve at build from rows omitted by the
+   * trees scoring them. No row is removed from forest training. The native
+   * confidence remains here so a caller can rank without losing resolution;
+   * libxs_predict_probability applies the curve and reports whether the result
+   * is a probability. libxs_predict_recalibrate can replace the automatic curve
+   * with one fitted on deployment-representative rows. The mapping is monotone,
+   * so neither form changes the ranking.
    */
   const double* confidence;
   /** Per-output variance among k nearest neighbors (noutputs elements). */
@@ -964,34 +966,38 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model,
   void* buffer, size_t* size);
 
 /**
- * Fits the curve that turns a reported confidence into a probability, from rows
+ * Replaces the automatically cross-fitted RF curve with one measured on rows
  * the model was NOT built from. `inputs` holds nentries*ninputs values and
  * `outputs` nentries*noutputs, laid out per entry as libxs_predict_push takes
- * them.
+ * them. This is useful when deployment differs from the training distribution;
+ * it is not required for libxs_predict_probability after an RF build.
+ * For example, a long-lived forest can be recalibrated from a labeled batch
+ * collected after class priors or input selection changed, without rebuilding
+ * its trees.
  *
- * A confidence is otherwise a RANKING on a scale of its own - for a forest, the
- * share of the trees that agree - which orders queries correctly and promises no
- * rate. The curve is what makes a threshold mean the same thing across corpora,
- * across tree granularities and against another library.
+ * A confidence is otherwise a RANKING on a scale of its own. The curve is what
+ * makes a threshold mean the same thing across corpora, across tree
+ * granularities and against another library.
  *
- * Fitted here rather than during the build because the build has no rows to
- * spare: measuring on rows withheld from every tree costs exactly the accuracy
- * those rows would have bought, and withholding them from a fold of the trees
- * instead cannot work, since how much of the forest omits a row is the same
- * quantity as how much of it can score that row. A caller holding a validation
- * set has rows that cost nothing, and they are the distribution it will gate on.
+ * The build-time curve uses ordinary out-of-bag trees. Rows used to calibrate
+ * the hybrid read-out still participate in RF tree construction, but do not fit
+ * or select boosted corrections; each calibration prediction then reads only
+ * trees whose bootstrap omitted that row. This separates fitting, correction
+ * selection and calibration without reserving data from the primary forest.
  *
  * Only a forest carries such a curve; for any other model this reports failure
  * and changes nothing. Calling it again refits from scratch.
  * Returns EXIT_SUCCESS, or EXIT_FAILURE if there is nothing to calibrate.
  */
-LIBXS_API int libxs_predict_calibrate(libxs_predict_t* model,
+LIBXS_API int libxs_predict_recalibrate(libxs_predict_t* model,
   const double* inputs, const double* outputs, int nentries);
 
 /**
- * Translates a confidence reported by libxs_predict_eval into a probability,
- * using the curve fitted by libxs_predict_calibrate (or carried in a loaded
- * model). `probability` always receives a value.
+ * Translates a confidence reported by libxs_predict_eval into the probability
+ * that the reported RF class is correct. Uses the automatic out-of-bag curve,
+ * a curve that libxs_predict_recalibrate replaced it with, or one carried in a
+ * loaded model. This is a top-class correctness probability, not the complete
+ * class distribution P(y|x). `probability` always receives a value.
  *
  * The RETURN VALUE says which of the two it is, and a caller comparing against
  * anything else has to read it: EXIT_SUCCESS when a fitted curve was applied and
