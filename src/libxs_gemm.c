@@ -26,6 +26,14 @@
 #if !defined(LIBXS_GEMM_BK)
 # define LIBXS_GEMM_BK 48
 #endif
+/* narrower panels give more tasks, at the cost of the GEMM they leave behind */
+#if !defined(LIBXS_GEMM_PANEL)
+# define LIBXS_GEMM_PANEL 64
+#endif
+/* a panel narrower than this is served better by the k-blocking than by one call of full k */
+#if !defined(LIBXS_SYRK_KFULL)
+# define LIBXS_SYRK_KFULL 192
+#endif
 #if !defined(LIBXS_SYRK_MINTASKS)
 # define LIBXS_SYRK_MINTASKS 4
 #endif
@@ -177,6 +185,7 @@ LIBXS_APIVAR_DEFINE(libxs_registry_t* internal_libxs_gemm_registry);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_bm);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_bn);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_bk);
+LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_panel);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_jit_max);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_jit_warmup);
 LIBXS_APIVAR_DEFINE(int internal_libxs_gemm_backend);
@@ -213,6 +222,7 @@ LIBXS_API_INTERN void internal_libxs_gemm_init(void)
     const char *const gemm_bm_env = getenv("LIBXS_GEMM_BM");
     const char *const gemm_bn_env = getenv("LIBXS_GEMM_BN");
     const char *const gemm_bk_env = getenv("LIBXS_GEMM_BK");
+    const char *const gemm_panel_env = getenv("LIBXS_GEMM_PANEL");
     const char *const gemm_jit_max_env = getenv("LIBXS_GEMM_JIT_MAX");
     const char *const gemm_jit_warmup_env = getenv("LIBXS_GEMM_JIT_WARMUP");
     const char *const gemm_backend_env = getenv("LIBXS_GEMM_BACKEND");
@@ -304,6 +314,11 @@ LIBXS_API_INTERN void internal_libxs_gemm_init(void)
     internal_libxs_gemm_bm = (NULL == gemm_bm_env ? LIBXS_GEMM_BM : atoi(gemm_bm_env));
     internal_libxs_gemm_bn = (NULL == gemm_bn_env ? LIBXS_GEMM_BN : atoi(gemm_bn_env));
     internal_libxs_gemm_bk = (NULL == gemm_bk_env ? LIBXS_GEMM_BK : atoi(gemm_bk_env));
+    internal_libxs_gemm_panel = (NULL == gemm_panel_env
+      ? LIBXS_GEMM_PANEL : atoi(gemm_panel_env));
+    if (internal_libxs_gemm_panel < internal_libxs_gemm_bn) {
+      internal_libxs_gemm_panel = internal_libxs_gemm_bn;
+    }
     internal_libxs_gemm_jit_max = (NULL == gemm_jit_max_env
       ? 7 /*default: AI of ~80x80x80*/ : atoi(gemm_jit_max_env));
     internal_libxs_gemm_jit_warmup = (NULL == gemm_jit_warmup_env
@@ -1637,54 +1652,101 @@ LIBXS_API void libxs_syrk_task(
       const int bm = internal_libxs_gemm_bm;
       const int bn = internal_libxs_gemm_bn;
       const int bk = internal_libxs_gemm_bk;
-      const int nb_m = LIBXS_UPDIV(n, bm);
-      const int nb_n = LIBXS_UPDIV(n, bn);
-      int j_begin, j_end;
-      internal_libxs_syrk_partition(tid, ntasks, nb_n, upper, &j_begin, &j_end);
-      if (j_begin < j_end) {
+      /* one panel owns its columns, hence the packed operand is not duplicated:
+         the width follows the task count, with two panels per task to balance */
+      const int np = LIBXS_MAX(internal_libxs_gemm_panel,
+        LIBXS_UPDIV(n, 2 * ntasks));
+      const int nb_p = LIBXS_UPDIV(n, np);
+      const int f64 = (LIBXS_DATATYPE_F64 == config->shape.datatype);
+      const internal_libxs_dsyrk_t dsyrk = (0 != f64
+        ? internal_libxs_dsyrk_blas : NULL);
+      const internal_libxs_ssyrk_t ssyrk = (0 == f64
+        ? internal_libxs_ssyrk_blas : NULL);
+      int p_begin, p_end;
+      internal_libxs_syrk_partition(tid, ntasks, nb_p, upper, &p_begin, &p_end);
+      if (p_begin < p_end) {
         const size_t need = (size_t)bm * bn * elemsize;
         void* scratch = internal_libxs_syrk_scratch(need);
         if (NULL != scratch) {
-          int j;
-          for (j = j_begin; j < j_end; ++j) {
-            const int jb = j * bn;
-            const int cn = LIBXS_MIN(bn, n - jb);
-            const int i_begin = (0 == upper ? (jb / bm) : 0);
-            const int i_end = (0 == upper ? nb_m : LIBXS_MIN(nb_m, (jb + cn - 1) / bm + 1));
-            int i;
-            for (i = i_begin; i < i_end; ++i) {
-              const int ib = i * bm;
-              const int cm = LIBXS_MIN(bm, n - ib);
-              const int diag = (ib < jb + cn && jb < ib + cm);
-              const int full = (cm == bm && cn == bn);
+          int p;
+          for (p = p_begin; p < p_end; ++p) {
+            const int pb = p * np;
+            const int pn = LIBXS_MIN(np, n - pb);
+            /* the panel beside the diagonal block lies inside the requested
+               triangle, hence BLAS accumulates into C without scratch */
+            const int pm = (0 == upper ? (n - pb - pn) : pb);
+            const int pi = (0 == upper ? (pb + pn) : 0);
+            int j;
+            if (0 < pm) {
+              const int kc = (LIBXS_SYRK_KFULL <= pn ? k : bk);
+              void *const ct = (char*)c + ((size_t)pb * ldc + pi) * elemsize;
+              double bc = beta;
               int kb;
-              memset(scratch, 0, need);
-              for (kb = 0; kb < k; kb += bk) {
-                const int ck = LIBXS_MIN(bk, k - kb);
-                if (full && ck == bk && (NULL != config->xgemm || NULL != config->dgemm_jit || NULL != config->sgemm_jit)) {
-                  const size_t aoff = ((size_t)ib + (size_t)kb * lda) * elemsize;
-                  const size_t ajoff = ((size_t)jb + (size_t)kb * lda) * elemsize;
-                  libxs_gemm_call(config,
-                    (const char*)a + aoff,
-                    (const char*)a + ajoff, scratch);
+              for (kb = 0; kb < k; kb += kc) {
+                const int ck = LIBXS_MIN(kc, k - kb);
+                internal_libxs_gemm_blas(config,
+                  (const char*)a + ((size_t)pi + (size_t)kb * lda) * elemsize,
+                  (const char*)a + ((size_t)pb + (size_t)kb * lda) * elemsize,
+                  ct, pm, pn, ck, lda, lda, ldc, alpha, bc);
+                bc = 1.0;
+              }
+            }
+            /* the diagonal block straddles the triangle: a BLAS SYRK writes it,
+               otherwise the tiles below do, which keeps a kernel reachable */
+            if (NULL != dsyrk) {
+              internal_libxs_dsyrk_blas(&uplo, "N", &pn, &k,
+                (const double*)&alpha, (const double*)a + pb, &lda,
+                (const double*)&beta, (double*)c + ((size_t)pb * ldc + pb), &ldc);
+              continue;
+            }
+            else if (NULL != ssyrk) {
+              const float fa = (float)alpha, fb = (float)beta;
+              internal_libxs_ssyrk_blas(&uplo, "N", &pn, &k,
+                &fa, (const float*)a + pb, &lda,
+                &fb, (float*)c + ((size_t)pb * ldc + pb), &ldc);
+              continue;
+            }
+            for (j = 0; j < pn; j += bn) {
+              const int jb = pb + j;
+              const int cn = LIBXS_MIN(bn, pn - j);
+              const int i_begin = (0 == upper ? ((jb - pb) / bm) : 0);
+              const int i_end = (0 == upper ? LIBXS_UPDIV(pn, bm)
+                : LIBXS_MIN(LIBXS_UPDIV(pn, bm), (jb - pb + cn - 1) / bm + 1));
+              int i;
+              for (i = i_begin; i < i_end; ++i) {
+                const int ib = pb + i * bm;
+                const int cm = LIBXS_MIN(bm, pb + pn - ib);
+                const int diag = (ib < jb + cn && jb < ib + cm);
+                const int full = (cm == bm && cn == bn);
+                int kb;
+                memset(scratch, 0, need);
+                for (kb = 0; kb < k; kb += bk) {
+                  const int ck = LIBXS_MIN(bk, k - kb);
+                  if (full && ck == bk && (NULL != config->xgemm || NULL != config->dgemm_jit || NULL != config->sgemm_jit)) {
+                    const size_t aoff = ((size_t)ib + (size_t)kb * lda) * elemsize;
+                    const size_t ajoff = ((size_t)jb + (size_t)kb * lda) * elemsize;
+                    libxs_gemm_call(config,
+                      (const char*)a + aoff,
+                      (const char*)a + ajoff, scratch);
+                  }
+                  else {
+                    const size_t aoff = ((size_t)ib + (size_t)kb * lda) * elemsize;
+                    const size_t ajoff = ((size_t)jb + (size_t)kb * lda) * elemsize;
+                    internal_libxs_gemm_blas(config,
+                      (const char*)a + aoff,
+                      (const char*)a + ajoff, scratch,
+                      cm, cn, ck, lda, lda, bm, 1.0, 1.0);
+                  }
+                }
+                if (LIBXS_DATATYPE_F64 == config->shape.datatype) {
+                  INTERNAL_SYRK_SCATTER(double, c, ldc, scratch, bm,
+                    ib, jb, cm, cn, upper, diag, alpha, beta);
                 }
                 else {
-                  const size_t aoff = ((size_t)ib + (size_t)kb * lda) * elemsize;
-                  const size_t ajoff = ((size_t)jb + (size_t)kb * lda) * elemsize;
-                  internal_libxs_gemm_blas(config,
-                    (const char*)a + aoff,
-                    (const char*)a + ajoff, scratch,
-                    cm, cn, ck, lda, lda, bm, 1.0, 1.0);
+                  INTERNAL_SYRK_SCATTER(float, c, ldc, scratch, bm,
+                    ib, jb, cm, cn, upper, diag,
+                    (float)alpha, (float)beta);
                 }
-              }
-              if (LIBXS_DATATYPE_F64 == config->shape.datatype) {
-                INTERNAL_SYRK_SCATTER(double, c, ldc, scratch, bm,
-                  ib, jb, cm, cn, upper, diag, alpha, beta);
-              }
-              else {
-                INTERNAL_SYRK_SCATTER(float, c, ldc, scratch, bm,
-                  ib, jb, cm, cn, upper, diag,
-                  (float)alpha, (float)beta);
               }
             }
           }
