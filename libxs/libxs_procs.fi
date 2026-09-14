@@ -400,8 +400,7 @@
           INTEGER(C_INT), INTENT(IN), OPTIONAL :: ldo
           TYPE(C_PTR), INTENT(IN), OPTIONAL :: scratch
           INTEGER(C_INT) :: lo, nt1, nt2
-          TYPE(C_PTR) :: ss
-          CHARACTER(C_CHAR), ALLOCATABLE, TARGET :: buffer(:)
+          TYPE(C_PTR) :: ss, sa
           IF (PRESENT(ldo)) THEN; lo = ldo
           ELSE; lo = n; END IF
           IF (PRESENT(scratch)) THEN; ss = scratch
@@ -432,12 +431,16 @@
 !$            nt2 = libxs_mem_ntasks(LIBXS_MEM_OP_OTRANS,               &
 !$   &          m, n, typesize, INT(omp_get_max_threads(), C_INT))
 !$          END IF
-            IF (1 .LT. nt1 .OR. 1 .LT. nt2) THEN
-              IF (.NOT. C_ASSOCIATED(ss)) THEN
-                ALLOCATE(buffer(INT(m, C_SIZE_T) * INT(n, C_SIZE_T)     &
-     &            * INT(typesize, C_SIZE_T)))
-                ss = C_LOC(buffer)
-              END IF
+            sa = C_NULL_PTR
+            IF ((1 .LT. nt1 .OR. 1 .LT. nt2)                            &
+     &        .AND. .NOT. C_ASSOCIATED(ss)) THEN
+              ! C allocator: ALLOCATE would pull in the Fortran runtime
+              sa = libxs_malloc_c(C_NULL_PTR, INT(m, C_SIZE_T)          &
+     &          * INT(n, C_SIZE_T) * INT(typesize, C_SIZE_T), 0)
+              ss = sa
+            END IF
+            IF ((1 .LT. nt1 .OR. 1 .LT. nt2)                            &
+     &        .AND. C_ASSOCIATED(ss)) THEN
 !$OMP PARALLEL NUM_THREADS(nt1) DEFAULT(NONE)                           &
 !$OMP&  SHARED(inout, typesize, m, n, ldi, ss)
 !$            CALL internal_matcopy_task(ss, inout, typesize,           &
@@ -454,6 +457,7 @@
               CALL internal_itrans(inout, typesize,                     &
      &          m, n, ldi, lo, ss)
             END IF
+            IF (C_ASSOCIATED(sa)) CALL libxs_free(sa)
           END IF
         END SUBROUTINE
 

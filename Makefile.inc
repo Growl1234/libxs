@@ -26,6 +26,7 @@ AWK := $(call which,awk)
 CUT := $(call which,cut)
 CP := $(call which,cp)
 MV := $(call which,mv)
+NM := $(call which,nm)
 MAKE ?= make
 
 SED := $(call which,gsed)

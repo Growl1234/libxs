@@ -170,6 +170,9 @@ OBJFILES := $(patsubst %,$(BLDDIR)/intel64/%.o,$(basename $(notdir $(SRCFILES)))
 ifneq (,$(strip $(FC)))
   FTNOBJS := $(BLDDIR)/intel64/$(PROJECT)-mod.o
 endif
+# the Fortran runtime is linked only if the Fortran objects reference it
+FTNRTLINK = $(if $(and $(FTNOBJS),$(LIBGFORTRAN),$(NM)),$$($(NM) -u $(FTNOBJS) 2>/dev/null \
+  | $(GREP) -q _gfortran_ && echo $(LIBGFORTRAN) $(call abslibrpath,$(LIBGFORTRAN))))
 
 # no warning conversion for released versions
 ifneq (0,$(VERSION_RELEASED))
@@ -306,7 +309,7 @@ endif
 ifeq (0,$(filter-out 1 2,$(BUILD))$(ANALYZE))
 $(OUTDIR)/$(PROJECT).$(DLIBEXT): $(OUTDIR)/.make $(OBJFILES) $(FTNOBJS)
 	$(LIB_SOLD) $(call solink_version,$(OUTDIR)/$(PROJECT).$(DLIBEXT)) \
-		$(call tailwords,$^) $(call cleanld,$(LDFLAGS) $(CLDFLAGS))
+		$(call tailwords,$^) $(call cleanld,$(LDFLAGS) $(CLDFLAGS)) $(FTNRTLINK)
 else
 .PHONY: $(OUTDIR)/$(PROJECT).$(DLIBEXT)
 endif
