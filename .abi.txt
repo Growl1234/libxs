@@ -63,6 +63,7 @@ libxs_gemm_dispatch_ptr_base
 libxs_gemm_dispatch_rt
 libxs_gemm_index
 libxs_gemm_index_task
+libxs_gemm_ntasks
 libxs_gemm_release
 libxs_gemm_release_registry
 libxs_get_verbosity
@@ -146,6 +147,7 @@ libxs_matdiff_combine
 libxs_matdiff_epsilon
 libxs_matdiff_grade
 libxs_matdiff_reduce
+libxs_mem_ntasks
 libxs_memcmp
 libxs_mhd_element_comparison
 libxs_mhd_element_conversion
@@ -189,7 +191,6 @@ libxs_pmalloc_lock
 libxs_pow2
 libxs_predict_build
 libxs_predict_build_task
-libxs_predict_calibrate
 libxs_predict_create
 libxs_predict_destroy
 libxs_predict_eval
@@ -211,6 +212,7 @@ libxs_predict_probability
 libxs_predict_push
 libxs_predict_push_weighted
 libxs_predict_query
+libxs_predict_recalibrate
 libxs_predict_save
 libxs_predict_set_central
 libxs_predict_set_consistency
@@ -307,6 +309,7 @@ libxs_syrk_dispatch_base
 libxs_syrk_dispatch_cpy_base
 libxs_syrk_dispatch_cpy_rt
 libxs_syrk_dispatch_rt
+libxs_syrk_ntasks
 libxs_syrk_task
 libxs_text_reflow
 libxs_text_reflow_map
