@@ -13,6 +13,9 @@
 #include <libxs/libxs_malloc.h>
 #include <libxs/libxs_gemm.h>
 #include <libxs/libxs_hash.h>
+#if defined(LIBXS_PREDICT_RF_PROFILE)
+# include <libxs/libxs_timer.h>
+#endif
 #include "libxs_main.h"
 
 #if !defined(LIBXS_PREDICT_MAXITER)
@@ -4054,6 +4057,9 @@ LIBXS_API int libxs_predict_build_task(libxs_predict_t* model,
    */
   libxs_barrier_t* team = NULL;
   int result = EXIT_SUCCESS;
+#if defined(LIBXS_PREDICT_RF_PROFILE)
+  libxs_timer_tick_t rf_tick = 0;
+#endif
   LIBXS_ASSERT(NULL != model);
   if (1 < ntasks) {
     LIBXS_ATOMIC_STORE(&model->sync.ntasks, ntasks, LIBXS_ATOMIC_SEQ_CST);
@@ -4091,10 +4097,21 @@ LIBXS_API int libxs_predict_build_task(libxs_predict_t* model,
   if (EXIT_SUCCESS == result && NULL != model->rf) {
     if (0 == tid) model->sync_failed = 0;
     libxs_barrier_wait(team);
+#if defined(LIBXS_PREDICT_RF_PROFILE)
+    if (0 == tid) rf_tick = libxs_timer_tick();
+#endif
     internal_libxs_predict_rf_bins_tasks(model, tid, ntasks);
     /* every task reads every row of the bins, so the fill is a stage of its own
        rather than something a task does to the rows it happens to need */
     libxs_barrier_wait(team);
+#if defined(LIBXS_PREDICT_RF_PROFILE)
+    if (0 == tid) {
+      const libxs_timer_tick_t now = libxs_timer_tick();
+      fprintf(stderr, "RF stage bins: %.6f s\n",
+        libxs_timer_duration(rf_tick, now));
+      rf_tick = now;
+    }
+#endif
     if (EXIT_SUCCESS != internal_libxs_predict_rf_build_tasks(
       model, tid, ntasks))
     {
@@ -4106,6 +4123,14 @@ LIBXS_API int libxs_predict_build_task(libxs_predict_t* model,
      * exist before the first residual can be taken.
      */
     libxs_barrier_wait(team);
+#if defined(LIBXS_PREDICT_RF_PROFILE)
+    if (0 == tid) {
+      const libxs_timer_tick_t now = libxs_timer_tick();
+      fprintf(stderr, "RF stage trees: %.6f s\n",
+        libxs_timer_duration(rf_tick, now));
+      rf_tick = now;
+    }
+#endif
     if (0 == tid) {
       internal_libxs_predict_rf_bins_free(model);
       if (0 == LIBXS_ATOMIC_LOAD(
@@ -4117,6 +4142,12 @@ LIBXS_API int libxs_predict_build_task(libxs_predict_t* model,
       else model->built = 0;
     }
     libxs_barrier_wait(team);
+#if defined(LIBXS_PREDICT_RF_PROFILE)
+    if (0 == tid) {
+      fprintf(stderr, "RF stage post: %.6f s\n",
+        libxs_timer_duration(rf_tick, libxs_timer_tick()));
+    }
+#endif
     if (0 != LIBXS_ATOMIC_LOAD(
       &model->sync_failed, LIBXS_ATOMIC_SEQ_CST))
     {
