@@ -211,6 +211,9 @@ typedef struct internal_libxs_predict_rf_grow_t {
   const internal_libxs_predict_entry_t* entries;
   const unsigned char* bins;
   const double* bin_edge;
+  /** Reused by mutually exclusive split and partition phases. */
+  double* values_scratch;
+  int* index_scratch;
   int nbins, nfeat, nfeatsub;
   int max_depth, min_leaf, leaf_floor;
   int output_idx, label_off, regress, nclass;
@@ -223,7 +226,8 @@ typedef struct internal_libxs_predict_rf_tree_t {
    * this tree's bootstrap left out. Kept beside the nodes rather than in them:
    * it is a second read-out over the same partition, read only where boosting
    * ran, and the descent should not carry it through cache. NULL where the
-   * output is folded, or where the stopping rule ended the stages first.
+  * output is folded without an explicit RF_RATE, or where the stopping rule
+  * ended the stages first.
    */
   double* incr;
   int nnodes;
@@ -231,6 +235,8 @@ typedef struct internal_libxs_predict_rf_tree_t {
 
 typedef struct internal_libxs_predict_rf_t {
   internal_libxs_predict_rf_tree_t* trees;
+  /** Build-only calibration fold per corpus row, encoded as fold+1 or zero. */
+  unsigned char* calib_fold;
   /**
    * Each input binned to one byte, nentries*ninputs, and the nbins+1 edges those
    * bins are cut at, per input. A wide node then accumulates counts per bin over
@@ -1890,6 +1896,7 @@ LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
         free(model->rf->trees[ti].incr);
       }
       free(model->rf->trees);
+      free(model->rf->calib_fold);
       /* normally released with the last tree; here for a build that gave up */
       free(model->rf->bins);
       free(model->rf->bin_edge);

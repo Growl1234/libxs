@@ -43,8 +43,9 @@
 #if !defined(LIBXS_PREDICT_RF_HISTMAX)
 #  define LIBXS_PREDICT_RF_HISTMAX 65536
 #endif
-/** Shrinkage applied to each boosted stage. The leaf basis is large enough
- *  that an unshrunk read-out over it fits the sample rather than the signal. */
+/** Shrinkage applied to each boosted stage. Regression uses it by default. A
+ *  folded vote share is already unbiased, so folded outputs attempt corrections
+ *  only when the RF_RATE environment variable is set explicitly. */
 #if !defined(LIBXS_PREDICT_RF_RATE)
 #  define LIBXS_PREDICT_RF_RATE 0.1
 #endif
@@ -55,7 +56,7 @@
 #  define LIBXS_PREDICT_RF_PATIENCE 3
 #endif
 /** One row in this many is held back from every stage's leaf means. Half select
- *  corrections and half calibrate them; all still train ordinary RF trees. */
+ *  corrections; half calibrate and train the other folds of ordinary trees. */
 #if !defined(LIBXS_PREDICT_RF_HOLD)
 #  define LIBXS_PREDICT_RF_HOLD 5
 #endif
@@ -104,6 +105,10 @@
 #if !defined(LIBXS_PREDICT_RF_CALIB_SAMPLE)
 #  define LIBXS_PREDICT_RF_CALIB_SAMPLE 8192
 #endif
+/** Calibration rows are divided over this many disjoint groups of trees. */
+#if !defined(LIBXS_PREDICT_RF_CALIB_FOLDS)
+#  define LIBXS_PREDICT_RF_CALIB_FOLDS 4
+#endif
 
 
 LIBXS_API_INLINE int internal_libxs_predict_rf_pair_cmp(
@@ -124,7 +129,8 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_sort(
   const internal_libxs_predict_entry_t* entries,
   const int* subset, int nsub, int nfeat, int nfeatsub,
   internal_libxs_predict_rf_node_t* node, size_t seed,
-  int output_idx, int label_off, int regress, int min_leaf, int nclass)
+  int output_idx, int label_off, int regress, int min_leaf, int nclass,
+  double* values_scratch, int* index_scratch)
 {
   /**
    * The fold is as wide as the corpus has classes, not as wide as it can be:
@@ -141,9 +147,15 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_sort(
   const size_t feat_coprime = libxs_coprime2((size_t)nfeat);
   /* sorting an order over one column reaches the radix path in libxs_sort,
      which a value/index pair cannot: its comparator is not recognized */
-  double* keys = (double*)LIBXS_PREDICT_MALLOC(
-    (size_t)nsub * sizeof(double), keys_pool);
-  int* ord = (int*)LIBXS_PREDICT_MALLOC((size_t)nsub * sizeof(int), ord_pool);
+  double* keys = values_scratch;
+  int* ord = index_scratch;
+  if (NULL == keys) {
+    keys = (double*)LIBXS_PREDICT_MALLOC(
+      (size_t)nsub * sizeof(double), keys_pool);
+  }
+  if (NULL == ord) {
+    ord = (int*)LIBXS_PREDICT_MALLOC((size_t)nsub * sizeof(int), ord_pool);
+  }
   node->feature = -1;
   node->label = -1;
   if (NULL != keys && NULL != ord) {
@@ -242,8 +254,8 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_sort(
       }
     }
   }
-  LIBXS_PREDICT_FREE(ord, ord_pool);
-  LIBXS_PREDICT_FREE(keys, keys_pool);
+  if (NULL == index_scratch) LIBXS_PREDICT_FREE(ord, ord_pool);
+  if (NULL == values_scratch) LIBXS_PREDICT_FREE(keys, keys_pool);
   result = (node->feature >= 0) ? 1 : 0;
   return result;
 }
@@ -272,7 +284,8 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_hist(
   const unsigned char* bins, const double* bin_edge, int nbins,
   const int* subset, int nsub, int nfeat, int nfeatsub,
   internal_libxs_predict_rf_node_t* node, size_t seed,
-  int output_idx, int label_off, int regress, int min_leaf, int nclass)
+  int output_idx, int label_off, int regress, int min_leaf, int nclass,
+  double* values_scratch, int* index_scratch)
 {
   /** As in the sorted search, the fold is as wide as the corpus has classes. */
   const int ncls = (0 != regress) ? 1
@@ -285,14 +298,19 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_hist(
   double best_score = -1.0, mu = 0;
   int nfused = (int)(LIBXS_PREDICT_RF_HISTMAX / (per * sizeof(double)));
   int acc_pool = 0, fsel_pool = 0;
-  double* acc;
-  int* fsel;
+  double* acc = values_scratch;
+  int* fsel = index_scratch;
   int base, i, j, k, b, result;
   if (1 > nfused) nfused = 1;
   if (nfeatsub < nfused) nfused = nfeatsub;
-  acc = (double*)LIBXS_PREDICT_MALLOC(
-    (size_t)nfused * per * sizeof(double), acc_pool);
-  fsel = (int*)LIBXS_PREDICT_MALLOC((size_t)nfeatsub * sizeof(int), fsel_pool);
+  if (NULL == acc) {
+    acc = (double*)LIBXS_PREDICT_MALLOC(
+      (size_t)nfused * per * sizeof(double), acc_pool);
+  }
+  if (NULL == fsel) {
+    fsel = (int*)LIBXS_PREDICT_MALLOC(
+      (size_t)nfeatsub * sizeof(int), fsel_pool);
+  }
   node->feature = -1;
   node->label = -1;
   if (NULL != acc && NULL != fsel) {
@@ -414,8 +432,8 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_hist(
       }
     }
   }
-  LIBXS_PREDICT_FREE(fsel, fsel_pool);
-  LIBXS_PREDICT_FREE(acc, acc_pool);
+  if (NULL == index_scratch) LIBXS_PREDICT_FREE(fsel, fsel_pool);
+  if (NULL == values_scratch) LIBXS_PREDICT_FREE(acc, acc_pool);
   result = (node->feature >= 0) ? 1 : 0;
   return result;
 }
@@ -434,7 +452,8 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split(
   const unsigned char* bins, const double* bin_edge, int nbins,
   const int* subset, int nsub, int nfeat, int nfeatsub,
   internal_libxs_predict_rf_node_t* node, size_t seed,
-  int output_idx, int label_off, int regress, int min_leaf, int nclass)
+  int output_idx, int label_off, int regress, int min_leaf, int nclass,
+  double* values_scratch, int* index_scratch)
 {
   int result;
   if (NULL != bins && NULL != bin_edge && 0 < nbins
@@ -442,11 +461,12 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split(
   {
     result = internal_libxs_predict_rf_split_hist(entries, bins, bin_edge,
       nbins, subset, nsub, nfeat, nfeatsub, node, seed, output_idx, label_off,
-      regress, min_leaf, nclass);
+      regress, min_leaf, nclass, values_scratch, index_scratch);
   }
   else {
     result = internal_libxs_predict_rf_split_sort(entries, subset, nsub, nfeat,
-      nfeatsub, node, seed, output_idx, label_off, regress, min_leaf, nclass);
+      nfeatsub, node, seed, output_idx, label_off, regress, min_leaf, nclass,
+      values_scratch, index_scratch);
   }
   return result;
 }
@@ -547,7 +567,8 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_part(
       || 0 == internal_libxs_predict_rf_split(entries, bins, bin_edge, nbins,
         subset + si, nc, nfeat, nfeatsub, &split,
         (size_t)si * 2654435761u + (size_t)nc, output_idx,
-        label_off, regress, leaf_floor, nclass))
+        label_off, regress, leaf_floor, nclass, g->values_scratch,
+        g->index_scratch))
     {
       nodes[ni].feature = -1;
       continue;
@@ -562,7 +583,11 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_part(
       nright = nc - nleft;
       if (0 == nleft || 0 == nright) { nodes[ni].feature = -1; continue; }
       { int part_pool = 0;
-        int* part = (int*)LIBXS_PREDICT_MALLOC((size_t)nc * sizeof(int), part_pool);
+        int* part = g->index_scratch;
+        if (NULL == part) {
+          part = (int*)LIBXS_PREDICT_MALLOC(
+            (size_t)nc * sizeof(int), part_pool);
+        }
         if (NULL != part) {
           int li = 0, ri = 0;
           for (i = 0; i < nc; ++i) {
@@ -574,7 +599,9 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_part(
             }
           }
           memcpy(sub, part, (size_t)nc * sizeof(int));
-          LIBXS_PREDICT_FREE(part, part_pool);
+          if (NULL == g->index_scratch) {
+            LIBXS_PREDICT_FREE(part, part_pool);
+          }
         }
         else { nodes[ni].feature = -1; continue; }
       }
@@ -764,31 +791,27 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree_parts(
 }
 
 
+/** Calibration fold of one row, or -1 where the row fits corrections. */
+LIBXS_API_INLINE int internal_libxs_predict_rf_calib_fold(
+  int row, int p, size_t hold_inv)
+{
+  int result = -1;
+  if (0 < hold_inv && 0 <= row && row < p) {
+    const size_t h = LIBXS_UNSHUFFLE_INDEX((size_t)row, (size_t)p,
+      hold_inv, LIBXS_PREDICT_RF_SEED);
+    if (h < (size_t)(p / LIBXS_PREDICT_RF_HOLD) && 0 != (h & 1)) {
+      result = (int)((h / 2) % LIBXS_PREDICT_RF_CALIB_FOLDS);
+    }
+  }
+  return result;
+}
+
+
 /** The row a tree's i-th bootstrap draw lands on. */
 LIBXS_API_INLINE int internal_libxs_predict_rf_draw(size_t i, size_t boot_n,
   size_t coprime, size_t seed, int p)
 {
   return (int)(LIBXS_SHUFFLE_INDEX(i, boot_n, coprime, seed) % (size_t)p);
-}
-
-
-/**
- * Whether row was omitted from the deterministic bootstrap. The shuffle is a
- * bijection over 2*p+1, so row has only two modulo preimages (three for zero),
- * and inverse-shuffling them avoids regenerating all p draws.
- */
-LIBXS_API_INLINE int internal_libxs_predict_rf_oob(
-  int row, int p, size_t boot_n, size_t boot_inv, size_t seed)
-{
-  size_t shuffled = (size_t)row;
-  int result = 1;
-  while (shuffled < boot_n && 0 != result) {
-    const size_t draw = LIBXS_UNSHUFFLE_INDEX(
-      shuffled, boot_n, boot_inv, seed);
-    if (draw < (size_t)p) result = 0;
-    shuffled += (size_t)p;
-  }
-  return result;
 }
 
 
@@ -814,6 +837,7 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_score(
   const int max_nodes = LIBXS_MIN(ntrain / min_leaf * 2 + 1,
     LIBXS_MAX(LIBXS_PREDICT_RF_MAXNODES / LIBXS_PREDICT_RF_PROBE, 1));
   int nodes_pool = 0, boot_pool = 0, nn_pool = 0;
+  int values_pool = 0, index_pool = 0;
   internal_libxs_predict_rf_node_t* nodes =
     (internal_libxs_predict_rf_node_t*)LIBXS_PREDICT_MALLOC(
       (size_t)nt * (size_t)max_nodes
@@ -821,8 +845,14 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_score(
   int* bootstrap = (int*)LIBXS_PREDICT_MALLOC((size_t)ntrain * sizeof(int),
     boot_pool);
   int* nn = (int*)LIBXS_PREDICT_MALLOC((size_t)nt * sizeof(int), nn_pool);
+  double* values_scratch = (double*)LIBXS_PREDICT_MALLOC(
+    (size_t)ntrain * sizeof(double), values_pool);
+  int* index_scratch = (int*)LIBXS_PREDICT_MALLOC(
+    (size_t)ntrain * sizeof(int), index_pool);
   double result = 1.0;
-  if (NULL != nodes && NULL != bootstrap && NULL != nn) {
+  if (NULL != nodes && NULL != bootstrap && NULL != nn
+    && NULL != values_scratch && NULL != index_scratch)
+  {
     const size_t boot_n = (size_t)ntrain * 2 + 1;
     const size_t boot_coprime = libxs_coprime2(boot_n);
     int t, i, wrong = 0, scored = 0;
@@ -836,6 +866,7 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_score(
          ranks depths against each other rather than reporting an error */
       { internal_libxs_predict_rf_grow_t g;
         g.entries = entries; g.bins = NULL; g.bin_edge = NULL; g.nbins = 0;
+        g.values_scratch = values_scratch; g.index_scratch = index_scratch;
         g.nfeat = m; g.nfeatsub = internal_libxs_predict_rf_nfeatsub(m);
         g.max_depth = max_depth; g.min_leaf = min_leaf; g.leaf_floor = min_leaf;
         g.output_idx = output_idx; g.label_off = label_off;
@@ -881,6 +912,8 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_score(
       result = (0 != regress) ? (err / scored) : ((double)wrong / scored);
     }
   }
+  LIBXS_PREDICT_FREE(index_scratch, index_pool);
+  LIBXS_PREDICT_FREE(values_scratch, values_pool);
   LIBXS_PREDICT_FREE(nn, nn_pool);
   LIBXS_PREDICT_FREE(bootstrap, boot_pool);
   LIBXS_PREDICT_FREE(nodes, nodes_pool);
@@ -1100,6 +1133,25 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build(libxs_predict_t* model)
         rf->depth[oi] = best;
       }
       model->rf = rf;
+      rf->calib_fold = (unsigned char*)malloc((size_t)p);
+      if (NULL != rf->calib_fold) {
+        const int ncalib = (p / LIBXS_PREDICT_RF_HOLD) / 2;
+        const int nsample = LIBXS_MIN(ncalib, LIBXS_PREDICT_RF_CALIB_SAMPLE);
+        const int step = LIBXS_MAX(
+          (ncalib + nsample - 1) / LIBXS_MAX(nsample, 1), 1);
+        const size_t hold_coprime = libxs_coprime2((size_t)p);
+        const size_t hold_inv = (1 < p)
+          ? libxs_mod_inverse(hold_coprime, (size_t)p) : 0;
+        int ci;
+        memset(rf->calib_fold, 0, (size_t)p);
+        for (ci = 0; ci < ncalib; ci += step) {
+          const int h = ci * 2 + 1;
+          const int row = (int)LIBXS_SHUFFLE_INDEX((size_t)h, (size_t)p,
+            hold_coprime, LIBXS_PREDICT_RF_SEED);
+          rf->calib_fold[row] = (unsigned char)(1
+            + internal_libxs_predict_rf_calib_fold(row, p, hold_inv));
+        }
+      }
       /* last, and after the depth probe rather than before it: the probe splits
          exactly, and the bins are read by the trees the tasks grow */
       internal_libxs_predict_rf_edges(model);
@@ -1140,23 +1192,52 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks(
         / (LIBXS_PREDICT_RF_MAXNODES - 1)) : 1;
     const int max_nodes = LIBXS_MIN(p / leaf_floor * 2 + 1,
       LIBXS_PREDICT_RF_MAXNODES);
-    int begin, end, bootstrap_pool = 0;
+    const size_t boot_n = (size_t)p * 2 + 1;
+    const size_t boot_coprime = libxs_coprime2(boot_n);
+    size_t values_count = (NULL != rf->bins)
+      ? LIBXS_PREDICT_RF_BINMIN : (size_t)p;
+    int begin, end, bootstrap_pool = 0, values_pool = 0, index_pool = 0;
     int* bootstrap = NULL;
+    double* values_scratch = NULL;
+    int* index_scratch = NULL;
+    int output;
+    if (NULL != rf->bins) {
+      for (output = 0; output < n; ++output) {
+        const int ncls = (0 != rf->regress[output]) ? 1
+          : ((0 < rf->nclass[output] && 128 >= rf->nclass[output])
+            ? rf->nclass[output] : 128);
+        const int width = (0 != rf->regress[output]) ? 3 : ncls;
+        const size_t per = (size_t)rf->nbins * width;
+        int nfused = (int)(LIBXS_PREDICT_RF_HISTMAX
+          / (per * sizeof(double)));
+        size_t needed;
+        if (1 > nfused) nfused = 1;
+        nfused = LIBXS_MIN(nfused,
+          internal_libxs_predict_rf_nfeatsub(m));
+        needed = (size_t)nfused * per;
+        if (values_count < needed) values_count = needed;
+      }
+    }
     internal_libxs_predict_split(total_trees, tid, ntasks, &begin, &end);
     result = EXIT_SUCCESS;
     if (begin < end) {
       bootstrap = (int*)LIBXS_PREDICT_MALLOC(
         (size_t)p * sizeof(int), bootstrap_pool);
-      if (NULL == bootstrap) result = EXIT_FAILURE;
+      values_scratch = (double*)LIBXS_PREDICT_MALLOC(
+        values_count * sizeof(double), values_pool);
+      index_scratch = (int*)LIBXS_PREDICT_MALLOC(
+        (size_t)p * sizeof(int), index_pool);
+      if (NULL == bootstrap || NULL == values_scratch
+        || NULL == index_scratch)
+      {
+        result = EXIT_FAILURE;
+      }
     }
-    if (NULL != bootstrap) {
+    if (NULL != bootstrap && NULL != values_scratch && NULL != index_scratch) {
       int ti;
       for (ti = begin; ti < end && EXIT_SUCCESS == result; ++ti) {
         const int oi = ti / ntrees;
-        const int t = ti % ntrees;
         const int max_depth = rf->depth[oi];
-        const size_t boot_n = (size_t)p * 2 + 1;
-        const size_t boot_coprime = libxs_coprime2(boot_n);
         int nodes_pool = 0;
         internal_libxs_predict_rf_node_t* nodes;
         int i, nn;
@@ -1166,12 +1247,20 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks(
             nodes_pool);
         for (i = 0; i < p; ++i) {
           bootstrap[i] = internal_libxs_predict_rf_draw((size_t)i, boot_n,
-            boot_coprime, (size_t)(oi * ntrees + t) * 7 + 13, p);
+            boot_coprime, (size_t)ti * 7 + 13, p);
+          if (NULL != rf->calib_fold) {
+            const int fold = ti % LIBXS_PREDICT_RF_CALIB_FOLDS;
+            while (1 + fold == rf->calib_fold[bootstrap[i]]) {
+              bootstrap[i] = (bootstrap[i] + 1 < p)
+                ? (bootstrap[i] + 1) : 0;
+            }
+          }
         }
         if (NULL != nodes) {
           internal_libxs_predict_rf_grow_t g;
           g.entries = model->entries;
           g.bins = rf->bins; g.bin_edge = rf->bin_edge; g.nbins = rf->nbins;
+          g.values_scratch = values_scratch; g.index_scratch = index_scratch;
           g.nfeat = m; g.nfeatsub = internal_libxs_predict_rf_nfeatsub(m);
           g.max_depth = max_depth; g.min_leaf = min_leaf;
           g.leaf_floor = leaf_floor; g.output_idx = oi;
@@ -1199,8 +1288,10 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks(
         }
         else result = EXIT_FAILURE;
       }
-      LIBXS_PREDICT_FREE(bootstrap, bootstrap_pool);
     }
+    LIBXS_PREDICT_FREE(index_scratch, index_pool);
+    LIBXS_PREDICT_FREE(values_scratch, values_pool);
+    LIBXS_PREDICT_FREE(bootstrap, bootstrap_pool);
   }
   return result;
 }
@@ -1380,15 +1471,17 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_boost(libxs_predict_t* model)
     const int p = model->nentries;
     const int ntrees = rf->ntrees;
     const char* renv = getenv("LIBXS_PREDICT_RF_RATE");
-    const double rate = (NULL != renv) ? atof(renv) : LIBXS_PREDICT_RF_RATE;
-    int maxn = 0, ncmax = 1, ti;
+    const double configured_rate = (NULL != renv)
+      ? atof(renv) : LIBXS_PREDICT_RF_RATE;
+    int maxn = 0, ncmax = 1, enabled = (NULL != renv) ? 1 : 0, ti;
     for (ti = 0; ti < ntrees * rf->noutputs; ++ti) {
       if (maxn < rf->trees[ti].nnodes) maxn = rf->trees[ti].nnodes;
     }
     for (ti = 0; ti < rf->noutputs; ++ti) {
       if (ncmax < rf->nclass[ti]) ncmax = rf->nclass[ti];
+      if (0 != rf->regress[ti]) enabled = 1;
     }
-    if (0 < maxn && 0 < rate) {
+    if (0 < maxn && 0 < configured_rate && 0 != enabled) {
       double* pred = (double*)malloc((size_t)p * ncmax * sizeof(double));
       double* sum = (double*)malloc((size_t)maxn * ncmax * sizeof(double));
       int* cnt = (int*)malloc((size_t)maxn * ncmax * sizeof(int));
@@ -1415,9 +1508,11 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_boost(libxs_predict_t* model)
           const int nc = rf->nclass[oi];
           const int reg = rf->regress[oi];
           const int loff = rf->label_offset[oi];
+          const double rate = (NULL != renv || 0 != reg)
+            ? configured_rate : 0;
           int stale = 0, miss0 = 0, miss1 = 0, t, i, k, c;
           double dist0 = 0, dist1 = 0;
-          if (1 > nc) continue;
+          if (1 > nc || 0 >= rate) continue;
           memset(pred, 0, (size_t)p * nc * sizeof(double));
           for (i = 0; i < p; ++i) cover[i] = 0;
           for (t = 0; t < ntrees; ++t) {
@@ -1425,9 +1520,15 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_boost(libxs_predict_t* model)
             if (NULL == tr->nodes || 0 == tr->nnodes) continue;
             memset(oob, 1, (size_t)p);
             for (i = 0; i < p; ++i) {
-              oob[internal_libxs_predict_rf_draw((size_t)i, boot_n,
-                boot_coprime, (size_t)(tbase + t) * 7 + 13,
-                p)] = 0;
+              int row = internal_libxs_predict_rf_draw((size_t)i, boot_n,
+                boot_coprime, (size_t)(tbase + t) * 7 + 13, p);
+              if (NULL != rf->calib_fold) {
+                const int fold = (tbase + t) % LIBXS_PREDICT_RF_CALIB_FOLDS;
+                while (1 + fold == rf->calib_fold[row]) {
+                  row = (row + 1 < p) ? (row + 1) : 0;
+                }
+              }
+              oob[row] = 0;
             }
             for (i = 0; i < p; ++i) {
               if (0 != oob[i]) {
@@ -1457,9 +1558,15 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_boost(libxs_predict_t* model)
              *  avoid recomputing them would cost more than the forest. */
             memset(oob, 1, (size_t)p);
             for (i = 0; i < p; ++i) {
-              oob[internal_libxs_predict_rf_draw((size_t)i, boot_n,
-                boot_coprime, (size_t)(tbase + t) * 7 + 13,
-                p)] = 0;
+              int row = internal_libxs_predict_rf_draw((size_t)i, boot_n,
+                boot_coprime, (size_t)(tbase + t) * 7 + 13, p);
+              if (NULL != rf->calib_fold) {
+                const int fold = (tbase + t) % LIBXS_PREDICT_RF_CALIB_FOLDS;
+                while (1 + fold == rf->calib_fold[row]) {
+                  row = (row + 1 < p) ? (row + 1) : 0;
+                }
+              }
+              oob[row] = 0;
             }
             /**
              * Judged on the held-back rows alone. Judging on this tree's
@@ -1518,8 +1625,7 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_boost(libxs_predict_t* model)
              * been made - and letting an unhelpful stage stand while waiting
              * for a later one to redeem it is how the read-out came to degrade
              * in proportion to the learning rate. Discarding instead makes the
-             * combined read-out no worse than the bagged one it corrects,
-             * which is the property that lets it be on by default.
+             * combined read-out no worse than the bagged one it corrects.
              */
             if (miss1 < miss0 || (miss1 == miss0 && dist1 < dist0)) {
               stale = 0;
@@ -1562,7 +1668,7 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_boost(libxs_predict_t* model)
 LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output_impl(
   const internal_libxs_predict_rf_t* rf, int output_idx,
   const double* inputs, double* confidence, double* variance,
-  int sample, int p, size_t boot_inv, int* evidence)
+  int calib_fold, int* evidence)
 {
   const int regress = (NULL != rf->regress) ? rf->regress[output_idx] : 0;
   const int nc = (NULL != rf->nclass) ? rf->nclass[output_idx] : 1;
@@ -1579,8 +1685,8 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output_impl(
   for (t = 0; t < rf->ntrees; ++t) {
     const internal_libxs_predict_rf_tree_t* tree = &rf->trees[base + t];
     int ni;
-    if (0 <= sample && 0 == internal_libxs_predict_rf_oob(sample, p,
-      (size_t)p * 2 + 1, boot_inv, (size_t)(base + t) * 7 + 13))
+    if (0 <= calib_fold
+      && calib_fold != ((base + t) % LIBXS_PREDICT_RF_CALIB_FOLDS))
     {
       continue;
     }
@@ -1606,7 +1712,7 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output_impl(
       }
     }
   }
-  if (0 <= sample && 0 < nvalid) scale = (double)rf->ntrees / nvalid;
+  if (0 <= calib_fold && 0 < nvalid) scale = (double)rf->ntrees / nvalid;
   if (0 != regress) {
     const double mean = (0 < nvalid) ? (sum / nvalid) : 0.0;
     result = mean + scale * boost;
@@ -1682,7 +1788,7 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output(
   const double* inputs, double* confidence, double* variance)
 {
   return internal_libxs_predict_rf_eval_output_impl(rf, output_idx, inputs,
-    confidence, variance, -1, 0, 0, NULL);
+    confidence, variance, -1, NULL);
 }
 
 
@@ -1698,12 +1804,14 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_calibrate_oob(
   const int nhold = p / LIBXS_PREDICT_RF_HOLD;
   const int ncalib = nhold / 2;
   const int nsample = LIBXS_MIN(ncalib, LIBXS_PREDICT_RF_CALIB_SAMPLE);
-  if (NULL != rf && 0 < nsample && 0 < rf->ntrees) {
+  if (NULL != rf && NULL != rf->calib_fold
+    && 0 < nsample && 0 < rf->ntrees)
+  {
     const int nbin = LIBXS_PREDICT_RF_CALIB;
     const int n = rf->noutputs;
-    const size_t boot_n = (size_t)p * 2 + 1;
-    const size_t boot_inv = libxs_mod_inverse(libxs_coprime2(boot_n), boot_n);
     const size_t hold_coprime = libxs_coprime2((size_t)p);
+    const size_t hold_inv = (1 < p)
+      ? libxs_mod_inverse(hold_coprime, (size_t)p) : 0;
     const int step = LIBXS_MAX((ncalib + nsample - 1) / nsample, 1);
     double* hit = (double*)calloc((size_t)n * nbin, sizeof(double));
     double* cnt = (double*)calloc((size_t)n * nbin, sizeof(double));
@@ -1714,6 +1822,8 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_calibrate_oob(
         const int h = ci * 2 + 1;
         const int row = (int)LIBXS_SHUFFLE_INDEX((size_t)h, (size_t)p,
           hold_coprime, LIBXS_PREDICT_RF_SEED);
+        const int fold = internal_libxs_predict_rf_calib_fold(
+          row, p, hold_inv);
         for (oi = 0; oi < n; ++oi) {
           if (0 == rf->regress[oi] && 1 < rf->nclass[oi]
             && 128 >= rf->nclass[oi])
@@ -1722,7 +1832,7 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_calibrate_oob(
             int evidence = 0;
             const double predicted = internal_libxs_predict_rf_eval_output_impl(
               rf, oi, model->entries[row].inputs, &confidence, NULL,
-              row, p, boot_inv, &evidence);
+              fold, &evidence);
             if (evidence >= LIBXS_MAX(rf->ntrees / 10, 3)) {
               const int b = internal_libxs_predict_rf_calib_bin(
                 confidence, nbin);
@@ -1758,5 +1868,9 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_calibrate_oob(
     free(curve);
     free(cnt);
     free(hit);
+  }
+  if (NULL != rf) {
+    free(rf->calib_fold);
+    rf->calib_fold = NULL;
   }
 }

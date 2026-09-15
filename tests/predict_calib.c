@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define NTRAIN 900
+#define NTRAIN 2000
 #define NCALIB 400
 #define NTEST 400
 #define NFEAT 4
