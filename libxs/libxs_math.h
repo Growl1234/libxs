@@ -85,6 +85,39 @@ LIBXS_EXTERN_C typedef struct libxs_gss_info_t {
   int status;
 } libxs_gss_info_t;
 
+/** Foeppl polynomial fingerprint: per-derivative-order norms. */
+LIBXS_EXTERN_C typedef struct libxs_fprint_t {
+  /** Per-order L2 norm (k = 0..order). */
+  double l2[LIBXS_FPRINT_MAXORDER + 1];
+  /** Per-order L1 norm (sum of absolute values). */
+  double l1[LIBXS_FPRINT_MAXORDER + 1];
+  /** Per-order Linf (max absolute value). */
+  double linf[LIBXS_FPRINT_MAXORDER + 1];
+  /** Per-order signed mean (sum / count, preserves sign and phase). */
+  double mean[LIBXS_FPRINT_MAXORDER + 1];
+  /** Streaming accumulators (un-normalized): sum of squares per order. */
+  double acc_sq[LIBXS_FPRINT_MAXORDER + 1];
+  /** Streaming accumulators: sum of absolute values per order. */
+  double acc_abs[LIBXS_FPRINT_MAXORDER + 1];
+  /** Streaming accumulators: signed sum per order. */
+  double acc_sum[LIBXS_FPRINT_MAXORDER + 1];
+  /** Tail values at each derivative level for junction bridging. */
+  double tail[LIBXS_FPRINT_MAXORDER + 1];
+  /** Derivative orders used and original data length. */
+  int order, n;
+  /** Number of difference values accumulated per order. */
+  int nk[LIBXS_FPRINT_MAXORDER + 1];
+  /** Discovered or given data type. */
+  libxs_data_t datatype;
+} libxs_fprint_t;
+
+typedef enum libxs_fprint_flags_t {
+  LIBXS_FPRINT_DEFAULT  = 0,
+  LIBXS_FPRINT_SORT     = 1,
+  LIBXS_FPRINT_AUTOCORR = 2,
+  LIBXS_FPRINT_PERAXIS  = 4
+} libxs_fprint_flags_t;
+
 /** BF16 storage type (raw uint16_t encoding: 1 sign + 8 exponent + 7 fraction). */
 typedef uint16_t libxs_bf16_t;
 
@@ -187,39 +220,6 @@ LIBXS_API int libxs_setdiff(
 LIBXS_API int libxs_setdiff_min(
   libxs_data_t datatype, const void* a, int na,
   const void* b, int nb, double* tol);
-
-/** Foeppl polynomial fingerprint: per-derivative-order norms. */
-LIBXS_EXTERN_C typedef struct libxs_fprint_t {
-  /** Per-order L2 norm (k = 0..order). */
-  double l2[LIBXS_FPRINT_MAXORDER + 1];
-  /** Per-order L1 norm (sum of absolute values). */
-  double l1[LIBXS_FPRINT_MAXORDER + 1];
-  /** Per-order Linf (max absolute value). */
-  double linf[LIBXS_FPRINT_MAXORDER + 1];
-  /** Per-order signed mean (sum / count, preserves sign and phase). */
-  double mean[LIBXS_FPRINT_MAXORDER + 1];
-  /** Streaming accumulators (un-normalized): sum of squares per order. */
-  double acc_sq[LIBXS_FPRINT_MAXORDER + 1];
-  /** Streaming accumulators: sum of absolute values per order. */
-  double acc_abs[LIBXS_FPRINT_MAXORDER + 1];
-  /** Streaming accumulators: signed sum per order. */
-  double acc_sum[LIBXS_FPRINT_MAXORDER + 1];
-  /** Tail values at each derivative level for junction bridging. */
-  double tail[LIBXS_FPRINT_MAXORDER + 1];
-  /** Derivative orders used and original data length. */
-  int order, n;
-  /** Number of difference values accumulated per order. */
-  int nk[LIBXS_FPRINT_MAXORDER + 1];
-  /** Discovered or given data type. */
-  libxs_data_t datatype;
-} libxs_fprint_t;
-
-typedef enum libxs_fprint_flags_t {
-  LIBXS_FPRINT_DEFAULT  = 0,
-  LIBXS_FPRINT_SORT     = 1,
-  LIBXS_FPRINT_AUTOCORR = 2,
-  LIBXS_FPRINT_PERAXIS  = 4
-} libxs_fprint_flags_t;
 
 /**
  * Foeppl polynomial fingerprint for n-dimensional data.
@@ -463,7 +463,6 @@ LIBXS_API unsigned int libxs_barrett_pow18(unsigned int p);
  */
 LIBXS_API unsigned int libxs_barrett_pow36(unsigned int p);
 
-
 /**
  * Error-free transformation of a sum (Knuth's TwoSum). Returns x = fl(a+b)
  * and, via err, the exact rounding error such that a + b == x + *err for
@@ -507,7 +506,6 @@ LIBXS_API_INLINE double libxs_two_product(double a, double b, double* err) {
 #endif
   return x;
 }
-
 
 /** Round a single-precision value to BF16 (round-to-nearest-even). */
 LIBXS_API_INLINE libxs_bf16_t libxs_round_bf16_f32(float x) {
@@ -561,7 +559,6 @@ LIBXS_API_INLINE double libxs_bf16_to_f64(libxs_bf16_t v) {
   return (double)libxs_bf16_to_f32(v);
 #endif
 }
-
 
 /**
  * Convert an 8-bit unsigned integer to BF16 (exact). BF16 carries eight
@@ -663,7 +660,6 @@ LIBXS_API_INLINE float libxs_f16_to_f32(libxs_f16_t v) {
 #endif
 }
 
-
 /** Round a double-precision value to IEEE FP16 (round-to-nearest-even). */
 LIBXS_API_INLINE libxs_f16_t libxs_round_f16(double x) {
 #if defined(LIBXS_F16)
@@ -676,7 +672,6 @@ LIBXS_API_INLINE libxs_f16_t libxs_round_f16(double x) {
   return libxs_round_f16_f32((float)x);
 #endif
 }
-
 
 /** Expand an IEEE FP16 encoding to double (exact). */
 LIBXS_API_INLINE double libxs_f16_to_f64(libxs_f16_t v) {

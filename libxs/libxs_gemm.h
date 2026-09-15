@@ -108,7 +108,6 @@ typedef libxs_gemm_xfn_t (*libxs_xgemm_dispatch_t)(
   unsigned int gemm_flags,
   unsigned int prefetch_flags);
 
-
 /**
  * Number of threads the BLAS uses by itself (e.g., MKL_Get_Max_Threads or
  * openblas_get_num_threads); 1 means sequential.
@@ -175,6 +174,7 @@ typedef struct libxs_gemm_config_t {
   int warmup;
   libxs_gemm_shape_t shape;
 } libxs_gemm_config_t;
+
 
 /**
  * Runtime GEMM dispatch with double-dispatch support.

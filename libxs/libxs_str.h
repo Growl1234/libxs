@@ -12,6 +12,15 @@
 
 #include "libxs.h"
 
+
+/** Matching strategy for libxs_strisimilar. */
+typedef enum libxs_strisimilar_t {
+  LIBXS_STRISIMILAR_GREEDY = 0,
+  LIBXS_STRISIMILAR_TWOOPT = 1,
+  LIBXS_STRISIMILAR_DEFAULT = LIBXS_STRISIMILAR_GREEDY
+} libxs_strisimilar_t;
+
+
 /** Case-insensitive character-level edit distance (Levenshtein) between two strings. */
 LIBXS_API int libxs_stridist(const char a[], const char b[]);
 
@@ -50,13 +59,6 @@ LIBXS_API const char* libxs_stristr(const char a[], const char b[]);
  * Optional count yields total number of words.
  */
 LIBXS_API int libxs_strimatch(const char a[], const char b[], const char delims[], int* count);
-
-/** Matching strategy for libxs_strisimilar. */
-typedef enum libxs_strisimilar_t {
-  LIBXS_STRISIMILAR_GREEDY = 0,
-  LIBXS_STRISIMILAR_TWOOPT = 1,
-  LIBXS_STRISIMILAR_DEFAULT = LIBXS_STRISIMILAR_GREEDY
-} libxs_strisimilar_t;
 
 /**
  * Compute similarity between strings A and B as a minimum-cost word matching.

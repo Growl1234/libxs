@@ -35,6 +35,15 @@
 #define LIBXS_LEXEME_ENTITY   0x0080u
 #define LIBXS_LEXEME_BREAK    0x0100u
 
+/**
+ * Separator for a multi-token normalization target: `to` may expand one source
+ * token into several tokens, e.g. "is not". Only the first emitted token
+ * carries the source byte length (and the word-break flag); the continuations
+ * carry length zero, so byte accounting over a stream is unchanged by
+ * normalization and libxs_lexeme_word_next groups them as one word.
+ */
+#define LIBXS_LEXNORM_SEPARATOR ' '
+
 
 /** Physical cell of a variable-length metatoken: control byte plus payload. */
 LIBXS_EXTERN_C typedef struct libxs_token_t {
@@ -54,11 +63,6 @@ LIBXS_EXTERN_C typedef struct libxs_token_stream_t {
   size_t size;
   size_t capacity;
 } libxs_token_stream_t;
-
-/** Opaque lexical vocabulary. Token id 0 is reserved for unknown. */
-LIBXS_EXTERN_C typedef struct libxs_lexicon_t libxs_lexicon_t;
-/** Opaque metatoken encoder configuration. */
-LIBXS_EXTERN_C typedef struct libxs_tokenizer_t libxs_tokenizer_t;
 
 /** Growable array of lexical occurrences. */
 LIBXS_EXTERN_C typedef struct libxs_lexeme_stream_t {
@@ -188,14 +192,10 @@ LIBXS_EXTERN_C typedef struct libxs_lexrule_ctx_t {
   unsigned int hash;
 } libxs_lexrule_ctx_t;
 
-/**
- * Separator for a multi-token normalization target: `to` may expand one source
- * token into several tokens, e.g. "is not". Only the first emitted token
- * carries the source byte length (and the word-break flag); the continuations
- * carry length zero, so byte accounting over a stream is unchanged by
- * normalization and libxs_lexeme_word_next groups them as one word.
- */
-#define LIBXS_LEXNORM_SEPARATOR ' '
+/** Opaque lexical vocabulary. Token id 0 is reserved for unknown. */
+LIBXS_EXTERN_C typedef struct libxs_lexicon_t libxs_lexicon_t;
+/** Opaque metatoken encoder configuration. */
+LIBXS_EXTERN_C typedef struct libxs_tokenizer_t libxs_tokenizer_t;
 
 /** Data-only lexical normalization: map normalized `from` text to `to`. */
 LIBXS_EXTERN_C typedef struct libxs_lexnorm_t {
