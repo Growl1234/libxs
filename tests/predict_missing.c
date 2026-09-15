@@ -238,6 +238,33 @@ int main(void)
     }
     else result = EXIT_FAILURE;
   }
+  /* An output absent from the header may name an intentionally hidden trailing
+     field. Inputs remain strict because no default or placement exists. */
+  if (EXIT_SUCCESS == result) {
+    FILE* out = fopen(CSVFILE, "w");
+    if (NULL != out) {
+      fprintf(out, "a,b,y\n1,2,3,4\n5,6,7,8\n");
+      fclose(out);
+      { libxs_predict_t* csv = libxs_predict_create(2, 2);
+        double inputs[2], outputs[2];
+        int loaded = -1;
+        if (NULL != csv) {
+          loaded = libxs_predict_load_csv(csv, CSVFILE, NULL,
+            "a,b", "y,hidden", NULL, 0, NULL);
+          if (2 == loaded) libxs_predict_get(csv, 1, inputs, outputs);
+        }
+        if (2 != loaded || 5.0 != inputs[0] || 6.0 != inputs[1]
+          || 7.0 != outputs[0] || 8.0 != outputs[1])
+        {
+          fprintf(stderr, "loader did not resolve a hidden trailing output\n");
+          result = EXIT_FAILURE;
+        }
+        libxs_predict_destroy(csv);
+      }
+      remove(CSVFILE);
+    }
+    else result = EXIT_FAILURE;
+  }
   libxs_predict_destroy(rfmodel);
   libxs_predict_destroy(vmodel);
   libxs_predict_destroy(model);

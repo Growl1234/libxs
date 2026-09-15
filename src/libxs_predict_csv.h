@@ -142,7 +142,7 @@ LIBXS_API int libxs_predict_load_csv_opts(libxs_predict_t* model,
     const char* output_tokens[64];
     char tokbuf[2048];
     int idx[128];
-    int i, named = 0, resolved = 1;
+    int i, named = 0, resolved = 1, ncols = 1, nextra = 0;
     int ni = 0, no = 0;
     LIBXS_UNUSED(ni); LIBXS_UNUSED(no);
     LIBXS_ASSERT(ninputs + noutputs <= 128);
@@ -184,6 +184,12 @@ LIBXS_API int libxs_predict_load_csv_opts(libxs_predict_t* model,
       sep = internal_libxs_predict_detect_delims(line);
     }
     if (NULL == sep) sep = ",";
+    { const char* cp = line;
+      while ('\0' != *cp) {
+        if (NULL != strchr(sep, *cp)) ++ncols;
+        ++cp;
+      }
+    }
     for (i = 0; i < ninputs && 0 != resolved; ++i) {
       if (NULL != inputs) {
         char* endptr = NULL;
@@ -202,7 +208,10 @@ LIBXS_API int libxs_predict_load_csv_opts(libxs_predict_t* model,
         if (endptr == output_tokens[i] || '\0' != *endptr) named = 1;
         idx[ninputs + i] = internal_libxs_predict_resolve_col(
           output_tokens[i], line, sep);
-        if (0 > idx[ninputs + i]) resolved = 0;
+        if (0 > idx[ninputs + i]) {
+          if (0 != named) idx[ninputs + i] = ncols + nextra++;
+          else resolved = 0;
+        }
       }
       else idx[ninputs + i] = ninputs + i;
     }
