@@ -1087,6 +1087,68 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
 }
 
 
+LIBXS_API_INLINE int internal_libxs_predict_load_rf_tree_v1(
+  const unsigned char** src, const unsigned char* end, int ninputs,
+  internal_libxs_predict_rf_tree_t* tree)
+{
+  uint16_t nn = 0;
+  int result = internal_libxs_predict_read(src, end, &nn, 2);
+  internal_libxs_predict_rf_build_node_t* nodes = NULL;
+  if (EXIT_SUCCESS == result && INT16_MAX < nn) result = EXIT_FAILURE;
+  if (EXIT_SUCCESS == result && 0 < nn) {
+    result = internal_libxs_predict_avail(*src, end, (size_t)nn,
+      2 + 8 + 2 + 2 + 1);
+  }
+  if (EXIT_SUCCESS == result && 0 < nn) {
+    nodes = (internal_libxs_predict_rf_build_node_t*)malloc(
+      (size_t)nn * sizeof(internal_libxs_predict_rf_build_node_t));
+    if (NULL == nodes) result = EXIT_FAILURE;
+  }
+  if (NULL != nodes) {
+    int k;
+    for (k = 0; k < (int)nn && EXIT_SUCCESS == result; ++k) {
+      int16_t feature = 0, left = 0, right = 0;
+      uint8_t label = 0;
+      result = internal_libxs_predict_read(src, end, &feature, 2);
+      if (EXIT_SUCCESS == result) {
+        result = internal_libxs_predict_read(
+          src, end, &nodes[k].threshold, 8);
+      }
+      if (EXIT_SUCCESS == result) {
+        result = internal_libxs_predict_read(src, end, &left, 2);
+      }
+      if (EXIT_SUCCESS == result) {
+        result = internal_libxs_predict_read(src, end, &right, 2);
+      }
+      if (EXIT_SUCCESS == result) {
+        result = internal_libxs_predict_read(src, end, &label, 1);
+      }
+      if (EXIT_SUCCESS == result && (feature >= ninputs || feature < -1
+        || left >= (int16_t)nn || left < -1
+        || right >= (int16_t)nn || right < -1))
+      {
+        result = EXIT_FAILURE;
+      }
+      if (EXIT_SUCCESS == result) {
+        nodes[k].feature = (int)feature;
+        nodes[k].left = (int)left;
+        nodes[k].right = (int)right;
+        nodes[k].label = (int)label;
+        nodes[k].value = (double)label;
+        nodes[k].leafp = 0.f;
+      }
+    }
+    if (EXIT_SUCCESS == result) {
+      tree->nnodes = internal_libxs_predict_rf_pack_tree(
+        nodes, (int)nn, &tree->nodes);
+      if (0 >= tree->nnodes) result = EXIT_FAILURE;
+    }
+  }
+  free(nodes);
+  return result;
+}
+
+
 LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
 {
   libxs_predict_t* model = NULL;
@@ -1431,7 +1493,6 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
     if (EXIT_SUCCESS == ok && src < end && model->decompose == LIBXS_PREDICT_RF) {
       uint16_t rf_ntrees = 0, rf_nouts = 0;
       int j;
-      if (2 > version) ok = EXIT_FAILURE;
       if (EXIT_SUCCESS == ok) {
         ok = internal_libxs_predict_read(&src, end, &rf_ntrees, 2);
       }
@@ -1513,6 +1574,11 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
               uint32_t nn = 0;
               uint8_t hasincr = 0;
               int k;
+              if (1 >= version) {
+                ok = internal_libxs_predict_load_rf_tree_v1(
+                  &src, end, (int)ninp, &rf->trees[ti]);
+                continue;
+              }
               if (EXIT_SUCCESS == ok) {
                 ok = internal_libxs_predict_read(&src, end, &nn, 4);
               }
