@@ -9,6 +9,9 @@
 ******************************************************************************/
 #include <libxs/libxs_predict.h>
 #include <libxs/libxs_malloc.h>
+#if defined(_OPENMP)
+# include <omp.h>
+#endif
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -36,7 +39,7 @@ static void fill(double input[], double* out, int i)
 }
 
 
-static int build_model(libxs_predict_t* model)
+static int build_model(libxs_predict_t* model, int ntrees, int collective)
 {
   int i, result = EXIT_SUCCESS;
   for (i = 0; i < NENTRY && EXIT_SUCCESS == result; ++i) {
@@ -46,6 +49,19 @@ static int build_model(libxs_predict_t* model)
   }
   if (EXIT_SUCCESS == result) {
     libxs_predict_set_decompose(model, LIBXS_PREDICT_RF);
+    if (0 < ntrees) libxs_predict_set_forest(model, ntrees, 0);
+#if defined(_OPENMP)
+    if (0 != collective) {
+#     pragma omp parallel num_threads(4)
+      { const int build = libxs_predict_build_task(model, 0, 1, 0.0,
+          omp_get_thread_num(), omp_get_num_threads());
+        if (0 == omp_get_thread_num()) result = build;
+      }
+    }
+    else
+#else
+    LIBXS_UNUSED(collective);
+#endif
     result = libxs_predict_build(model, 0, 1, 0.0);
   }
   return result;
@@ -61,7 +77,7 @@ static int save_model(void** buffer, size_t* size, double prediction[])
   *buffer = NULL;
   *size = 0;
   if (NULL != model) {
-    if (EXIT_SUCCESS == build_model(model)
+    if (EXIT_SUCCESS == build_model(model, 0, 0)
       && EXIT_SUCCESS == libxs_predict_save(model, NULL, size) && 0 < *size)
     {
       int i;
@@ -103,6 +119,48 @@ static int save_model(void** buffer, size_t* size, double prediction[])
     }
     libxs_predict_destroy(model);
   }
+  return result;
+}
+
+
+static int check_team_build_case(int ntrees)
+{
+  libxs_predict_t* serial = libxs_predict_create(NFEAT, 1);
+  libxs_predict_t* team = libxs_predict_create(NFEAT, 1);
+  void* a = NULL;
+  void* b = NULL;
+  size_t na = 0, nb = 0;
+  int result = (NULL != serial && NULL != team) ? EXIT_SUCCESS : EXIT_FAILURE;
+  if (EXIT_SUCCESS == result) result = build_model(serial, ntrees, 0);
+  if (EXIT_SUCCESS == result) result = build_model(team, ntrees, 1);
+  if (EXIT_SUCCESS == result) result = libxs_predict_save(serial, NULL, &na);
+  if (EXIT_SUCCESS == result) result = libxs_predict_save(team, NULL, &nb);
+  if (EXIT_SUCCESS == result && na == nb) {
+    a = malloc(na);
+    b = malloc(nb);
+    if (NULL != a && NULL != b) {
+      result = libxs_predict_save(serial, a, &na);
+      if (EXIT_SUCCESS == result) result = libxs_predict_save(team, b, &nb);
+      if (EXIT_SUCCESS == result && 0 != memcmp(a, b, na)) {
+        fprintf(stderr, "serial and team forests differ\n");
+        result = EXIT_FAILURE;
+      }
+    }
+    else result = EXIT_FAILURE;
+  }
+  else if (EXIT_SUCCESS == result) result = EXIT_FAILURE;
+  free(b);
+  free(a);
+  libxs_predict_destroy(team);
+  libxs_predict_destroy(serial);
+  return result;
+}
+
+
+static int check_team_build(void)
+{
+  int result = check_team_build_case(2);
+  if (EXIT_SUCCESS == result) result = check_team_build_case(8);
   return result;
 }
 
@@ -174,7 +232,7 @@ int main(void)
   void* second = NULL;
   size_t nfirst = 0, nsecond = 0;
   double prediction[NENTRY], repeated[NENTRY];
-  int result = EXIT_SUCCESS;
+  int result = check_team_build();
   if (EXIT_SUCCESS != save_model(&first, &nfirst, prediction)) {
     fprintf(stderr, "the model could not be built or saved\n");
     result = EXIT_FAILURE;

@@ -90,6 +90,10 @@
 #if !defined(LIBXS_PREDICT_RF_NTREES)
 #  define LIBXS_PREDICT_RF_NTREES 100
 #endif
+/** Concurrent tree working sets when caller tasks outnumber trees. */
+#if !defined(LIBXS_PREDICT_RF_BUILD_TEAMS)
+#  define LIBXS_PREDICT_RF_BUILD_TEAMS 100
+#endif
 /** Trees per candidate while scoring depth: enough to average out the
  *  bootstrap, few enough that trying four depths is not four full builds. */
 #if !defined(LIBXS_PREDICT_RF_PROBE)
@@ -1224,10 +1228,10 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_pack_tree(
     if (NULL != dst) {
       int next = 0;
       if (EXIT_SUCCESS == internal_libxs_predict_rf_pack_part(
-        src, nsrc, 0, dst, &next) && nsrc == next)
+        src, nsrc, 0, dst, &next))
       {
         *packed = dst;
-        result = nsrc;
+        result = next;
       }
       else free(dst);
     }
@@ -1236,7 +1240,55 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_pack_tree(
 }
 
 
-LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks(
+LIBXS_API_INLINE void internal_libxs_predict_rf_team_bounds(
+  int ntasks, int nteams, int team, int* begin, int* end)
+{
+  internal_libxs_predict_split(ntasks, team, nteams, begin, end);
+}
+
+
+LIBXS_API_INLINE int internal_libxs_predict_rf_team_prepare(
+  libxs_predict_t* model, int ntasks)
+{
+  internal_libxs_predict_rf_t* const rf = model->rf;
+  int result = EXIT_SUCCESS;
+  if (NULL != rf) {
+    const int total_trees = rf->ntrees * rf->noutputs;
+    const int nteams = LIBXS_MIN(total_trees, LIBXS_PREDICT_RF_BUILD_TEAMS);
+    if (ntasks > nteams && 0 < nteams
+      && INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX * nteams >= ntasks)
+    {
+      int team;
+      rf->build_team = (internal_libxs_predict_rf_team_t*)calloc(
+        (size_t)nteams, sizeof(internal_libxs_predict_rf_team_t));
+      if (NULL != rf->build_team) {
+        rf->build_nteams = nteams;
+        for (team = 0; team < nteams; ++team) {
+          int begin, end;
+          internal_libxs_predict_rf_team_bounds(
+            ntasks, nteams, team, &begin, &end);
+          libxs_barrier_init(&rf->build_team[team].barrier, end - begin);
+        }
+      }
+      else result = EXIT_FAILURE;
+    }
+  }
+  return result;
+}
+
+
+LIBXS_API_INLINE void internal_libxs_predict_rf_team_release(
+  libxs_predict_t* model)
+{
+  if (NULL != model->rf) {
+    free(model->rf->build_team);
+    model->rf->build_team = NULL;
+    model->rf->build_nteams = 0;
+  }
+}
+
+
+LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks_independent(
   libxs_predict_t* model, int tid, int ntasks)
 {
   const internal_libxs_predict_rf_t* rf = model->rf;
@@ -1355,6 +1407,249 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks(
     LIBXS_PREDICT_FREE(index_scratch, index_pool);
     LIBXS_PREDICT_FREE(values_scratch, values_pool);
     LIBXS_PREDICT_FREE(bootstrap, bootstrap_pool);
+  }
+  return result;
+}
+
+
+LIBXS_API_INLINE size_t internal_libxs_predict_rf_values_count(
+  const internal_libxs_predict_rf_t* rf, int output, int nfeat, int nrows)
+{
+  size_t result = (NULL != rf->bins)
+    ? LIBXS_PREDICT_RF_BINMIN : (size_t)nrows;
+  if (NULL != rf->bins) {
+    const int ncls = (0 != rf->regress[output]) ? 1
+      : ((0 < rf->nclass[output] && 128 >= rf->nclass[output])
+        ? rf->nclass[output] : 128);
+    const int width = (0 != rf->regress[output]) ? 3 : ncls;
+    const size_t per = (size_t)rf->nbins * width;
+    int nfused = (int)(LIBXS_PREDICT_RF_HISTMAX
+      / (per * sizeof(double)));
+    const int nfeatsub = internal_libxs_predict_rf_nfeatsub(nfeat);
+    size_t needed;
+    if (1 > nfused) nfused = 1;
+    nfused = LIBXS_MIN(nfused, nfeatsub);
+    needed = (size_t)nfused * per;
+    if (result < needed) result = needed;
+  }
+  return result;
+}
+
+
+LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree_team(
+  libxs_predict_t* model, int tree, int rank, int team_size,
+  internal_libxs_predict_rf_team_t* ctx)
+{
+  internal_libxs_predict_rf_t* const rf = model->rf;
+  const int p = model->nentries;
+  const int m = model->ninputs;
+  const int min_leaf = LIBXS_PREDICT_RF_MINLEAF;
+  const int leaf_floor = (LIBXS_PREDICT_RF_MAXNODES < p * 2 / min_leaf)
+    ? LIBXS_MAX(1, (p * 2 + LIBXS_PREDICT_RF_MAXNODES - 2)
+      / (LIBXS_PREDICT_RF_MAXNODES - 1)) : 1;
+  const int max_nodes = LIBXS_MIN(p / leaf_floor * 2 + 1,
+    LIBXS_PREDICT_RF_MAXNODES);
+  const size_t boot_n = (size_t)p * 2 + 1;
+  const size_t boot_coprime = libxs_coprime2(boot_n);
+  const int output = tree / rf->ntrees;
+  int result;
+  internal_libxs_predict_rf_build_node_t* part = NULL;
+  double* values_scratch = NULL;
+  int* index_scratch = NULL;
+  if (0 == rank) {
+    const size_t values_count = internal_libxs_predict_rf_values_count(
+      rf, output, m, p);
+    int i;
+    ctx->failed = 0;
+    ctx->top_n = 0;
+    ctx->nfrontier = 0;
+    for (i = 0; i < INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX; ++i) {
+      ctx->part[i] = NULL;
+      ctx->part_n[i] = 0;
+    }
+    ctx->bootstrap = (int*)malloc((size_t)p * sizeof(int));
+    ctx->values_scratch = (double*)malloc(values_count * sizeof(double));
+    ctx->index_scratch = (int*)malloc((size_t)p * sizeof(int));
+    ctx->nodes = (internal_libxs_predict_rf_build_node_t*)malloc(
+      (size_t)(max_nodes + INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX)
+        * sizeof(internal_libxs_predict_rf_build_node_t));
+    if (NULL == ctx->bootstrap || NULL == ctx->values_scratch
+      || NULL == ctx->index_scratch || NULL == ctx->nodes)
+    {
+      LIBXS_ATOMIC_STORE(&ctx->failed, 1, LIBXS_ATOMIC_SEQ_CST);
+    }
+  }
+  libxs_barrier_wait(&ctx->barrier);
+  if (0 == LIBXS_ATOMIC_LOAD(&ctx->failed, LIBXS_ATOMIC_SEQ_CST)) {
+    int begin, end, i;
+    internal_libxs_predict_split(p, rank, team_size, &begin, &end);
+    for (i = begin; i < end; ++i) {
+      int probed = 0;
+      ctx->bootstrap[i] = internal_libxs_predict_rf_draw((size_t)i, boot_n,
+        boot_coprime, (size_t)tree * 7 + 13, p);
+      if (NULL != rf->calib_fold) {
+        const int fold = tree % LIBXS_PREDICT_RF_CALIB_FOLDS;
+        while (probed < p
+          && 1 + fold == rf->calib_fold[ctx->bootstrap[i]])
+        {
+          ctx->bootstrap[i] = (ctx->bootstrap[i] + 1 < p)
+            ? (ctx->bootstrap[i] + 1) : 0;
+          ++probed;
+        }
+        if (p <= probed) {
+          LIBXS_ATOMIC_STORE(&ctx->failed, 1, LIBXS_ATOMIC_SEQ_CST);
+        }
+      }
+    }
+  }
+  libxs_barrier_wait(&ctx->barrier);
+  if (0 == rank
+    && 0 == LIBXS_ATOMIC_LOAD(&ctx->failed, LIBXS_ATOMIC_SEQ_CST))
+  {
+    internal_libxs_predict_rf_grow_t g;
+    g.entries = model->entries;
+    g.bins = rf->bins; g.bin_edge = rf->bin_edge; g.nbins = rf->nbins;
+    g.values_scratch = ctx->values_scratch;
+    g.index_scratch = ctx->index_scratch;
+    g.nfeat = m; g.nfeatsub = internal_libxs_predict_rf_nfeatsub(m);
+    g.max_depth = rf->depth[output]; g.min_leaf = min_leaf;
+    g.leaf_floor = leaf_floor; g.output_idx = output;
+    g.label_off = rf->label_offset[output]; g.regress = rf->regress[output];
+    g.nclass = rf->nclass[output];
+    ctx->top_n = internal_libxs_predict_rf_build_part(&g, ctx->bootstrap,
+      0, p, 0, ctx->nodes, max_nodes, team_size,
+      ctx->fr_si, ctx->fr_nc, ctx->fr_depth, ctx->fr_node,
+      &ctx->nfrontier);
+    if (0 >= ctx->top_n || max_nodes < ctx->top_n
+      || INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX < ctx->nfrontier)
+    {
+      LIBXS_ATOMIC_STORE(&ctx->failed, 1, LIBXS_ATOMIC_SEQ_CST);
+    }
+  }
+  libxs_barrier_wait(&ctx->barrier);
+  if (rank < ctx->nfrontier
+    && 0 == LIBXS_ATOMIC_LOAD(&ctx->failed, LIBXS_ATOMIC_SEQ_CST))
+  {
+    const int nc = ctx->fr_nc[rank];
+    const int part_cap = LIBXS_MIN(
+      LIBXS_MAX(nc / leaf_floor * 2 + 1, 3), max_nodes);
+    const size_t values_count = internal_libxs_predict_rf_values_count(
+      rf, output, m, nc);
+    internal_libxs_predict_rf_grow_t g;
+    part = (internal_libxs_predict_rf_build_node_t*)malloc(
+      (size_t)part_cap * sizeof(internal_libxs_predict_rf_build_node_t));
+    values_scratch = (double*)malloc(values_count * sizeof(double));
+    index_scratch = (int*)malloc((size_t)nc * sizeof(int));
+    if (NULL != part && NULL != values_scratch && NULL != index_scratch) {
+      g.entries = model->entries;
+      g.bins = rf->bins; g.bin_edge = rf->bin_edge; g.nbins = rf->nbins;
+      g.values_scratch = values_scratch; g.index_scratch = index_scratch;
+      g.nfeat = m; g.nfeatsub = internal_libxs_predict_rf_nfeatsub(m);
+      g.max_depth = rf->depth[output]; g.min_leaf = min_leaf;
+      g.leaf_floor = leaf_floor; g.output_idx = output;
+      g.label_off = rf->label_offset[output];
+      g.regress = rf->regress[output]; g.nclass = rf->nclass[output];
+      ctx->part_n[rank] = internal_libxs_predict_rf_build_part(&g,
+        ctx->bootstrap, ctx->fr_si[rank], nc, ctx->fr_depth[rank],
+        part, part_cap, 0, NULL, NULL, NULL, NULL, NULL);
+      ctx->part[rank] = part;
+      if (0 >= ctx->part_n[rank]) {
+        LIBXS_ATOMIC_STORE(&ctx->failed, 1, LIBXS_ATOMIC_SEQ_CST);
+      }
+    }
+    else LIBXS_ATOMIC_STORE(&ctx->failed, 1, LIBXS_ATOMIC_SEQ_CST);
+  }
+  libxs_barrier_wait(&ctx->barrier);
+  if (0 == rank
+    && 0 == LIBXS_ATOMIC_LOAD(&ctx->failed, LIBXS_ATOMIC_SEQ_CST))
+  {
+    int assembled = ctx->top_n;
+    int frontier;
+    for (frontier = 0; frontier < ctx->nfrontier; ++frontier) {
+      const int base = assembled;
+      const int np = ctx->part_n[frontier];
+      int j;
+      if (max_nodes + INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX < assembled + np) {
+        LIBXS_ATOMIC_STORE(&ctx->failed, 1, LIBXS_ATOMIC_SEQ_CST);
+        break;
+      }
+      memcpy(ctx->nodes + base, ctx->part[frontier],
+        (size_t)np * sizeof(internal_libxs_predict_rf_build_node_t));
+      for (j = 0; j < np; ++j) {
+        if (0 <= ctx->nodes[base + j].left) {
+          ctx->nodes[base + j].left += base;
+        }
+        if (0 <= ctx->nodes[base + j].right) {
+          ctx->nodes[base + j].right += base;
+        }
+      }
+      ctx->nodes[ctx->fr_node[frontier]] = ctx->nodes[base];
+      assembled += np;
+    }
+    if (0 == LIBXS_ATOMIC_LOAD(&ctx->failed, LIBXS_ATOMIC_SEQ_CST)) {
+      rf->trees[tree].nnodes = internal_libxs_predict_rf_pack_tree(
+        ctx->nodes, assembled, &rf->trees[tree].nodes);
+      if (0 >= rf->trees[tree].nnodes) {
+        LIBXS_ATOMIC_STORE(&ctx->failed, 1, LIBXS_ATOMIC_SEQ_CST);
+      }
+    }
+  }
+  libxs_barrier_wait(&ctx->barrier);
+  result = (0 == LIBXS_ATOMIC_LOAD(&ctx->failed, LIBXS_ATOMIC_SEQ_CST))
+    ? EXIT_SUCCESS : EXIT_FAILURE;
+  free(index_scratch);
+  free(values_scratch);
+  free(part);
+  if (0 == rank) {
+    free(ctx->nodes);
+    free(ctx->index_scratch);
+    free(ctx->values_scratch);
+    free(ctx->bootstrap);
+  }
+  return result;
+}
+
+
+LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks_team(
+  libxs_predict_t* model, int tid, int ntasks)
+{
+  internal_libxs_predict_rf_t* const rf = model->rf;
+  const int total_trees = rf->ntrees * rf->noutputs;
+  int team = 0, task_begin = 0, task_end = 0;
+  int rank, team_size, tree, result = EXIT_SUCCESS;
+  while (team < rf->build_nteams) {
+    internal_libxs_predict_rf_team_bounds(ntasks, rf->build_nteams,
+      team, &task_begin, &task_end);
+    if (task_begin <= tid && tid < task_end) break;
+    ++team;
+  }
+  if (rf->build_nteams <= team) result = EXIT_FAILURE;
+  if (EXIT_SUCCESS == result) {
+    rank = tid - task_begin;
+    team_size = task_end - task_begin;
+    for (tree = team; tree < total_trees && EXIT_SUCCESS == result;
+      tree += rf->build_nteams)
+    {
+      result = internal_libxs_predict_rf_build_tree_team(model, tree,
+        rank, team_size, rf->build_team + team);
+    }
+  }
+  return result;
+}
+
+
+LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks(
+  libxs_predict_t* model, int tid, int ntasks)
+{
+  int result;
+  if (NULL != model->rf && NULL != model->rf->build_team
+    && 0 < model->rf->build_nteams)
+  {
+    result = internal_libxs_predict_rf_build_tasks_team(model, tid, ntasks);
+  }
+  else {
+    result = internal_libxs_predict_rf_build_tasks_independent(
+      model, tid, ntasks);
   }
   return result;
 }
