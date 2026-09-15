@@ -53,9 +53,10 @@ static int build_model(libxs_predict_t* model)
 
 
 /** Serializes a freshly built model; the caller owns the buffer. */
-static int save_model(void** buffer, size_t* size)
+static int save_model(void** buffer, size_t* size, double prediction[])
 {
   libxs_predict_t* model = libxs_predict_create(NFEAT, 1);
+  double batch_input[NENTRY * NFEAT], batch_prediction[NENTRY];
   int result = EXIT_FAILURE;
   *buffer = NULL;
   *size = 0;
@@ -63,13 +64,80 @@ static int save_model(void** buffer, size_t* size)
     if (EXIT_SUCCESS == build_model(model)
       && EXIT_SUCCESS == libxs_predict_save(model, NULL, size) && 0 < *size)
     {
-      *buffer = malloc(*size);
-      if (NULL != *buffer) {
-        result = libxs_predict_save(model, *buffer, size);
+      int i;
+      result = EXIT_SUCCESS;
+      for (i = 0; i < NENTRY && EXIT_SUCCESS == result; ++i) {
+        double input[NFEAT], out;
+        fill(input, &out, i);
+        memcpy(batch_input + (size_t)i * NFEAT,
+          input, (size_t)NFEAT * sizeof(double));
+        libxs_predict_eval(NULL, model, input, prediction + i, NULL, 0);
+      }
+      libxs_predict_eval_batch(
+        model, batch_input, batch_prediction, NENTRY, 0);
+      for (i = 0; i < NENTRY && EXIT_SUCCESS == result; ++i) {
+        if (batch_prediction[i] != prediction[i]) {
+          fprintf(stderr, "batch prediction %g differs from %g at entry %d\n",
+            batch_prediction[i], prediction[i], i);
+          result = EXIT_FAILURE;
+        }
+      }
+      if (EXIT_SUCCESS == result) {
+        libxs_predict_eval_batch(
+          model, batch_input, batch_prediction, NENTRY - 3, 0);
+        for (i = 0; i < NENTRY - 3 && EXIT_SUCCESS == result; ++i) {
+          if (batch_prediction[i] != prediction[i]) {
+            fprintf(stderr, "batch tail %g differs from %g at entry %d\n",
+              batch_prediction[i], prediction[i], i);
+            result = EXIT_FAILURE;
+          }
+        }
+      }
+      if (EXIT_SUCCESS == result) {
+        *buffer = malloc(*size);
+        if (NULL != *buffer) {
+          result = libxs_predict_save(model, *buffer, size);
+        }
+        else result = EXIT_FAILURE;
       }
     }
     libxs_predict_destroy(model);
   }
+  return result;
+}
+
+
+static int check_roundtrip(const void* buffer, size_t size,
+  const double prediction[])
+{
+  libxs_predict_t* model = libxs_predict_load(buffer, size);
+  int result = (NULL != model) ? EXIT_SUCCESS : EXIT_FAILURE;
+  int i;
+  for (i = 0; i < NENTRY && EXIT_SUCCESS == result; ++i) {
+    double input[NFEAT], out, loaded = 0;
+    fill(input, &out, i);
+    libxs_predict_eval(NULL, model, input, &loaded, NULL, 0);
+    if (loaded != prediction[i]) {
+      fprintf(stderr, "loaded prediction %g differs from %g at entry %d\n",
+        loaded, prediction[i], i);
+      result = EXIT_FAILURE;
+    }
+  }
+  if (EXIT_SUCCESS == result) {
+    size_t written = 0;
+    void* saved;
+    result = libxs_predict_save(model, NULL, &written);
+    saved = (EXIT_SUCCESS == result && size == written)
+      ? malloc(written) : NULL;
+    if (NULL != saved) result = libxs_predict_save(model, saved, &written);
+    else result = EXIT_FAILURE;
+    if (EXIT_SUCCESS == result && 0 != memcmp(buffer, saved, size)) {
+      fprintf(stderr, "loaded model did not save byte-identically\n");
+      result = EXIT_FAILURE;
+    }
+    free(saved);
+  }
+  libxs_predict_destroy(model);
   return result;
 }
 
@@ -105,14 +173,15 @@ int main(void)
   void* first = NULL;
   void* second = NULL;
   size_t nfirst = 0, nsecond = 0;
+  double prediction[NENTRY], repeated[NENTRY];
   int result = EXIT_SUCCESS;
-  if (EXIT_SUCCESS != save_model(&first, &nfirst)) {
+  if (EXIT_SUCCESS != save_model(&first, &nfirst, prediction)) {
     fprintf(stderr, "the model could not be built or saved\n");
     result = EXIT_FAILURE;
   }
   if (EXIT_SUCCESS == result) {
     dirty_scratch();
-    if (EXIT_SUCCESS != save_model(&second, &nsecond)) {
+    if (EXIT_SUCCESS != save_model(&second, &nsecond, repeated)) {
       fprintf(stderr, "the model could not be rebuilt or saved\n");
       result = EXIT_FAILURE;
     }
@@ -136,6 +205,9 @@ int main(void)
       " first at %llu (%02x vs %02x)\n", (unsigned long long)ndiff,
       (unsigned long long)nfirst, (unsigned long long)at, a[at], b[at]);
     result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS == result) {
+    result = check_roundtrip(first, nfirst, prediction);
   }
   free(second);
   free(first);

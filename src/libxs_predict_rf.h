@@ -109,6 +109,10 @@
 #if !defined(LIBXS_PREDICT_RF_CALIB_FOLDS)
 #  define LIBXS_PREDICT_RF_CALIB_FOLDS 4
 #endif
+/** Queries advanced together through one packed tree. */
+#if !defined(LIBXS_PREDICT_RF_PACKET)
+#  define LIBXS_PREDICT_RF_PACKET 16
+#endif
 
 
 LIBXS_API_INLINE int internal_libxs_predict_rf_pair_cmp(
@@ -128,7 +132,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_pair_cmp(
 LIBXS_API_INLINE int internal_libxs_predict_rf_split_sort(
   const internal_libxs_predict_entry_t* entries,
   const int* subset, int nsub, int nfeat, int nfeatsub,
-  internal_libxs_predict_rf_node_t* node, size_t seed,
+  internal_libxs_predict_rf_build_node_t* node, size_t seed,
   int output_idx, int label_off, int regress, int min_leaf, int nclass,
   double* values_scratch, int* index_scratch)
 {
@@ -283,7 +287,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_hist(
   const internal_libxs_predict_entry_t* entries,
   const unsigned char* bins, const double* bin_edge, int nbins,
   const int* subset, int nsub, int nfeat, int nfeatsub,
-  internal_libxs_predict_rf_node_t* node, size_t seed,
+  internal_libxs_predict_rf_build_node_t* node, size_t seed,
   int output_idx, int label_off, int regress, int min_leaf, int nclass,
   double* values_scratch, int* index_scratch)
 {
@@ -451,7 +455,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split(
   const internal_libxs_predict_entry_t* entries,
   const unsigned char* bins, const double* bin_edge, int nbins,
   const int* subset, int nsub, int nfeat, int nfeatsub,
-  internal_libxs_predict_rf_node_t* node, size_t seed,
+  internal_libxs_predict_rf_build_node_t* node, size_t seed,
   int output_idx, int label_off, int regress, int min_leaf, int nclass,
   double* values_scratch, int* index_scratch)
 {
@@ -498,7 +502,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_nfeatsub(int nfeat)
 LIBXS_API_INLINE int internal_libxs_predict_rf_build_part(
   const internal_libxs_predict_rf_grow_t* g, int* subset,
   int si0, int nc0, int depth0,
-  internal_libxs_predict_rf_node_t* nodes, int max_nodes,
+  internal_libxs_predict_rf_build_node_t* nodes, int max_nodes,
   int frontier, int* fr_si, int* fr_nc, int* fr_depth, int* fr_node,
   int* fr_count)
 {
@@ -530,7 +534,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_part(
     const int ni = stack_node[sp];
     int best_label = 0, best_count = 0, pure = 0, k;
     double mean = 0, dev = 0;
-    internal_libxs_predict_rf_node_t split;
+    internal_libxs_predict_rf_build_node_t split;
     LIBXS_MEMZERO(&split);
     if (0 != regress) {
       for (k = 0; k < nc; ++k) {
@@ -672,7 +676,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_part(
  */
 LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree(
   const internal_libxs_predict_rf_grow_t* g, int* subset, int nsub,
-  internal_libxs_predict_rf_node_t* nodes, int max_nodes)
+  internal_libxs_predict_rf_build_node_t* nodes, int max_nodes)
 {
   return internal_libxs_predict_rf_build_part(g, subset, 0, nsub, 0,
     nodes, max_nodes, 0, NULL, NULL, NULL, NULL, NULL);
@@ -691,8 +695,8 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree(
  * if the tree is deeper than the traversal holds, which is the bound growth has.
  */
 LIBXS_API_INLINE int internal_libxs_predict_rf_relabel(
-  const internal_libxs_predict_rf_node_t* src, int nsrc, int root,
-  int* map, internal_libxs_predict_rf_node_t* dst)
+  const internal_libxs_predict_rf_build_node_t* src, int nsrc, int root,
+  int* map, internal_libxs_predict_rf_build_node_t* dst)
 {
   int stack[64], sp = 0, next = 1, i, result = 0;
   for (i = 0; i < nsrc; ++i) map[i] = -1;
@@ -742,7 +746,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_relabel(
  */
 LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree_parts(
   const internal_libxs_predict_rf_grow_t* g, int* subset, int nsub,
-  internal_libxs_predict_rf_node_t* nodes, int max_nodes, int frontier)
+  internal_libxs_predict_rf_build_node_t* nodes, int max_nodes, int frontier)
 {
   int fr_si[64], fr_nc[64], fr_depth[64], fr_node[64], fc = 0;
   int result = internal_libxs_predict_rf_build_part(g, subset, 0, nsub, 0,
@@ -772,13 +776,15 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree_parts(
     int map_pool = 0, dst_pool = 0;
     int* map = (int*)LIBXS_PREDICT_MALLOC(
       (size_t)result * sizeof(int), map_pool);
-    internal_libxs_predict_rf_node_t* dst =
-      (internal_libxs_predict_rf_node_t*)LIBXS_PREDICT_MALLOC(
-        (size_t)result * sizeof(internal_libxs_predict_rf_node_t), dst_pool);
+    internal_libxs_predict_rf_build_node_t* dst =
+      (internal_libxs_predict_rf_build_node_t*)LIBXS_PREDICT_MALLOC(
+        (size_t)result * sizeof(internal_libxs_predict_rf_build_node_t),
+        dst_pool);
     if (NULL != map && NULL != dst) {
       const int n = internal_libxs_predict_rf_relabel(nodes, result, 0, map, dst);
       if (0 < n) {
-        memcpy(nodes, dst, (size_t)n * sizeof(internal_libxs_predict_rf_node_t));
+        memcpy(nodes, dst,
+          (size_t)n * sizeof(internal_libxs_predict_rf_build_node_t));
         result = n;
       }
       else result = 0;
@@ -838,10 +844,10 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_score(
     LIBXS_MAX(LIBXS_PREDICT_RF_MAXNODES / LIBXS_PREDICT_RF_PROBE, 1));
   int nodes_pool = 0, boot_pool = 0, nn_pool = 0;
   int values_pool = 0, index_pool = 0;
-  internal_libxs_predict_rf_node_t* nodes =
-    (internal_libxs_predict_rf_node_t*)LIBXS_PREDICT_MALLOC(
+  internal_libxs_predict_rf_build_node_t* nodes =
+    (internal_libxs_predict_rf_build_node_t*)LIBXS_PREDICT_MALLOC(
       (size_t)nt * (size_t)max_nodes
-        * sizeof(internal_libxs_predict_rf_node_t), nodes_pool);
+        * sizeof(internal_libxs_predict_rf_build_node_t), nodes_pool);
   int* bootstrap = (int*)LIBXS_PREDICT_MALLOC((size_t)ntrain * sizeof(int),
     boot_pool);
   int* nn = (int*)LIBXS_PREDICT_MALLOC((size_t)nt * sizeof(int), nn_pool);
@@ -883,7 +889,8 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_score(
       double sum = 0;
       memset(votes, 0, sizeof(votes));
       for (t = 0; t < nt; ++t) {
-        const internal_libxs_predict_rf_node_t* tn = nodes + (size_t)t * max_nodes;
+        const internal_libxs_predict_rf_build_node_t* tn =
+          nodes + (size_t)t * max_nodes;
         int ni = 0;
         if (0 >= nn[t]) continue;
         while (ni >= 0 && ni < nn[t] && tn[ni].feature >= 0) {
@@ -1168,6 +1175,67 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build(libxs_predict_t* model)
 }
 
 
+LIBXS_API_INLINE int internal_libxs_predict_rf_pack_part(
+  const internal_libxs_predict_rf_build_node_t src[], int nsrc, int si,
+  internal_libxs_predict_rf_node_t dst[], int* next)
+{
+  int result = EXIT_FAILURE;
+  if (0 <= si && si < nsrc && *next < nsrc) {
+    const internal_libxs_predict_rf_build_node_t* const sn = src + si;
+    const int di = (*next)++;
+    internal_libxs_predict_rf_node_t* const dn = dst + di;
+    if (UINT16_MAX <= sn->feature) result = EXIT_FAILURE;
+    else {
+      dn->feature = (0 <= sn->feature) ? (uint16_t)sn->feature : UINT16_MAX;
+      dn->value = (0 <= sn->feature) ? sn->threshold : sn->value;
+      dn->label = (uint8_t)sn->label;
+      if (0 > sn->feature) {
+        dn->data.leafp = sn->leafp;
+        result = EXIT_SUCCESS;
+      }
+      else if (0 <= sn->left && sn->left < nsrc
+        && 0 <= sn->right && sn->right < nsrc)
+      {
+        dn->data.right = 0;
+        result = internal_libxs_predict_rf_pack_part(
+          src, nsrc, sn->left, dst, next);
+        if (EXIT_SUCCESS == result) {
+          dn->data.right = *next - di;
+          result = internal_libxs_predict_rf_pack_part(
+            src, nsrc, sn->right, dst, next);
+        }
+      }
+    }
+  }
+  return result;
+}
+
+
+LIBXS_API_INLINE int internal_libxs_predict_rf_pack_tree(
+  const internal_libxs_predict_rf_build_node_t src[], int nsrc,
+  internal_libxs_predict_rf_node_t** packed)
+{
+  int result = 0;
+  *packed = NULL;
+  if (0 < nsrc) {
+    internal_libxs_predict_rf_node_t* const dst =
+      (internal_libxs_predict_rf_node_t*)malloc(
+        (size_t)nsrc * sizeof(internal_libxs_predict_rf_node_t));
+    if (NULL != dst) {
+      int next = 0;
+      if (EXIT_SUCCESS == internal_libxs_predict_rf_pack_part(
+        src, nsrc, 0, dst, &next) && nsrc == next)
+      {
+        *packed = dst;
+        result = nsrc;
+      }
+      else free(dst);
+    }
+  }
+  return result;
+}
+
+
 LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks(
   libxs_predict_t* model, int tid, int ntasks)
 {
@@ -1239,12 +1307,12 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks(
         const int oi = ti / ntrees;
         const int max_depth = rf->depth[oi];
         int nodes_pool = 0;
-        internal_libxs_predict_rf_node_t* nodes;
+        internal_libxs_predict_rf_build_node_t* nodes;
         int i, nn;
         if (NULL != rf->trees[ti].nodes) continue;
-        nodes = (internal_libxs_predict_rf_node_t*)LIBXS_PREDICT_MALLOC(
-            (size_t)max_nodes * sizeof(internal_libxs_predict_rf_node_t),
-            nodes_pool);
+        nodes = (internal_libxs_predict_rf_build_node_t*)LIBXS_PREDICT_MALLOC(
+            (size_t)max_nodes
+              * sizeof(internal_libxs_predict_rf_build_node_t), nodes_pool);
         for (i = 0; i < p; ++i) {
           bootstrap[i] = internal_libxs_predict_rf_draw((size_t)i, boot_n,
             boot_coprime, (size_t)ti * 7 + 13, p);
@@ -1276,14 +1344,9 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks(
               : internal_libxs_predict_rf_build_tree(&g, bootstrap, p,
                   nodes, max_nodes);
           }
-          rf->trees[ti].nodes = (internal_libxs_predict_rf_node_t*)malloc(
-            (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
-          if (NULL != rf->trees[ti].nodes) {
-            memcpy(rf->trees[ti].nodes, nodes,
-              (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
-            rf->trees[ti].nnodes = nn;
-          }
-          else result = EXIT_FAILURE;
+          rf->trees[ti].nnodes = internal_libxs_predict_rf_pack_tree(
+            nodes, nn, &rf->trees[ti].nodes);
+          if (0 >= rf->trees[ti].nnodes) result = EXIT_FAILURE;
           LIBXS_PREDICT_FREE(nodes, nodes_pool);
         }
         else result = EXIT_FAILURE;
@@ -1298,7 +1361,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks(
 
 
 /** Index of the leaf the inputs descend to, or negative if the tree is empty
- *  or its links leave the node array. */
+ *  or a relative jump leaves the packed preorder array. */
 LIBXS_API_INLINE int internal_libxs_predict_rf_leafof(
   const internal_libxs_predict_rf_tree_t* tree, const double* inputs)
 {
@@ -1308,10 +1371,10 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_leafof(
   }
   else {
     while (0 <= result && result < tree->nnodes
-      && 0 <= tree->nodes[result].feature)
+      && UINT16_MAX != tree->nodes[result].feature)
     {
       const internal_libxs_predict_rf_node_t* nd = &tree->nodes[result];
-      result = (inputs[nd->feature] <= nd->threshold) ? nd->left : nd->right;
+      result += (inputs[nd->feature] <= nd->value) ? 1 : nd->data.right;
     }
     if (result >= tree->nnodes) result = -1;
   }
@@ -1702,7 +1765,7 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output_impl(
       else {
         const int lab = tree->nodes[ni].label & 127;
         ++votes[lab];
-        lscore[lab] += tree->nodes[ni].leafp;
+        lscore[lab] += tree->nodes[ni].data.leafp;
         ++nvalid;
         if (NULL != tree->incr) {
           for (k = 0; k < nc && k < 128; ++k) {
@@ -1789,6 +1852,85 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output(
 {
   return internal_libxs_predict_rf_eval_output_impl(rf, output_idx, inputs,
     confidence, variance, -1, NULL);
+}
+
+
+LIBXS_API_INLINE int internal_libxs_predict_rf_batchable(
+  const internal_libxs_predict_rf_t* rf)
+{
+  int result = (NULL != rf && NULL != rf->regress) ? 1 : 0;
+  int i;
+  for (i = 0; 0 != result && i < rf->noutputs; ++i) {
+    if (0 != rf->regress[i]) result = 0;
+  }
+  for (i = 0; 0 != result && i < rf->ntrees * rf->noutputs; ++i) {
+    if (NULL == rf->trees[i].nodes || 0 >= rf->trees[i].nnodes
+      || NULL != rf->trees[i].incr)
+    {
+      result = 0;
+    }
+  }
+  return result;
+}
+
+
+LIBXS_API_INLINE void internal_libxs_predict_rf_eval_batch_folded(
+  const internal_libxs_predict_rf_t* rf, const double inputs[], int ninputs,
+  double outputs[], int noutputs, int begin, int end)
+{
+  int first;
+  for (first = begin; first < end; first += LIBXS_PREDICT_RF_PACKET) {
+    const int lanes = LIBXS_MIN(LIBXS_PREDICT_RF_PACKET, end - first);
+    int output;
+    for (output = 0; output < noutputs; ++output) {
+      int votes[LIBXS_PREDICT_RF_PACKET][128];
+      const int base = output * rf->ntrees;
+      int tree, lane;
+      memset(votes, 0, sizeof(votes));
+      for (tree = 0; tree < rf->ntrees; ++tree) {
+        const internal_libxs_predict_rf_tree_t* const tr =
+          rf->trees + base + tree;
+        int node[LIBXS_PREDICT_RF_PACKET];
+        int active = lanes;
+        for (lane = 0; lane < lanes; ++lane) node[lane] = 0;
+        while (0 < active) {
+          active = 0;
+          LIBXS_PRAGMA_SIMD_REDUCTION(+:active)
+          for (lane = 0; lane < lanes; ++lane) {
+            const int ni = node[lane];
+            if (0 <= ni && ni < tr->nnodes
+              && UINT16_MAX != tr->nodes[ni].feature)
+            {
+              const internal_libxs_predict_rf_node_t* const nd =
+                tr->nodes + ni;
+              const double* const input = inputs
+                + (size_t)(first + lane) * ninputs;
+              node[lane] = ni
+                + ((input[nd->feature] <= nd->value) ? 1 : nd->data.right);
+              ++active;
+            }
+          }
+        }
+        for (lane = 0; lane < lanes; ++lane) {
+          const int ni = node[lane];
+          if (0 <= ni && ni < tr->nnodes) {
+            ++votes[lane][tr->nodes[ni].label & 127];
+          }
+        }
+      }
+      for (lane = 0; lane < lanes; ++lane) {
+        int best = 0, count = 0, label;
+        for (label = 0; label < 128; ++label) {
+          if (count < votes[lane][label]) {
+            count = votes[lane][label];
+            best = label;
+          }
+        }
+        outputs[(size_t)(first + lane) * noutputs + output] =
+          (double)(best - rf->label_offset[output]);
+      }
+    }
+  }
 }
 
 

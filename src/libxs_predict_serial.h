@@ -426,8 +426,8 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       }
       for (c = 0; c < total_trees; ++c) {
         required += sizeof(uint32_t) + sizeof(uint8_t);
-        /* feature, threshold, value, left, right, label, leafp */
-        required += (size_t)model->rf->trees[c].nnodes * (2 + 8 + 8 + 4 + 4 + 1 + 4);
+        /* feature, threshold/value, right-jump/leaf confidence, label */
+        required += (size_t)model->rf->trees[c].nnodes * (2 + 8 + 4 + 1);
         if (NULL != model->rf->trees[c].incr) {
           required += (size_t)model->rf->trees[c].nnodes
             * (size_t)model->rf->nclass[c / model->rf->ntrees]
@@ -583,23 +583,20 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
           WRITE_U8(NULL != tree->incr ? 1 : 0);
           for (k = 0; k < tree->nnodes; ++k) {
             const internal_libxs_predict_rf_node_t* nd = &tree->nodes[k];
-            { const int16_t f = (int16_t)nd->feature;
+            { const uint16_t f = nd->feature;
               memcpy(dst, &f, 2); dst += 2;
             }
-            WRITE_F64(nd->threshold);
             WRITE_F64(nd->value);
-            /* four bytes: a node index outgrows int16 well before a corpus is large */
-            { const int32_t l = (int32_t)nd->left;
-              const int32_t r = (int32_t)nd->right;
-              memcpy(dst, &l, 4); dst += 4;
+            /* right jump for a split, confidence for a leaf */
+            if (UINT16_MAX != nd->feature) {
+              const int32_t r = (int32_t)nd->data.right;
               memcpy(dst, &r, 4); dst += 4;
             }
-            WRITE_U8(nd->label);
-            /* what a leaf's read-out is worth, see the node type; four bytes
-               because it is an estimate and not a quantity to accumulate */
-            { const float lp = nd->leafp;
+            else {
+              const float lp = nd->data.leafp;
               memcpy(dst, &lp, 4); dst += 4;
             }
+            WRITE_U8(nd->label);
           }
           if (NULL != tree->incr) {
             const int nk = tree->nnodes * model->rf->nclass[c / model->rf->ntrees];
@@ -1434,7 +1431,10 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
     if (EXIT_SUCCESS == ok && src < end && model->decompose == LIBXS_PREDICT_RF) {
       uint16_t rf_ntrees = 0, rf_nouts = 0;
       int j;
-      ok = internal_libxs_predict_read(&src, end, &rf_ntrees, 2);
+      if (2 > version) ok = EXIT_FAILURE;
+      if (EXIT_SUCCESS == ok) {
+        ok = internal_libxs_predict_read(&src, end, &rf_ntrees, 2);
+      }
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &rf_nouts, 2);
       /* eval indexes trees[output_idx * ntrees + t] for output_idx < noutputs */
       if (EXIT_SUCCESS == ok && rf_nouts != nout) ok = EXIT_FAILURE;
@@ -1513,27 +1513,18 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
               uint32_t nn = 0;
               uint8_t hasincr = 0;
               int k;
-              /**
-               * A version-1 file counts a tree's nodes in two bytes, which is
-               * what bounded the node budget to what fits them. Version 2 counts
-               * in four: the budget follows the corpus now, and a tree over
-               * 65535 nodes would otherwise have been written back truncated
-               * without saying so, exactly as the two-byte child indices did.
-               */
-              if (1 < version) {
+              if (EXIT_SUCCESS == ok) {
                 ok = internal_libxs_predict_read(&src, end, &nn, 4);
               }
-              else {
-                uint16_t nn16 = 0;
-                ok = internal_libxs_predict_read(&src, end, &nn16, 2);
-                nn = nn16;
-              }
-              if (EXIT_SUCCESS == ok && 1 < version) {
+              if (EXIT_SUCCESS == ok) {
                 ok = internal_libxs_predict_read(&src, end, &hasincr, 1);
               }
               if (EXIT_SUCCESS == ok && nn > 0) {
-                ok = internal_libxs_predict_avail(src, end, (size_t)nn,
-                  (1 < version) ? (2 + 8 + 8 + 4 + 4 + 1) : (2 + 8 + 2 + 2 + 1));
+                if (INT_MAX < nn) ok = EXIT_FAILURE;
+                if (EXIT_SUCCESS == ok) {
+                  ok = internal_libxs_predict_avail(src, end, (size_t)nn,
+                    2 + 8 + 4 + 1);
+                }
                 if (EXIT_SUCCESS == ok) {
                   rf->trees[ti].nodes = (internal_libxs_predict_rf_node_t*)malloc(
                     (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
@@ -1541,59 +1532,35 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
                   if (NULL == rf->trees[ti].nodes) ok = EXIT_FAILURE;
                 }
                 for (k = 0; k < (int)nn && EXIT_SUCCESS == ok; ++k) {
-                  int16_t f = 0;
-                  int32_t l = 0, r = 0;
+                  uint16_t f = 0;
                   uint8_t lab = 0;
                   ok = internal_libxs_predict_read(&src, end, &f, 2);
                   if (EXIT_SUCCESS == ok) {
                     ok = internal_libxs_predict_read(&src, end,
-                      &rf->trees[ti].nodes[k].threshold, 8);
-                  }
-                  if (EXIT_SUCCESS == ok && 1 < version) {
-                    ok = internal_libxs_predict_read(&src, end,
                       &rf->trees[ti].nodes[k].value, 8);
                   }
-                  /* narrow in v1, and a v1 index cannot have overflowed
-                     because the trees that fit in it are the only ones it held */
-                  if (EXIT_SUCCESS == ok) {
-                    if (1 < version) {
-                      ok = internal_libxs_predict_read(&src, end, &l, 4);
-                      if (EXIT_SUCCESS == ok) {
-                        ok = internal_libxs_predict_read(&src, end, &r, 4);
-                      }
-                    }
-                    else {
-                      int16_t l16 = 0, r16 = 0;
-                      ok = internal_libxs_predict_read(&src, end, &l16, 2);
-                      if (EXIT_SUCCESS == ok) {
-                        ok = internal_libxs_predict_read(&src, end, &r16, 2);
-                      }
-                      l = l16; r = r16;
-                    }
+                  if (EXIT_SUCCESS == ok && UINT16_MAX != f) {
+                    ok = internal_libxs_predict_read(&src, end,
+                      &rf->trees[ti].nodes[k].data.right, 4);
+                  }
+                  else if (EXIT_SUCCESS == ok) {
+                    ok = internal_libxs_predict_read(&src, end,
+                      &rf->trees[ti].nodes[k].data.leafp, 4);
                   }
                   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &lab, 1);
-                  /* traversal dereferences inputs[feature] and descends into
-                     left/right, hence both must stay in range (-1 is a leaf) */
-                  if (EXIT_SUCCESS == ok && (f >= (int16_t)ninp || f < -1
-                    || l >= (int32_t)nn || l < -1
-                    || r >= (int32_t)nn || r < -1))
+                  /* v2 is packed preorder: an internal node advances by one or
+                     by its positive right-subtree jump; a leaf carries zero */
+                  if (EXIT_SUCCESS == ok && ((UINT16_MAX != f && f >= ninp)
+                    || (UINT16_MAX != f
+                      && (1 >= rf->trees[ti].nodes[k].data.right
+                      || (int)nn - k
+                        <= rf->trees[ti].nodes[k].data.right))))
                   {
                     ok = EXIT_FAILURE;
                   }
                   if (EXIT_SUCCESS == ok) {
-                    rf->trees[ti].nodes[k].feature = (int)f;
-                    rf->trees[ti].nodes[k].left = (int)l;
-                    rf->trees[ti].nodes[k].right = (int)r;
-                    rf->trees[ti].nodes[k].label = (int)lab;
-                    rf->trees[ti].nodes[k].leafp = 0.f;
-                    if (1 >= version) rf->trees[ti].nodes[k].value = (double)lab;
-                  }
-                  /* zero above, so a v1 model, which recorded none, falls back
-                     to the share and answers as it always did */
-                  if (EXIT_SUCCESS == ok && 1 < version) {
-                    float lp = 0.f;
-                    ok = internal_libxs_predict_read(&src, end, &lp, 4);
-                    if (EXIT_SUCCESS == ok) rf->trees[ti].nodes[k].leafp = lp;
+                    rf->trees[ti].nodes[k].feature = f;
+                    rf->trees[ti].nodes[k].label = lab;
                   }
                 }
                 if (EXIT_SUCCESS == ok && 0 != hasincr) {

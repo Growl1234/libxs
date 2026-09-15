@@ -176,7 +176,7 @@ typedef struct internal_libxs_predict_order_ctx_t {
   int tid, ntasks;
 } internal_libxs_predict_order_ctx_t;
 
-typedef struct internal_libxs_predict_rf_node_t {
+typedef struct internal_libxs_predict_rf_build_node_t {
   int feature;
   double threshold;
   /** Leaf read-out. Carries the subset mean for a real-valued output and the
@@ -198,6 +198,17 @@ typedef struct internal_libxs_predict_rf_node_t {
    * `label` and this occupies that hole rather than growing every node.
    */
   float leafp;
+} internal_libxs_predict_rf_build_node_t;
+
+/** Packed preorder node: left is the next node and right is a relative jump. */
+typedef struct internal_libxs_predict_rf_node_t {
+  double value;
+  union {
+    int right;
+    float leafp;
+  } data;
+  uint16_t feature;
+  uint8_t label;
 } internal_libxs_predict_rf_node_t;
 
 /**
@@ -4973,11 +4984,22 @@ LIBXS_API void libxs_predict_eval_batch_task(
   internal_libxs_predict_split(count, tid, ntasks, &begin, &end);
   LIBXS_ASSERT(NULL != model && 0 != model->built);
   LIBXS_ASSERT(NULL != inputs_batch && NULL != outputs_batch);
-  for (i = begin; i < end; ++i) {
-    libxs_predict_eval(NULL, model,
-      inputs_batch + (size_t)i * m,
-      outputs_batch + (size_t)i * n,
-      NULL, nblend);
+  if (NULL != model->rf && 0 == model->eval_mode && 0 == model->nseries
+    && NULL == model->decompose_mat && 1 >= model->nbank
+    && NULL == model->transforms && 0 >= model->floor
+    && 0 >= model->quantile
+    && 0 != internal_libxs_predict_rf_batchable(model->rf))
+  {
+    internal_libxs_predict_rf_eval_batch_folded(model->rf, inputs_batch, m,
+      outputs_batch, n, begin, end);
+  }
+  else {
+    for (i = begin; i < end; ++i) {
+      libxs_predict_eval(NULL, model,
+        inputs_batch + (size_t)i * m,
+        outputs_batch + (size_t)i * n,
+        NULL, nblend);
+    }
   }
 }
 
