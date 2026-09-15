@@ -484,8 +484,8 @@ static void evaluate(const libxs_predict_t* model,
       }
       if (NULL != xgb_predicted && NULL != xgb_conf
         && EXIT_SUCCESS == predict_xgb(reference,
-          ntotal, NINPUTS, NOUTPUTS, trained, classify, xgb_predicted,
-          xgb_conf, task, NULL, NULL))
+          ntotal, NINPUTS, NOUTPUTS, trained, 0, ntotal, classify,
+          xgb_predicted, xgb_conf, task, NULL, NULL))
       {
         double lsum[NOUTPUTS], xsum[NOUTPUTS];
         int lhit[NOUTPUTS], xhit[NOUTPUTS], nnovel = 0;

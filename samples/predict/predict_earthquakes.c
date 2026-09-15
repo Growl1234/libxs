@@ -147,8 +147,8 @@ int main(int argc, char* argv[])
                 if (NULL != xgb_pred && NULL != mask) {
                   for (i = 0; i < train_end; ++i) mask[i] = 1;
                   if (EXIT_SUCCESS == predict_xgb(source, total, NINPUTS,
-                    NOUTPUTS, mask, &classify, xgb_pred, NULL, NULL,
-                    "reg:absoluteerror", NULL))
+                    NOUTPUTS, mask, 0, total, &classify, xgb_pred, NULL,
+                    NULL, "reg:absoluteerror", NULL))
                   {
                     double xsum_err = 0, xmax_err = 0;
                     for (i = train_end; i < total; ++i) {

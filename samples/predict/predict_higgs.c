@@ -252,13 +252,11 @@ int main(int argc, char* argv[])
               int classify = 1, task = 0;
               predict_xgb_time_t xtime;
               if (NULL != xp && NULL != xc && NULL != mask) {
-                libxs_timer_tick_t xt = libxs_timer_tick();
                 for (t = 0; t < train_end; ++t) mask[t] = 1;
                 if (EXIT_SUCCESS == predict_xgb(source, total, NFEAT, 1,
-                  mask, &classify, xp, xc, &task, NULL, &xtime))
+                  mask, test_begin, ntest, &classify, xp, xc, &task, NULL,
+                  &xtime))
                 {
-                  const double dt_xgb =
-                    libxs_timer_duration(xt, libxs_timer_tick());
                   int xok = 0, xg = 0, xgok = 0;
                   char* xokv = (char*)calloc((size_t)total, 1);
                   for (t = test_begin; t < total; ++t) {
@@ -271,18 +269,17 @@ int main(int argc, char* argv[])
                     if (gates[0] <= xc[t]) { ++xg; if (0 != ok) ++xgok; }
                     if (NULL != xokv) xokv[t - test_begin] = (char)(0 != ok);
                   }
-                  /* less what the per-query probe below cost, which is measured
-                     inside the same call and is not part of the comparison */
-                  fprintf(stdout, "XGBoost: rounds=%i depth=%i eta=%g, %.2f s"
-                    " of which marshal %.2f, train %.2f, predict %.2f\n",
+                  fprintf(stdout, "XGBoost: rounds=%i depth=%i eta=%g\n",
                     predict_xgb_geti("XGB_ROUNDS", 200),
                     predict_xgb_geti("XGB_DEPTH", 6),
-                    predict_xgb_getd("XGB_ETA", 0.1), dt_xgb - xtime.query,
-                    xtime.marshal, xtime.train, xtime.predict);
-                  /* what compares against what: a build against the rounds it
-                     is the counterpart of, not against the whole call */
-                  fprintf(stdout, "Build vs train: %.2f s vs %.2f s\n",
-                    dt_build, xtime.train);
+                    predict_xgb_getd("XGB_ETA", 0.1));
+                  fprintf(stdout, "XGBoost marshal: %.2f s (train plus test"
+                    " matrices)\n", xtime.marshal);
+                  fprintf(stdout, "Model fit: LIBXS RF %.2f s; XGBoost %.2f s"
+                    " (boosting rounds)\n", dt_build, xtime.train);
+                  fprintf(stdout, "Batch test prediction: LIBXS %.2f s;"
+                    " XGBoost %.2f s (%d queries)\n", dt_batch,
+                    xtime.predict, ntest);
                   if (0 < xtime.nquery && 0 < ntest) {
                     fprintf(stdout, "Per query: %.1f us here, %.1f us there;"
                       " batched %.2f us here, %.2f us there\n",

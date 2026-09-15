@@ -263,13 +263,15 @@ static int predict_xgb_output(DMatrixHandle dtrain, DMatrixHandle dall,
 
 
 /**
- * Train XGBoost on exactly the entries LIBXS was built from and predict every
- * row, so both models are scored on one split.  Handing this a mask other than
- * the one the LIBXS model saw invalidates the comparison with no symptom to
- * notice, which is why the mask is an argument rather than recomputed here.
+ * Train XGBoost on exactly the entries LIBXS was built from and predict an
+ * explicit range, so both models are scored on one split. Handing this a mask
+ * other than the one the LIBXS model saw invalidates the comparison with no
+ * symptom to notice, which is why the mask is an argument rather than
+ * recomputed here.
  *
  * source:    corpus the LIBXS model was pushed from (need not be built).
  * trained:   ntotal flags, non-zero where the entry was trained on.
+ * eval_begin, neval: contiguous source range to predict.
  * classify:  noutputs flags requesting classification over the attested value
  *            set instead of regression (NULL requests regression throughout).
  * predicted: ntotal*noutputs values written, in user space.
@@ -286,9 +288,9 @@ static int predict_xgb_output(DMatrixHandle dtrain, DMatrixHandle dall,
  * Returns EXIT_SUCCESS or EXIT_FAILURE.
  */
 static int predict_xgb(const libxs_predict_t* source, int ntotal,
-  int ninputs, int noutputs, const char trained[], const int classify[],
-  double predicted[], double confidence[], int task[], const char* regobj,
-  predict_xgb_time_t* dt)
+  int ninputs, int noutputs, const char trained[], int eval_begin, int neval,
+  const int classify[], double predicted[], double confidence[], int task[],
+  const char* regobj, predict_xgb_time_t* dt)
 {
   double* row = (double*)malloc((size_t)(ninputs + noutputs) * sizeof(double));
   float* x = (float*)malloc((size_t)ntotal * ninputs * sizeof(float));
@@ -303,7 +305,9 @@ static int predict_xgb(const libxs_predict_t* source, int ntotal,
     libxs_timer_tick_t mt = libxs_timer_tick();
     int ntrain = 0, i, j, status;
     if (NULL != dt) memset(dt, 0, sizeof(*dt));
-    for (i = 0; i < ntotal; ++i) {
+    status = (0 > eval_begin || 0 > neval || ntotal - eval_begin < neval)
+      ? 1 : 0;
+    for (i = 0; i < ntotal && 0 == status; ++i) {
       libxs_predict_get(source, i, row, row + ninputs);
       for (j = 0; j < ninputs; ++j) {
         x[(size_t)i * ninputs + j] = (float)row[j];
@@ -318,10 +322,13 @@ static int predict_xgb(const libxs_predict_t* source, int ntotal,
         ++ntrain;
       }
     }
-    status = XGDMatrixCreateFromMat(xtrain, (bst_ulong)ntrain,
-      (bst_ulong)ninputs, -1.0f, &dtrain);
     if (0 == status) {
-      status = XGDMatrixCreateFromMat(x, (bst_ulong)ntotal,
+      status = XGDMatrixCreateFromMat(xtrain, (bst_ulong)ntrain,
+        (bst_ulong)ninputs, -1.0f, &dtrain);
+    }
+    if (0 == status) {
+      status = XGDMatrixCreateFromMat(x + (size_t)eval_begin * ninputs,
+        (bst_ulong)neval,
         (bst_ulong)ninputs, -1.0f, &dall);
     }
     if (NULL != dt) dt->marshal += libxs_timer_duration(mt, libxs_timer_tick());
@@ -347,9 +354,11 @@ static int predict_xgb(const libxs_predict_t* source, int ntotal,
         }
       }
       if (1 == nclass) {
-        for (i = 0; i < ntotal; ++i) {
-          predicted[(size_t)i * noutputs + j] = values[0];
-          if (NULL != confidence) confidence[(size_t)i * noutputs + j] = 1.0;
+        for (i = 0; i < neval; ++i) {
+          predicted[(size_t)(eval_begin + i) * noutputs + j] = values[0];
+          if (NULL != confidence) {
+            confidence[(size_t)(eval_begin + i) * noutputs + j] = 1.0;
+          }
         }
       }
       else {
@@ -359,9 +368,13 @@ static int predict_xgb(const libxs_predict_t* source, int ntotal,
           dt->marshal += libxs_timer_duration(mt, libxs_timer_tick());
         }
         if (0 == status) {
-          status = predict_xgb_output(dtrain, dall, ntotal, nclass, values,
-            predicted + j, (NULL != confidence) ? (confidence + j) : NULL,
-            noutputs, predict_xgb_regobj(regobj), x, ninputs, trained, dt);
+          status = predict_xgb_output(dtrain, dall, neval, nclass, values,
+            predicted + (size_t)eval_begin * noutputs + j,
+            (NULL != confidence)
+              ? (confidence + (size_t)eval_begin * noutputs + j) : NULL,
+            noutputs, predict_xgb_regobj(regobj),
+            x + (size_t)eval_begin * ninputs, ninputs,
+            (NULL != trained) ? (trained + eval_begin) : NULL, dt);
         }
       }
       if (NULL != task) task[j] = nclass;
