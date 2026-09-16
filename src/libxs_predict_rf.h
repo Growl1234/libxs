@@ -33,30 +33,40 @@
 #if !defined(LIBXS_PREDICT_RF_BINROWS)
 #  define LIBXS_PREDICT_RF_BINROWS 262144
 #endif
-/** Rows the bin edges are placed from. Hundreds per bin is ample for a quantile,
- *  and a bound rather than a share keeps the sort off the corpus size. */
+/**
+ * Rows the bin edges are placed from. Hundreds per bin is ample for a quantile,
+ * and a bound rather than a share keeps the sort off the corpus size.
+ */
 #if !defined(LIBXS_PREDICT_RF_SKETCH)
 #  define LIBXS_PREDICT_RF_SKETCH 65536
 #endif
-/** Bytes of histogram one split may hold. It buys the width of the accumulating
- *  pass, so it wants to be a cache the pass stays inside of. */
+/**
+ * Bytes of histogram one split may hold. It buys the width of the accumulating
+ * pass, so it wants to be a cache the pass stays inside of.
+ */
 #if !defined(LIBXS_PREDICT_RF_HISTMAX)
 #  define LIBXS_PREDICT_RF_HISTMAX 65536
 #endif
-/** Shrinkage applied to each boosted stage. Regression uses it by default. A
- *  folded vote share is already unbiased, so folded outputs attempt corrections
- *  only when the RF_RATE environment variable is set explicitly. */
+/**
+ * Shrinkage applied to each boosted stage. Regression uses it by default. A
+ * folded vote share is already unbiased, so folded outputs attempt corrections
+ * only when the RF_RATE environment variable is set explicitly.
+ */
 #if !defined(LIBXS_PREDICT_RF_RATE)
 #  define LIBXS_PREDICT_RF_RATE 0.1
 #endif
-/** Consecutive stages allowed not to improve before boosting stops. Each stage
- *  scores on its own tree's out-of-bag rows, a different subset every time, so
- *  a single stage that fails to improve is noise rather than a trend. */
+/**
+ * Consecutive stages allowed not to improve before boosting stops. Each stage
+ * scores on its own tree's out-of-bag rows, a different subset every time, so
+ * a single stage that fails to improve is noise rather than a trend.
+ */
 #if !defined(LIBXS_PREDICT_RF_PATIENCE)
 #  define LIBXS_PREDICT_RF_PATIENCE 3
 #endif
-/** One row in this many is held back from every stage's leaf means. Half select
- *  corrections; half calibrate and train the other folds of ordinary trees. */
+/**
+ * One row in this many is held back from every stage's leaf means. Half select
+ * corrections; half calibrate and train the other folds of ordinary trees.
+ */
 #if !defined(LIBXS_PREDICT_RF_HOLD)
 #  define LIBXS_PREDICT_RF_HOLD 5
 #endif
@@ -94,18 +104,24 @@
 #if !defined(LIBXS_PREDICT_RF_BUILD_TEAMS)
 #  define LIBXS_PREDICT_RF_BUILD_TEAMS 100
 #endif
-/** Trees per candidate while scoring depth: enough to average out the
- *  bootstrap, few enough that trying four depths is not four full builds. */
+/**
+ * Trees per candidate while scoring depth: enough to average out the
+ * bootstrap, few enough that trying four depths is not four full builds.
+ */
 #if !defined(LIBXS_PREDICT_RF_PROBE)
 #  define LIBXS_PREDICT_RF_PROBE 12
 #endif
-/** Bins over native RF confidence, each carrying its empirical correctness.
- *  Few enough that every bin is populated on a modest corpus. */
+/**
+ * Bins over native RF confidence, each carrying its empirical correctness.
+ * Few enough that every bin is populated on a modest corpus.
+ */
 #if !defined(LIBXS_PREDICT_RF_CALIB)
 #  define LIBXS_PREDICT_RF_CALIB 16
 #endif
-/** Rows used to fit the automatic OOB curve. Hundreds per bin are enough, and
- *  a fixed bound keeps calibration independent of corpus size. */
+/**
+ * Rows used to fit the automatic OOB curve. Hundreds per bin are enough, and
+ * a fixed bound keeps calibration independent of corpus size.
+ */
 #if !defined(LIBXS_PREDICT_RF_CALIB_SAMPLE)
 #  define LIBXS_PREDICT_RF_CALIB_SAMPLE 8192
 #endif
@@ -154,7 +170,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_sort(
   int keys_pool = 0, ord_pool = 0;
   const size_t feat_coprime = libxs_coprime2((size_t)nfeat);
   /* sorting an order over one column reaches the radix path in libxs_sort,
-     which a value/index pair cannot: its comparator is not recognized */
+   * which a value/index pair cannot: its comparator is not recognized */
   double* keys = values_scratch;
   int* ord = index_scratch;
   if (NULL == keys) {
@@ -323,7 +339,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_hist(
   node->label = -1;
   if (NULL != acc && NULL != fsel) {
     /* the same draw the sorted search makes, so the two paths differ in the
-       resolution of the candidates and in nothing else */
+     * resolution of the candidates and in nothing else */
     for (i = 0; i < nfeatsub; ++i) {
       fsel[i] = (int)(LIBXS_SHUFFLE_INDEX((size_t)i, (size_t)nfeat,
         feat_coprime, seed) % (size_t)nfeat);
@@ -480,8 +496,10 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split(
 }
 
 
-/** Features a split samples: the square root of what there is, which is the choice
- *  that makes a forest a forest. Here rather than at each caller so they agree. */
+/**
+ * Features a split samples: the square root of what there is, which is the choice
+ * that makes a forest a forest. Here rather than at each caller so they agree.
+ */
 LIBXS_API_INLINE int internal_libxs_predict_rf_nfeatsub(int nfeat)
 {
   int result = (int)(sqrt((double)nfeat) + 0.5);
@@ -567,7 +585,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_part(
     nodes[ni].label = best_label;
     nodes[ni].value = mean;
     /* what this read-out would be worth if the node ends as a leaf; a folded
-       output only, since a real-valued one reports no share to begin with */
+     * output only, since a real-valued one reports no share to begin with */
     nodes[ni].leafp = (0 == regress && 0 < nc)
       ? (float)((best_count + 1.0) / (nc + ((0 < nclass) ? nclass : 1)))
       : 0.f;
@@ -714,7 +732,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_relabel(
         map[src[ni].left] = next++;
         map[src[ni].right] = next++;
         /* both children are taken before either is descended, so the pending
-           count grows by one per split exactly as it does while growing */
+         * count grows by one per split exactly as it does while growing */
         if (62 >= sp) {
           stack[sp++] = src[ni].left;
           stack[sp++] = src[ni].right;
@@ -770,7 +788,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree_parts(
         if (0 <= nodes[base + j].right) nodes[base + j].right += base;
       }
       /* the unit's node already exists in the top, so its grown form replaces it
-         and the copy at `base` is left for the renumbering to drop */
+       * and the copy at `base` is left for the renumbering to drop */
       nodes[fr_node[i]] = nodes[base];
       result = base + np;
     }
@@ -843,7 +861,7 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_score(
 {
   const int nt = LIBXS_PREDICT_RF_PROBE;
   /* the probe holds every one of its trees at once, so it is bounded by the
-     same budget divided among them rather than by one of its own */
+   * same budget divided among them rather than by one of its own */
   const int max_nodes = LIBXS_MIN(ntrain / min_leaf * 2 + 1,
     LIBXS_MAX(LIBXS_PREDICT_RF_MAXNODES / LIBXS_PREDICT_RF_PROBE, 1));
   int nodes_pool = 0, boot_pool = 0, nn_pool = 0;
@@ -873,7 +891,7 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_score(
           (size_t)t * 7 + 13) % (size_t)ntrain);
       }
       /* the probe splits exactly: it runs before the bins are filled, and it
-         ranks depths against each other rather than reporting an error */
+       * ranks depths against each other rather than reporting an error */
       { internal_libxs_predict_rf_grow_t g;
         g.entries = entries; g.bins = NULL; g.bin_edge = NULL; g.nbins = 0;
         g.values_scratch = values_scratch; g.index_scratch = index_scratch;
@@ -1029,8 +1047,10 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_bins_tasks(
 }
 
 
-/** Releases the bins once the forest is grown: split finding is what read them,
- *  and boosting and the calibration descend the raw inputs. */
+/**
+ * Releases the bins once the forest is grown: split finding is what read them,
+ * and boosting and the calibration descend the raw inputs.
+ */
 LIBXS_API_INLINE void internal_libxs_predict_rf_bins_free(libxs_predict_t* model)
 {
   if (NULL != model->rf) {
@@ -1164,7 +1184,7 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_build(libxs_predict_t* model)
         }
       }
       /* last, and after the depth probe rather than before it: the probe splits
-         exactly, and the bins are read by the trees the tasks grow */
+       * exactly, and the bins are read by the trees the tasks grow */
       internal_libxs_predict_rf_edges(model);
     }
     else {
@@ -1387,7 +1407,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks_independent(
           g.label_off = rf->label_offset[oi]; g.regress = rf->regress[oi];
           g.nclass = rf->nclass[oi];
           /* the decomposition must answer as the single pass does, so it is
-             selectable and off by default until a task actually holds a unit */
+           * selectable and off by default until a task actually holds a unit */
           { const char* fenv = getenv("LIBXS_PREDICT_RF_FRONTIER");
             const int fr = (NULL != fenv) ? atoi(fenv) : 0;
             nn = (0 < fr && 63 > max_depth)
@@ -1655,8 +1675,10 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks(
 }
 
 
-/** Index of the leaf the inputs descend to, or negative if the tree is empty
- *  or a relative jump leaves the packed preorder array. */
+/**
+ * Index of the leaf the inputs descend to, or negative if the tree is empty
+ * or a relative jump leaves the packed preorder array.
+ */
 LIBXS_API_INLINE int internal_libxs_predict_rf_leafof(
   const internal_libxs_predict_rf_tree_t* tree, const double* inputs)
 {
@@ -1778,7 +1800,7 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_isotonic(
     }
   }
   { /* every bin takes the block that covers it, and a bin below the first block
-       or above the last takes the nearest one */
+     * or above the last takes the nearest one */
     double prev = (0 < nblock) ? (vsum[0] / wsum[0]) : 0.0;
     k = 0;
     for (b = 0; b < nbin; ++b) {
@@ -2229,10 +2251,12 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_eval_batch_folded(
 }
 
 
-/** Fit P(final hybrid prediction is correct | native RF confidence) from rows
- *  excluded from correction fitting and selection. Every such row still trains
- *  ordinary RF trees; its score uses only trees whose bootstrap omitted it and
- *  rescales their additive sum to the full forest that deployment evaluates. */
+/**
+ * Fit P(final hybrid prediction is correct | native RF confidence) from rows
+ * excluded from correction fitting and selection. Every such row still trains
+ * ordinary RF trees; its score uses only trees whose bootstrap omitted it and
+ * rescales their additive sum to the full forest that deployment evaluates.
+ */
 LIBXS_API_INLINE void internal_libxs_predict_rf_calibrate_oob(
   libxs_predict_t* model)
 {

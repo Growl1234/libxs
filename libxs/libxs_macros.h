@@ -141,7 +141,7 @@
  * #else
  * // fallback code
  * #endif
-*/
+ */
 #define LIBXS_VERSION_GE(MAJOR, MINOR, UPDATE) \
   LIBXS_VERSION_CHECK(>=, MAJOR, MINOR, UPDATE)
 

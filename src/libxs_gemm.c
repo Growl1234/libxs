@@ -27,13 +27,13 @@
 # define LIBXS_GEMM_BK 48
 #endif
 /* narrower panels give more tasks, at the cost of the GEMM they leave behind;
-   zero takes the column block size, which is the finest the tiles ever were */
+ * zero takes the column block size, which is the finest the tiles ever were */
 #if !defined(LIBXS_GEMM_PANEL)
 # define LIBXS_GEMM_PANEL 0
 #endif
 /* A panel narrower than this is served better by the k-blocking than by one call
-   of full k. The two libraries disagree: MKL falls off a cliff at a width of 128
-   with full k, whereas OpenBLAS prefers full k at every width measured. */
+ * of full k. The two libraries disagree: MKL falls off a cliff at a width of 128
+ * with full k, whereas OpenBLAS prefers full k at every width measured. */
 #if !defined(LIBXS_SYRK_KFULL)
 # define LIBXS_SYRK_KFULL 192
 #endif
@@ -737,8 +737,8 @@ LIBXS_API_INTERN libxs_gemm_config_t* internal_libxs_gemm_dispatch(
         const int kldc = kernel_shape->ldc;
         const int gemm_backend = internal_libxs_gemm_backend;
         /* a leading dimension beyond the operand's own extent means a window
-           into a larger matrix: generated kernels neither pack nor prefetch
-           and then lose to BLAS, whereas resident operands are their domain */
+         * into a larger matrix: generated kernels neither pack nor prefetch
+         * and then lose to BLAS, whereas resident operands are their domain */
         const int strided = (klda > (0 != ta ? kk : km)
           || kldb > (0 != tb ? kn : kk));
         const int use_jit = (INTERNAL_GEMM_BACKEND_MKL_JIT == gemm_backend
@@ -1498,7 +1498,7 @@ LIBXS_API void libxs_syr2k_task(
       const int bn = internal_libxs_gemm_bn;
       const int bk = internal_libxs_gemm_bk;
       /* one panel owns its columns, hence the packed operand is not duplicated:
-         the width follows the task count, with two panels per task to balance */
+       * the width follows the task count, with two panels per task to balance */
       const int np = LIBXS_MAX(internal_libxs_gemm_panel,
         LIBXS_UPDIV(n, 2 * ntasks));
       const int nb_p = LIBXS_UPDIV(n, np);
@@ -1519,7 +1519,7 @@ LIBXS_API void libxs_syr2k_task(
             const int pb = p * np;
             const int pn = LIBXS_MIN(np, n - pb);
             /* the panel beside the diagonal block lies inside the requested
-               triangle, hence BLAS accumulates into C without scratch */
+             * triangle, hence BLAS accumulates into C without scratch */
             const int pm = (0 == upper ? (n - pb - pn) : pb);
             const int pi = (0 == upper ? (pb + pn) : 0);
             int j;
@@ -1542,7 +1542,7 @@ LIBXS_API void libxs_syr2k_task(
               }
             }
             /* the diagonal block straddles the triangle: a BLAS SYR2K writes it,
-               otherwise the tiles below do, which keeps a kernel reachable */
+             * otherwise the tiles below do, which keeps a kernel reachable */
             if (NULL != dsyr2k) {
               internal_libxs_dsyr2k_blas(&uplo, "N", &pn, &k,
                 (const double*)&alpha, (const double*)a + pb, &lda,
@@ -1720,7 +1720,7 @@ LIBXS_API void libxs_syrk_task(
       const int bn = internal_libxs_gemm_bn;
       const int bk = internal_libxs_gemm_bk;
       /* one panel owns its columns, hence the packed operand is not duplicated:
-         the width follows the task count, with two panels per task to balance */
+       * the width follows the task count, with two panels per task to balance */
       const int np = LIBXS_MAX(internal_libxs_gemm_panel,
         LIBXS_UPDIV(n, 2 * ntasks));
       const int nb_p = LIBXS_UPDIV(n, np);
@@ -1740,7 +1740,7 @@ LIBXS_API void libxs_syrk_task(
             const int pb = p * np;
             const int pn = LIBXS_MIN(np, n - pb);
             /* the panel beside the diagonal block lies inside the requested
-               triangle, hence BLAS accumulates into C without scratch */
+             * triangle, hence BLAS accumulates into C without scratch */
             const int pm = (0 == upper ? (n - pb - pn) : pb);
             const int pi = (0 == upper ? (pb + pn) : 0);
             int j;
@@ -1759,7 +1759,7 @@ LIBXS_API void libxs_syrk_task(
               }
             }
             /* the diagonal block straddles the triangle: a BLAS SYRK writes it,
-               otherwise the tiles below do, which keeps a kernel reachable */
+             * otherwise the tiles below do, which keeps a kernel reachable */
             if (NULL != dsyrk) {
               internal_libxs_dsyrk_blas(&uplo, "N", &pn, &k,
                 (const double*)&alpha, (const double*)a + pb, &lda,

@@ -69,7 +69,7 @@ int main(void)
   int i;
   if (EXIT_SUCCESS == result) {
     /* forced so that the absent-coordinate override is what the flag reports:
-       left to the fingerprint this corpus is scored categorically anyway */
+     * left to the fingerprint this corpus is scored categorically anyway */
     libxs_predict_set_mode(model, LIBXS_PREDICT_INTERPOLATE);
     for (i = 0; i < NENTRY; ++i) {
       double inputs[2], out;
@@ -239,7 +239,7 @@ int main(void)
     else result = EXIT_FAILURE;
   }
   /* An output absent from the header may name an intentionally hidden trailing
-     field. Inputs remain strict because no default or placement exists. */
+   * field. Inputs remain strict because no default or placement exists. */
   if (EXIT_SUCCESS == result) {
     FILE* out = fopen(CSVFILE, "w");
     if (NULL != out) {

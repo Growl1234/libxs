@@ -760,7 +760,7 @@ LIBXS_API_INLINE void libxs_barrier_init(libxs_barrier_t* barrier, int ntasks) {
     barrier->value[1] = 0;
 #if (0 == LIBXS_SYNC)
     /* without synchronization there is no team to wait for, and a wait for one
-       that cannot arrive does not end */
+     * that cannot arrive does not end */
     LIBXS_UNUSED(ntasks);
     barrier->ntasks = 1;
 #else
@@ -773,7 +773,7 @@ LIBXS_API_INLINE void libxs_barrier_init(libxs_barrier_t* barrier, int ntasks) {
 LIBXS_API_INLINE void libxs_barrier_wait(libxs_barrier_t* barrier) {
   if (NULL != barrier && 1 < barrier->ntasks) {
     /* read before arriving: the last task may release the team before this one
-       looks at the epoch, and it must not then wait for the next release */
+     * looks at the epoch, and it must not then wait for the next release */
     const int epoch = (int)LIBXS_ATOMIC_LOAD(
       &barrier->epoch.i, LIBXS_ATOMIC_SEQ_CST);
     if (barrier->ntasks == (int)LIBXS_ATOMIC_ADD_FETCH(
@@ -819,7 +819,7 @@ LIBXS_API_INLINE int libxs_barrier_bcast(libxs_barrier_t* barrier,
   int result = value;
   if (NULL != barrier && 1 < barrier->ntasks) {
     /* the epoch does not move between two rendezvous, so every task of this one
-       picks the same slot without a further rendezvous to agree on it */
+     * picks the same slot without a further rendezvous to agree on it */
     const int slot = (int)LIBXS_ATOMIC_LOAD(
       &barrier->epoch.i, LIBXS_ATOMIC_SEQ_CST) & 1;
     if (tid == root) {

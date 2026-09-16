@@ -240,8 +240,8 @@ typedef struct internal_libxs_predict_rf_tree_t {
    * this tree's bootstrap left out. Kept beside the nodes rather than in them:
    * it is a second read-out over the same partition, read only where boosting
    * ran, and the descent should not carry it through cache. NULL where the
-  * output is folded without an explicit RF_RATE, or where the stopping rule
-  * ended the stages first.
+   * output is folded without an explicit RF_RATE, or where the stopping rule
+   * ended the stages first.
    */
   double* incr;
   int nnodes;
@@ -484,8 +484,8 @@ typedef struct internal_libxs_predict_ctx_t {
   int noutputs;
   int maxsup;
   /* followed by: escape weights [n * NESCAPE], dist p, norm scratch,
-     local evidence, the per-output reporting arrays, the int arrays, then the
-     per-call dispatch buffers */
+   * local evidence, the per-output reporting arrays, the int arrays, then the
+   * per-call dispatch buffers */
 } internal_libxs_predict_ctx_t;
 
 
@@ -923,7 +923,7 @@ LIBXS_API_INLINE int internal_libxs_predict_kdpart(libxs_predict_t* model,
 
 
 /* the mean of a cluster's members, for a partition that assigned before it knew
-   where the clusters sit (the kd-tree ones; Lloyd carries its centroids along) */
+ * where the clusters sit (the kd-tree ones; Lloyd carries its centroids along) */
 LIBXS_API_INLINE void internal_libxs_predict_centroids(
   libxs_predict_t* model, int nclusters)
 {
@@ -1167,7 +1167,7 @@ LIBXS_API_INLINE void internal_libxs_predict_kmeans(libxs_barrier_t* barrier,
                 else for (j = 0; j < m; ++j) {
                   const int n = dcounts[(size_t)c * m + j];
                   /* absent throughout the cluster: the centroid has no value here,
-                     and saying so lets the distance omit it rather than read a 0 */
+                   * and saying so lets the distance omit it rather than read a 0 */
                   cen[j] = (0 < n) ? (cen[j] / n)
                     : internal_libxs_predict_absent();
                 }
@@ -3437,8 +3437,8 @@ LIBXS_API_INLINE double internal_libxs_predict_order_fn(
   const int ord = LIBXS_MAX(LIBXS_ROUNDX(int, x), 1);
   double total_err = 1e30;
   /* NULL barrier: a candidate is built by the searching task alone (ntasks is
-     one), so there is no rendezvous to hold and none of the outer build's to
-     interfere with - which is what a barrier per call buys over one per model */
+   * one), so there is no rendezvous to hold and none of the outer build's to
+   * interfere with - which is what a barrier per call buys over one per model */
   if (EXIT_SUCCESS == internal_libxs_predict_build_impl(NULL, ctx->model,
     ctx->nclusters, ord, 0, ctx->tid, ctx->ntasks))
   {
@@ -3504,7 +3504,7 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
     if (NULL != renv) model->refine = atoi(renv);
   }
   /* the builder's alone: it rewrites the corpus and resolves what follows.
-     Every task tested the same state above, so the verdict is already shared */
+   * Every task tested the same state above, so the verdict is already shared */
   if (0 == tid && EXIT_SUCCESS == result) {
     if (NULL != model && 0 < model->nts && 0 == model->nentries) {
       internal_libxs_predict_ts_expand(model);
@@ -3564,7 +3564,7 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
     }
   } /* end of the builder's preparation of the corpus */
   /* the builder's verdict on a stage no task could form for itself, handed over
-     as the rendezvous releases */
+   * as the rendezvous releases */
   result = libxs_barrier_bcast(barrier, tid, 0, result);
   if (EXIT_SUCCESS == result && NULL != model && 0 < model->nentries
     && LIBXS_PREDICT_HKNN == model->decompose
@@ -3689,7 +3689,7 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
       if (NULL == model->eval_buf) result = EXIT_FAILURE;
       else {
         /* resolves a requested window bank to the one view a forest can use;
-           skipping it left the request standing and eval took the bank path */
+         * skipping it left the request standing and eval took the bank path */
         internal_libxs_predict_bank_all(model);
         model->built = 1;
         ++model->nbuild;
@@ -3703,8 +3703,8 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
     const int n = model->noutputs;
     int c, i;
     /* entries bucketed by cluster, so collecting a cluster's members is a
-       lookup rather than a scan over all entries (that scan made build
-       O(p*nclusters), hence superlinear at the default nclusters = sqrt(p)) */
+     * lookup rather than a scan over all entries (that scan made build
+     * O(p*nclusters), hence superlinear at the default nclusters = sqrt(p)) */
     int pool_bucket = 0, pool_cbegin = 0;
     int* bucket = NULL;
     int* cbegin = NULL;
@@ -4119,7 +4119,7 @@ LIBXS_API int libxs_predict_build_task(libxs_predict_t* model,
     libxs_barrier_wait(team);
     internal_libxs_predict_rf_bins_tasks(model, tid, ntasks);
     /* every task reads every row of the bins, so the fill is a stage of its own
-       rather than something a task does to the rows it happens to need */
+     * rather than something a task does to the rows it happens to need */
     libxs_barrier_wait(team);
     if (EXIT_SUCCESS != internal_libxs_predict_rf_build_tasks(
       model, tid, ntasks))
@@ -5420,7 +5420,7 @@ LIBXS_API_INLINE int internal_libxs_predict_point(
     NULL, -1, candidates, dists, &nfound, &exact, &exact_nearest, &best, NULL,
     model->has_missing, NULL);
   /* Accumulate evidence per DISTINCT support entry, as the dense path does by
-     indexing into local[]; a value can be returned by several neighbors. */
+   * indexing into local[]; a value can be returned by several neighbors. */
   for (i = 0; i < nfound; ++i) {
     const int k = internal_libxs_predict_support_index(sv, ns, candidates[i]);
     if (0 <= k) {
@@ -5949,7 +5949,7 @@ LIBXS_API void* libxs_predict_prob_create(const libxs_predict_t* model)
       ctx->noutputs = model->noutputs;
       ctx->maxsup = internal_libxs_predict_maxsup(model);
       /* seed from the model's weights so a loaded, converged model does not
-         re-pay the adaptation transient on every fresh stream */
+       * re-pay the adaptation transient on every fresh stream */
       for (i = 0; i < nw; ++i) {
         w[i] = (NULL != model->escape_w)
           ? model->escape_w[i] : (1.0 / LIBXS_PREDICT_NESCAPE);
@@ -5981,7 +5981,7 @@ LIBXS_API int libxs_predict_prob_commit(libxs_predict_t* model,
     && 0 != internal_libxs_predict_ctx_valid(model, context))
   {
     /* the context is only READ here, so it stays const: casting it away would
-       discard exactly the guarantee this entry point wants to make */
+     * discard exactly the guarantee this entry point wants to make */
     const internal_libxs_predict_ctx_t* ctx =
       (const internal_libxs_predict_ctx_t*)context;
     const double* base = (const double*)((const unsigned char*)ctx
@@ -6176,7 +6176,7 @@ LIBXS_API void libxs_predict_prob(libxs_lock_t* lock,
         info->noutputs = n;
         info->cluster = -1;
         /* mean over the outputs that carry a bank: a single output's value
-           would depend on which one happened to be scored last */
+         * would depend on which one happened to be scored last */
         info->entropy = (0 < nent) ? (entsum / nent) : 0.0;
       }
     }

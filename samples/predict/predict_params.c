@@ -297,7 +297,7 @@ static void evaluate(const libxs_predict_t* model,
 {
 #if defined(__XGBOOST)
   /* read only by the comparison below, which is what carries our coverage over
-     to it; without XGBoost nothing reads it and filling it is dead work */
+   * to it; without XGBoost nothing reads it and filling it is dead work */
   double novel_cov[5];
 #endif
   double* all_inputs = (double*)malloc((size_t)ntotal * NINPUTS * sizeof(double));

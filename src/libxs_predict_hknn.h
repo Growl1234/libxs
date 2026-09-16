@@ -381,8 +381,10 @@ LIBXS_API_INLINE void internal_libxs_predict_hknn_partition(
 }
 
 
-/* tid/ntasks as internal_libxs_predict_kmeans: the assignment step is split
-   across the tasks, moving the centroids is the builder's */
+/*
+ * tid/ntasks as internal_libxs_predict_kmeans: the assignment step is split
+ * across the tasks, moving the centroids is the builder's
+ */
 LIBXS_API_INLINE void internal_libxs_predict_hknn_refine(libxs_barrier_t* barrier,
   libxs_predict_t* model, int nclusters, int tid, int ntasks)
 {

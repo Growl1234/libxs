@@ -25,9 +25,11 @@
 #define PREDICT_XGB_PREDCFG "{\"type\":0,\"training\":false," \
   "\"iteration_begin\":0,\"iteration_end\":0,\"strict_shape\":false}"
 
-/** Inplace prediction over a single row: no DMatrix is built, so the call is the
- *  descent through the trees rather than the construction of a matrix to hold
- *  one query. Anything else measures the interface instead of the model. */
+/**
+ * Inplace prediction over a single row: no DMatrix is built, so the call is the
+ * descent through the trees rather than the construction of a matrix to hold
+ * one query. Anything else measures the interface instead of the model.
+ */
 #define PREDICT_XGB_DENSECFG "{\"type\":0,\"iteration_begin\":0," \
   "\"iteration_end\":0,\"strict_shape\":false,\"cache_id\":0,\"missing\":NaN}"
 
@@ -35,10 +37,12 @@
 #define PREDICT_XGB_ARRAY "{\"data\":[%lu,true],\"shape\":[1,%i]," \
   "\"typestr\":\"<f4\",\"version\":3}"
 
-/** Rows the single-query latency is measured over, a bound rather than a share:
- *  it is a per-call cost, so a few thousand calls settle it and every further
- *  one is charged to the comparison for nothing. XGB_LATENCY overrides it, and
- *  zero declines the measurement. */
+/**
+ * Rows the single-query latency is measured over, a bound rather than a share:
+ * it is a per-call cost, so a few thousand calls settle it and every further
+ * one is charged to the comparison for nothing. XGB_LATENCY overrides it, and
+ * zero declines the measurement.
+ */
 #if !defined(PREDICT_XGB_LATENCY)
 #  define PREDICT_XGB_LATENCY 4096
 #endif
@@ -190,7 +194,7 @@ static int predict_xgb_output(DMatrixHandle dtrain, DMatrixHandle dall,
     result = XGBoosterPredictFromDMatrix(booster, dall,
       PREDICT_XGB_PREDCFG, &shape, &ndim, &out);
     /* stopped before the read-out below, which is this harness picking a class
-       out of the probabilities rather than XGBoost predicting anything */
+     * out of the probabilities rather than XGBoost predicting anything */
     if (NULL != dt) dt->predict += libxs_timer_duration(tick, libxs_timer_tick());
     if (0 == result && NULL != out && 0 < ndim) {
       const int width = (1 < ndim) ? (int)shape[1] : 1;
@@ -224,7 +228,7 @@ static int predict_xgb_output(DMatrixHandle dtrain, DMatrixHandle dall,
         char array[192];
         int n = 0, i;
         /* the row the query is read from does not move, so the interface that
-           names it is written once and the loop measures the prediction */
+         * names it is written once and the loop measures the prediction */
         LIBXS_SNPRINTF(array, sizeof(array), PREDICT_XGB_ARRAY,
           (unsigned long)(size_t)qrow, ninputs);
         /**
@@ -237,7 +241,7 @@ static int predict_xgb_output(DMatrixHandle dtrain, DMatrixHandle dall,
          */
         XGBoosterSetParam(booster, "nthread", "1");
         /* the first call allocates the buffer the result is returned in, and
-           charging that to a query would charge it to every query */
+         * charging that to a query would charge it to every query */
         result = XGBoosterPredictFromDense(booster, array, PREDICT_XGB_DENSECFG,
           NULL, &shape, &ndim, &out);
         tick = libxs_timer_tick();

@@ -531,7 +531,7 @@ static int test_mixed_key_sizes_cache(void)
   }
 
   /* hammer alternating lengths: more distinct keys than cache entries,
-     so the cache both hits and evicts throughout */
+   * so the cache both hits and evicts throughout */
   for (i = 0; i < 100; ++i) {
     for (n = 1; n <= LIBXS_REGKEY_MAXSIZE; ++n) {
       const int* v = (const int*)libxs_registry_get(registry, key, (size_t)n, NULL);
@@ -549,7 +549,7 @@ static int test_mixed_key_sizes_cache(void)
   }
 
   /* invalidation is length-specific: removing one length must not drop
-     the cached values of the surrounding lengths */
+   * the cached values of the surrounding lengths */
   libxs_registry_remove(registry, key, 3, NULL);
   TEST_CHECK(NULL == libxs_registry_get(registry, key, 3, NULL));
   { const int* v = (const int*)libxs_registry_get(registry, key, 2, NULL);
@@ -588,7 +588,7 @@ static int test_mixed_key_sizes_iteration(void)
          entry = libxs_registry_next_length(registry, &regkey, &regkey_size, &cursor))
     {
       /* the reported size identifies the entry, and re-reading the key at
-         exactly that size must round-trip back to the very same value */
+       * exactly that size must round-trip back to the very same value */
       const int val = *(const int*)entry;
       TEST_CHECK(0 < regkey_size && regkey_size <= LIBXS_REGKEY_MAXSIZE);
       TEST_CHECK(val == (int)regkey_size);
@@ -694,8 +694,8 @@ static int test_tls_cache_growth(void)
   TEST_CHECK(NULL != p); /* seeds the TLS cache */
 
   /* insert other keys one at a time (crossing several growth thresholds) and
-     re-read the cached key after each: the entry moves, so every get must
-     return the CURRENT location, never the freed one */
+   * re-read the cached key after each: the entry moves, so every get must
+   * return the CURRENT location, never the freed one */
   for (i = 1; i < 4000; ++i) {
     const unsigned int k = 100000 + i;
     double v = 1.0;

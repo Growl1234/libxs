@@ -1247,19 +1247,19 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
      * before either is allowed to gate anything.
      */
     /**
-      * WHICH sources a word occurs in, as a saturating bitmap of hashed section
-      * identity rather than an exact set.
-      *
-      * The exact set needed a table of section names, and a table has a size: at
-      * 64 it silently tracked only the first 64 sections a corpus offered, so on a
-      * 473-section corpus `nsrc` was not merely capped, it was BIASED toward words
-      * appearing early. It also cost a linear scan of that table per entry.
-      *
-      * A bitmap answers the only question asked of it - "at least minsrc distinct
-      * sources" - in bounded memory and with no positional bias. Two collisions
-      * can hide one source, so it UNDERCOUNTS a word occurring in many sections;
-      * that direction is safe, because the test admits on a lower bound.
-      */
+     * WHICH sources a word occurs in, as a saturating bitmap of hashed section
+     * identity rather than an exact set.
+     *
+     * The exact set needed a table of section names, and a table has a size: at
+     * 64 it silently tracked only the first 64 sections a corpus offered, so on a
+     * 473-section corpus `nsrc` was not merely capped, it was BIASED toward words
+     * appearing early. It also cost a linear scan of that table per entry.
+     *
+     * A bitmap answers the only question asked of it - "at least minsrc distinct
+     * sources" - in bounded memory and with no positional bias. Two collisions
+     * can hide one source, so it UNDERCOUNTS a word occurring in many sections;
+     * that direction is safe, because the test admits on a lower bound.
+     */
     unsigned int* srcmask = (unsigned int*)calloc(2 * ((size_t)vocab + 1),
       sizeof(unsigned int));
     libxs_hist_t* hist_seed = libxs_hist_create(10, 2, NULL, NULL, NULL);
@@ -1309,7 +1309,7 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
       unsigned int id;
       void* value;
       /* The learner needs the embedding, so it says so rather than depending on
-         a prediction kind having been asked for. */
+       * a prediction kind having been asked for. */
       if (0 == token_emb_ready()) {
         token_emb_build(corpus, lexicon, rules, nrules, 0);
       }
@@ -1418,7 +1418,7 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
                 }
               }
               /* The last word of a sentence is a head by definition: there is
-                 nothing left for it to modify. */
+               * nothing left for it to modify. */
               if (pos + 1 < stream.size) {
                 const libxs_lexeme_t* next = stream.data + pos + 1;
                 if (0 != (next->flags & LIBXS_LEXEME_WORD)
@@ -1454,8 +1454,8 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
         memcpy(cseed, centroid, TOKEN_EMB_DIM * sizeof(double));
         memcpy(sseed, scentroid, TOKEN_EMB_DIM * sizeof(double));
         /* Section BUCKETS, not sections: nsrc counts distinct buckets, and
-           saying "sections" would overstate its resolution. corpus_sections_size
-           is per FILE and would report only the last one of a multi-file corpus. */
+         * saying "sections" would overstate its resolution. corpus_sections_size
+         * is per FILE and would report only the last one of a multi-file corpus. */
         { int b, w;
           for (w = 0; w < 2; ++w) {
             unsigned int bits = seenmask[w];
@@ -1466,7 +1466,7 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
           " accept>=%.2f speculate>=%.2f minsrc=%d minfreq=%d refine=%d\n",
           nseed, nbucket, accept, specul, minsrc, minfreq, refine);
         /* The SEEDS are the known-good group: they are person nouns by
-           assertion, so their head fraction is what a member looks like. */
+         * assertion, so their head fraction is what a member looks like. */
         /**
          * An introducer is not simply a function word that was ever seen in
          * front of a member. Taken that way the set fills up with conjunctions,
@@ -1549,7 +1549,7 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
               sample[t] = (0 < seedn[s][t])
                 ? ((double)seedk[s][t] / (double)seedn[s][t]) : 0.0;
               /* Per test, not per member: a member may sit low on one dimension
-                 and still speak for the class on the other. */
+               * and still speak for the class on the other. */
               if (0 < rest_n && 0 != answer_rules_implausible(seedk[s][t],
                 seedn[s][t], (double)rest_k / (double)rest_n))
               {
@@ -1717,15 +1717,15 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
           }
         }
         /* Both counts are labelled in replies: see the provenance comment in
-           converse.h for why the accepted band is not trusted either. */
+         * converse.h for why the accepted band is not trusted either. */
         /**
-          * A cap that binds is REPORTED. `want` is a cap and never a target: E1
-          * measured that precision at a fixed count cannot be improved, because
-          * every term an exclusion removes is replaced by the next wrong one just
-          * below it. So a run that stops at the cap has not measured the class, it
-          * has measured the first N of it, and saying nothing would read as
-          * "these are the terms that qualify".
-          */
+         * A cap that binds is REPORTED. `want` is a cap and never a target: E1
+         * measured that precision at a fixed count cannot be improved, because
+         * every term an exclusion removes is replaced by the next wrong one just
+         * below it. So a run that stops at the cap has not measured the class, it
+         * has measured the first N of it, and saying nothing would read as
+         * "these are the terms that qualify".
+         */
         fprintf(stderr, "rule learning: %lu accepted, %lu proposed"
           " (both labelled in replies)%s\n", (unsigned long)result,
           (unsigned long)nspecul, (0 == exhausted)
@@ -1996,7 +1996,7 @@ static size_t corpus_parents_load(void)
             }
             if (0 < result) {
               /* The views were rebuilt FROM the parents being replaced, so they
-                 no longer stand for anything this registry holds. */
+               * no longer stand for anything this registry holds. */
               corpus_view_free();
               if (NULL != corpus_parents) {
                 libxs_registry_destroy(corpus_parents);
@@ -2528,8 +2528,8 @@ int corpus_case_forced(const char* text, int at, int heading_len)
         result = 1;
       }
       /* The typeset quotes are three bytes and end with these, which is enough
-         to recognise them without decoding: no other character here does. The
-         last two are the guillemets a German edition opens an utterance with. */
+       * to recognise them without decoding: no other character here does. The
+       * last two are the guillemets a German edition opens an utterance with. */
       else if (0x98 == c || 0x9c == c || 0xab == c || 0xbb == c) result = 1;
     }
   }
@@ -2604,9 +2604,9 @@ int corpus_line_markup(const char* text, int len)
     }
     if (0 == result && NULL != memchr(text, '|', (size_t)len)) result = 1;
     /* An entity reference is markup by the same argument as the bar: "&nbsp;" and
-       "&ndash;" are syntax, and a line carrying one was never prose a reader wrote.
-       Without this, "Best Picture&nbsp;&ndash; 1928 to present" was a section and
-       answers were credited to it. */
+     * "&ndash;" are syntax, and a line carrying one was never prose a reader wrote.
+     * Without this, "Best Picture&nbsp;&ndash; 1928 to present" was a section and
+     * answers were credited to it. */
     if (0 == result) {
       int at;
       for (at = 0; at < len && 0 == result; ++at) {
@@ -2875,8 +2875,8 @@ static void corpus_sections_build(const unsigned char* text, size_t size)
         while (0 < len && 0 != isspace(text[line_start + len - 1])) --len;
         while (indent < len && 0 != isspace(text[line_start + indent])) ++indent;
         /* Markup neither separates two sections nor is content, and where it
-           stands between a heading and the space above it, counting it as
-           content hides the separation the heading was given. */
+         * stands between a heading and the space above it, counting it as
+         * content hides the separation the heading was given. */
         if (indent < len && 0 != corpus_line_markup((const char*)text
           + line_start + indent, len - indent))
         {
@@ -2921,8 +2921,8 @@ static void corpus_sections_build(const unsigned char* text, size_t size)
             && 0 == cased && 0 != alone && (1 < blanks || 0 == line_start))
           {
             /* The first heading of a file has no separation above it and is
-               still the outermost one there is, so it never votes and always
-               qualifies. */
+             * still the outermost one there is, so it never votes and always
+             * qualifies. */
             const int depth = (0 == line_start) ? level : blanks;
             if (0 == pass) {
               if (0 != line_start && depth < SECTION_DEPTH_MAX) {
@@ -2931,9 +2931,9 @@ static void corpus_sections_build(const unsigned char* text, size_t size)
             }
             else if (depth >= level) {
               /* The section begins AT its heading, not after it: ingest stores
-                 the first sentence of a section from the heading onward, so a
-                 section that began below its own heading would credit the first
-                 sentence of every section to the previous one. */
+               * the first sentence of a section from the heading onward, so a
+               * section that began below its own heading would credit the first
+               * sentence of every section to the previous one. */
               corpus_sections_append((const char*)text + at, body, at, depth);
             }
           }
@@ -3341,9 +3341,9 @@ static int corpus_store_record(libxs_registry_t* corpus,
           ? (const corpus_entry_t*)existing : NULL;
         matched = 1;
         /* Replace only to gain token metadata; sizes now vary by text
-           length, so an unequal size is no longer evidence of anything.
-           A span was built from the same text as this entry, so it has the
-           same tokens and there is nothing to gain from replacing it. */
+         * length, so an unequal size is no longer evidence of anything.
+         * A span was built from the same text as this entry, so it has the
+         * same tokens and there is nothing to gain from replacing it. */
         if (NULL != old_entry) {
           if (0 == old_entry->ntokens && entry->ntokens > 0) {
             libxs_registry_set(corpus, key, key_size,
@@ -3792,7 +3792,7 @@ static int ngram_is_vowel_cp(unsigned long cp)
   if (cp < 128) result = ngram_is_vowel((unsigned char)cp);
   else if (0xC0 <= cp && 0x24F >= cp) {
     /* fold to the base letter: the accented ranges run in blocks whose
-       residues mod the block size follow the base vowel order */
+     * residues mod the block size follow the base vowel order */
     static const char* const vowels = "aeiouy";
     unsigned long base = 0;
     if (0xC0 <= cp && 0xFF >= cp) {
@@ -4968,7 +4968,7 @@ static int token_emb_succ_prepare(const unsigned int ctx[], int nctx,
       int d;
       for (d = 0; d < TOKEN_EMB_DIM; ++d) u[d] = 0.0;
       /* Walk from the immediate predecessor backwards so weight 1 is the nearest
-         token and the decay applies to older testimony. */
+       * token and the decay applies to older testimony. */
       for (i = nctx - 1; i >= 0; --i) {
         const double* e = token_emb_get(ctx[i]);
         for (d = 0; d < TOKEN_EMB_DIM; ++d) u[d] += w * e[d];
@@ -5073,8 +5073,8 @@ int token_emb_succ_rank(const unsigned int ctx[], int nctx,
 {
   int result = -1;
   /* Shares the prepared distribution so the probe scores exactly what the slot
-     scores: a probe that built its own context vector could report a mechanism
-     nobody is running. */
+   * scores: a probe that built its own context vector could report a mechanism
+   * nobody is running. */
   if (0 != cand && cand <= vocab
     && 0 != token_emb_succ_prepare(ctx, nctx, vocab, ngram_emb_temp())
     && token_emb_prior[cand] > 0.0)
@@ -5123,8 +5123,8 @@ static void token_emb_cooc_text(libxs_registry_t* pairs, double* rowcnt,
       answer_lexnorms, answer_lexnorms_size, 0))
   {
     /* Trailing buffer of the last TOKEN_EMB_WINDOW ids: each token pairs with
-       every buffered predecessor and both directions are counted, so the union
-       over positions is a symmetric window of that same radius (no 2*W+1). */
+     * every buffered predecessor and both directions are counted, so the union
+     * over positions is a symmetric window of that same radius (no 2*W+1). */
     unsigned int window[TOKEN_EMB_WINDOW];
     int fill = 0;
     size_t pos;
@@ -5149,8 +5149,8 @@ static void token_emb_cooc_text(libxs_registry_t* pairs, double* rowcnt,
             || (0 != distonly && (fill - i) == dir))
           {
             /* Row = predecessor, column = successor, so the row of the matrix
-               is the successor profile of that token and nothing symmetrizes
-               it. window[fill-1] is the immediate predecessor. */
+             * is the successor profile of that token and nothing symmetrizes
+             * it. window[fill-1] is the immediate predecessor. */
             token_emb_pair_observe(pairs, window[i], lex->id);
           }
         }
@@ -5171,7 +5171,7 @@ static void token_emb_cooc_text(libxs_registry_t* pairs, double* rowcnt,
 }
 
 /* Multiply the sparse PPMI matrix (CSR) by a dense (vocab+1) x DIM block:
-   out = A * in when transpose is zero, out = A^T * in otherwise. */
+ * out = A * in when transpose is zero, out = A^T * in otherwise. */
 static void token_emb_spmm(const size_t* rowptr, const unsigned int* colidx,
   const double* val, unsigned int vocab, const double* in, int transpose,
   double* out)
@@ -5196,7 +5196,7 @@ static void token_emb_spmm(const size_t* rowptr, const unsigned int* colidx,
 }
 
 /* Gram-Schmidt orthonormalization of the DIM columns of a (vocab+1) x DIM
-   block, in place. */
+ * block, in place. */
 static void token_emb_orthonormalize(double* block, unsigned int vocab)
 {
   const size_t rows = (size_t)vocab + 1;
@@ -5236,8 +5236,8 @@ static int token_emb_reduce(const size_t* rowptr, const unsigned int* colidx,
   double* work = (double*)malloc(block * sizeof(double));
   if (NULL != basis && NULL != work) {
     /* Symmetry-breaking start: LIBXS_SHUFFLE_INDEX is a coprime affine map,
-       hence a bijection onto [0, block), so the values are an evenly spread
-       (not clustered) permutation and reproducible across runs. */
+     * hence a bijection onto [0, block), so the values are an evenly spread
+     * (not clustered) permutation and reproducible across runs. */
     const size_t stride = libxs_coprime_bias(block, -1.0);
     unsigned int id, iter;
     size_t i;
@@ -5471,7 +5471,7 @@ void token_emb_build(const libxs_registry_t* corpus,
         value = corpus_iterx_next(corpus, &key, &cursor);
       }
       /* rowcnt was already accumulated for the backfill, so the unigram prior
-         the successor distribution rescales costs one normalization. */
+       * the successor distribution rescales costs one normalization. */
       { double ntok = 0.0;
         for (id = 1; id <= vocab; ++id) ntok += rowcnt[id];
         if (ntok > 0.0) {
@@ -5916,8 +5916,8 @@ static int corpus_store_clauses(libxs_registry_t* corpus,
     corpus_blob_key(parent, key, &key_size);
     libxs_registry_remove(corpus_parents, key, key_size, NULL);
     /* The id is handed out again, so any window cached under it would now stand
-       for a different parent's text: one registry's removal invalidating the
-       other's contents, which is the reason the views are dropped here. */
+     * for a different parent's text: one registry's removal invalidating the
+     * other's contents, which is the reason the views are dropped here. */
     corpus_view_free();
     if (corpus_blob_max == parent) --corpus_blob_max;
   }
@@ -6155,8 +6155,8 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
         if (fread(text, 1, text_size, f) == text_size) {
           text[text_size] = 0;
           /* The id is spent only on a file that was actually read, so it stands for
-             a name a citation can print: -b probes many candidates that do not
-             exist, and numbering those left the table mostly empty. */
+           * a name a citation can print: -b probes many candidates that do not
+           * exist, and numbering those left the table mostly empty. */
           if (corpus_source_id < 0xffff) ++corpus_source_id;
           corpus_source_path_set((int)corpus_source_id, path);
           result = EXIT_SUCCESS;
@@ -6171,7 +6171,7 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
     unsigned char* reflowed = NULL;
     size_t reflowed_size = 0;
     /* The map comes from the same pass, because a line of the reflowed text is
-       not a line of the file a reader opens. */
+     * not a line of the file a reader opens. */
     if (EXIT_SUCCESS == libxs_text_reflow_map(text, text_size,
       &reflowed, &reflowed_size, &corpus_ingest_lines, &corpus_ingest_nlines))
     {
@@ -6275,7 +6275,7 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
       }
     }
     /* Sections are reported because attribution rests on them and a heading the
-       scan misses is invisible in every other figure. */
+     * scan misses is invisible in every other figure. */
     fprintf(stderr, "  fragments: %d from over-long sentences (the only copy),"
       " %d from long paragraphs (covered twice)\n", nfragsent, nfragpara);
     if (0 != corpus_span_check()) {
@@ -6952,7 +6952,7 @@ int converse_setup(int argc, char* argv[], int role, converse_run_t* run)
     size_t nbig[4];
     void* value;
     /* Before the facts, because a widened person class is what makes new facts
-       extractable at all: run it after and the learned terms would sit unused. */
+     * extractable at all: run it after and the learned terms would sit unused. */
     answer_relation_rules_learn(run->corpus, run->lexicon, converse_lexrules,
       run->nrules);
     token_emb_pair_probe(run->corpus, run->lexicon, converse_lexrules,

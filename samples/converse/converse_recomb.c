@@ -307,9 +307,9 @@ static int recomb_clause_only(void)
   static int cached = -1;
   if (cached < 0) {
     /* ON by default: the samples improve visibly (ungrammatical seams 4 -> 1 of
-       12, coherent 2 -> 5) and it costs 8 points of yield, 400 joins from 475
-       tries instead of 435. CONVERSE_RECOMB_CLAUSE=0 restores the unconstrained
-       splice, which every recomb figure published before 2026-08-13 used. */
+     * 12, coherent 2 -> 5) and it costs 8 points of yield, 400 joins from 475
+     * tries instead of 435. CONVERSE_RECOMB_CLAUSE=0 restores the unconstrained
+     * splice, which every recomb figure published before 2026-08-13 used. */
     const char* env = getenv("CONVERSE_RECOMB_CLAUSE");
     cached = (NULL != env && '0' == *env) ? 0 : 1;
   }
@@ -399,7 +399,7 @@ static int recomb_repeats(const char* text, int seam, int len)
     }
     for (pos = 0; pos + want <= nwords && 0 == result; ++pos) {
       /* The haystack is the PREFIX of a buffer whose remainder holds the span
-         being looked for, which is why this needs the size-explicit form. */
+       * being looked for, which is why this needs the size-explicit form. */
       result = (NULL != libxs_strimem(text, (size_t)seam, text + begin[pos],
         (size_t)(end[pos + want - 1] - begin[pos]))) ? 1 : 0;
     }

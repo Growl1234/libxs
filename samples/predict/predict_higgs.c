@@ -117,7 +117,7 @@ int main(int argc, char* argv[])
           double gates[NGATE];
           const int ngates = gate_list(gates, NGATE);
           /* per query, so precision can be read against coverage rather than at
-             one threshold whose meaning moves with how confidence is formed */
+           * one threshold whose meaning moves with how confidence is formed */
           double* lconf = (double*)malloc((size_t)total * sizeof(double));
           double* lpred = (double*)malloc((size_t)total * sizeof(double));
           char* lok = (char*)calloc((size_t)total, 1);

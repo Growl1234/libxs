@@ -263,8 +263,8 @@ static int test_double_dispatch(void)
     config = libxs_gemm_dispatch_rt(&shape, &kshape, &backend, registry);
   }
   /* automatic selection declines a kernel that covers a tile of the shape:
-     such operands stream through a larger matrix, which a generated kernel
-     serves worse than BLAS (LIBXS_GEMM_BACKEND reaches the generators) */
+   * such operands stream through a larger matrix, which a generated kernel
+   * serves worse than BLAS (LIBXS_GEMM_BACKEND reaches the generators) */
   TEST_CHECK(0 == jit_create_handle_calls);
   TEST_CHECK(NULL != config);
   TEST_CHECK(NULL == config->dgemm_jit);
@@ -441,7 +441,7 @@ static int test_registry_no_warmup_entries(void)
   shape.lda = 5; shape.ldb = 5; shape.ldc = 5;
   shape.alpha = 1.0;
   /* the first shape of a process skips warm-up, so spend that on a throwaway
-     and keep these checks independent of the order main() runs them in */
+   * and keep these checks independent of the order main() runs them in */
   TEST_CHECK(NULL != libxs_gemm_dispatch_rt(
     &shape, NULL, &backend, registry));
 
@@ -507,12 +507,12 @@ static int test_registry_no_blas_entries(void)
   shape.lda = 7; shape.ldb = 7; shape.ldc = 7;
   shape.alpha = 1.0;
   /* the first shape of a process skips warm-up, so spend that on a throwaway
-     and keep these checks independent of the order main() runs them in */
+   * and keep these checks independent of the order main() runs them in */
   TEST_CHECK(NULL != libxs_gemm_dispatch_rt(
     &shape, NULL, &backend, registry));
 
   /* an arithmetic intensity of 2*128/24 is far above LIBXS_GEMM_JIT_MAX, so
-     the gate refuses this shape whatever backend is offered */
+   * the gate refuses this shape whatever backend is offered */
   shape.m = 128; shape.n = 128; shape.k = 128;
   shape.lda = 128; shape.ldb = 128; shape.ldc = 128;
   n0 = libxs_registry_size(registry);
@@ -576,8 +576,8 @@ static int test_registry_no_syrk_entries(void)
   TEST_CHECK(NULL != registry);
   jit_create_handle_calls = 0;
   /* a shape that fits one tile runs the kernel, hence it is dispatched: this
-     double dispatch may enter neither the problem shape nor the tile while the
-     shape is still proving reuse */
+   * double dispatch may enter neither the problem shape nor the tile while the
+   * shape is still proving reuse */
   for (i = 0; i < TEST_MAXWARMUP && 0 == jit_create_handle_calls; ++i) {
     LIBXS_MEMZERO(&config);
     TEST_CHECK(0 != libxs_syrk_dispatch_cpy_rt(
@@ -599,8 +599,8 @@ static int test_registry_no_syrk_entries(void)
   TEST_CHECK(NULL != registry);
   jit_create_handle_calls = 0;
   /* a shape wider than one tile runs the BLAS SYRK wherever that entry point
-     is available, and a kernel nothing calls is then neither built nor entered;
-     without the entry point the same shape tiles like the case above */
+   * is available, and a kernel nothing calls is then neither built nor entered;
+   * without the entry point the same shape tiles like the case above */
   for (i = 0; i < TEST_MAXWARMUP && 0 == jit_create_handle_calls; ++i) {
     LIBXS_MEMZERO(&config);
     TEST_CHECK(0 != libxs_syrk_dispatch_cpy_rt(

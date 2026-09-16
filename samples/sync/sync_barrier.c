@@ -24,7 +24,7 @@ int main(int argc, char* argv[])
   const int request = LIBXS_MAX(1 < argc ? atoi(argv[1]) : max_nthreads, 1);
   const int nrepeat = LIBXS_MAX(2 < argc ? atoi(argv[2]) : 100000, 1);
   /* the barrier is written by every task at every rendezvous, so it is given a
-     line of its own rather than sharing one with the counters below */
+   * line of its own rather than sharing one with the counters below */
   LIBXS_ALIGNED(libxs_barrier_t barrier, LIBXS_ALIGNMENT);
   libxs_timer_tick_t tickw = 0, tickb = 0;
   int nthreads = 1, result = EXIT_SUCCESS;
@@ -78,7 +78,7 @@ int main(int argc, char* argv[])
 #     pragma omp parallel num_threads(nthreads) reduction(+:stale)
 #endif
       { /* each task stamps its own slot and then reads every slot: a task that
-           left the rendezvous early finds a stamp from the round before */
+         * left the rendezvous early finds a stamp from the round before */
 #if defined(_OPENMP)
         const int tid = omp_get_thread_num();
 #else
@@ -92,7 +92,7 @@ int main(int argc, char* argv[])
             if (stamp[t] != r) ++stale;
           }
           /* a second rendezvous before the next stamp, or a task racing ahead
-             would overwrite a slot another task has not read yet */
+           * would overwrite a slot another task has not read yet */
           libxs_barrier_wait(&barrier);
         }
       }
@@ -101,7 +101,7 @@ int main(int argc, char* argv[])
 #     pragma omp parallel num_threads(nthreads) reduction(+:wrong)
 #endif
       { /* the root publishes a value that changes every round, so a task that
-           reads the slot of the round before differs rather than coincides */
+         * reads the slot of the round before differs rather than coincides */
 #if defined(_OPENMP)
         const int tid = omp_get_thread_num();
 #else
@@ -122,7 +122,7 @@ int main(int argc, char* argv[])
           libxs_timer_duration(0, tickb) / nb * 1e9, (double)tickb / nb);
       }
       /* a rendezvous that lets a task through early is fast and worthless, so
-         the timing is only reported beside what it was measured on */
+       * the timing is only reported beside what it was measured on */
       if (0 != stale || 0 != wrong) {
         fprintf(stderr, "Error: %i stale stamps and %i wrong broadcasts\n",
           stale, wrong);

@@ -71,7 +71,7 @@ static int test_team(int nthreads)
           if (stamp[t] != r) ++stale;
         }
         /* the second rendezvous keeps a task from stamping the next round over
-           a slot another task has not read yet */
+         * a slot another task has not read yet */
         libxs_barrier_wait(&barrier);
       }
     }
@@ -127,7 +127,7 @@ int main(void)
 #if defined(_OPENMP)
   { int nthreads = 1;
     /* the team says how large it is: a barrier told a number the runtime does
-       not grant would wait for a task that never arrives */
+     * not grant would wait for a task that never arrives */
 #   pragma omp parallel
     { if (0 == omp_get_thread_num()) nthreads = omp_get_num_threads(); }
     if (EXIT_SUCCESS == result && 1 < nthreads) {

@@ -17,33 +17,3 @@ stacked-comments    2  samples/converse/converse_hier.c
 stacked-comments    5  samples/converse/converse_lm.c
 stacked-comments   12  samples/converse/converse_qa.c
 stacked-comments    6  samples/converse/converse_recomb.c
-# comment-shape is new, and it runs tree-wide like the other rules that
-# mislead a reader wherever they sit. Two shapes are listed: a block written
-# with a hanging indent and no stars, which is most of the count, and a compact
-# block at file scope in a header, which is 13 of the entries in
-# src/libxs_predict_{rf,hknn}.h. samples/converse keeps its own to-do list, so
-# its share is deferred rather than scrubbed under work in progress.
-comment-shape       1  libxs/libxs_macros.h
-comment-shape       3  libxs/libxs_sync.h
-comment-shape      29  samples/converse/converse.c
-comment-shape      15  samples/converse/converse_lm.c
-comment-shape      49  samples/converse/converse_qa.c
-comment-shape       2  samples/converse/converse_recomb.c
-comment-shape       1  samples/converse/summarize.c
-comment-shape       1  samples/predict/predict_higgs.c
-comment-shape       1  samples/predict/predict_params.c
-comment-shape       5  samples/predict/predict_xgb.h
-comment-shape       5  samples/sync/sync_barrier.c
-comment-shape       9  src/libxs_gemm.c
-comment-shape       3  src/libxs_malloc.c
-comment-shape      14  src/libxs_predict.c
-comment-shape       2  src/libxs_predict_hknn.h
-comment-shape      22  src/libxs_predict_rf.h
-comment-shape       3  src/libxs_predict_serial.h
-comment-shape       1  src/libxs_textrule.c
-comment-shape       6  tests/gemm_dispatch.c
-comment-shape       1  tests/memory.c
-comment-shape       1  tests/predict_calib.c
-comment-shape       2  tests/predict_missing.c
-comment-shape       4  tests/registry.c
-comment-shape       2  tests/sync_barrier.c

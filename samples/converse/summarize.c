@@ -1088,7 +1088,7 @@ static int compose_document(const libxs_registry_t* corpus,
             }
             if (0 != have_prev) {
               /* Stored fingerprints are the compact projection; widen both to
-                 the library form for the distance. */
+               * the library form for the distance. */
               libxs_fprint_t ea, pb;
               corpus_fprint_unpack(&ea, &e->fprint);
               corpus_fprint_unpack(&pb, &prev_fprint);

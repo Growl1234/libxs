@@ -101,7 +101,7 @@ LIBXS_API_INLINE int internal_libxs_predict_load_entries(libxs_predict_t* model)
       int c, k;
       model->capacity = p;
       /* sized once: the entries are filled in cluster order, and every growth
-         would otherwise re-seat all of them again */
+       * would otherwise re-seat all of them again */
       if (NULL == internal_libxs_predict_slot(model, p - 1)) {
         result = EXIT_FAILURE;
       }
@@ -1536,7 +1536,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
               uint8_t ncl = 0;
               ok = internal_libxs_predict_read(&src, end, &ncl, 1);
               /* the correction is indexed by node and class, so a width of
-                 zero or beyond the fold would leave that indexing unbounded */
+               * zero or beyond the fold would leave that indexing unbounded */
               if (EXIT_SUCCESS == ok && (0 == ncl || 128 < ncl)) {
                 ok = EXIT_FAILURE;
               }
@@ -1615,7 +1615,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
                   }
                   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &lab, 1);
                   /* v2 is packed preorder: an internal node advances by one or
-                     by its positive right-subtree jump; a leaf carries zero */
+                   * by its positive right-subtree jump; a leaf carries zero */
                   if (EXIT_SUCCESS == ok && ((UINT16_MAX != f && f >= ninp)
                     || (UINT16_MAX != f
                       && (1 >= rf->trees[ti].nodes[k].data.right

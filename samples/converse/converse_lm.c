@@ -616,7 +616,7 @@ static void ngram_bank_update(double weight[], const ngram_expert_t expert[],
   int active[NGRAM_BANK_MAX];
   ngram_bank_view(&mix, weight, expert, prob, active, rate, share);
   /* the caller's mixture, which carries the log-loss floor ngram_bank_pool
-     applies; recomputing it here would drop that floor */
+   * applies; recomputing it here would drop that floor */
   libxs_mix_update(&mix, prob, active, mixture);
 }
 
@@ -950,12 +950,12 @@ static double ngram_bank_pool(const double weight[],
   double pooled;
   int slot;
   /* pool does not write the weights, but the view type is mutable; copying the
-     few slots keeps the const contract instead of casting it away */
+   * few slots keeps the const contract instead of casting it away */
   for (slot = 0; slot < NGRAM_BANK_MAX; ++slot) copy[slot] = weight[slot];
   ngram_bank_view(&mix, copy, expert, prob, active, 0.0, 0.0);
   pooled = libxs_mix_pool(&mix, prob, active);
   /* the log-loss floor stays here: the primitive reports what it computed and
-     leaves the choice of floor to the caller that takes the logarithm */
+   * leaves the choice of floor to the caller that takes the logarithm */
   return (pooled > 0.0) ? pooled : 1e-12;
 }
 
@@ -1579,7 +1579,7 @@ static int ngram_gen_eval(libxs_registry_t* model,
             (0 < gen_embcand && gen_ncand > gen_ncand_cnt)
               ? gen_ncand_cnt : gen_ncand, &got_order);
           /* Proposals join BEFORE the bank so the pool arbitrates the union
-             rather than being handed a decision already made. */
+           * rather than being handed a decision already made. */
           if (0 < gen_embcand) {
             const int nctx = (gen_embctx < hlen) ? gen_embctx : hlen;
             int k;
@@ -1725,8 +1725,8 @@ static int ngram_gen_eval(libxs_registry_t* model,
             }
             if (0 != cdecl) ++pos_resc;
             /* Whether what generation actually EMITTED is a successor no count
-               context attested here - the share of output that is synthesized
-               rather than selected, which is the cost side of this mode. */
+             * context attested here - the share of output that is synthesized
+             * rather than selected, which is the cost side of this mode. */
             { int fromemb = 0, k;
               for (k = 0; k < nemb && 0 == fromemb; ++k) {
                 if (embids[k] == ids[0]) fromemb = 1;
@@ -2153,8 +2153,8 @@ static int ngram_bank_warmup(libxs_predict_t* store, int vocabulary)
     }
     result = libxs_predict_prob_commit(store, context);
     /* nscan is the candidates ONE observation walks, so the product is the real
-       cost of this pass - printed because a bound that looks small can still be
-       quadratic against a large cluster. */
+     * cost of this pass - printed because a bound that looks small can still be
+     * quadratic against a large cluster. */
     fprintf(stderr, "predict slot: warm-up observed %ld of %i entries"
       " (bound %i, %i clusters, scan max=%i avg=%.0f mean=%.0f"
       " => %.1fM pair-ops), commit %s\n",
@@ -2231,7 +2231,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
   double bank_slot_bytes[NGRAM_BANK_MAX];
   long bank_n = 0;
   /* The bank under the attested/novel split: two mechanisms so far had their
-     headline reversed by bucket-splitting, so every slot set reports both. */
+   * headline reversed by bucket-splitting, so every slot set reports both. */
   double bank_deep_bits = 0.0, bank_shallow_bits = 0.0;
   const int bank = ngram_bank_probe();
   const unsigned int bank_slots = ngram_bank_slots();
@@ -2337,7 +2337,7 @@ static int ngram_eval(libxs_registry_t* model, const libxs_registry_t* corpus,
       int hlen = 0;
       int maxorder = ngram_maxorder();
       /* Source bytes this entry contributes, whether or not every token in it
-         is scored - the ceiling the denominator should approach. */
+       * is scored - the ceiling the denominator should approach. */
       entry_bytes += (double)entry->text_len;
       for (ti = 0; ti < ntok; ++ti) {
         unsigned int cur;
@@ -3782,7 +3782,7 @@ static void knnlm_cache_build(const libxs_predict_t* store)
       knnlm_cache_size = stats.nentries;
       knnlm_cache_model = store;
       /* Fit the projection from the datastore, then map the keys into it; the
-         query is mapped in knnlm_vote so both sides share one space. */
+       * query is mapped in knnlm_vote so both sides share one space. */
       token_proj_build(store);
       if (0 != token_proj_ready) {
         for (i = 0; i < stats.nentries; ++i) {
@@ -3956,7 +3956,7 @@ static int knnlm_vote(const libxs_predict_t* store, const unsigned int hist[],
         knnlm_scan_head(in, knnlm_dyn_in, knnlm_dyn_next, knnlm_dyn_size,
           head * span, (head + 1) * span, near_next, near_dist, &nnear);
         /* Softmax needs the minimum distance first (stability); the historical
-           inverse-distance kernel needs no such pass. */
+         * inverse-distance kernel needs no such pass. */
         if (temp > 0.0) {
           for (i = 0; i < nnear; ++i) {
             if (i == 0 || near_dist[i] < dmin) dmin = near_dist[i];
@@ -4450,12 +4450,12 @@ int converse_lm_run(converse_run_t* run)
     ngram_backoff_build(ngram_model, run->lexicon);
     converse_stage_end("ngram_build");
     /* The embedding-rank probe reads the embedding without being a prediction
-       KIND, so it declares the dependency itself rather than forcing -K embed,
-       which the dispatch below would route away from gen-eval. Split out of
-       the kind chain so the probe does not also build a predict store: that
-       store is what gen-eval scores as the bank's kind-different slot, and
-       handing it one it would not otherwise have would change the run being
-       measured. */
+     * KIND, so it declares the dependency itself rather than forcing -K embed,
+     * which the dispatch below would route away from gen-eval. Split out of
+     * the kind chain so the probe does not also build a predict store: that
+     * store is what gen-eval scores as the bank's kind-different slot, and
+     * handing it one it would not otherwise have would change the run being
+     * measured. */
     if (0 != use_embed || 0 != use_knnlm || 0 != ngram_gen_embrank()
       || 0 != ngram_gen_embcand()
       || 0 != (ngram_bank_slots() & (1u << NGRAM_BANK_EMB)))
@@ -4476,19 +4476,19 @@ int converse_lm_run(converse_run_t* run)
         run->ngram_holdout);
     }
     /* The expert bank can carry the predict store as a slot, which needs the
-       store in the plain n-gram path too. Gated on the slot being asked for,
-       so every other configuration stays byte-identical. */
+     * store in the plain n-gram path too. Gated on the slot being asked for,
+     * so every other configuration stays byte-identical. */
     else if (0 != (ngram_bank_slots() & (1u << NGRAM_BANK_PREDICT))) {
       token_model = token_predict_build(run->corpus, run->lexicon, run->rules,
         run->nrules, run->profile, 0, run->ngram_holdout, 2);
       /* Separate timers: one stage covering both made a slow build
-         indistinguishable from slow scoring, and attributing the cost to the
-         wrong one of those is how a fix gets aimed at the wrong code. */
+       * indistinguishable from slow scoring, and attributing the cost to the
+       * wrong one of those is how a fix gets aimed at the wrong code. */
       converse_stage_end("predict_build");
       /* Converge and publish the escape weights BEFORE scoring, so frozen
-         mode freezes something converged rather than the uniform prior. The
-         model is mutable only here, which is also the only place it may be
-         written: scoring requires it read-only. */
+       * mode freezes something converged rather than the uniform prior. The
+       * model is mutable only here, which is also the only place it may be
+       * written: scoring requires it read-only. */
       if (0 != ngram_bank_frozen() && NULL != token_model) {
         ngram_bank_warmup(token_model, (int)libxs_lexicon_size(run->lexicon));
         converse_stage_end("predict_warmup");
@@ -4538,7 +4538,7 @@ int converse_lm_run(converse_run_t* run)
     }
     if (0 == use_hier) ngram_stats(ngram_model);
     /* Bounds any cut rule against the model just trained, so it runs after
-       the store exists and reads only held-out entries. */
+     * the store exists and reads only held-out entries. */
     if (NULL != getenv("CONVERSE_SYLLABLE_ORACLE") && NULL != ngram_model) {
       ngram_syllable_oracle(ngram_model, run->lexicon, run->rules, run->nrules,
         eval_corpus, run->ngram_holdout, ngram_maxorder());

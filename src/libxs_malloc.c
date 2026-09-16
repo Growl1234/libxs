@@ -344,7 +344,7 @@ LIBXS_API_INLINE size_t internal_libxs_malloc_evict_available(
     size_t used = 0, i;
     unsigned int sh;
     /* every shard, because a chunk worth evicting sits in whichever free list the
-       task that released it belongs to */
+     * task that released it belongs to */
     for (sh = 0; sh < LIBXS_MALLOC_NSHARDS && NULL == pointer; ++sh) {
       internal_libxs_malloc_shard_t *const shard = pool->shard + sh;
       LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &shard->lock);
@@ -414,7 +414,7 @@ LIBXS_API_INLINE size_t internal_libxs_malloc_evict_bounded(
       &pool->pool_bytes, LIBXS_ATOMIC_RELAXED);
     if (pool_bytes <= target) break;
     /* every shard, because a chunk worth evicting sits in whichever free list the
-       task that released it belongs to */
+     * task that released it belongs to */
     for (sh = 0; sh < LIBXS_MALLOC_NSHARDS && NULL == pointer; ++sh) {
       internal_libxs_malloc_shard_t *const shard = pool->shard + sh;
       LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, &shard->lock);
@@ -850,7 +850,7 @@ LIBXS_API int libxs_malloc_pool_info(const libxs_malloc_pool_t* pool, libxs_mall
       size_t nchunks = 0, nfree = 0, i;
       unsigned int sh;
       /* the accounting is the pool's and not a shard's: what a caller asks about
-         is how much the pool holds, however its free lists are divided */
+       * is how much the pool holds, however its free lists are divided */
       for (sh = 0; sh < LIBXS_MALLOC_NSHARDS; ++sh) {
         const internal_libxs_malloc_chunk_t *chunk = pool->shard[sh].all;
         while (NULL != chunk) {
