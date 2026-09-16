@@ -28,6 +28,9 @@
 #define INTERNAL_REG_HASH_SEED  2166136261u
 #define INTERNAL_REG_HASH_PRIME 16777619u
 
+#define INTERNAL_REG_MAGIC 0x58535247U /* "XSRG" */
+#define INTERNAL_REG_VERSION 1
+
 /* Enable thread-local cache when TLS and sync are available and cache is non-zero. */
 #if !defined(LIBXS_NO_TLS) && (0 != LIBXS_SYNC) && (0 < (LIBXS_REGCACHE_NENTRIES))
 # define INTERNAL_REG_CACHE
@@ -89,6 +92,7 @@ LIBXS_EXTERN_C typedef struct internal_libxs_regcache_entry_t {
   char key[LIBXS_REGKEY_MAXSIZE];
 } internal_libxs_regcache_entry_t;
 #endif
+
 
 #if defined(INTERNAL_REG_CACHE)
 static LIBXS_TLS internal_libxs_regcache_entry_t
@@ -778,10 +782,6 @@ LIBXS_API int libxs_registry_info(const libxs_registry_t* registry, libxs_regist
   }
   return result;
 }
-
-
-#define INTERNAL_REG_MAGIC 0x58535247U /* "XSRG" */
-#define INTERNAL_REG_VERSION 1
 
 
 LIBXS_API int libxs_registry_save(const libxs_registry_t* registry,

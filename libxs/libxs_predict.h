@@ -209,6 +209,33 @@ LIBXS_EXTERN_C typedef struct libxs_predict_prob_info_t {
   double entropy;
 } libxs_predict_prob_info_t;
 
+/**
+ * Options for libxs_predict_load_csv_opts. A zero-initialized struct requests
+ * the same load as libxs_predict_load_csv with every argument NULL or zero.
+ */
+LIBXS_EXTERN_C typedef struct libxs_predict_csv_t {
+  /** As libxs_predict_load_csv: delimiters, column specs, header capture. */
+  const char* delims;
+  const char* inputs;
+  const char* outputs;
+  char* header;
+  int header_size;
+  char* delim_out;
+  /** Stop after this many entries were pushed (0: read to end of file). */
+  int nrows;
+  /**
+   * Push every stride-th admissible row (0 or 1: every row). A prefix of a file
+   * is not a sample of it, so a subset for a scaling study or a held-back split
+   * is strided rather than truncated; with offset this splits one file into
+   * disjoint parts each spanning the whole of it. Unparsable and comment rows
+   * are not admissible and do not advance the count, so neither a header nor a
+   * damaged row shifts which rows a given (stride, offset) selects.
+   */
+  int stride;
+  /** Admissible rows to skip before the first one taken (0: none). */
+  int offset;
+} libxs_predict_csv_t;
+
 
 /**
  * Create a prediction model for the given input/output dimensionality.
@@ -1056,33 +1083,6 @@ LIBXS_API int libxs_predict_load_csv(libxs_predict_t* model,
   const char filename[], const char delims[],
   const char inputs[], const char outputs[],
   char header[], int header_size, char* delim_out);
-
-/**
- * Options for libxs_predict_load_csv_opts. A zero-initialized struct requests
- * the same load as libxs_predict_load_csv with every argument NULL or zero.
- */
-LIBXS_EXTERN_C typedef struct libxs_predict_csv_t {
-  /** As libxs_predict_load_csv: delimiters, column specs, header capture. */
-  const char* delims;
-  const char* inputs;
-  const char* outputs;
-  char* header;
-  int header_size;
-  char* delim_out;
-  /** Stop after this many entries were pushed (0: read to end of file). */
-  int nrows;
-  /**
-   * Push every stride-th admissible row (0 or 1: every row). A prefix of a file
-   * is not a sample of it, so a subset for a scaling study or a held-back split
-   * is strided rather than truncated; with offset this splits one file into
-   * disjoint parts each spanning the whole of it. Unparsable and comment rows
-   * are not admissible and do not advance the count, so neither a header nor a
-   * damaged row shifts which rows a given (stride, offset) selects.
-   */
-  int stride;
-  /** Admissible rows to skip before the first one taken (0: none). */
-  int offset;
-} libxs_predict_csv_t;
 
 /**
  * Load delimited text as libxs_predict_load_csv, taking its arguments as a

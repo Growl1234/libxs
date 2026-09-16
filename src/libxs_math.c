@@ -47,7 +47,6 @@
 #define LIBXS_MATDIFF_REL(DI, RA, TA) \
   LIBXS_MATDIFF_DIV(DI, ((RA) < (DI) ? 0 : (RA)), TA)
 
-
 /** Sort-based multiset matching for real (scalar) element types. */
 #define LIBXS_SETDIFF_REAL(TYPE, CVT) { \
   const TYPE *const setdiff_ra_ = (const TYPE*)a, *const setdiff_rb_ = (const TYPE*)b; \
@@ -134,6 +133,17 @@
 #define LIBXS_SETDIFF_NOP(VALUE) (VALUE)
 
 
+/** Context for the GSS callback used by libxs_setdiff_min. */
+LIBXS_EXTERN_C typedef struct internal_libxs_setdiff_ctx_t {
+  const void *a, *b;
+  const double *sa, *sb;
+  const double *pts, *qa;
+  const int* idx;
+  libxs_data_t datatype;
+  int na, nb;
+} internal_libxs_setdiff_ctx_t;
+
+
 /** Merge-only: count matches on pre-sorted double arrays. */
 LIBXS_API_INLINE int internal_libxs_setdiff_merge(
   const double* sa, int na, const double* sb, int nb, double tol)
@@ -171,17 +181,6 @@ LIBXS_API_INLINE int internal_libxs_setdiff_kd_match(
   }
   return m;
 }
-
-
-/** Context for the GSS callback used by libxs_setdiff_min. */
-LIBXS_EXTERN_C typedef struct internal_libxs_setdiff_ctx_t {
-  const void *a, *b;
-  const double *sa, *sb;
-  const double *pts, *qa;
-  const int* idx;
-  libxs_data_t datatype;
-  int na, nb;
-} internal_libxs_setdiff_ctx_t;
 
 
 #include "libxs_math_matdiff.h"

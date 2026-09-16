@@ -12,6 +12,10 @@
 #include <libxs/libxs_sync.h>
 
 
+/** Per-thread PRNG state (TLS when available, otherwise single global). */
+static LIBXS_TLS unsigned long long internal_libxs_rng_state = 1;
+
+
 /**
  * SplitMix64 PRNG (Vigna, 2015). Period: 2^64.
  * Self-contained, no libc dependency, excellent statistical quality.
@@ -24,10 +28,6 @@ LIBXS_API_INLINE unsigned long long internal_libxs_rng_splitmix64(
   z = (z ^ (z >> 27)) * 0x94D049BB133111EBuLL;
   return z ^ (z >> 31);
 }
-
-
-/** Per-thread PRNG state (TLS when available, otherwise single global). */
-static LIBXS_TLS unsigned long long internal_libxs_rng_state = 1;
 
 
 LIBXS_API void libxs_rng_set_seed(unsigned int/*uint32_t*/ seed)

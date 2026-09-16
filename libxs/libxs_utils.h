@@ -435,11 +435,10 @@
 # define LIBXS_MXCSR_SET(VALUE) LIBXS_UNUSED(VALUE)
 #endif
 
-/**
- * Pseudo intrinsics for portability
- */
-LIBXS_API int LIBXS_INTRINSICS_BITSCANFWD32_SW(unsigned int n);
-LIBXS_API int LIBXS_INTRINSICS_BITSCANFWD64_SW(unsigned long long n);
+/** LIBXS_NBITS determines the minimum number of bits needed to represent N. */
+#define LIBXS_NBITS(N) (LIBXS_INTRINSICS_BITSCANBWD64(N) + LIBXS_MIN(1, N))
+#define LIBXS_ISQRT2_HI(N) ((unsigned int)((1ULL << (LIBXS_NBITS(N) >> 1)) /*+ LIBXS_MIN(1, N)*/))
+#define LIBXS_ISQRT2_LO(N) ((unsigned int)(1ULL << (LIBXS_INTRINSICS_BITSCANBWD64(N) >> 1)))
 
 /** Binary Logarithm (based on Stackoverflow's NBITSx macro). */
 #define LIBXS_INTRINSICS_BITSCANBWD_SW02(N) (0 != ((N) & 0x2/*0b10*/) ? 1 : 0)
@@ -451,35 +450,34 @@ LIBXS_API int LIBXS_INTRINSICS_BITSCANFWD64_SW(unsigned long long n);
 #define LIBXS_INTRINSICS_BITSCANBWD32_SW(N) LIBXS_INTRINSICS_BITSCANBWD_SW32((unsigned int)(N))
 #define LIBXS_INTRINSICS_BITSCANBWD64_SW(N) LIBXS_INTRINSICS_BITSCANBWD_SW64((unsigned long long)(N))
 
-#if defined(_WIN32) && !defined(__NO_INTRINSICS)
-LIBXS_API unsigned int LIBXS_INTRINSICS_BITSCANFWD32(unsigned int n);
-LIBXS_API unsigned int LIBXS_INTRINSICS_BITSCANBWD32(unsigned int n);
-# if defined(_WIN64)
-LIBXS_API unsigned int LIBXS_INTRINSICS_BITSCANFWD64(unsigned long long n);
-LIBXS_API unsigned int LIBXS_INTRINSICS_BITSCANBWD64(unsigned long long n);
-# else
-# define LIBXS_INTRINSICS_BITSCANFWD64 LIBXS_INTRINSICS_BITSCANFWD64_SW
-# define LIBXS_INTRINSICS_BITSCANBWD64 LIBXS_INTRINSICS_BITSCANBWD64_SW
-# endif
-#elif defined(__GNUC__) && !defined(__NO_INTRINSICS)
+#if defined(__GNUC__) && !defined(__NO_INTRINSICS)
 # define LIBXS_INTRINSICS_BITSCANFWD32(N) (0 != (N) ? __builtin_ctz(N) : 0)
 # define LIBXS_INTRINSICS_BITSCANFWD64(N) (0 != (N) ? __builtin_ctzll(N) : 0)
 # define LIBXS_INTRINSICS_BITSCANBWD32(N) (0 != (N) ? (31 - __builtin_clz(N)) : 0)
 # define LIBXS_INTRINSICS_BITSCANBWD64(N) (0 != (N) ? (63 - __builtin_clzll(N)) : 0)
-#else /* fallback implementation */
+#elif !defined(_WIN32) || defined(__NO_INTRINSICS) /* fallback implementation */
 # define LIBXS_INTRINSICS_BITSCANFWD32 LIBXS_INTRINSICS_BITSCANFWD32_SW
 # define LIBXS_INTRINSICS_BITSCANFWD64 LIBXS_INTRINSICS_BITSCANFWD64_SW
 # define LIBXS_INTRINSICS_BITSCANBWD32 LIBXS_INTRINSICS_BITSCANBWD32_SW
 # define LIBXS_INTRINSICS_BITSCANBWD64 LIBXS_INTRINSICS_BITSCANBWD64_SW
+#else /* Windows */
+# if !defined(_WIN64)
+# define LIBXS_INTRINSICS_BITSCANFWD64 LIBXS_INTRINSICS_BITSCANFWD64_SW
+# define LIBXS_INTRINSICS_BITSCANBWD64 LIBXS_INTRINSICS_BITSCANBWD64_SW
+# else
+LIBXS_API unsigned int LIBXS_INTRINSICS_BITSCANFWD64(unsigned long long n);
+LIBXS_API unsigned int LIBXS_INTRINSICS_BITSCANBWD64(unsigned long long n);
+# endif
+LIBXS_API unsigned int LIBXS_INTRINSICS_BITSCANFWD32(unsigned int n);
+LIBXS_API unsigned int LIBXS_INTRINSICS_BITSCANBWD32(unsigned int n);
 #endif
 
-/** LIBXS_NBITS determines the minimum number of bits needed to represent N. */
-#define LIBXS_NBITS(N) (LIBXS_INTRINSICS_BITSCANBWD64(N) + LIBXS_MIN(1, N))
-#define LIBXS_ISQRT2_HI(N) ((unsigned int)((1ULL << (LIBXS_NBITS(N) >> 1)) /*+ LIBXS_MIN(1, N)*/))
-#define LIBXS_ISQRT2_LO(N) ((unsigned int)(1ULL << (LIBXS_INTRINSICS_BITSCANBWD64(N) >> 1)))
+/** Pseudo intrinsics for portability */
+LIBXS_API int LIBXS_INTRINSICS_BITSCANFWD32_SW(unsigned int n);
+LIBXS_API int LIBXS_INTRINSICS_BITSCANFWD64_SW(unsigned long long n);
+
 /** LIBXS_ILOG2 definition matches ceil(log2(N)). */
 LIBXS_API unsigned int LIBXS_ILOG2(unsigned long long n);
-
 
 /**
  * AVX-512 unsigned 32-bit high-multiply: floor(a * b / 2^32) for 16 lanes.

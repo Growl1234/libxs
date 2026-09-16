@@ -24,6 +24,9 @@
 #if !defined(LIBXS_PREDICT_MAGIC_HKNN)
 #  define LIBXS_PREDICT_MAGIC_HKNN 0x58534B4EU /* "XSKN" */
 #endif
+
+#define INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX 64
+
 /**
  * Serialization format version. Bumped whenever the on-disk layout changes at
  * a release boundary; libxs_predict_load accepts every released version down to
@@ -243,8 +246,6 @@ typedef struct internal_libxs_predict_rf_tree_t {
   double* incr;
   int nnodes;
 } internal_libxs_predict_rf_tree_t;
-
-#define INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX 64
 
 typedef struct internal_libxs_predict_rf_team_t {
   libxs_barrier_t barrier;
@@ -495,7 +496,6 @@ static const double internal_libxs_predict_escape_rate[
   0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02,
   0.05, 0.10, 0.20, 0.35, 0.55, 0.80
 };
-
 
 LIBXS_API_INLINE int internal_libxs_predict_support_all(libxs_predict_t* model);
 LIBXS_API_INLINE void internal_libxs_predict_missing_all(libxs_predict_t* model);

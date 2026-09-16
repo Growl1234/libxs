@@ -5,7 +5,6 @@ LIBXS_EXTERN_C typedef struct internal_libxs_kdtree2d_ctx_t {
   double qx, qy;
 } internal_libxs_kdtree2d_ctx_t;
 
-
 LIBXS_EXTERN_C typedef struct internal_libxs_kdtree_ctx_t {
   const double* pts;
   const int* idx;
@@ -13,6 +12,17 @@ LIBXS_EXTERN_C typedef struct internal_libxs_kdtree_ctx_t {
   const double* query;
   int ndims, stride;
 } internal_libxs_kdtree_ctx_t;
+
+LIBXS_EXTERN_C typedef struct internal_libxs_kdtree_knn_ctx_t {
+  const double* pts;
+  const int* idx;
+  const unsigned char* used;
+  const double* query;
+  int* out_idx;
+  double* out_dist2;
+  double max_dist2;
+  int ndims, stride, k, count;
+} internal_libxs_kdtree_knn_ctx_t;
 
 
 LIBXS_API_INLINE void internal_libxs_kdtree2d_build(
@@ -327,18 +337,6 @@ LIBXS_API int libxs_kdtree_nearest(
   }
   return result;
 }
-
-
-LIBXS_EXTERN_C typedef struct internal_libxs_kdtree_knn_ctx_t {
-  const double* pts;
-  const int* idx;
-  const unsigned char* used;
-  const double* query;
-  int* out_idx;
-  double* out_dist2;
-  double max_dist2;
-  int ndims, stride, k, count;
-} internal_libxs_kdtree_knn_ctx_t;
 
 
 /**

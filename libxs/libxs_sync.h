@@ -72,19 +72,6 @@
 # endif
 #endif
 
-typedef enum libxs_atomic_kind_t {
-#if defined(__ATOMIC_SEQ_CST)
-  LIBXS_ATOMIC_SEQ_CST = __ATOMIC_SEQ_CST,
-#else
-  LIBXS_ATOMIC_SEQ_CST = 0,
-#endif
-#if defined(__ATOMIC_RELAXED)
-  LIBXS_ATOMIC_RELAXED = __ATOMIC_RELAXED
-#else
-  LIBXS_ATOMIC_RELAXED = LIBXS_ATOMIC_SEQ_CST
-#endif
-} libxs_atomic_kind_t;
-
 /** Lock ordering: x86 (TSO) needs no extra fence; weak-memory platforms need SEQ_CST. */
 #if defined(LIBXS_PLATFORM_X86)
 # define LIBXS_ATOMIC_LOCKORDER LIBXS_ATOMIC_RELAXED
@@ -677,22 +664,33 @@ typedef enum libxs_atomic_kind_t {
 #elif defined(_WIN32)
 # define LIBXS_FLOCK(FILE) _lock_file(FILE)
 # define LIBXS_FUNLOCK(FILE) _unlock_file(FILE)
+#elif defined(__CYGWIN__) /* __CYGWIN__ *and* C++0x needed */
+# define LIBXS_FLOCK(FILE)
+# define LIBXS_FUNLOCK(FILE)
 #else
-# if !defined(__CYGWIN__)
-#   define LIBXS_FLOCK(FILE) flockfile(FILE)
-#   define LIBXS_FUNLOCK(FILE) funlockfile(FILE)
+# define LIBXS_FLOCK(FILE) flockfile(FILE)
+# define LIBXS_FUNLOCK(FILE) funlockfile(FILE)
 LIBXS_EXTERN void flockfile(FILE*) LIBXS_NOTHROW;
 LIBXS_EXTERN void funlockfile(FILE*) LIBXS_NOTHROW;
-# else /* Only available with __CYGWIN__ *and* C++0x. */
-#   define LIBXS_FLOCK(FILE)
-#   define LIBXS_FUNLOCK(FILE)
-# endif
 #endif
 
 /** Synchronize console output */
 #define LIBXS_STDIO_ACQUIRE() libxs_stdio_acquire()
 #define LIBXS_STDIO_RELEASE() libxs_stdio_release()
 
+
+typedef enum libxs_atomic_kind_t {
+#if defined(__ATOMIC_SEQ_CST)
+  LIBXS_ATOMIC_SEQ_CST = __ATOMIC_SEQ_CST,
+#else
+  LIBXS_ATOMIC_SEQ_CST = 0,
+#endif
+#if defined(__ATOMIC_RELAXED)
+  LIBXS_ATOMIC_RELAXED = __ATOMIC_RELAXED
+#else
+  LIBXS_ATOMIC_RELAXED = LIBXS_ATOMIC_SEQ_CST
+#endif
+} libxs_atomic_kind_t;
 
 /** General-purpose lock type for application use. */
 typedef LIBXS_LOCK_TYPE(LIBXS_LOCK) libxs_lock_t;
