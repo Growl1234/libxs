@@ -472,7 +472,16 @@ static void* gemm_host_malloc(size_t nbytes, int hostmem)
   void* result = NULL;
 #if defined(__LIBXSTREAM)
   if (0 != hostmem) {
-    if (0 != nbytes && EXIT_SUCCESS == libxstream_init()) {
+    /* The page-locked allocator exists only where a device does: with no context
+     * the allocation falls back to host-pool memory that is not locked, and the
+     * run would still be recorded as page-locked. Asked of the offload library
+     * rather than of OZAKI_OCL, so the answer has one authority and this driver
+     * keeps no copy of the library's policy. */
+    int ndevices = 0;
+    if (EXIT_SUCCESS != libxstream_device_count(&ndevices) || 0 >= ndevices) {
+      fprintf(stderr, "ERROR: GEMM_HOSTMEM=%i found no device to page-lock for.\n", hostmem);
+    }
+    else if (0 != nbytes && EXIT_SUCCESS == libxstream_init()) {
       if (EXIT_SUCCESS != libxstream_mem_host_allocate(&result, nbytes, NULL)) result = NULL;
     }
   }
