@@ -76,10 +76,16 @@ Setting OZAKI applies to both.
 |-------------------|-----------|------------------------------------------------------------------|
 | OZAKI_FLAGS       | 3         | Sch.1 bitmask: 1=Triangular, 2=Symmetrize, 0=full S^2 square     |
 | OZAKI_TRIM        | 0         | Levels to trim (0=default). ~7 bits/level (Sch.1), ~4 bits (Sch.2); negative buys precision back |
-| OZAKI_I8          | 0         | Sch.2: signed i8 residues (moduli<=128) instead of u8            |
-| OZAKI_GROUPS      | 0         | Sch.2: K-grouping (0/1=off). Consecutive K panels, one reconstr. |
 | OZAKI_MAXK        | 32768     | Max K per preprocessing pass (0=full K in one pass)              |
 | OZAKI_THRESHOLD   | 12        | Intensity threshold. Bypass when flops/(bytes\*thr)<1. 0=always  |
+
+`OZAKI_I8` selects signed i8 residues (moduli<=128) instead of u8 for
+Scheme 2 on the CPU path. It is a compile-time define (`-DOZAKI_I8=1`)
+rather than an environment variable, and the GPU path does not have it.
+
+`OZAKI_MAXK` also travels to the GPU context, where it decides the
+derived K-grouping; the LIBXSTREAM Ozaki README states that rule, so
+that one K bound is not described twice.
 
 ### GPU Path (requires LIBXSTREAM)
 
@@ -90,9 +96,11 @@ Setting OZAKI applies to both.
 | OZAKI_TN    | (auto)    | GPU output tile width (multiple of 16)     |
 
 GPU-specific kernel tuning variables (OZAKI_RTM, OZAKI_RTN, OZAKI_WG,
-OZAKI_SG, OZAKI_KU, OZAKI_RC, OZAKI_PB, OZAKI_HIER, OZAKI_PREFETCH,
-OZAKI_SCALAR_ACC, OZAKI_CACHE, OZAKI_ARENA) are documented in the
-LIBXSTREAM Ozaki README.
+OZAKI_SG, OZAKI_KU, OZAKI_RC, OZAKI_PB, OZAKI_HIER, OZAKI_GROUPS,
+OZAKI_PREFETCH, OZAKI_SCALAR_ACC, OZAKI_CACHE, OZAKI_ARENA) are
+documented in the LIBXSTREAM Ozaki README. This driver reads them only
+to forward them, so their meaning and their defaults are stated there
+and not here.
 
 ### Monitoring and Diagnostics
 
