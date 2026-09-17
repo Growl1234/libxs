@@ -629,8 +629,13 @@ else
 .PHONY: $(PPKGDIR)/$(PROJECT)-shared.pc
 endif
 
-$(PCMKDIR)/$(PROJECT)Config.cmake: $(ROOTSCR)/$(PROJECT)Config.cmake $(PCMKDIR)/.make
-	@$(CP) $< $@
+.PHONY: FORCE
+FORCE:
+
+$(PPKGDIR)/$(PROJECT)-static.pc: FORCE
+$(PPKGDIR)/$(PROJECT)-shared.pc: FORCE
+$(PCMKDIR)/$(PROJECT)Config.cmake: $(ROOTSCR)/$(PROJECT)Config.cmake $(PCMKDIR)/.make FORCE
+	@$(SED) -e 's|@LIBXS_OPENMP@|$(if $(strip $(FC)),ON,OFF)|g' <$< >$@
 	@$(SED) -e 's|@VERSION@|$(VERSION_STRING)|g' \
 		<$(ROOTSCR)/$(PROJECT)ConfigVersion.cmake.in >$(PCMKDIR)/$(PROJECT)ConfigVersion.cmake
 

@@ -1,4 +1,5 @@
 get_filename_component(_libxs_prefix "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+set(LIBXS_OPENMP @LIBXS_OPENMP@)
 
 set(_libxs_suffixes_save "${CMAKE_FIND_LIBRARY_SUFFIXES}")
 if(DEFINED BUILD_SHARED_LIBS AND NOT BUILD_SHARED_LIBS)
@@ -16,6 +17,9 @@ find_path(LIBXS_INCLUDE_DIR NAMES libxs/libxs.h HINTS "${_libxs_prefix}/include"
 if(LIBXS_LIBRARY AND LIBXS_INCLUDE_DIR)
   if(NOT TARGET libxs::libxs)
     find_package(Threads QUIET)
+    if(LIBXS_OPENMP)
+      find_package(OpenMP REQUIRED COMPONENTS C)
+    endif()
     set(_incdirs "${LIBXS_INCLUDE_DIR}")
     if(EXISTS "${LIBXS_INCLUDE_DIR}/libxs/libxs.mod")
       list(APPEND _incdirs "${LIBXS_INCLUDE_DIR}/libxs")
@@ -27,6 +31,10 @@ if(LIBXS_LIBRARY AND LIBXS_INCLUDE_DIR)
     if(TARGET Threads::Threads)
       set_property(TARGET libxs::libxs APPEND PROPERTY
         INTERFACE_LINK_LIBRARIES Threads::Threads)
+    endif()
+    if(LIBXS_OPENMP)
+      set_property(TARGET libxs::libxs APPEND PROPERTY
+        INTERFACE_LINK_LIBRARIES OpenMP::OpenMP_C)
     endif()
     # same link interface as the CMake-exported target, i.e. consumers of a
     # GNU Make build resolve sqrt/pow, dlopen, and clock_gettime alike
@@ -55,3 +63,4 @@ endif()
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(libxs DEFAULT_MSG LIBXS_LIBRARY LIBXS_INCLUDE_DIR)
 unset(_libxs_prefix)
+unset(LIBXS_OPENMP)
