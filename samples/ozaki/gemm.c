@@ -61,6 +61,16 @@ int main(int argc, char* argv[])
   const char* const env_tame = getenv("TAME");
   const int tame = (NULL != env_tame && 0 != *env_tame) ? atoi(env_tame) : 0;
   /**
+   * SCALE=s multiplies both operands by 2^s after generation, which tests
+   * whether the decomposition is invariant to the operands' scale. A power of
+   * two is the case an exponent-based scaling must handle exactly: it shifts
+   * every exponent by s and nothing else, so eps and rsq are expected to be
+   * bit-identical across s. A scaling derived from a logarithm of a norm need
+   * not be, and the published fast mode of the modular scheme is not.
+   */
+  const char* const env_scale = getenv("SCALE");
+  const int scale_exp = (NULL != env_scale && 0 != *env_scale) ? atoi(env_scale) : 0;
+  /**
    * GRADE applies the componentwise criterion of the graded BLAS accuracy tests,
    * |fl(AB) - AB| <= f(n) * u * (|alpha||A||B| + |beta||C|), with f(n) linear in n.
    * It answers a different question than CHECK: CHECK compares one scalar against a
@@ -309,9 +319,20 @@ int main(int argc, char* argv[])
     }
   }
 
+  /* After TAME, so the mantissa mask sees the generated values and not scaled ones:
+   * the two knobs are then independent and a sweep over one holds the other fixed. */
+  if (EXIT_SUCCESS == result && 0 != scale_exp) {
+    const GEMM_REAL_TYPE factor = (GEMM_REAL_TYPE)libxs_pow2(scale_exp);
+    const size_t na = (size_t)nc * lda * a_cols, nb = (size_t)nc * ldb * b_cols;
+    size_t ti;
+    for (ti = 0; ti < na; ++ti) a[ti] *= factor;
+    for (ti = 0; ti < nb; ++ti) b[ti] *= factor;
+  }
+
   /* Stamped on every run: rows from different generators are otherwise indistinguishable. */
   if (EXIT_SUCCESS == result) {
-    fprintf(stderr, "DATA: matrng=%i evil=%i tame=%i\n", LIBXS_MATRNG_VERSION, evil_raw, tame);
+    fprintf(stderr, "DATA: matrng=%i evil=%i tame=%i scale=%i\n",
+      LIBXS_MATRNG_VERSION, evil_raw, tame, scale_exp);
   }
 
   if (EXIT_SUCCESS == result) { /* Call GEMM */
