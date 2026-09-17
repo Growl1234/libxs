@@ -1503,9 +1503,9 @@ LIBXS_API void libxs_syr2k_task(
         LIBXS_UPDIV(n, 2 * ntasks));
       const int nb_p = LIBXS_UPDIV(n, np);
       const int f64 = (LIBXS_DATATYPE_F64 == config->shape.datatype);
-      const internal_libxs_dsyr2k_t dsyr2k = (0 != f64
+      const internal_libxs_dsyr2k_t dsyr2k_fn = (0 != f64
         ? internal_libxs_dsyr2k_blas : NULL);
-      const internal_libxs_ssyr2k_t ssyr2k = (0 == f64
+      const internal_libxs_ssyr2k_t ssyr2k_fn = (0 == f64
         ? internal_libxs_ssyr2k_blas : NULL);
       int p_begin, p_end;
       internal_libxs_syrk_partition(tid, ntasks, nb_p, upper, &p_begin, &p_end);
@@ -1543,14 +1543,14 @@ LIBXS_API void libxs_syr2k_task(
             }
             /* the diagonal block straddles the triangle: a BLAS SYR2K writes it,
              * otherwise the tiles below do, which keeps a kernel reachable */
-            if (NULL != dsyr2k) {
+            if (NULL != dsyr2k_fn) {
               internal_libxs_dsyr2k_blas(&uplo, "N", &pn, &k,
                 (const double*)&alpha, (const double*)a + pb, &lda,
                 (const double*)b + pb, &ldb,
                 (const double*)&beta, (double*)c + ((size_t)pb * ldc + pb), &ldc);
               continue;
             }
-            else if (NULL != ssyr2k) {
+            else if (NULL != ssyr2k_fn) {
               const float fa = (float)alpha, fb = (float)beta;
               internal_libxs_ssyr2k_blas(&uplo, "N", &pn, &k,
                 &fa, (const float*)a + pb, &lda, (const float*)b + pb, &ldb,
@@ -1725,9 +1725,9 @@ LIBXS_API void libxs_syrk_task(
         LIBXS_UPDIV(n, 2 * ntasks));
       const int nb_p = LIBXS_UPDIV(n, np);
       const int f64 = (LIBXS_DATATYPE_F64 == config->shape.datatype);
-      const internal_libxs_dsyrk_t dsyrk = (0 != f64
+      const internal_libxs_dsyrk_t dsyrk_fn = (0 != f64
         ? internal_libxs_dsyrk_blas : NULL);
-      const internal_libxs_ssyrk_t ssyrk = (0 == f64
+      const internal_libxs_ssyrk_t ssyrk_fn = (0 == f64
         ? internal_libxs_ssyrk_blas : NULL);
       int p_begin, p_end;
       internal_libxs_syrk_partition(tid, ntasks, nb_p, upper, &p_begin, &p_end);
@@ -1760,13 +1760,13 @@ LIBXS_API void libxs_syrk_task(
             }
             /* the diagonal block straddles the triangle: a BLAS SYRK writes it,
              * otherwise the tiles below do, which keeps a kernel reachable */
-            if (NULL != dsyrk) {
+            if (NULL != dsyrk_fn) {
               internal_libxs_dsyrk_blas(&uplo, "N", &pn, &k,
                 (const double*)&alpha, (const double*)a + pb, &lda,
                 (const double*)&beta, (double*)c + ((size_t)pb * ldc + pb), &ldc);
               continue;
             }
-            else if (NULL != ssyrk) {
+            else if (NULL != ssyrk_fn) {
               const float fa = (float)alpha, fb = (float)beta;
               internal_libxs_ssyrk_blas(&uplo, "N", &pn, &k,
                 &fa, (const float*)a + pb, &lda,
