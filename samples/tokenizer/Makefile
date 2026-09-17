@@ -74,3 +74,8 @@ endif
 .PHONY: deepclean
 deepclean: realclean
 	@-rm -f .make .state
+
+# Relink when only the link flags changed: those are tracked apart from .state so
+# that a link-only change no longer recompiles every object, which leaves the link
+# as the one step that still has to see them.
+$(XFILES): $(LNKSTATE)

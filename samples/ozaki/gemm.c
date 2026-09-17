@@ -479,7 +479,12 @@ static void* gemm_host_malloc(size_t nbytes, int hostmem)
      * keeps no copy of the library's policy. */
     int ndevices = 0;
     if (EXIT_SUCCESS != libxstream_device_count(&ndevices) || 0 >= ndevices) {
-      fprintf(stderr, "ERROR: GEMM_HOSTMEM=%i found no device to page-lock for.\n", hostmem);
+      /* Once per process: every operand takes this branch and the reason is the same. */
+      static int reported = 0;
+      if (0 == reported) {
+        reported = 1;
+        fprintf(stderr, "ERROR: GEMM_HOSTMEM=%i found no device to page-lock for.\n", hostmem);
+      }
     }
     else if (0 != nbytes && EXIT_SUCCESS == libxstream_init()) {
       if (EXIT_SUCCESS != libxstream_mem_host_allocate(&result, nbytes, NULL)) result = NULL;
@@ -500,7 +505,11 @@ static void* gemm_host_malloc(size_t nbytes, int hostmem)
    * malloc here would be recorded as page-locked when it is not, and the two
    * differ by an order of magnitude on a PCIe part. */
   if (0 != hostmem) {
-    fprintf(stderr, "ERROR: GEMM_HOSTMEM=%i needs a LIBXSTREAM-enabled build.\n", hostmem);
+    static int reported = 0;
+    if (0 == reported) {
+      reported = 1;
+      fprintf(stderr, "ERROR: GEMM_HOSTMEM=%i needs a LIBXSTREAM-enabled build.\n", hostmem);
+    }
   }
   else result = malloc(nbytes);
 #endif

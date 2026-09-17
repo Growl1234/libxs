@@ -1130,10 +1130,16 @@ ifneq (Darwin,$(UNAME))
   ifeq (0,$(shell ln -fs this-file-does-not-exist .ln 2>/dev/null && echo "$$?" && rm .ln 2>/dev/null))
     solink = -o $(basename $1).$(DLIBEXT)$(call dot,$2,$3,$4) $(call linkopt,-soname,$(strip $(call qndir,$(basename $1))).$(DLIBEXT)$(call dot,$5))
     ifneq (0,$(SONAMELNK))
+    # A dry run must not touch the tree. This $(shell) runs while the recipe is
+    # expanded, and -n expands recipes as well, so it would leave version
+    # symlinks behind pointing at a library the dry run never built -- which any
+    # consumer probing lib/ with $(wildcard) then takes for a real library.
+    ifeq (,$(findstring n,$(firstword -$(MAKEFLAGS))))
       solink += $(shell cd $(call qdir,$1) 2>/dev/null && $(if $(filter-out x$(call dot,$5)x,x$(call dot,$2,$3,$4)x), \
         ln -fs $(call qndir,$(basename $1).$(DLIBEXT)$(call dot,$2,$3,$4)) $(call qndir,$(basename $1).$(DLIBEXT)$(call dot,$5)) 2>/dev/null,true) \
           $(if $(filter-out 0,$(shell echo "$$((1<$(SONAMELNK)||0>$(SONAMELNK)))")), && $(if $5, \
         ln -fs $(call qndir,$(basename $1).$(DLIBEXT).$5) $(call qndir,$(basename $1).$(DLIBEXT)) 2>/dev/null,true)))
+    endif
     endif
   else # MinGW
     solink = -o $(call quote,$(basename $1).$(DLIBEXT)) $(call linkopt,-soname,$(strip $(call qndir,$(basename $1)).$(DLIBEXT)$(call dot,$5)))
@@ -1143,8 +1149,10 @@ else # macOS
            -install_name $(call qbname,$(call qapath,$1))$(call dot,$2).$(DLIBEXT) \
            $(if $2,-current_version $2$(call dot,$3,$3) -compatibility_version $5)
   ifneq (0,$(SONAMELNK))
+  ifeq (,$(findstring n,$(firstword -$(MAKEFLAGS))))
     solink += $(shell cd $(call qdir,$1) 2>/dev/null $(if $2, && \
       ln -fs $(call qndir,$(call qbname,$1).$2.$(DLIBEXT)) $(call qndir,$(basename $1)).$(DLIBEXT) 2>/dev/null))
+  endif
   endif
 endif
 
@@ -2277,10 +2285,16 @@ endif
 endif
 OMPFLAG ?= $(NULL)
 
-# Link dependencies and libraries
-SLIB := $(wildcard $(DEPDIR)/lib/$(PROJECT).$(SLIBEXT))
-DLIB := $(wildcard $(DEPDIR)/lib/$(PROJECT).$(DLIBEXT))
-XLIB := $(wildcard $(DEPDIR)/lib/$(PROJECT).$(LIBEXT))
+# Link dependencies and libraries.  A candidate counts only if it resolves:
+# $(wildcard) matches a dangling symlink, and lib/ holds one whenever a build of
+# that library was interrupted or never ran, because the soname links are created
+# while the link recipe is expanded.  Taking one for a library makes it a link
+# prerequisite nothing can produce ("No rule to make target"), and it also hides
+# the header-only fallback that the absence of a library is supposed to select.
+libexists = $(if $(realpath $1),$1)
+SLIB := $(call libexists,$(wildcard $(DEPDIR)/lib/$(PROJECT).$(SLIBEXT)))
+DLIB := $(call libexists,$(wildcard $(DEPDIR)/lib/$(PROJECT).$(DLIBEXT)))
+XLIB := $(call libexists,$(wildcard $(DEPDIR)/lib/$(PROJECT).$(LIBEXT)))
 XLIB := $(if $(XLIB),$(XLIB),$(if $(SLIB),$(SLIB),$(DLIB)))
 
 ifeq (libxs,$(PROJECT))
@@ -2660,6 +2674,20 @@ DIRSTATE ?= .
 PRESTATE := $(shell echo '$(VALSTATE)' | $(DEPDIR)/.state.sh $(DIRSTATE))
 
 $(DIRSTATE)/.state: $(firstword $(PRESTATE))
+
+# Link-scoped state: the flags that decide a binary but cannot decide an object.
+# They are filtered out of STATE above, so a link-only change no longer
+# recompiles everything; tracked here so that it still relinks.  A target that
+# links names $(LNKSTATE) among its prerequisites -- without that, excluding a
+# flag from STATE would silently leave a binary built with the previous one.
+# No $HOME/$USER rewriting as VALSTATE does: a false difference here costs one
+# relink, whereas only a missed difference would be wrong.
+LNKSTATEVAR := BLAS_STATIC LDFLAGS CLDFLAGS SLDFLAGS FLDFLAGS BLAS_LDFLAGS
+LNKVALSTATE := $(foreach V,$(LNKSTATEVAR),$(if $($V),$V=$($V)?))
+LNKSTATE := $(DIRSTATE)/.state-link
+PRELNKSTATE := $(shell echo '$(LNKVALSTATE)' | STATENAME=.state-link $(DEPDIR)/.state.sh $(DIRSTATE))
+
+$(LNKSTATE): $(firstword $(PRELNKSTATE))
 
 %/.make:
 	@$(MKDIR) -p $(call qdir,$@) && touch $@

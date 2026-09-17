@@ -35,9 +35,13 @@ ifneq (0,$(OCL))
 ifneq (0,$(OPENCL))
 ifneq (0,$(LIBXSTREAM))
   LIBXSTREAMROOT := $(wildcard $(DEPDIR)/../libxstream)
-  XSTREAM_SLIB := $(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(SLIBEXT))
-  XSTREAM_DLIB := $(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(DLIBEXT))
-  XSTREAM_LIB := $(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(LIBEXT))
+  # A candidate counts only if it resolves: $(wildcard) matches a dangling
+  # symlink, and lib/ can hold one whenever a build of that library was
+  # interrupted or never ran (the soname links are created while the link recipe
+  # is expanded). Linking against one stops with "No rule to make target".
+  XSTREAM_SLIB := $(call libexists,$(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(SLIBEXT)))
+  XSTREAM_DLIB := $(call libexists,$(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(DLIBEXT)))
+  XSTREAM_LIB := $(call libexists,$(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(LIBEXT)))
   XSTREAM_LIB := $(strip $(if $(XSTREAM_LIB),$(XSTREAM_LIB), \
     $(if $(XSTREAM_SLIB),$(XSTREAM_SLIB),$(XSTREAM_DLIB))))
   XSTREAM_SOURCE := $(wildcard $(LIBXSTREAMROOT)/libxstream/libxstream_source.h)
@@ -301,3 +305,8 @@ endif
 .PHONY: deepclean
 deepclean: realclean
 	@-rm -f .make .state
+
+# Relink when only the link flags changed: those are tracked apart from .state so
+# that a link-only change no longer recompiles every object, which leaves the link
+# as the one step that still has to see them.
+$(XFILES): $(LNKSTATE)

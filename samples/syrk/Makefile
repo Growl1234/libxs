@@ -22,9 +22,9 @@ include $(DEPDIR)/Makefile.inc
 # root directory of LIBXSMM
 ifneq (0,$(LIBXSMM))
   LIBXSMMROOT := $(wildcard $(DEPDIR)/../libxsmm)
-  XSMM_SLIB := $(wildcard $(LIBXSMMROOT)/lib/libxsmm.$(SLIBEXT))
-  XSMM_DLIB := $(wildcard $(LIBXSMMROOT)/lib/libxsmm.$(DLIBEXT))
-  XSMM_LIB := $(wildcard $(LIBXSMMROOT)/lib/libxsmm.$(LIBEXT))
+  XSMM_SLIB := $(call libexists,$(wildcard $(LIBXSMMROOT)/lib/libxsmm.$(SLIBEXT)))
+  XSMM_DLIB := $(call libexists,$(wildcard $(LIBXSMMROOT)/lib/libxsmm.$(DLIBEXT)))
+  XSMM_LIB := $(call libexists,$(wildcard $(LIBXSMMROOT)/lib/libxsmm.$(LIBEXT)))
   XSMM_LIB := $(strip $(if $(XSMM_LIB),$(XSMM_LIB), \
     $(if $(XSMM_SLIB),$(XSMM_SLIB),$(XSMM_DLIB))))
   ifneq (,$(XSMM_LIB))
@@ -120,3 +120,8 @@ endif
 .PHONY: deepclean
 deepclean: realclean
 	@-rm -f .make .state
+
+# Relink when only the link flags changed: those are tracked apart from .state so
+# that a link-only change no longer recompiles every object, which leaves the link
+# as the one step that still has to see them.
+$(XFILES): $(LNKSTATE)
