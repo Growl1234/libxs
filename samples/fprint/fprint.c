@@ -71,7 +71,7 @@ int main(void)
   if (NULL != env_dir && 0 != *env_dir && strlen(env_dir) < sizeof(output_dir)) {
     strcpy(output_dir, env_dir);
   }
-  printf("FPRINT: Foeppl polynomial fingerprint experiments\n");
+  printf("FPRINT: polynomial fingerprint experiments\n");
   printf("  output: %s\n", 0 != output_dir[0] ? output_dir : "stdout only");
   if (EXIT_SUCCESS == result) result = run_convergence();
   if (EXIT_SUCCESS == result) result = run_sensitivity();

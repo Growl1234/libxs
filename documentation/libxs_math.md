@@ -216,8 +216,8 @@ Interpretation of the return value:
              order == 0 or l2[0] == 0 or n < 2).
 
 The decay ratio is the key discriminator for type discovery
-(see below) and for the compressibility diagnostic described
-in the Foeppl paper.
+(see below) and for the Newton-truncation compressibility
+diagnostic.
 
 The L2 norms and signed means serve comparison via the Sobolev
 distance (libxs_fprint_diff). The Linf norms serve as a decay

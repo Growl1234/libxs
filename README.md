@@ -145,7 +145,8 @@ USE :: libxs, ONLY: libxs_memcmp
 | [shuffle]     | Shuffling strategies comparison                 |
 | [scratch]     | Pool allocator vs system malloc                 |
 | [spatial]     | Stratification, pair counting, kd-tree          |
-| [fprint]      | Foeppl fingerprint structure/geometry tests     |
+| [fprint]      | Fingerprint structure/geometry tests            |
+| [bracket]     | Sharp edges from bracket units (Adam, GEMM)     |
 | [memory]      | Byte comparison, matrix copy, transpose         |
 | [ozaki]       | Ozaki-scheme low-precision GEMM                 |
 | [gemm]        | Batched DGEMM (strided, pointer, grouped)       |
@@ -162,6 +163,7 @@ USE :: libxs, ONLY: libxs_memcmp
 [scratch]:   documentation/samples/libxs_scratch.md
 [spatial]:   documentation/samples/libxs_spatial.md
 [fprint]:    documentation/samples/libxs_fprint.md
+[bracket]:   documentation/samples/libxs_bracket.md
 [memory]:    documentation/samples/libxs_memory.md
 [ozaki]:     documentation/samples/libxs_ozaki.md
 [gemm]:      documentation/samples/libxs_gemm.md

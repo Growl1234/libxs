@@ -80,6 +80,7 @@ nav:
   - Scratch: samples/libxs_scratch.md
   - Spatial: samples/libxs_spatial.md
   - Fprint: samples/libxs_fprint.md
+  - Bracket: samples/libxs_bracket.md
   - Memory: samples/libxs_memory.md
   - Ozaki: samples/libxs_ozaki.md
   - GEMM: samples/libxs_gemm.md

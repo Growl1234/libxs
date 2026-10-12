@@ -177,7 +177,7 @@ make medmnist3d MEDMNIST3D_NPZ=~/.medmnist/organmnist3d.npz FRAME=compact
 ```
 
 The same NPZ input can be used with the metrics script to report invariants,
-locality distortion, and LIBXS Foeppl fingerprint distances for a selected
+locality distortion, and LIBXS fingerprint distances for a selected
 volume:
 
 ```bash
@@ -211,7 +211,7 @@ after applying the inverse map. The distortion metrics measure what changes for
 a convolutional model: how far source 3D grid neighbors move apart in the 2D
 sheet, and how often adjacent sheet cells correspond to adjacent source voxels.
 
-The script also reports LIBXS Foeppl fingerprint metrics. These are compact
+The script also reports LIBXS fingerprint metrics. These are compact
 multi-order L2 descriptors of value and finite-difference structure. The
 `fprint.source_reconstructed.diff` value should be zero for a correct lossless
 round trip, while `fprint.source_sheet.diff` summarizes how different the
