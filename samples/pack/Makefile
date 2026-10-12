@@ -13,6 +13,7 @@ DFLAGS = $(NULL)
 BLAS = 0
 OMP = 0
 SYM = 1
+SSE = 0
 
 # include common Makefile artifacts
 include $(DEPDIR)/Makefile.inc

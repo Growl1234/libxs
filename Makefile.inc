@@ -2769,6 +2769,7 @@ PDF_UTF8_SED = \
 	-e 's/\xe2\x81\xbc/^=^/g' \
 	-e 's/\xe2\x81\xbd/^(^/g' \
 	-e 's/\xe2\x81\xbe/^)^/g' \
+	-e 's/\xe1\xb5\x90/^m^/g' \
 	-e 's/\^\^//g' \
 	-e 's/\xca\xb7/w/g' \
 	-e 's/\xe1\xb5\x87/b/g' \

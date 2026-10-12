@@ -145,6 +145,7 @@ HEADERS_MAIN := \
           $(ROOTINC)/$(PROJECT)_mhd.h \
           $(ROOTINC)/$(PROJECT)_mix.h \
           $(ROOTINC)/$(PROJECT)_ngram.h \
+          $(ROOTINC)/$(PROJECT)_pack.h \
           $(ROOTINC)/$(PROJECT)_perm.h \
           $(ROOTINC)/$(PROJECT)_predict.h \
           $(ROOTINC)/$(PROJECT)_reg.h \

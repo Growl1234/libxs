@@ -38,7 +38,7 @@ extension holds a REAL(8) eps, an INT32 number of blocks, and an INT32 shape(3)
 per block provides eps and the blocks itself; CP2K writes such files
 (`CP2K_COMPRESS_DUMP=prefix`, from its tensor compression).
 
-The output compares the fixed width with a width per group of 8 to 64 values,
+The output compares the fixed width with a width per group of 4 to 32 values,
 with deltas between neighbors, and for floating-point data with a quantization
 step of twice `eps`, plus the bits that a width per value would need.
 Synthetic data shows speed; decisions about the format rest on real data.

@@ -125,10 +125,6 @@ No special include order is required. When used through
 pre-built library (`-DLIBXSTREAM_SOURCE`), `LIBXS_SOURCE` is
 implied automatically.
 
-**Debugging** — `LIBXS_PTRACE=1` lets a debugger of the same user
-attach to the running process (`gdb -p <pid>`) where the system
-otherwise allows only a parent to do so (Linux, `ptrace_scope=1`).
-
 **Fortran** — use the provided module
 ([documentation](libxs_fortran.md)):
 
@@ -149,7 +145,8 @@ USE :: libxs, ONLY: libxs_memcmp
 | [shuffle]     | Shuffling strategies comparison                 |
 | [scratch]     | Pool allocator vs system malloc                 |
 | [spatial]     | Stratification, pair counting, kd-tree          |
-| [fprint]      | Foeppl fingerprint structure/geometry tests     |
+| [fprint]      | Fingerprint structure/geometry tests            |
+| [bracket]     | Sharp edges from bracket units (Adam, GEMM)     |
 | [memory]      | Byte comparison, matrix copy, transpose         |
 | [ozaki]       | Ozaki-scheme low-precision GEMM                 |
 | [gemm]        | Batched DGEMM (strided, pointer, grouped)       |
@@ -166,6 +163,7 @@ USE :: libxs, ONLY: libxs_memcmp
 [scratch]: samples/libxs_scratch.md
 [spatial]: samples/libxs_spatial.md
 [fprint]: samples/libxs_fprint.md
+[bracket]: samples/libxs_bracket.md
 [memory]: samples/libxs_memory.md
 [ozaki]: samples/libxs_ozaki.md
 [gemm]: samples/libxs_gemm.md

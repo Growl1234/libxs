@@ -1384,3 +1384,32 @@
           status = internal_mhd_write_ptr(filename, C_LOC(data),        &
      &      LIBXS_DATATYPE_I64, shape, extension)
         END FUNCTION
+
+        !> Variable-width packing (see libxs_vpack).
+        FUNCTION libxs_vpack_i64(packed, values, maxbits, group)        &
+     &  RESULT(nwords)
+          INTEGER(C_LONG_LONG), INTENT(OUT), CONTIGUOUS,                &
+     &      TARGET :: packed(:)
+          INTEGER(C_LONG_LONG), INTENT(IN), CONTIGUOUS,                 &
+     &      TARGET :: values(:)
+          INTEGER(C_INT), INTENT(IN) :: maxbits
+          INTEGER(C_INT), INTENT(IN), OPTIONAL :: group
+          INTEGER(C_SIZE_T) :: nwords
+          INTEGER(C_INT) :: g
+          g = 0
+          IF (PRESENT(group)) g = group
+          nwords = internal_vpack(C_LOC(packed), C_LOC(values),         &
+     &      LIBXS_DATATYPE_I64, SIZE(values, KIND=C_SIZE_T),            &
+     &      maxbits, g)
+        END FUNCTION
+
+        !> Variable-width unpacking (see libxs_vunpack).
+        FUNCTION libxs_vunpack_i64(values, packed) RESULT(nwords)
+          INTEGER(C_LONG_LONG), INTENT(OUT), CONTIGUOUS,                &
+     &      TARGET :: values(:)
+          INTEGER(C_LONG_LONG), INTENT(IN), CONTIGUOUS,                 &
+     &      TARGET :: packed(:)
+          INTEGER(C_SIZE_T) :: nwords
+          nwords = internal_vunpack(C_LOC(values), C_LOC(packed),       &
+     &      LIBXS_DATATYPE_I64, SIZE(values, KIND=C_SIZE_T))
+        END FUNCTION

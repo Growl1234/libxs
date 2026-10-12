@@ -75,6 +75,7 @@
         PUBLIC :: libxs_registry_save, libxs_registry_load
         PUBLIC :: libxs_memcmp
         PUBLIC :: libxs_mhd_write
+        PUBLIC :: libxs_vpack, libxs_vunpack, libxs_vpack_bound
         PUBLIC :: libxs_aligned
         PUBLIC :: libxs_matcopy, libxs_matcopy_task
         PUBLIC :: libxs_otrans, libxs_otrans_task
@@ -1516,6 +1517,36 @@
             TYPE(C_PTR) :: libxs_strtoken
           END FUNCTION
 
+          !> Words libxs_vpack writes at most (libxs_pack.h).
+          PURE FUNCTION libxs_vpack_bound(n, maxbits, group)            &
+     &    BIND(C)
+            IMPORT :: C_SIZE_T, C_INT
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE :: n
+            INTEGER(C_INT), INTENT(IN), VALUE :: maxbits, group
+            INTEGER(C_SIZE_T) :: libxs_vpack_bound
+          END FUNCTION
+
+          ! internal (use libxs_vpack)
+          FUNCTION internal_vpack(packed, values, datatype, n,          &
+     &    maxbits, group) BIND(C, NAME="libxs_vpack")
+            IMPORT :: C_PTR, C_INT, C_SIZE_T
+            TYPE(C_PTR), INTENT(IN), VALUE :: packed, values
+            INTEGER(C_INT), INTENT(IN), VALUE :: datatype
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE :: n
+            INTEGER(C_INT), INTENT(IN), VALUE :: maxbits, group
+            INTEGER(C_SIZE_T) :: internal_vpack
+          END FUNCTION
+
+          ! internal (use libxs_vunpack)
+          FUNCTION internal_vunpack(values, packed, datatype, n)        &
+     &    BIND(C, NAME="libxs_vunpack")
+            IMPORT :: C_PTR, C_INT, C_SIZE_T
+            TYPE(C_PTR), INTENT(IN), VALUE :: values, packed
+            INTEGER(C_INT), INTENT(IN), VALUE :: datatype
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE :: n
+            INTEGER(C_SIZE_T) :: internal_vunpack
+          END FUNCTION
+
           ! internal (use libxs_mhd_write)
           FUNCTION internal_mhd_write(filename, offset, size, pitch,    &
      &    info, data, write_info) BIND(C, NAME="libxs_mhd_write")
@@ -1563,6 +1594,19 @@
           MODULE PROCEDURE libxs_fprint_partial_f32
           MODULE PROCEDURE libxs_fprint_partial_i32
           MODULE PROCEDURE libxs_fprint_partial_i8
+        END INTERFACE
+
+        !> Variable-width packing (libxs_pack.h): values are taken as
+        !> integers of maxbits bits; the group size defaults to 8.
+        !> Returns the number of words written.
+        INTERFACE libxs_vpack
+          MODULE PROCEDURE libxs_vpack_i64
+        END INTERFACE
+
+        !> Unpacks SIZE(values) integers written by libxs_vpack.
+        !> Returns the number of words consumed.
+        INTERFACE libxs_vunpack
+          MODULE PROCEDURE libxs_vunpack_i64
         END INTERFACE
 
         !> Write an array as MHD file (libxs_mhd.h): the given shape

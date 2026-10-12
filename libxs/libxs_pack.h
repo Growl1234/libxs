@@ -13,7 +13,7 @@
 #include "libxs.h"
 
 /** Values per group of the variable-width format (libxs_vpack) unless given. */
-#define LIBXS_VPACK_GROUP 16
+#define LIBXS_VPACK_GROUP 8
 
 
 /**
@@ -37,9 +37,11 @@ LIBXS_API int libxs_unpack(void* values, const void* packed,
  * is stored at the width its largest magnitude needs. Values are taken as
  * integers of maxbits bits (signed types sign-extended from maxbits, unsigned
  * types masked), and signed types fold the sign so that small magnitudes of
- * either sign stay narrow. The stream records the group size and widths; only
- * n has to be known to unpack. Returns the number of 64-bit words written,
- * at most libxs_vpack_bound, or zero for invalid arguments or n of zero.
+ * either sign stay narrow. A group size that is a multiple of 8 keeps every
+ * group's data byte-aligned, which is the fast path. The stream records the
+ * group size and widths; only n has to be known to unpack. Returns the number
+ * of 64-bit words written, at most libxs_vpack_bound, or zero for invalid
+ * arguments or n of zero.
  */
 LIBXS_API size_t libxs_vpack(void* packed, const void* values,
   libxs_data_t type, size_t n, int maxbits, int group);

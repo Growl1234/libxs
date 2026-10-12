@@ -33,7 +33,12 @@ typedef struct stats_t {
 } stats_t;
 
 
-static const int groups[NGROUPS] = { 8, 16, 32, 64 };
+typedef struct header_t {
+  double payload, byte, seven, base3, base2, nwidths, hist[MAXBITS + 1];
+} header_t;
+
+
+static const int groups[NGROUPS] = { 4, 8, 16, 32 };
 static uint64_t rng_state = 0x9E3779B97F4A7C15ULL;
 
 
@@ -228,11 +233,33 @@ static int add_file(stats_t* st, const char* filename, double eps)
 
 
 /** Packs every stream at its width (one stream per width, as CP2K's containers). */
-static double vpack_bits(const stream_t* s, int group, double* seconds, int* ok)
+/* Header costs of the widths: bytes, 7 bits, or a base per 8 groups with 3- or 2-bit offsets. */
+static void header_costs(header_t* h, const unsigned char* widths, size_t ngroups)
+{
+  size_t i, j;
+  for (i = 0; i < ngroups; i += 8) {
+    const size_t m = LIBXS_MIN((size_t)8, ngroups - i);
+    int wmin = MAXBITS, wmax = 0;
+    for (j = 0; j < m; ++j) {
+      wmin = LIBXS_MIN(wmin, (int)widths[i + j]);
+      wmax = LIBXS_MAX(wmax, (int)widths[i + j]);
+      h->hist[widths[i + j]] += 1;
+    }
+    h->base3 += 1.0 + (7 >= wmax - wmin ? 7.0 + 3.0 * m : 7.0 * m); /* flag selects the scheme */
+    h->base2 += 1.0 + (3 >= wmax - wmin ? 7.0 + 2.0 * m : 7.0 * m);
+  }
+  h->byte += 8.0 * (1 + ngroups);
+  h->seven += 7.0 * ngroups;
+  h->nwidths += (double)ngroups;
+}
+
+
+static double vpack_bits(const stream_t* s, int group, double* seconds, double* useconds, int* ok,
+  header_t* h)
 {
   double bits = 0;
   int nbits;
-  *seconds = 0;
+  *seconds = *useconds = 0;
   for (nbits = 1; nbits <= MAXBITS; ++nbits) {
     if (0 != s[nbits].n) {
       const size_t bound = libxs_vpack_bound(s[nbits].n, nbits, group);
@@ -243,9 +270,15 @@ static double vpack_bits(const stream_t* s, int group, double* seconds, int* ok)
         const size_t nwords = libxs_vpack(packed, s[nbits].q, LIBXS_DATATYPE_I64, s[nbits].n, nbits, group);
         const libxs_timer_tick_t t1 = libxs_timer_tick();
         const size_t nread = libxs_vunpack(back, packed, LIBXS_DATATYPE_I64, s[nbits].n);
+        *useconds += libxs_timer_duration(t1, libxs_timer_tick());
         *seconds += libxs_timer_duration(t0, t1);
         if (nread != nwords || 0 != memcmp(back, s[nbits].q, s[nbits].n * sizeof(int64_t))) *ok = 0;
         bits += 64.0 * (double)nwords;
+        if (NULL != h) {
+          const size_t ngroups = (s[nbits].n + group - 1) / group;
+          h->payload += 64.0 * ((double)nwords - (double)((1 + ngroups + 7) / 8));
+          header_costs(h, (const unsigned char*)packed + 1, ngroups);
+        }
       }
       else *ok = 0;
       free(packed);
@@ -264,28 +297,49 @@ static int run_files(int nfiles, char* files[], double eps)
   for (i = 0; i < nfiles && EXIT_SUCCESS == result; ++i) result = add_file(&st, files[i], eps);
   if (EXIT_SUCCESS == result && 0 != st.nvalues) {
     const double hdr = (double)st.nblocks * WIDTH_HEADER, n = (double)st.nvalues;
-    double seconds, bits;
+    header_t hd[NGROUPS];
+    double seconds, useconds, bits;
     int ok = 1, ig;
     printf("files %i  blocks %lu  values %lu  zeros %.1f%%  eps %g  skipped %lu\n", nfiles,
       (unsigned long)st.nblocks, (unsigned long)st.nvalues, 100.0 * st.nzeros / n, st.eps,
       (unsigned long)st.nskipped);
-    printf("%-26s %10s %8s %12s\n", "variant", "bits/value", "ratio", "pack ns/value");
+    printf("%-26s %10s %8s %14s %14s\n", "variant", "bits/value", "ratio", "pack ns/value", "unpack ns/value");
     printf("%-26s %10.2f %8.2f\n", "fixed", st.bits_fixed / n, 1.0);
     for (ig = 0; ig < NGROUPS; ++ig) {
       char label[32];
-      bits = vpack_bits(st.plain, groups[ig], &seconds, &ok) + hdr;
+      memset(&hd[ig], 0, sizeof(hd[ig]));
+      bits = vpack_bits(st.plain, groups[ig], &seconds, &useconds, &ok, &hd[ig]) + hdr;
       LIBXS_SNPRINTF(label, sizeof(label), "vpack group %i", groups[ig]);
-      printf("%-26s %10.2f %8.2f %12.2f\n", label, bits / n, st.bits_fixed / bits, 1E9 * seconds / n);
+      printf("%-26s %10.2f %8.2f %14.2f %14.2f\n", label, bits / n, st.bits_fixed / bits,
+        1E9 * seconds / n, 1E9 * useconds / n);
     }
-    bits = vpack_bits(st.delta, LIBXS_VPACK_GROUP, &seconds, &ok) + hdr;
-    printf("%-26s %10.2f %8.2f %12.2f\n", "vpack deltas", bits / n, st.bits_fixed / bits, 1E9 * seconds / n);
+    bits = vpack_bits(st.delta, LIBXS_VPACK_GROUP, &seconds, &useconds, &ok, NULL) + hdr;
+    printf("%-26s %10.2f %8.2f %14.2f %14.2f\n", "vpack deltas", bits / n, st.bits_fixed / bits,
+      1E9 * seconds / n, 1E9 * useconds / n);
     if (0 != st.has_twice) {
       printf("%-26s %10.2f %8.2f\n", "fixed, step 2*eps", st.bits_twice / n, st.bits_fixed / st.bits_twice);
-      bits = vpack_bits(st.twice, LIBXS_VPACK_GROUP, &seconds, &ok) + hdr;
-      printf("%-26s %10.2f %8.2f %12.2f\n", "vpack, step 2*eps", bits / n, st.bits_fixed / bits, 1E9 * seconds / n);
+      bits = vpack_bits(st.twice, LIBXS_VPACK_GROUP, &seconds, &useconds, &ok, NULL) + hdr;
+      printf("%-26s %10.2f %8.2f %14.2f %14.2f\n", "vpack, step 2*eps", bits / n, st.bits_fixed / bits,
+        1E9 * seconds / n, 1E9 * useconds / n);
     }
     printf("%-26s %10.2f %8.2f\n", "needed per value (bound)", (st.bits_needed + hdr) / n,
       st.bits_fixed / (st.bits_needed + hdr));
+    printf("\n%-8s %9s %26s\n", "group", "payload", "+ header: bytes 7-bit base+3 base+2 entropy");
+    for (ig = 0; ig < NGROUPS; ++ig) {
+      const double nw = LIBXS_MAX(1.0, hd[ig].nwidths), pay = hd[ig].payload + hdr;
+      double entropy = 0;
+      int w;
+      for (w = 0; w <= MAXBITS; ++w) {
+        if (0 < hd[ig].hist[w]) entropy -= hd[ig].hist[w] * log2(hd[ig].hist[w] / nw);
+      }
+      printf("%-8i %9.2f %10.2f %6.2f %6.2f %6.2f %7.2f   bits/value\n", groups[ig], pay / n,
+        (pay + hd[ig].byte) / n, (pay + hd[ig].seven) / n, (pay + hd[ig].base3) / n,
+        (pay + hd[ig].base2) / n, (pay + entropy) / n);
+      printf("%-8s %9s %10.2f %6.2f %6.2f %6.2f %7.2f   ratio\n", "", "",
+        st.bits_fixed / (pay + hd[ig].byte), st.bits_fixed / (pay + hd[ig].seven),
+        st.bits_fixed / (pay + hd[ig].base3), st.bits_fixed / (pay + hd[ig].base2),
+        st.bits_fixed / (pay + entropy));
+    }
     if (0 == ok) {
       fprintf(stderr, "ERROR: a round trip failed\n");
       result = EXIT_FAILURE;
@@ -306,7 +360,8 @@ static void synthesize(int64_t* q, size_t n, int nbits, int range, int zeros)
   size_t i;
   for (i = 0; i < n; ++i) {
     const int top = nbits - 1 - (int)((i / BLOCK) % (uint64_t)LIBXS_MAX(1, nbits / 4));
-    const int e = LIBXS_MAX(0, top - (int)(rng_next() % (uint64_t)LIBXS_MAX(1, range)));
+    const int drop = (int)(rng_next() % (uint64_t)LIBXS_MAX(1, range)); /* LIBXS_MAX evaluates twice */
+    const int e = LIBXS_MAX(0, top - drop);
     const int64_t v = (int64_t)(rng_next() & ((((uint64_t)1) << e) - 1));
     q[i] = ((int)(rng_next() % 100) < zeros) ? 0 : (0 != (1 & rng_next()) ? -v : v);
   }
