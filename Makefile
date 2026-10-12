@@ -288,7 +288,8 @@ endif
 # conditional compilation (!$ lines) and so compiles calls into the OpenMP runtime,
 # but links no runtime, which left the shared library with references nothing it
 # depends on resolves. The module carries no SIMD directive for it to serve.
-$(BLDDIR)/intel64/$(PROJECT)-mod.o: $(BLDDIR)/intel64/.make $(INCDIR)/$(PROJECT).f
+$(BLDDIR)/intel64/$(PROJECT)-mod.o: $(BLDDIR)/intel64/.make $(INCDIR)/$(PROJECT).f \
+  $(wildcard $(INCDIR)/$(PROJECT)*.fi)
 	$(FC) $(DFLAGS) $(IFLAGS) $(FCMTFLAGS) $(filter-out $(FFORM_FLAG) -fopenmp-simd -qopenmp-simd,$(FCFLAGS)) $(FTARGET) \
 		-c $(INCDIR)/$(PROJECT).f -o $@ $(FMFLAGS) $(INCDIR)
 $(INCDIR)/$(PROJECT).mod: $(BLDDIR)/intel64/$(PROJECT)-mod.o
