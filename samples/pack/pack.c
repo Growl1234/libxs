@@ -232,7 +232,6 @@ static int add_file(stats_t* st, const char* filename, double eps)
 }
 
 
-/** Packs every stream at its width (one stream per width, as CP2K's containers). */
 /* Header costs of the widths: bytes, 7 bits, or a base per 8 groups with 3- or 2-bit offsets. */
 static void header_costs(header_t* h, const unsigned char* widths, size_t ngroups)
 {
@@ -254,6 +253,7 @@ static void header_costs(header_t* h, const unsigned char* widths, size_t ngroup
 }
 
 
+/** Packs every stream at its width (one stream per width, as CP2K's containers). */
 static double vpack_bits(const stream_t* s, int group, double* seconds, double* useconds, int* ok,
   header_t* h)
 {

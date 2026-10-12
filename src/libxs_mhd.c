@@ -16,7 +16,7 @@
 #endif
 
 #if !defined(LIBXS_MHD_MAX_STRLENGTH)
-# define LIBXS_MHD_MAX_STRLENGTH 128
+# define LIBXS_MHD_MAX_STRLENGTH FILENAME_MAX
 #endif
 
 #if !defined(LIBXS_MHD_MAX_ELEMSIZE)
