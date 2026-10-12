@@ -188,6 +188,7 @@ libxs_nranks
 libxs_offset
 libxs_otrans
 libxs_otrans_task
+libxs_pack
 libxs_pfree
 libxs_pfree_lock
 libxs_pid
@@ -349,7 +350,11 @@ libxs_tokenizer_granularity
 libxs_tokenizer_set_granularity
 libxs_typename
 libxs_typesize
+libxs_unpack
 libxs_unshuffle
 libxs_unshuffle2
 libxs_utf8_decode
 libxs_utf8_size
+libxs_vpack
+libxs_vpack_bound
+libxs_vunpack

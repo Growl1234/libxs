@@ -24,6 +24,7 @@ of [LIBXSMM](https://github.com/libxsmm/libxsmm).
 | [GEMM][dgemm]    | `libxs_gemm.h`     | Batched dense GEMM (strided, grouped)      |
 | [Math][dmath]    | `libxs_math.h`     | Matrix compare, GCD/LCM, BF16 conversion   |
 | [Hash][dhash]    | `libxs_hash.h`     | CRC32, Adler-32, string hashing            |
+| [Pack][dpack]    | `libxs_pack.h`     | Bit packing at fixed or per-group widths   |
 | [Perm][dperm]    | `libxs_perm.h`     | Shuffle, kd-tree, Hilbert/Morton curves    |
 | [Hist][dhist]    | `libxs_hist.h`     | Thread-safe histogram, running statistics  |
 | [Mix][dmix]      | `libxs_mix.h`      | Fixed-share mixture over expert banks      |
@@ -44,6 +45,7 @@ of [LIBXSMM](https://github.com/libxsmm/libxsmm).
 [dgemm]: libxs_gemm.md
 [dmath]: libxs_math.md
 [dhash]: libxs_hash.md
+[dpack]: libxs_pack.md
 [dperm]: libxs_perm.md
 [dhist]: libxs_hist.md
 [dmix]: libxs_mix.md

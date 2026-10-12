@@ -1,0 +1,60 @@
+/******************************************************************************
+* Copyright (c) 2009-2026 Hans Pabst                                          *
+* Copyright (c) 2009-2026 Intel Corporation                                   *
+* This file is part of the LIBXS library.                                     *
+*                                                                             *
+* For information on the license, see the LICENSE file.                       *
+* Further information: https://github.com/hfp/libxs/                          *
+* SPDX-License-Identifier: BSD-3-Clause                                       *
+******************************************************************************/
+#ifndef LIBXS_PACK_H
+#define LIBXS_PACK_H
+
+#include "libxs.h"
+
+/** Values per group of the variable-width format (libxs_vpack) unless given. */
+#define LIBXS_VPACK_GROUP 16
+
+
+/**
+ * Packs n integers of the given type (I8..I64, U8..U64) at nbits each (1 to
+ * 8 times the type size) into CEILING(n*nbits/64) 64-bit words, which must be
+ * aligned accordingly. Bits beyond nbits are ignored. Every group of 64 values
+ * fills exactly nbits words, the first value in the least significant bits.
+ * Returns EXIT_SUCCESS, or EXIT_FAILURE for a type or width out of range.
+ */
+LIBXS_API int libxs_pack(void* packed, const void* values,
+  libxs_data_t type, size_t n, int nbits);
+/**
+ * Unpacks n integers written by libxs_pack. Signed types are sign-extended
+ * from nbits, unsigned types zero-extended.
+ */
+LIBXS_API int libxs_unpack(void* values, const void* packed,
+  libxs_data_t type, size_t n, int nbits);
+
+/**
+ * Variable width: every group of values (group = 1..255, 0 = LIBXS_VPACK_GROUP)
+ * is stored at the width its largest magnitude needs. Values are taken as
+ * integers of maxbits bits (signed types sign-extended from maxbits, unsigned
+ * types masked), and signed types fold the sign so that small magnitudes of
+ * either sign stay narrow. The stream records the group size and widths; only
+ * n has to be known to unpack. Returns the number of 64-bit words written,
+ * at most libxs_vpack_bound, or zero for invalid arguments or n of zero.
+ */
+LIBXS_API size_t libxs_vpack(void* packed, const void* values,
+  libxs_data_t type, size_t n, int maxbits, int group);
+/** Number of 64-bit words libxs_vpack writes at most. */
+LIBXS_API size_t libxs_vpack_bound(size_t n, int maxbits, int group);
+/**
+ * Unpacks n integers written by libxs_vpack. Returns the number of 64-bit
+ * words consumed, or zero for invalid arguments or n of zero.
+ */
+LIBXS_API size_t libxs_vunpack(void* values, const void* packed,
+  libxs_data_t type, size_t n);
+
+/* header-only: include implementation */
+#if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H)
+# include "libxs_source.h"
+#endif
+
+#endif /*LIBXS_PACK_H*/

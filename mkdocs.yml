@@ -62,6 +62,7 @@ nav:
   - GEMM: libxs_gemm.md
   - Math: libxs_math.md
   - Hash: libxs_hash.md
+  - Pack: libxs_pack.md
   - Perm: libxs_perm.md
   - Hist: libxs_hist.md
   - Mix: libxs_mix.md
@@ -75,6 +76,7 @@ nav:
   - Rosetta: samples/libxs_rosetta.md
   - Setdiff: samples/libxs_setdiff.md
   - Shuffle: samples/libxs_shuffle.md
+  - Pack: samples/libxs_pack.md
   - Scratch: samples/libxs_scratch.md
   - Spatial: samples/libxs_spatial.md
   - Fprint: samples/libxs_fprint.md
