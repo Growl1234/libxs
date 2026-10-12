@@ -1293,3 +1293,94 @@
             CALL internal_syrk_run(cfg, uplo, alpha, beta, a, c)
           END IF
         END SUBROUTINE
+
+        !> Write an MHD file (see libxs_mhd_write).
+        FUNCTION internal_mhd_write_ptr(filename, data, datatype,       &
+     &  shape, extension) RESULT(status)
+          CHARACTER(LEN=*), INTENT(IN) :: filename
+          TYPE(C_PTR), INTENT(IN) :: data
+          INTEGER(C_INT), INTENT(IN) :: datatype
+          INTEGER, INTENT(IN) :: shape(:)
+          INTEGER(C_INT8_T), INTENT(IN), CONTIGUOUS, TARGET,            &
+     &      OPTIONAL :: extension(:)
+          INTEGER(C_INT) :: status
+          INTEGER(C_SIZE_T), TARGET :: extent(SIZE(shape))
+          TYPE(libxs_mhd_info_t) :: info
+          TYPE(libxs_mhd_write_info_t), TARGET :: wrinfo
+          extent = INT(shape, KIND=C_SIZE_T)
+          info%ndims = SIZE(shape, KIND=C_SIZE_T)
+          info%ncomponents = 1
+          info%type = datatype
+          info%header_size = 0
+          wrinfo%handler_info = C_NULL_PTR
+          wrinfo%handler = C_NULL_FUNPTR
+          wrinfo%handler_context = C_NULL_PTR
+          wrinfo%extension_header = C_NULL_PTR
+          wrinfo%extension = C_NULL_PTR
+          wrinfo%extension_size = 0
+          IF (PRESENT(extension)) THEN
+            IF (0 .LT. SIZE(extension)) THEN
+              wrinfo%extension = C_LOC(extension)
+              wrinfo%extension_size = SIZE(extension, KIND=C_SIZE_T)
+            END IF
+          END IF
+          status = internal_mhd_write(TRIM(filename) // C_NULL_CHAR,    &
+     &      C_NULL_PTR, C_LOC(extent), C_NULL_PTR, info, data,          &
+     &      C_LOC(wrinfo))
+        END FUNCTION
+
+        !> Write an array as MHD file (libxs_mhd_write).
+        FUNCTION libxs_mhd_write_f64(filename, data, shape,             &
+     &  extension) RESULT(status)
+          CHARACTER(LEN=*), INTENT(IN) :: filename
+          REAL(C_DOUBLE), INTENT(IN), CONTIGUOUS,                       &
+     &      TARGET :: data(:)
+          INTEGER, INTENT(IN) :: shape(:)
+          INTEGER(C_INT8_T), INTENT(IN), CONTIGUOUS, TARGET,            &
+     &      OPTIONAL :: extension(:)
+          INTEGER(C_INT) :: status
+          status = internal_mhd_write_ptr(filename, C_LOC(data),        &
+     &      LIBXS_DATATYPE_F64, shape, extension)
+        END FUNCTION
+
+        !> Write an array as MHD file (libxs_mhd_write).
+        FUNCTION libxs_mhd_write_f32(filename, data, shape,             &
+     &  extension) RESULT(status)
+          CHARACTER(LEN=*), INTENT(IN) :: filename
+          REAL(C_FLOAT), INTENT(IN), CONTIGUOUS,                        &
+     &      TARGET :: data(:)
+          INTEGER, INTENT(IN) :: shape(:)
+          INTEGER(C_INT8_T), INTENT(IN), CONTIGUOUS, TARGET,            &
+     &      OPTIONAL :: extension(:)
+          INTEGER(C_INT) :: status
+          status = internal_mhd_write_ptr(filename, C_LOC(data),        &
+     &      LIBXS_DATATYPE_F32, shape, extension)
+        END FUNCTION
+
+        !> Write an array as MHD file (libxs_mhd_write).
+        FUNCTION libxs_mhd_write_i32(filename, data, shape,             &
+     &  extension) RESULT(status)
+          CHARACTER(LEN=*), INTENT(IN) :: filename
+          INTEGER(C_INT), INTENT(IN), CONTIGUOUS,                       &
+     &      TARGET :: data(:)
+          INTEGER, INTENT(IN) :: shape(:)
+          INTEGER(C_INT8_T), INTENT(IN), CONTIGUOUS, TARGET,            &
+     &      OPTIONAL :: extension(:)
+          INTEGER(C_INT) :: status
+          status = internal_mhd_write_ptr(filename, C_LOC(data),        &
+     &      LIBXS_DATATYPE_I32, shape, extension)
+        END FUNCTION
+
+        !> Write an array as MHD file (libxs_mhd_write).
+        FUNCTION libxs_mhd_write_i64(filename, data, shape,             &
+     &  extension) RESULT(status)
+          CHARACTER(LEN=*), INTENT(IN) :: filename
+          INTEGER(C_LONG_LONG), INTENT(IN), CONTIGUOUS,                 &
+     &      TARGET :: data(:)
+          INTEGER, INTENT(IN) :: shape(:)
+          INTEGER(C_INT8_T), INTENT(IN), CONTIGUOUS, TARGET,            &
+     &      OPTIONAL :: extension(:)
+          INTEGER(C_INT) :: status
+          status = internal_mhd_write_ptr(filename, C_LOC(data),        &
+     &      LIBXS_DATATYPE_I64, shape, extension)
+        END FUNCTION

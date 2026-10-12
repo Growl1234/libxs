@@ -130,4 +130,10 @@ int libxs_mhd_write(const char filename[],
 
 Write image data in the extended MHD format. `info->header_size` is updated on output. Pass NULL for `write_info` when no conversion or extension is needed.
 
+From Fortran (`USE libxs`), the generic `libxs_mhd_write` takes a contiguous array of `REAL(8)`, `REAL(4)`, `INTEGER(4)`, or `INTEGER(8)`, the image extents (first dimension fastest), and optionally the extension as an array of `INTEGER(C_INT8_T)`. It returns zero on success.
+
+```Fortran
+status = libxs_mhd_write("blocks.mhd", values, [n], extension)
+```
+
 When the environment variable `LIBXS_MHD_PNG` is set and the image is two-dimensional, an uncompressed PNG file is written alongside the MHD output (same base name, `.png` extension). Supported channel counts are 1 (grayscale), 3 (RGB), and 4 (RGBA) at 8-bit depth. Source data of any element type is converted to unsigned 8-bit using the built-in element conversion with automatic min/max scaling.
