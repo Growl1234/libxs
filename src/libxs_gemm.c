@@ -476,7 +476,8 @@ LIBXS_API_INTERN void internal_libxs_dgemm_default(
           ? b[p + j * lldb] : b[j + p * lldb];
         sum += aval * bval;
       }
-      c[i + j * lldc] = dalpha * sum + dbeta * c[i + j * lldc];
+      /* BLAS does not read C when beta is zero (C may hold NaN, e.g., fresh memory) */
+      c[i + j * lldc] = (0.0 == dbeta ? dalpha * sum : (dalpha * sum + dbeta * c[i + j * lldc]));
     }
   }
 }
@@ -516,7 +517,7 @@ LIBXS_API_INTERN void internal_libxs_sgemm_default(
           ? b[p + j * lldb] : b[j + p * lldb];
         sum += aval * bval;
       }
-      c[i + j * lldc] = falpha * sum + fbeta * c[i + j * lldc];
+      c[i + j * lldc] = (0.f == fbeta ? falpha * sum : (falpha * sum + fbeta * c[i + j * lldc]));
     }
   }
 }
