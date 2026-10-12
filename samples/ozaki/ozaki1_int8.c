@@ -405,11 +405,10 @@ LIBXS_INLINE void gemm_oz1_diff(const char* transa, const char* transb, const GE
             const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
             int32_t* const dst = b_packed + (long)slice_a * N_blocks * bp_stride + (long)(jb / BLOCK_N) * bp_stride;
             if (jblk == BLOCK_N) {
-              const __m512i vidx = OZAKI_GATHER_VIDX(K_grp_pad);
               GEMM_INT_TYPE kb;
               for (kb = 0; kb < K_grp_pad; kb += BLOCK_K) {
-                OZAKI_REFORMAT_B_IMPL(vidx, b_slices + (long)slice_a * N * K_grp_pad + (long)jb * K_grp_pad,
-                  kb, BLOCK_N, dst + (kb / 4) * BLOCK_N, BLOCK_K);
+                ozaki_reformat_b(b_slices + (long)slice_a * N * K_grp_pad + (long)jb * K_grp_pad,
+                  K_grp_pad, kb, dst + (kb / 4) * BLOCK_N);
               }
             }
             else {

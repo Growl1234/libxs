@@ -375,6 +375,14 @@ LIBXS_INLINE int32_t ozaki_dot_u8_sw(const uint8_t a[BLOCK_K], const uint8_t b[B
  */
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
 
+/* B (BLOCK_N columns at stride LDB) as dwords of 4 values for BLOCK_K values at KB, i.e., the VNNI panel layout */
+LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void ozaki_reformat_b(const void* b, GEMM_INT_TYPE ldb, GEMM_INT_TYPE kb,
+  int32_t* buf)
+{
+  const __m512i vidx = OZAKI_GATHER_VIDX(ldb);
+  OZAKI_REFORMAT_B_IMPL(vidx, b, kb, BLOCK_N, buf, BLOCK_K);
+}
+
 /* s8*s8 panel via DPBSSD (AVX-VNNI-INT8, 512-bit EVEX). */
 # if (LIBXS_X86_AVX512_INT8 <= LIBXS_MAX_STATIC_TARGET_ARCH)
 LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_INT8) void ozaki_panel_i8_bssd(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K,
@@ -743,12 +751,11 @@ LIBXS_INLINE void ozaki_gemm_s8s8s32(char transa, char transb, GEMM_INT_TYPE M, 
 #else
 # if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
   if (OZAKI_VNNI512 && N == BLOCK_N && 0 == (K % BLOCK_K)) {
-    const __m512i rf_vidx = OZAKI_GATHER_VIDX(ldb);
     GEMM_INT_TYPE kb;
     for (kb = 0; kb < K; kb += BLOCK_K) {
       LIBXS_ALIGNED(int32_t bp[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
       const int b1 = (kb == 0) ? beta : 1;
-      OZAKI_REFORMAT_B_IMPL(rf_vidx, b, kb, BLOCK_N, bp, BLOCK_K);
+      ozaki_reformat_b(b, ldb, kb, bp);
       OZAKI_DISPATCH_I8(
         ozaki_panel_i8_bssd(M, N, BLOCK_K, a + kb, lda, bp, BLOCK_N, b1, c, ldc),
         ozaki_panel_i8_vnni(M, N, BLOCK_K, a + kb, lda, bp, BLOCK_N, b1, c, ldc))
@@ -769,15 +776,13 @@ LIBXS_INLINE void ozaki_gemm_s8s8s32_fused(GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEM
 #if !defined(__DNNL)
 # if defined(LIBXS_INTRINSICS_AVX512) && 16 == BLOCK_N && (16 == BLOCK_K || 32 == BLOCK_K || 64 == BLOCK_K)
   if (OZAKI_VNNI512 && N == BLOCK_N && 0 == (K % BLOCK_K)) {
-    const __m512i rf_vidx1 = OZAKI_GATHER_VIDX(ldb1);
-    const __m512i rf_vidx2 = OZAKI_GATHER_VIDX(ldb2);
     GEMM_INT_TYPE kb;
     for (kb = 0; kb < K; kb += BLOCK_K) {
       LIBXS_ALIGNED(int32_t bp1[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
       LIBXS_ALIGNED(int32_t bp2[(BLOCK_K / 4) * BLOCK_N], LIBXS_ALIGNMENT);
       const int bt = (kb == 0) ? beta : 1;
-      OZAKI_REFORMAT_B_IMPL(rf_vidx1, b1, kb, BLOCK_N, bp1, BLOCK_K);
-      OZAKI_REFORMAT_B_IMPL(rf_vidx2, b2, kb, BLOCK_N, bp2, BLOCK_K);
+      ozaki_reformat_b(b1, ldb1, kb, bp1);
+      ozaki_reformat_b(b2, ldb2, kb, bp2);
       OZAKI_DISPATCH_I8(
         ozaki_panel_i8_bssd_fused(M, N, BLOCK_K, a1 + kb, lda1, bp1, BLOCK_N,
           a2 + kb, lda2, bp2, BLOCK_N, bt, c, ldc),
