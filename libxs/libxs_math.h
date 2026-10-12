@@ -13,7 +13,7 @@
 #include "libxs.h"
 
 /**
- * Maximum derivative order for Foeppl polynomial fingerprints.
+ * Maximum derivative order for polynomial fingerprints.
  * Orders 0..LIBXS_FPRINT_MAXORDER correspond to value, slope,
  * curvature, and higher structural features.
  */
@@ -85,7 +85,7 @@ LIBXS_EXTERN_C typedef struct libxs_gss_info_t {
   int status;
 } libxs_gss_info_t;
 
-/** Foeppl polynomial fingerprint: per-derivative-order norms. */
+/** Polynomial fingerprint: per-derivative-order norms. */
 LIBXS_EXTERN_C typedef struct libxs_fprint_t {
   /** Per-order L2 norm (k = 0..order). */
   double l2[LIBXS_FPRINT_MAXORDER + 1];
@@ -222,7 +222,7 @@ LIBXS_API int libxs_setdiff_min(
   const void* b, int nb, double* tol);
 
 /**
- * Foeppl polynomial fingerprint for n-dimensional data.
+ * Polynomial fingerprint for n-dimensional data.
  * For 1-D data, builds per-derivative-order norms (L2, L1, Linf)
  * normalized to the unit interval [0,1] so that fingerprints of
  * different lengths are directly comparable.

@@ -312,7 +312,7 @@
           INTEGER(C_INT) :: constant_tsc
         END TYPE
 
-        !> Maximum derivative order for fingerprints (Foeppl).
+        !> Maximum derivative order for fingerprints.
         INTEGER(C_INT), PARAMETER ::                                    &
      &    LIBXS_FPRINT_MAXORDER = 8
         PUBLIC :: LIBXS_FPRINT_MAXORDER
@@ -325,7 +325,7 @@
         PUBLIC :: LIBXS_FPRINT_DEFAULT, LIBXS_FPRINT_SORT
         PUBLIC :: LIBXS_FPRINT_AUTOCORR, LIBXS_FPRINT_PERAXIS
 
-        !> Foeppl polynomial fingerprint norms per derivative order.
+        !> Polynomial fingerprint norms per derivative order.
         TYPE, BIND(C) :: libxs_fprint_t
           REAL(C_DOUBLE) :: l2(LIBXS_FPRINT_MAXORDER + 1)
           REAL(C_DOUBLE) :: l1(LIBXS_FPRINT_MAXORDER + 1)
@@ -1579,7 +1579,7 @@
           MODULE PROCEDURE libxs_diff_i32, libxs_diff_i64
         END INTERFACE
 
-        !> Foeppl polynomial fingerprint.
+        !> Polynomial fingerprint.
         INTERFACE libxs_fprint
           MODULE PROCEDURE libxs_fprint_ptr
           MODULE PROCEDURE libxs_fprint_f64

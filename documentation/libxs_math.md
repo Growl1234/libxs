@@ -123,10 +123,10 @@ The distance as a function of tolerance is monotonically
 non-increasing (a step function with discrete drops), which makes
 it unimodal — the prerequisite for Golden Section Search.
 
-## Foeppl Polynomial Fingerprint
+## Polynomial Fingerprint
 
-Structural fingerprint for n-dimensional data based on Foeppl (Macaulay)
-bracket polynomials. For 1-D data, the fingerprint records per-derivative-order
+Structural fingerprint for n-dimensional data based on Macaulay bracket
+(truncated-power) polynomials. For 1-D data, the fingerprint records per-derivative-order
 norms of the forward finite differences, normalized to the unit interval
 [0,1]. Higher dimensions are handled hierarchically: the innermost dimension
 is fingerprinted first, each child fingerprint is collapsed to a Sobolev

@@ -132,6 +132,13 @@ implied automatically.
 USE :: libxs, ONLY: libxs_memcmp
 ```
 
+**Environment** — read when the library initializes:
+
+| Variable      | Default | Description                                                    |
+|---------------|---------|----------------------------------------------------------------|
+| LIBXS_VERBOSE | 0       | Verbosity level; set but empty means 1                         |
+| LIBXS_PTRACE  | 0       | Linux: any process may attach a debugger (not only an ancestor) |
+
 ## Samples
 
 | Sample        | Description                                     |
