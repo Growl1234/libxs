@@ -233,17 +233,17 @@ LIBXS_API unsigned int libxs_remainder(unsigned int a, unsigned int b,
 
 LIBXS_API int libxs_primes_u32(unsigned int num, unsigned int num_factors_n32[], int num_factors_max)
 {
-  unsigned int c = num, i;
+  unsigned int c = num, i, j;
   int n = 0;
   if (0 < c && 0 == (c & 1)) { /* non-zero even */
-    unsigned int j = c / 2;
+    j = c / 2;
     while (c == (2 * j)) {
       if (n < num_factors_max) num_factors_n32[n] = 2;
       c = j; j /= 2; ++n;
     }
   }
-  for (i = 3; (i * i) <= c; i += 2) {
-    unsigned int j = c / i;
+  /* i <= c/i is i*i <= c without overflowing (i*i wraps for c > 65535^2) */
+  for (i = 3, j = c / 3; i <= j; i += 2, j = c / i) {
     while (c == (i * j)) {
       if (n < num_factors_max) num_factors_n32[n] = i;
       c = j; j /= i; ++n;

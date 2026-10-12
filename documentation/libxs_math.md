@@ -545,7 +545,10 @@ int libxs_primes_u32(unsigned int num,
   unsigned int num_factors_n32[], int num_factors_max);
 ```
 
-Prime factors of `num` in ascending order. Returns factor count.
+Prime factors of `num` in ascending order, repeated by multiplicity
+(12 yields [2, 2, 3]). Returns the factor count, which may exceed
+`num_factors_max` (only that many are written). Returns zero if `num`
+is a prime other than two.
 
 ```C
 size_t libxs_coprime(size_t n, size_t minco);
@@ -593,7 +596,8 @@ unsigned int libxs_isqrt_u32(unsigned int x);
 unsigned int libxs_isqrt2_u32(unsigned int x);
 ```
 
-Integer square root. The isqrt2 variant returns a factor of x.
+Exact integer square root, floor(sqrt(x)), without floating point.
+The isqrt2 variant returns a factor of x.
 
 ```C
 double libxs_pow2(int n);

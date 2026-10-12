@@ -327,9 +327,10 @@ int main(int argc, char* argv[])
   }
 
   { /* check prime factorization */
-    const unsigned int test[] = { 0, 1, 2, 3, 5, 7, 12, 13, 24, 32, 2057, 120, 14, 997, 65519u * 65521u };
+    /* 4294967291 (largest 32-bit prime) exceeds 65535^2 where i*i wraps; 4294967295 = 3*5*17*257*65537 */
+    const unsigned int test[] = { 0, 1, 2, 3, 5, 7, 12, 13, 24, 32, 2057, 120, 14, 997, 65519u * 65521u, 4294967291u, 4294967295u };
     /* expected factor count including multiplicity; 0 for primes other than two (per API contract) */
-    const int expected[] = { 0, 0, 1, 0, 0, 0, 3, 0, 4, 5, 3, 5, 2, 0, 2 };
+    const int expected[] = { 0, 0, 1, 0, 0, 0, 3, 0, 4, 5, 3, 5, 2, 0, 2, 0, 5 };
     const int n = sizeof(test) / sizeof(*test);
     unsigned int fact[32];
     for (i = 0; i < n; ++i) {

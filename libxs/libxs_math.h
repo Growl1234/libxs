@@ -426,9 +426,9 @@ LIBXS_API double libxs_bisect_min(
   double x0, double x1, double fmin, double* xmin, int maxiter,
   double ftol, libxs_gss_info_t* info);
 
-/** SQRT with Newton's method using integer arithmetic. */
+/** Exact floor(sqrt(x)) by bitwise binary search (integer arithmetic). */
 LIBXS_API unsigned int libxs_isqrt_u64(unsigned long long x);
-/** SQRT with Newton's method using integer arithmetic. */
+/** Exact floor(sqrt(x)) by digit-by-digit shift-subtract (integer arithmetic). */
 LIBXS_API unsigned int libxs_isqrt_u32(unsigned int x);
 /** Based on libxs_isqrt_u32; result is factor of x. */
 LIBXS_API unsigned int libxs_isqrt2_u32(unsigned int x);
