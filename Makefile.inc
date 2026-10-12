@@ -327,6 +327,21 @@ ftest = $(if $1,$(if $(shell INFILE=$$($(MKTEMP) /tmp/_build_XXXXXX.f) && \
   rm -f /tmp/$$(basename $${INFILE} .f).* _build_??????.f.* 2>/dev/null),$(NULL),$(strip $2 $3)))
 
 ldclib = $(if $1,$(call ctest,$1 $2,-l$(strip $3)))
+# Whether the C compiler $1 builds and assembles a function with target attribute $2
+# (ISA_TARGET_*) and body $3 (ISA_BODY_*): a GCC outside of the system may meet an
+# assembler too old for its instructions. The include is \043 since a hash starts a comment.
+isatest = $(if $1,$(if $(shell INFILE=$$($(MKTEMP) /tmp/.build_XXXXXX.c) && \
+  printf '\043include <immintrin.h>\n__attribute__((target("%s"))) void f(void* p) { %s }\n' \
+    '$(strip $2)' '$(strip $3)' >$${INFILE} && \
+  $(firstword $1) -c $${INFILE} -o $${INFILE}.o >/dev/null 2>&1 || echo "FAILED"; \
+  rm -f /tmp/$$(basename $${INFILE} .c).* 2>/dev/null),$(NULL),1))
+# per level as in LIBXS_ATTRIBUTE_TARGET_* (libxs_utils.h), with an instruction of that level
+ISA_TARGET_1100 := avx2,fma,avx512f,avx512cd,avx512dq,avx512bw,avx512vl,avx512vnni
+ISA_BODY_1100 := _mm512_storeu_si512(p, _mm512_maskz_loadu_epi8(1, p));
+ISA_TARGET_1105 := $(ISA_TARGET_1100),amx-tile,amx-int8,amx-bf16
+ISA_BODY_1105 := $(ISA_BODY_1100) _tile_zero(0);
+ISA_TARGET_1110 := avx10.2,amx-tile,amx-int8,amx-bf16
+ISA_BODY_1110 := __m512i v = _mm512_loadu_si512(p); _mm512_storeu_si512(p, _mm512_dpbuud_epi32(v, v, v));
 ldflib = $(if $1,$(call ftest,$1 $2,-l$(strip $3)))
 
 # extract from source file (1st arg) the value of the preprocessor definition (2nd arg)
@@ -2016,8 +2031,14 @@ else ifneq (0,$(CLANG))
   INTRINSICS ?= 2
 else ifneq (,$(GCC_VERSION))
   ifneq (0,$(shell echo "$$((100000<=$(GCC_VERSION_NUM)))"))
-  ifeq (/usr/bin/,$(call qdir,$(call which,$(CC))))
-    INTRINSICS ?= 2
+  ifeq (x86_64,$(MNAME)$(INTRINSICS)) # probe unless given
+  ifneq (,$(call isatest,$(CC),$(ISA_TARGET_1110),$(ISA_BODY_1110)))
+    INTRINSICS ?= 1110
+  else ifneq (,$(call isatest,$(CC),$(ISA_TARGET_1105),$(ISA_BODY_1105)))
+    INTRINSICS ?= 1105
+  else ifneq (,$(call isatest,$(CC),$(ISA_TARGET_1100),$(ISA_BODY_1100)))
+    INTRINSICS ?= 1100
+  endif
   endif
   endif
 endif
