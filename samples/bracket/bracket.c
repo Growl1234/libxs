@@ -44,6 +44,9 @@
 #define BRACKET_ALS 2
 #define BRACKET_CELLMAX (2 * BRACKET_N2)
 #define BRACKET_STEPDEG 3.0
+#define BRACKET_DISC_R 0.3
+#define BRACKET_DISC_X 0.53
+#define BRACKET_DISC_Y 0.48
 
 
 /* piecewise-constant profile: level[i] holds on [edge[i-1], edge[i]) */
@@ -97,6 +100,7 @@ typedef struct rotdata_t {
 } rotdata_t;
 
 typedef int (*eval_fn_t)(const void* model, size_t n, double out[]);
+typedef double (*value_fn_t)(double x, double y, double angle);
 
 typedef struct study_t {
   const target1_t* row;
@@ -128,16 +132,33 @@ static void model1_train(model1_t* model, const double x[], const double y[], in
 static void model1_merge(model1_t* model, double hcell);
 static void model1_insert(model1_t* model, const double x[], const double y[], int n,
   int nmax, const train_t* refine);
+static int solve_spd(double a[], double b[], int n);
+static double model1_refit(model1_t* model, const double x[], const double avg[], int n,
+  int skip);
+static void model1_prune(model1_t* model, const double x[], const double y[], int n,
+  double sigma);
+static double noise_sigma(const double avg[], int n);
 static int model1_eval(const void* model, size_t n, double out[]);
 static double checker_edge(int i);
 static double checker_value(double x, double y, double angle);
-static void checker_row(double y, double angle, target1_t* row);
+static double disc_value(double x, double y, double angle);
+static void checker_row(value_fn_t value, double y, double angle, target1_t* row);
 static int tensor_init(tensor_t* model, int nu, int integrated);
 static void tensor_factor(const double param[], int nu, int axis, size_t n, double lo,
   double h, double relu[], double step[]);
 static int tensor_train(tensor_t* model, const double y[], int n, double lo, double h,
   const train_t* train);
 static int tensor_eval(const void* model, size_t n, double out[]);
+static int box_init(tensor_t* model, int nu, int integrated);
+static void box_factor(const double param[], int nu, int axis, size_t n, double lo, double h,
+  double ramp[], double below[], double above[]);
+static int box_train(tensor_t* model, const double y[], int n, double lo, double h,
+  const train_t* train);
+static int box_eval(const void* model, size_t n, double out[]);
+static int box_cells(tensor_t* model, const double data[], int n, double h,
+  const train_t* train);
+static int box_greedy(tensor_t* model, const double data[], const double area[], int n,
+  double h, int nmax, const train_t* train, const train_t* refine);
 static int mlp_init(mlp_t* model, int nh, int integrated);
 static int mlp_forward(const double param[], int nh, const double xs[], const double ys[],
   int npts, double a1[], double a2[], double s1[], double out[]);
@@ -170,7 +191,7 @@ static int env_int(const char name[], int value, int lo, int hi);
 static int run_1d(const train_t* train, const setup_t* setup, unsigned int seed);
 static int run_2d(const train_t* train, const setup_t* setup, unsigned int seed);
 static int run_checker(const train_t* train, const setup_t* setup, unsigned int seed,
-  const char target[], double angle, double work[]);
+  const char target[], value_fn_t value, double angle, double work[]);
 
 
 int main(void)
@@ -553,6 +574,169 @@ static void model1_insert(model1_t* model, const double x[], const double y[], i
 }
 
 
+/* Cholesky solve of the symmetric positive definite a x = b in place (b receives x) */
+static int solve_spd(double a[], double b[], int n)
+{
+  int result = EXIT_SUCCESS, i, j, k;
+  for (j = 0; j < n && EXIT_SUCCESS == result; ++j) {
+    double d = a[j + n * j];
+    for (k = 0; k < j; ++k) d -= a[j + n * k] * a[j + n * k];
+    if (0 < d) {
+      a[j + n * j] = sqrt(d);
+      for (i = j + 1; i < n; ++i) {
+        double t = a[i + n * j];
+        for (k = 0; k < j; ++k) t -= a[i + n * k] * a[j + n * k];
+        a[i + n * j] = t / a[j + n * j];
+      }
+    }
+    else result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS == result) {
+    for (i = 0; i < n; ++i) {
+      for (k = 0; k < i; ++k) b[i] -= a[i + n * k] * b[k];
+      b[i] /= a[i + n * i];
+    }
+    for (i = n - 1; 0 <= i; --i) {
+      for (k = i + 1; k < n; ++k) b[i] -= a[k + n * i] * b[k];
+      b[i] /= a[i + n * i];
+    }
+  }
+  return result;
+}
+
+
+/**
+ * With the knots of a merged model fixed, its cell averages are linear in the slope and
+ * the jumps (a cell holding a knot sees the fraction it covers): least squares on the
+ * cell averages, leaving out unit skip (-1: none). Returns the squared residual.
+ */
+static double model1_refit(model1_t* model, const double x[], const double avg[], int n,
+  int skip)
+{
+  const int nh = model->nh, nc = n - 1;
+  double ata[(BRACKET_H1MAX + 1) * (BRACKET_H1MAX + 1)], atb[BRACKET_H1MAX + 1];
+  double phi[BRACKET_H1MAX + 1], rss = 0;
+  int i, j, k, cols[BRACKET_H1MAX + 1], m = 0;
+  for (j = 0; j <= nh; ++j) { /* column nh is the slope */
+    if (j != skip) cols[m++] = j;
+  }
+  memset(ata, 0, sizeof(double) * (size_t)(m * m));
+  memset(atb, 0, sizeof(double) * (size_t)m);
+  for (k = 0; k < nc; ++k) {
+    for (i = 0; i < m; ++i) {
+      const int u = cols[i];
+      const double a = (nh == u ? 0 : model->param[2 * nh + u]);
+      phi[i] = (nh == u ? 1.0 : LIBXS_CLMP((x[k + 1] - a) / (x[k + 1] - x[k]), 0.0, 1.0));
+    }
+    for (i = 0; i < m; ++i) {
+      for (j = 0; j < m; ++j) ata[i + m * j] += phi[i] * phi[j];
+      atb[i] += phi[i] * avg[k];
+    }
+  }
+  { /* nearly collinear columns (knots at a bound or in one cell) need the ridge */
+    double dmax = 0;
+    for (i = 0; i < m; ++i) dmax = LIBXS_MAX(dmax, ata[i + m * i]);
+    for (i = 0; i < m; ++i) ata[i + m * i] += 1E-10 * dmax;
+  }
+  if (EXIT_SUCCESS == solve_spd(ata, atb, m)) {
+    for (k = 0; k < nc; ++k) {
+      double e = -avg[k];
+      for (i = 0; i < m; ++i) {
+        const int u = cols[i];
+        const double a = (nh == u ? 0 : model->param[2 * nh + u]);
+        e += atb[i] * (nh == u ? 1.0
+          : LIBXS_CLMP((x[k + 1] - a) / (x[k + 1] - x[k]), 0.0, 1.0));
+      }
+      rss += e * e;
+    }
+    if (0 > skip) {
+      for (i = 0; i < m; ++i) {
+        if (nh == cols[i]) model->param[3 * nh + 1] = atb[i];
+        else {
+          model->param[cols[i]] = 1;
+          model->param[nh + cols[i]] = atb[i];
+        }
+      }
+    }
+  }
+  else rss = 1E300;
+  return rss;
+}
+
+
+/**
+ * Robust noise level of cell averages from the absolute deviations of their differences:
+ * the median (MAD), unless edges make up so many differences that the median measures
+ * them; the lower quartile (0.3186 for a unit normal) then stands in, being far smaller.
+ */
+static double noise_sigma(const double avg[], int n)
+{
+  double d[BRACKET_N1MAX + 1], med = 0, mad, quartile;
+  int i, j, k;
+  for (i = 0; i + 1 < n; ++i) d[i] = avg[i + 1] - avg[i];
+  for (k = 0; k < 2; ++k) {
+    for (i = 1; i + 1 < n; ++i) { /* insertion sort */
+      const double v = d[i];
+      for (j = i; 0 < j && v < d[j - 1]; --j) d[j] = d[j - 1];
+      d[j] = v;
+    }
+    med = 0.5 * (d[(n - 2) / 2] + d[(n - 1) / 2]);
+    if (0 == k) {
+      for (i = 0; i + 1 < n; ++i) d[i] = fabs(d[i] - med);
+    }
+  }
+  mad = med / 0.6745 / sqrt(2.0);
+  quartile = d[(n - 2) / 4] / 0.3186 / sqrt(2.0);
+  return (mad <= 2 * quartile ? mad : quartile);
+}
+
+
+/**
+ * Backward elimination of jumps: the jump whose removal (with all heights refitted) costs
+ * least is dropped while the squared residual grows by at most 2 sigma^2 ln(cells).
+ */
+static void model1_prune(model1_t* model, const double x[], const double y[], int n,
+  double sigma)
+{
+  const double penalty = 2 * sigma * sigma * log((double)(n - 1));
+  double avg[BRACKET_N1MAX + 1], rss;
+  int done = 0, i, j;
+  for (i = 0; i + 1 < n; ++i) avg[i] = (y[i + 1] - y[i]) / (x[i + 1] - x[i]);
+  model1_merge(model, x[1] - x[0]); /* canonical units (w = 1, knot in b), one per cell */
+  rss = model1_refit(model, x, avg, n, -1);
+  if (1E299 < rss) done = 1; /* a failed refit prices every removal alike: keep all */
+  while (0 == done && 0 < model->nh) {
+    double best = 1E300;
+    int jbest = -1;
+    for (j = 0; j < model->nh; ++j) {
+      const double value = model1_refit(model, x, avg, n, j);
+      if (value < best) {
+        best = value;
+        jbest = j;
+      }
+    }
+    if (0 <= jbest && 1E299 > best && best - rss <= penalty) {
+      const int nh = model->nh;
+      double tmp[BRACKET_NPARAM1];
+      memcpy(tmp, model->param, sizeof(double) * (size_t)(3 * nh + 2));
+      for (i = j = 0; i < nh; ++i) {
+        if (i != jbest) {
+          model->param[j] = tmp[i];
+          model->param[nh - 1 + j] = tmp[nh + i];
+          model->param[2 * (nh - 1) + j] = tmp[2 * nh + i];
+          ++j;
+        }
+      }
+      model->param[3 * (nh - 1)] = tmp[3 * nh];
+      model->param[3 * (nh - 1) + 1] = tmp[3 * nh + 1];
+      model->nh = nh - 1;
+      rss = model1_refit(model, x, avg, n, -1);
+    }
+    else done = 1;
+  }
+}
+
+
 static int model1_eval(const void* model, size_t n, double out[])
 {
   const model1_t *const model1 = (const model1_t*)model;
@@ -579,29 +763,37 @@ static double checker_value(double x, double y, double angle)
 }
 
 
+static double disc_value(double x, double y, double angle)
+{
+  const double dx = x - BRACKET_DISC_X, dy = y - BRACKET_DISC_Y;
+  LIBXS_UNUSED(angle);
+  return (dx * dx + dy * dy < BRACKET_DISC_R * BRACKET_DISC_R ? 1.0 : -1.0);
+}
+
+
 /* edges along the row y, each located by bisection */
-static void checker_row(double y, double angle, target1_t* row)
+static void checker_row(value_fn_t value, double y, double angle, target1_t* row)
 {
   const int n = BRACKET_HI1;
-  double prev = checker_value(0, y, angle);
+  double prev = value(0, y, angle);
   int j, k;
   row->name = "row";
   row->nedges = 0;
   row->noise = 0;
   row->level[0] = prev;
   for (j = 1; j < n && row->nedges < BRACKET_MAX_EDGES; ++j) {
-    const double value = checker_value((double)j / (double)(n - 1), y, angle);
-    if (value != prev) {
+    const double next = value((double)j / (double)(n - 1), y, angle);
+    if (next != prev) {
       double lo = (double)(j - 1) / (double)(n - 1), hi = (double)j / (double)(n - 1);
       for (k = 0; k < 50; ++k) {
         const double mid = 0.5 * (lo + hi);
-        if (checker_value(mid, y, angle) == prev) lo = mid;
+        if (value(mid, y, angle) == prev) lo = mid;
         else hi = mid;
       }
       row->edge[row->nedges] = 0.5 * (lo + hi);
       ++row->nedges;
-      row->level[row->nedges] = value;
-      prev = value;
+      row->level[row->nedges] = next;
+      prev = next;
     }
   }
 }
@@ -732,6 +924,308 @@ static int tensor_eval(const void* model, size_t n, double out[])
       for (j = 0; j < n; ++j) p[j + n * (size_t)u] *= s;
     }
     result = gemm_f64('N', 'T', (int)n, (int)n, nu, p, (int)n, q, (int)n, out, (int)n);
+  }
+  free(work);
+  return result;
+}
+
+
+/* parameters: ax, bx, ay, by, c; each unit is c (<x-ax>^1 - <x-bx>^1) (<y-ay>^1 - <y-by>^1) */
+static int box_init(tensor_t* model, int nu, int integrated)
+{
+  int result = EXIT_SUCCESS, u;
+  model->param = (double*)malloc(sizeof(double) * 5 * (size_t)nu);
+  model->nu = nu;
+  model->integrated = integrated;
+  if (NULL != model->param) {
+    for (u = 0; u < nu; ++u) {
+      model->param[u] = libxs_rng_f64();
+      model->param[nu + u] = model->param[u] + 0.1 + 0.3 * libxs_rng_f64();
+      model->param[2 * nu + u] = libxs_rng_f64();
+      model->param[3 * nu + u] = model->param[2 * nu + u] + 0.1 + 0.3 * libxs_rng_f64();
+      model->param[4 * nu + u] = 0.1 * (2.0 * libxs_rng_f64() - 1.0);
+    }
+  }
+  else result = EXIT_FAILURE;
+  return result;
+}
+
+
+/* column u holds the clamped ramp and the indicators beyond its two knots on the grid */
+static void box_factor(const double param[], int nu, int axis, size_t n, double lo, double h,
+  double ramp[], double below[], double above[])
+{
+  const double *const a = param + (0 == axis ? 0 : 2 * nu), *const b = a + nu;
+  size_t j;
+  int u;
+  for (u = 0; u < nu; ++u) {
+    for (j = 0; j < n; ++j) {
+      const double z = lo + h * (double)j, za = z - a[u], zb = z - b[u];
+      const size_t k = j + n * (size_t)u;
+      if (NULL != ramp) ramp[k] = (0 < za ? za : 0) - (0 < zb ? zb : 0);
+      if (NULL != below) below[k] = (0 < za ? 1 : 0);
+      if (NULL != above) above[k] = (0 < zb ? 1 : 0);
+    }
+  }
+}
+
+
+/* as tensor_train, but every term is bounded by the width of its box */
+static int box_train(tensor_t* model, const double y[], int n, double lo, double h,
+  const train_t* train)
+{
+  const int nu = model->nu, nparam = 5 * nu;
+  const size_t nn = (size_t)n * (size_t)n, nf = (size_t)n * (size_t)nu;
+  double *const work = (double*)malloc(sizeof(double) * (nn + 9 * nf + 3 * (size_t)nparam));
+  int result = (NULL != work ? EXIT_SUCCESS : EXIT_FAILURE), step, u, j;
+  if (EXIT_SUCCESS == result) {
+    double *const r = work, *const p = r + nn, *const q = p + nf, *const pc = q + nf;
+    double *const rq = pc + nf, *const rp = rq + nf, *const pa = rp + nf, *const pb = pa + nf;
+    double *const qa = pb + nf, *const qb = qa + nf, *const grad = qb + nf;
+    double *const m = grad + nparam, *const v = m + nparam;
+    const double *const c = model->param + 4 * nu;
+    memset(m, 0, sizeof(double) * 2 * (size_t)nparam);
+    for (step = 1; step <= train->nsteps && EXIT_SUCCESS == result; ++step) {
+      size_t i;
+      box_factor(model->param, nu, 0, (size_t)n, lo, h, p, pa, pb);
+      box_factor(model->param, nu, 1, (size_t)n, lo, h, q, qa, qb);
+      for (u = 0; u < nu; ++u) {
+        for (j = 0; j < n; ++j) pc[j + (size_t)n * u] = c[u] * p[j + (size_t)n * u];
+      }
+      result = gemm_f64('N', 'T', n, n, nu, pc, n, q, n, r, n);
+      for (i = 0; i < nn; ++i) r[i] = (r[i] - y[i]) / (double)nn;
+      if (EXIT_SUCCESS == result) result = gemm_f64('N', 'N', n, nu, n, r, n, q, n, rq, n);
+      if (EXIT_SUCCESS == result) result = gemm_f64('T', 'N', n, nu, n, r, n, p, n, rp, n);
+      if (EXIT_SUCCESS == result) {
+        for (u = 0; u < nu; ++u) {
+          double sc = 0, sax = 0, sbx = 0, say = 0, sby = 0;
+          for (j = 0; j < n; ++j) {
+            const size_t k = j + (size_t)n * u;
+            sc += p[k] * rq[k];
+            sax -= pa[k] * rq[k];
+            sbx += pb[k] * rq[k];
+            say -= qa[k] * rp[k];
+            sby += qb[k] * rp[k];
+          }
+          grad[u] = c[u] * sax;
+          grad[nu + u] = c[u] * sbx;
+          grad[2 * nu + u] = c[u] * say;
+          grad[3 * nu + u] = c[u] * sby;
+          grad[4 * nu + u] = sc;
+        }
+        adam_update(model->param, grad, m, v, nparam, 0, step,
+          cosine_lr(train->lr, step - 1, train->nsteps), train->wd);
+      }
+    }
+  }
+  free(work);
+  return result;
+}
+
+
+/* integrated: the mixed derivative of each term is c times the indicator of its rectangle */
+static int box_eval(const void* model, size_t n, double out[])
+{
+  const tensor_t *const box = (const tensor_t*)model;
+  const int nu = box->nu;
+  const size_t nf = n * (size_t)nu;
+  double *const work = (double*)malloc(sizeof(double) * 4 * nf);
+  int result = (NULL != work ? EXIT_SUCCESS : EXIT_FAILURE), u;
+  if (EXIT_SUCCESS == result) {
+    double *const p = work, *const q = p + nf, *const pb = q + nf, *const qb = pb + nf;
+    const double *const c = box->param + 4 * nu;
+    const double h = 1.0 / (double)(n - 1);
+    size_t j;
+    if (0 == box->integrated) {
+      box_factor(box->param, nu, 0, n, 0, h, p, NULL, NULL);
+      box_factor(box->param, nu, 1, n, 0, h, q, NULL, NULL);
+    }
+    else {
+      box_factor(box->param, nu, 0, n, 0, h, NULL, p, pb);
+      box_factor(box->param, nu, 1, n, 0, h, NULL, q, qb);
+      for (j = 0; j < nf; ++j) {
+        p[j] -= pb[j];
+        q[j] -= qb[j];
+      }
+    }
+    for (u = 0; u < nu; ++u) {
+      for (j = 0; j < n; ++j) p[j + n * (size_t)u] *= c[u];
+    }
+    result = gemm_f64('N', 'T', (int)n, (int)n, nu, p, (int)n, q, (int)n, out, (int)n);
+  }
+  free(work);
+  return result;
+}
+
+
+/**
+ * Refines rectangles on the cell averages: the overlap of a box with a cell is a clamped
+ * linear function of its edges, so an edge is moved by c/h times the residual of the cells
+ * it lies in, summed along the edge (a difference loss, as for mlp_int).
+ */
+static int box_cells(tensor_t* model, const double data[], int n, double h,
+  const train_t* train)
+{
+  const int nu = model->nu, nparam = 5 * nu;
+  const size_t nn = (size_t)n * (size_t)n, nf = (size_t)n * (size_t)nu;
+  double *const work = (double*)malloc(sizeof(double) * (nn + 5 * nf + 3 * (size_t)nparam));
+  int result = (NULL != work ? EXIT_SUCCESS : EXIT_FAILURE), step, u, i;
+  if (EXIT_SUCCESS == result) {
+    double *const e = work, *const fx = e + nn, *const fy = fx + nf, *const pc = fy + nf;
+    double *const eq = pc + nf, *const ep = eq + nf, *const grad = ep + nf;
+    double *const m = grad + nparam, *const v = m + nparam, *const prm = model->param;
+    memset(m, 0, sizeof(double) * 2 * (size_t)nparam);
+    for (step = 1; step <= train->nsteps && EXIT_SUCCESS == result; ++step) {
+      size_t k;
+      for (u = 0; u < nu; ++u) {
+        for (i = 0; i < n; ++i) {
+          const double x0 = h * i, x1 = x0 + h;
+          fx[i + (size_t)n * u] = (LIBXS_CLMP(prm[nu + u], x0, x1)
+            - LIBXS_CLMP(prm[u], x0, x1)) / h;
+          fy[i + (size_t)n * u] = (LIBXS_CLMP(prm[3 * nu + u], x0, x1)
+            - LIBXS_CLMP(prm[2 * nu + u], x0, x1)) / h;
+          pc[i + (size_t)n * u] = prm[4 * nu + u] * fx[i + (size_t)n * u];
+        }
+      }
+      result = gemm_f64('N', 'T', n, n, nu, pc, n, fy, n, e, n);
+      for (k = 0; k < nn; ++k) e[k] = (e[k] - data[k]) / (double)nn;
+      if (EXIT_SUCCESS == result) result = gemm_f64('N', 'N', n, nu, n, e, n, fy, n, eq, n);
+      if (EXIT_SUCCESS == result) result = gemm_f64('T', 'N', n, nu, n, e, n, fx, n, ep, n);
+      if (EXIT_SUCCESS == result) {
+        for (u = 0; u < nu; ++u) {
+          const double c = prm[4 * nu + u];
+          double gc = 0;
+          int q;
+          for (i = 0; i < n; ++i) gc += fx[i + (size_t)n * u] * eq[i + (size_t)n * u];
+          grad[4 * nu + u] = gc;
+          for (q = 0; q < 4; ++q) { /* ax, bx, ay, by: only the cell holding the edge */
+            const double pos = prm[q * nu + u], *const side = (2 > q ? eq : ep);
+            const int cell = (int)floor(pos / h);
+            grad[q * nu + u] = ((0 <= cell && cell < n)
+              ? (0 == (q & 1) ? -1.0 : 1.0) * c / h * side[cell + (size_t)n * u] : 0);
+          }
+        }
+        adam_update(prm, grad, m, v, nparam, 0, step,
+          cosine_lr(train->lr, step - 1, train->nsteps), train->wd);
+      }
+    }
+  }
+  free(work);
+  return result;
+}
+
+
+/**
+ * Stratification by rectangles: the residual of the cell averages gets a summed-area table,
+ * which prices every axis-aligned rectangle in O(1) by its gain S^2/area (a 2-D stump); the
+ * best one is added with the mean residual as its height, and all rectangles are refined.
+ */
+static int box_greedy(tensor_t* model, const double data[], const double area[], int n,
+  double h, int nmax, const train_t* train, const train_t* refine)
+{
+  const size_t nn = (size_t)n * (size_t)n, nc = (size_t)n + 1;
+  double *const work = (double*)malloc(sizeof(double) * (nn + nc * nc + 2 * (size_t)n));
+  int result = (NULL != work ? EXIT_SUCCESS : EXIT_FAILURE), done = 0;
+  model->param = (double*)malloc(sizeof(double) * 5 * (size_t)nmax);
+  model->nu = 0;
+  model->integrated = 1;
+  if (NULL == model->param) result = EXIT_FAILURE;
+  if (EXIT_SUCCESS == result) {
+    double *const e = work, *const sat = e + nn, *const fx = sat + nc * nc, *const fy = fx + n;
+    double total = 0;
+    size_t i, j;
+    for (i = 0; i < nn; ++i) total += data[i] * data[i];
+    { /**
+       * Two rectangles meeting inside one pixel leave its average to two edges, which it
+       * cannot tell apart (a gap fits as well); a background at the lowest level makes each
+       * edge separate a rectangle from what lies beneath it.
+       */
+      double base = data[0];
+      for (i = 1; i < nn; ++i) base = LIBXS_MIN(base, data[i]);
+      model->param[0] = model->param[2] = 0;
+      model->param[1] = model->param[3] = 1;
+      model->param[4] = base;
+      model->nu = 1;
+    }
+    while (0 == done && model->nu < nmax && EXIT_SUCCESS == result) {
+      const int nu = model->nu;
+      double best = 0, height = 0;
+      size_t i0, i1, j0, j1, bi0 = 0, bi1 = 0, bj0 = 0, bj1 = 0;
+      int u;
+      memcpy(e, data, sizeof(double) * nn);
+      for (u = 0; u < nu; ++u) { /* signed overlap of each box with the cells, per axis */
+        const double *const prm = model->param, c = prm[4 * nu + u];
+        for (i = 0; i < (size_t)n; ++i) {
+          const double x0 = h * (double)i, x1 = x0 + h;
+          fx[i] = (LIBXS_CLMP(prm[nu + u], x0, x1) - LIBXS_CLMP(prm[u], x0, x1)) / h;
+          fy[i] = (LIBXS_CLMP(prm[3 * nu + u], x0, x1) - LIBXS_CLMP(prm[2 * nu + u], x0, x1))
+            / h;
+        }
+        for (j = 0; j < (size_t)n; ++j) {
+          for (i = 0; i < (size_t)n; ++i) e[i + n * j] -= c * fx[i] * fy[j];
+        }
+      }
+      for (j = 0; j < nc; ++j) {
+        for (i = 0; i < nc; ++i) {
+          sat[i + nc * j] = (0 == i || 0 == j ? 0 : sat[i - 1 + nc * j]
+            + sat[i + nc * (j - 1)] - sat[i - 1 + nc * (j - 1)] + e[i - 1 + n * (j - 1)]);
+        }
+      }
+      for (j0 = 0; j0 < nc; ++j0) {
+        for (j1 = j0 + 1; j1 < nc; ++j1) {
+          for (i0 = 0; i0 < nc; ++i0) {
+            for (i1 = i0 + 1; i1 < nc; ++i1) {
+              const double sum = sat[i1 + nc * j1] - sat[i0 + nc * j1] - sat[i1 + nc * j0]
+                + sat[i0 + nc * j0];
+              const double cnt = (double)((i1 - i0) * (j1 - j0));
+              if (best < sum * sum / cnt) {
+                best = sum * sum / cnt;
+                height = sum / cnt;
+                bi0 = i0;
+                bi1 = i1;
+                bj0 = j0;
+                bj1 = j1;
+              }
+            }
+          }
+        }
+      }
+      if (best <= 1E-12 * total) done = 1;
+      else {
+        double tmp[5 * BRACKET_U2];
+        int q;
+        memcpy(tmp, model->param, sizeof(double) * 5 * (size_t)nu);
+        for (q = 0; q < 5; ++q) {
+          for (u = 0; u < nu; ++u) model->param[q * (nu + 1) + u] = tmp[q * nu + u];
+        }
+        { /* each edge extends into its neighboring strip by the fraction its residual asks */
+          double fl = 0, fr = 0, fb = 0, ft = 0;
+          for (j = bj0; j < bj1; ++j) {
+            if (0 < bi0) fl += e[bi0 - 1 + n * j];
+            if (bi1 < (size_t)n) fr += e[bi1 + n * j];
+          }
+          for (i = bi0; i < bi1; ++i) {
+            if (0 < bj0) fb += e[i + n * (bj0 - 1)];
+            if (bj1 < (size_t)n) ft += e[i + n * bj1];
+          }
+          fl = LIBXS_CLMP(fl / (double)(bj1 - bj0) / height, 0.0, 1.0);
+          fr = LIBXS_CLMP(fr / (double)(bj1 - bj0) / height, 0.0, 1.0);
+          fb = LIBXS_CLMP(fb / (double)(bi1 - bi0) / height, 0.0, 1.0);
+          ft = LIBXS_CLMP(ft / (double)(bi1 - bi0) / height, 0.0, 1.0);
+          model->param[nu] = h * ((double)bi0 - fl);
+          model->param[(nu + 1) + nu] = h * ((double)bi1 + fr);
+          model->param[2 * (nu + 1) + nu] = h * ((double)bj0 - fb);
+          model->param[3 * (nu + 1) + nu] = h * ((double)bj1 + ft);
+        }
+        model->param[4 * (nu + 1) + nu] = height;
+        model->nu = nu + 1;
+        result = box_cells(model, data, n, h, refine);
+      }
+    }
+    if (EXIT_SUCCESS == result && 0 < model->nu) {
+      result = box_cells(model, data, n, h, train);
+    }
+    LIBXS_UNUSED(area);
   }
   free(work);
   return result;
@@ -1033,7 +1527,8 @@ static int clip_half(const double xin[], const double yin[], int n, double xout[
     const int j = (i + 1) % n;
     const double ci = (0 == axis ? xin[i] : yin[i]) - bound;
     const double cj = (0 == axis ? xin[j] : yin[j]) - bound;
-    const int ini = (0 != greater ? 0 <= ci : 0 >= ci), inj = (0 != greater ? 0 <= cj : 0 >= cj);
+    const int ini = (0 != greater ? 0 <= ci : 0 >= ci);
+    const int inj = (0 != greater ? 0 <= cj : 0 >= cj);
     if (0 != ini) {
       xout[m] = xin[i];
       yout[m] = yin[i];
@@ -1383,14 +1878,14 @@ static int run_1d(const train_t* train, const setup_t* setup, unsigned int seed)
 {
   static const char *const variants[] = {
     "direct", "direct_wd", "integrated", "integrated_wd", "integrated_merge",
-    "integrated_greedy"
+    "integrated_greedy", "integrated_prune"
   };
   const int nvariants = (int)(sizeof(variants) / sizeof(*variants));
   const int ns = setup->samples, nint = (0 != setup->pixel ? ns + 1 : ns);
   const double h = 1.0 / (double)(0 != setup->pixel ? ns : (ns - 1));
   double xd[BRACKET_N1MAX + 1], fd[BRACKET_N1MAX + 1];
   double xi[BRACKET_N1MAX + 1], fi[BRACKET_N1MAX + 1];
-  double stack[7 * BRACKET_IMAGE1], buffer[BRACKET_HI1];
+  double stack[8 * BRACKET_IMAGE1], buffer[BRACKET_HI1];
   target1_t targets[3];
   study_t study;
   train_t train1 = *train;
@@ -1466,7 +1961,12 @@ static int run_1d(const train_t* train, const setup_t* setup, unsigned int seed)
         refine.lr = 0.1 * train1.lr;
         model1_merge(&model, h);
         model1_train(&model, xi, fi, nint, &refine);
-        if (5 == k) model1_insert(&model, xi, fi, nint, setup->units, &refine);
+        if (5 <= k) model1_insert(&model, xi, fi, nint, setup->units, &refine);
+        if (6 == k) {
+          double avg[BRACKET_N1MAX + 1];
+          for (i = 0; i + 1 < nint; ++i) avg[i] = (fi[i + 1] - fi[i]) / (xi[i + 1] - xi[i]);
+          model1_prune(&model, xi, fi, nint, noise_sigma(avg, nint - 1));
+        }
       }
       result = report(&study, target->name, variants[k], &model, model1_eval,
         libxs_timer_duration(start, libxs_timer_tick()),
@@ -1488,9 +1988,15 @@ static int run_2d(const train_t* train, const setup_t* setup, unsigned int seed)
   double *const work = (double*)malloc(sizeof(double)
     * (n * n + 3 * nc * nc + 2 * ni * ni + nbuffer));
   int result = (NULL != work ? EXIT_SUCCESS : EXIT_FAILURE);
-  if (EXIT_SUCCESS == result) result = run_checker(train, setup, seed, "checker", 0, work);
   if (EXIT_SUCCESS == result) {
-    result = run_checker(train, setup, seed, "turned", setup->angle * BRACKET_PI / 180, work);
+    result = run_checker(train, setup, seed, "checker", checker_value, 0, work);
+  }
+  if (EXIT_SUCCESS == result) {
+    result = run_checker(train, setup, seed, "turned", checker_value,
+      setup->angle * BRACKET_PI / 180, work);
+  }
+  if (EXIT_SUCCESS == result) {
+    result = run_checker(train, setup, seed, "disc", disc_value, 0, work);
   }
   free(work);
   return result;
@@ -1498,14 +2004,15 @@ static int run_2d(const train_t* train, const setup_t* setup, unsigned int seed)
 
 
 /**
- * Pixel data: cell averages (exact and separable at angle 0, supersampled otherwise), their
+ * Pixel data: cell averages (exact for the axis-aligned board, supersampled otherwise), their
  * summed-area table at the cell corners, and diagonal steps of h times the average.
  */
 static int run_checker(const train_t* train, const setup_t* setup, unsigned int seed,
-  const char target[], double angle, double work[])
+  const char target[], value_fn_t value, double angle, double work[])
 {
   static const char *const variants[] = {
-    "mlp", "mlp_int", "tensor", "tensor_int", "sep", "sep_int", "rot", "rot_int"
+    "mlp", "mlp_int", "tensor", "tensor_int", "sep", "sep_int", "rot", "rot_int",
+    "box", "box_int", "box_greedy"
   };
   const size_t n = BRACKET_N2, nc = n + 1, ni = BRACKET_IMAGE2;
   double *const data = work, *const area = data + n * n, *const tmp = area + nc * nc;
@@ -1541,12 +2048,14 @@ static int run_checker(const train_t* train, const setup_t* setup, unsigned int 
     for (j = 0; j < n; ++j) {
       for (i = 0; i < n; ++i) {
         double avg = 0;
-        if (0 == angle) avg = (tmp[i + 1] - tmp[i]) * (tmp[j + 1] - tmp[j]) / (h * h);
+        if (0 == angle && checker_value == value) {
+          avg = (tmp[i + 1] - tmp[i]) * (tmp[j + 1] - tmp[j]) / (h * h);
+        }
         else {
           int si, sj;
           for (sj = 0; sj < BRACKET_SUPER; ++sj) {
             for (si = 0; si < BRACKET_SUPER; ++si) {
-              avg += checker_value(h * ((double)i + (si + 0.5) / BRACKET_SUPER),
+              avg += value(h * ((double)i + (si + 0.5) / BRACKET_SUPER),
                 h * ((double)j + (sj + 0.5) / BRACKET_SUPER), angle);
             }
           }
@@ -1567,7 +2076,7 @@ static int run_checker(const train_t* train, const setup_t* setup, unsigned int 
   else {
     for (j = 0; j < n; ++j) {
       for (i = 0; i < n; ++i) {
-        data[i + n * j] = checker_value(h * (double)i, h * (double)j, angle);
+        data[i + n * j] = value(h * (double)i, h * (double)j, angle);
       }
     }
     for (j = 0; j < n; ++j) integrate1(data + n * j, n, tmp + n * j);
@@ -1583,11 +2092,11 @@ static int run_checker(const train_t* train, const setup_t* setup, unsigned int 
   }
   for (j = 0; j < ni; ++j) {
     for (i = 0; i < ni; ++i) {
-      image[i + ni * j] = checker_value((double)i / (double)(ni - 1),
+      image[i + ni * j] = value((double)i / (double)(ni - 1),
         (double)j / (double)(ni - 1), angle);
     }
   }
-  checker_row(yrow, angle, &row);
+  checker_row(value, yrow, angle, &row);
   memset(&study, 0, sizeof(study));
   study.ndims = 2;
   study.htrain = h;
@@ -1605,8 +2114,8 @@ static int run_checker(const train_t* train, const setup_t* setup, unsigned int 
   }
   LIBXS_SNPRINTF(name, sizeof(name), "bracket_2d_%s", target);
   result = write_mhd(name, image, ni, ni);
-  for (k = 0; k < 8 && EXIT_SUCCESS == result; ++k) {
-    const int integrated = (k & 1);
+  for (k = 0; k < 11 && EXIT_SUCCESS == result; ++k) {
+    const int integrated = (10 == k ? 1 : (k & 1));
     const libxs_timer_tick_t start = libxs_timer_tick();
     const void* model = NULL;
     eval_fn_t eval = NULL;
@@ -1636,6 +2145,24 @@ static int run_checker(const train_t* train, const setup_t* setup, unsigned int 
       model = &tensor;
       eval = tensor_eval;
     }
+    else if (10 == k) { /* Adam moves each parameter by about lr: refining needs sub-pixel */
+      train_t step = train2;
+      step.lr = train2.lr = 0.1 * BRACKET_LR2;
+      step.nsteps = LIBXS_MAX(train2.nsteps / 10, 1);
+      result = box_greedy(&tensor, data, area, (int)n, h, BRACKET_U2, &train2, &step);
+      model = &tensor;
+      eval = box_eval;
+    }
+    else if (8 <= k) {
+      train2.lr = BRACKET_LR2;
+      result = box_init(&tensor, BRACKET_U2, integrated);
+      if (EXIT_SUCCESS == result) {
+        result = (0 != integrated ? box_train(&tensor, area, nint, 0, h, &train2)
+          : box_train(&tensor, data, (int)n, lo, h, &train2));
+      }
+      model = &tensor;
+      eval = box_eval;
+    }
     else if (6 <= k) {
       result = rot_train(&rot, data, (int)n, setup->units, integrated, &train1, &refine);
       model = &rot;
@@ -1653,7 +2180,7 @@ static int run_checker(const train_t* train, const setup_t* setup, unsigned int 
     if (EXIT_SUCCESS == result) {
       result = report(&study, target, variants[k], model, eval,
         libxs_timer_duration(start, libxs_timer_tick()), model_image);
-      if (6 <= k) {
+      if (6 <= k && 8 > k) {
         printf("  %s %s angle=%.3f\n", target, variants[k], rot.angle * 180 / BRACKET_PI);
       }
     }

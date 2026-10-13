@@ -1,7 +1,7 @@
 # Bracket Units
 
 This sample fits piecewise-constant targets (steps, a square wave, and a
-checkerboard, axis-aligned and turned by 30°) with networks of truncated-power units ⟨w·x − b⟩ᵐ, and
+checkerboard, axis-aligned and turned by 30°, and a disc) with networks of truncated-power units ⟨w·x − b⟩ᵐ, and
 measures how sharp the learned edges are. Training uses Adam with full
 batches; the two-dimensional models use LIBXS GEMM. By default the training data
 are pixels, i.e., averages over cells, as an image sensor records them.
@@ -13,6 +13,7 @@ are pixels, i.e., averages over cells, as an image sensor records them.
 | `*_wd`          | As above, with decoupled weight decay.                                 |
 | `*_merge`       | Integrated, then jumps within one sample spacing merged and refined.   |
 | `*_greedy`      | As merged, then jumps inserted where the residual calls for one.       |
+| `*_prune`       | As greedy, then jumps removed while the fit stays within the estimated noise. |
 | `mlp`           | Two hidden ReLU layers fitted to the checkerboard.                     |
 | `mlp_int`       | The same network fitted to the integral along (1,1), then ∂/∂x + ∂/∂y. |
 | `tensor`        | Products ⟨x − a⟩¹⟨y − b⟩¹ fitted to the checkerboard.                    |
@@ -21,6 +22,9 @@ are pixels, i.e., averages over cells, as an image sensor records them.
 | `sep_int`       | The same fitted to the summed-area table (merged, greedy), then ∂²/∂x∂y. |
 | `rot`           | One product A(u)·B(v) in a turned frame (u, v), fitted to the pixels.   |
 | `rot_int`       | The same fitted to running sums in that frame, then ∂²/∂u∂v; the angle is searched. |
+| `box`           | Products of clamped ramps (⟨x − a⟩¹ − ⟨x − b⟩¹)(⟨y − e⟩¹ − ⟨y − g⟩¹), fitted to the pixels. |
+| `box_int`       | The same fitted to the summed-area table, then ∂²/∂x∂y: a sum of rectangles. |
+| `box_greedy`    | Rectangles added one at a time where the residual gains most, over a background; refined on the pixels. |
 
 ## Build and Run
 
@@ -62,7 +66,7 @@ For the checkerboard, the fingerprint norms are the root mean square over image 
 | `BRACKET_ANGLE`   | 30      | Angle of the turned checkerboard in degrees.               |
 
 `bracket_1d_<target>.mhd` stacks the target and each variant's output as rows.
-`bracket_2d_<target>.mhd` holds a checkerboard (`checker` or `turned`), and
+`bracket_2d_<target>.mhd` holds a target (`checker`, `turned`, or `disc`), and
 `bracket_2d_<target>_<variant>.mhd` each model's image, clamped to the target's
 range [−1, 1] after the metrics are taken. The directory must exist. Set `LIBXS_MHD_PNG=1` to also write a PNG next to each two-dimensional
 MHD file:
