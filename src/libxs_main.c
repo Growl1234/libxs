@@ -278,6 +278,25 @@ LIBXS_API_INTERN libxs_timer_tick_t internal_libxs_timer_tick_tsc(void)
 }
 
 
+/* RTC with the midpoint of the TSC reads around it, of the try where these are closest */
+LIBXS_API_INTERN void internal_libxs_timer_pair(libxs_timer_tick_t* rtc, libxs_timer_tick_t* tsc);
+LIBXS_API_INTERN void internal_libxs_timer_pair(libxs_timer_tick_t* rtc, libxs_timer_tick_t* tsc)
+{
+  libxs_timer_tick_t skew = 0;
+  int i;
+  for (i = 0; i < 3; ++i) {
+    const libxs_timer_tick_t t0 = internal_libxs_timer_tick_tsc();
+    const libxs_timer_tick_t s = internal_libxs_timer_tick_rtc();
+    const libxs_timer_tick_t t1 = internal_libxs_timer_tick_tsc();
+    if (0 == i || (t1 - t0) < skew) {
+      skew = t1 - t0;
+      *rtc = s;
+      *tsc = t0 + skew / 2;
+    }
+  }
+}
+
+
 LIBXS_API_INTERN void internal_libxs_finalize(void);
 LIBXS_API_INTERN void internal_libxs_finalize(void)
 {
@@ -541,9 +560,8 @@ LIBXS_API_CTOR void libxs_init(void)
     LIBXS_ASSERT(0 < tid);
     /* libxs_ninit (1: initialization started, 2: library initialized, higher: to invalidate code-TLS) */
     if (1 == tid) {
-      libxs_timer_tick_t s0 = internal_libxs_timer_tick_rtc(); /* warm-up */
-      libxs_timer_tick_t t0 = internal_libxs_timer_tick_tsc(); /* warm-up */
-      s0 = internal_libxs_timer_tick_rtc(); t0 = internal_libxs_timer_tick_tsc(); /* start timing */
+      libxs_timer_tick_t s0, t0;
+      internal_libxs_timer_pair(&s0, &t0); /* start timing */
       { const unsigned int ninit = LIBXS_ATOMIC_ADD_FETCH(&libxs_ninit, 1, LIBXS_ATOMIC_SEQ_CST);
         LIBXS_UNUSED_NDEBUG(ninit);
         assert(1 == ninit); /* !LIBXS_ASSERT */
@@ -590,7 +608,7 @@ LIBXS_API_CTOR void libxs_init(void)
         if (INTERNAL_SINGLETON(internal_libxs_singleton_handle)) { /* after internal_libxs_init */
           internal_libxs_dump(stdout, 1/*urgent*/);
         }
-        s1 = internal_libxs_timer_tick_rtc(); t1 = internal_libxs_timer_tick_tsc(); /* mid-timing */
+        internal_libxs_timer_pair(&s1, &t1); /* mid-timing */
         /**
          * TSC calibration is Release-only: debug overhead would skew the measurement,
          * and the RTC fallback is accurate enough for development/testing.
@@ -623,12 +641,15 @@ LIBXS_API_CTOR void libxs_init(void)
         }
 #endif
         result_atexit = atexit(internal_libxs_finalize);
-        s1 = internal_libxs_timer_tick_rtc(); t1 = internal_libxs_timer_tick_tsc(); /* final timing */
-        /* set timer-scale */
+        internal_libxs_timer_pair(&s1, &t1); /* final timing */
+        /* set timer-scale: the longer window is the better estimate, CPUID promised an invariant TSC */
         if (t0 < t1 && 0.0 < libxs_timer_scale) {
           const double scale = internal_libxs_timer_duration_rtc(s0, s1) / (t1 - t0);
           const double diff = LIBXS_DELTA(libxs_timer_scale, scale) / scale;
-          if (5E-4 > diff) {
+          if (1E-2 > diff) { /* a gross disagreement hints at a TSC that is not invariant after all */
+            if (5E-4 <= diff && (LIBXS_VERBOSITY_WARN <= libxs_verbosity || 0 > libxs_verbosity)) {
+              fprintf(stderr, "LIBXS WARNING: timer calibration differs by %.2f%%\n", 100.0 * diff);
+            }
             libxs_timer_scale = scale;
           }
           else {
