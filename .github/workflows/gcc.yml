@@ -47,9 +47,15 @@ jobs:
       # OpenCL loader the ozaki sample links holds allocations to exit, as do
       # the BLAS and OpenMP runtimes, whereas libxs releases its own state
       # through atexit. Turn it on (detect_leaks=1) to see what a run reports.
-      ASAN_OPTIONS: detect_leaks=0
+      # The fake stack behind use-after-return detection does not honor the 64-byte
+      # alignment GCC gives locals that 512-bit code loads, so an AVX-512 path
+      # faults on an aligned access (reported as SEGV without an address).
+      ASAN_OPTIONS: detect_leaks=0:detect_stack_use_after_return=0
     steps:
     - uses: actions/checkout@v5
+
+    - name: System Information
+      run: lscpu --extended=MODELNAME 2>/dev/null | tail -n1
 
     - name: Install GCC ${{ matrix.gcc }}
       run: |

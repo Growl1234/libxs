@@ -27,6 +27,9 @@ jobs:
     steps:
     - uses: actions/checkout@v5
 
+    - name: System Information
+      run: lscpu --extended=MODELNAME 2>/dev/null | tail -n1
+
     # Drop intel-oneapi-compiler-fortran to save time and disk space (GNU
     # Fortran is then combined with the Intel C/C++ compiler).
     - name: Install Intel oneAPI

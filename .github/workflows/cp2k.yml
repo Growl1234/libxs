@@ -42,6 +42,9 @@ jobs:
     steps:
     - uses: actions/checkout@v5
 
+    - name: System Information
+      run: lscpu --extended=MODELNAME 2>/dev/null | tail -n1
+
     # Space-separated NAME=VALUE pairs given when launching manually. They come
     # in through the environment rather than the script, so no value is executed.
     - name: Setup environment
