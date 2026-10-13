@@ -22,7 +22,7 @@ The sample writes:
 | `geometry.csv` | Bracket-polynomial boundary area, centroid, moments, and shape fingerprints. |
 | `hierarchy.csv` | 2-D smooth, creased, diagonal-creased, and noisy fields in hierarchical and per-axis modes. |
 | `compression.csv` | Newton truncation order versus reconstruction error. |
-| `collision.csv` | Pseudometric collision test: pairs with shared L2 norms but different signed means. |
+| `collision.csv` | Pseudometric collision test: pairs with shared L2 norms but different signed means, and a pair sharing the whole fingerprint; `bernstein_distance` is `libxs_fprint_bernstein_diff`. |
 | `timing.csv` | Wall-clock cost per element at various input sizes. |
 | `convergence_rate.csv` | Log-log convergence rate (slope and R-squared) for smooth functions. |
 

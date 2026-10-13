@@ -433,5 +433,183 @@ int main(void)
     LIBXS_UNUSED(d_full);
   }
 
+  /* Bernstein norms: bounded by the fingerprint, and matching known values */
+  { double sine[41], step[41], noise[41], ratio;
+    double norms[LIBXS_FPRINT_MAXORDER + 1];
+    const size_t shape[] = {41};
+    unsigned int seed = 1;
+    libxs_fprint_t fp;
+    int i, k, c;
+    for (i = 0; i < 41; ++i) {
+      sine[i] = sin(2 * 3.14159265358979323846 * i / 40.0);
+      step[i] = (0.37 <= i / 40.0 ? 1.0 : 0.0);
+      seed = seed * 1103515245U + 12345U;
+      noise[i] = (double)(seed >> 16 & 0x7FFF) / 0x7FFF - 0.5;
+    }
+    for (c = 0; c < 3; ++c) {
+      const double *const data = (0 == c ? sine : (1 == c ? step : noise));
+      libxs_fprint(&fp, LIBXS_DATATYPE_F64, data, 1, shape, NULL, 4, 0, 0, 0);
+      if (EXIT_SUCCESS != libxs_fprint_bernstein(norms, LIBXS_DATATYPE_F64, data, 41, 4)) {
+        FPRINTF(stderr, "ERROR line #%i: bernstein failed\n", __LINE__);
+        exit(EXIT_FAILURE);
+      }
+      for (k = 0; k <= 4; ++k) {
+        ratio = norms[k] / fp.l2[k];
+        if (1 + 1E-12 < ratio) {
+          FPRINTF(stderr, "ERROR line #%i: bernstein case %d order %d ratio=%.17g\n",
+            __LINE__, c, k, ratio);
+          exit(EXIT_FAILURE);
+        }
+      }
+      if (2 > c) { /* independent quadrature: 0.9172 and 0.3071 at order 1 */
+        ratio = norms[1] / fp.l2[1];
+        if (1E-3 < LIBXS_DELTA(ratio, 0 == c ? 0.9172 : 0.3071)) {
+          FPRINTF(stderr, "ERROR line #%i: bernstein case %d ratio=%.17g\n",
+            __LINE__, c, ratio);
+          exit(EXIT_FAILURE);
+        }
+      }
+    }
+  }
+
+  /* Bernstein norms reproduce a linear function exactly, also when banded */
+  { static double line[2001];
+    double norms[LIBXS_FPRINT_MAXORDER + 1];
+    const int sizes[] = {2, 41, 2001};
+    int i, k, j;
+    for (j = 0; j < 3; ++j) {
+      const int n = sizes[j];
+      for (i = 0; i < n; ++i) line[i] = (double)i / (n - 1);
+      if (EXIT_SUCCESS != libxs_fprint_bernstein(norms, LIBXS_DATATYPE_F64, line, n, 3)) {
+        FPRINTF(stderr, "ERROR line #%i: bernstein failed\n", __LINE__);
+        exit(EXIT_FAILURE);
+      }
+      for (k = 0; k <= 3; ++k) {
+        const double expect = (0 == k ? sqrt(1.0 / 3.0) : (1 == k ? 1.0 : 0.0));
+        if (1E-9 + 1E-13 * pow(n - 1, k) < LIBXS_DELTA(norms[k], expect)) { /* rounding */
+          FPRINTF(stderr, "ERROR line #%i: bernstein n=%d order %d norm=%.17g\n",
+            __LINE__, n, k, norms[k]);
+          exit(EXIT_FAILURE);
+        }
+      }
+    }
+    for (i = 0; i < 5; ++i) line[i] = 3.0;
+    libxs_fprint_bernstein(norms, LIBXS_DATATYPE_F64, line, 5, 1);
+    if (1E-12 < LIBXS_DELTA(norms[0], 3.0) || 1E-12 < norms[1]) {
+      FPRINTF(stderr, "ERROR line #%i: bernstein constant %.17g %.17g\n",
+        __LINE__, norms[0], norms[1]);
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  /* Bernstein distance: a metric across lengths, exact for equal lengths */
+  { static double fine[2001];
+    double a[21], b[41], c[41], diff[41], norms[LIBXS_FPRINT_MAXORDER + 1];
+    const double w0[] = {1, 0, 0, 0};
+    double d, dab, dba, dac, dbc, ref = 0, expect = 0, wk = 1;
+    int i, k, q;
+    for (i = 0; i < 21; ++i) a[i] = sin(3.0 * i / 20.0);
+    for (i = 0; i < 41; ++i) {
+      b[i] = sin(3.0 * i / 40.0) + 0.01 * (i % 3);
+      c[i] = cos(2.0 * i / 40.0);
+      diff[i] = b[i] - c[i];
+    }
+    libxs_fprint_bernstein_diff(&d, LIBXS_DATATYPE_F64, b, 41, b, 41, 3, NULL);
+    if (0 != d) {
+      FPRINTF(stderr, "ERROR line #%i: bernstein_diff self=%.17g\n", __LINE__, d);
+      exit(EXIT_FAILURE);
+    }
+    /* equal lengths: the distance is the norm of the difference (B is linear) */
+    libxs_fprint_bernstein_diff(&d, LIBXS_DATATYPE_F64, b, 41, c, 41, 3, NULL);
+    libxs_fprint_bernstein(norms, LIBXS_DATATYPE_F64, diff, 41, 3);
+    for (k = 0; k <= 3; ++k) {
+      if (0 < k) wk /= k;
+      expect += wk * norms[k] * norms[k];
+    }
+    if (1E-12 < LIBXS_DELTA(d, sqrt(expect))) {
+      FPRINTF(stderr, "ERROR line #%i: bernstein_diff=%.17g vs %.17g\n", __LINE__,
+        d, sqrt(expect));
+      exit(EXIT_FAILURE);
+    }
+    /* different lengths: order 0 against de Casteljau and Simpson's rule */
+    for (q = 0; q < 2001; ++q) {
+      const double x = q / 2000.0;
+      double ta[21], tb[41];
+      int r;
+      for (i = 0; i < 21; ++i) ta[i] = a[i];
+      for (i = 0; i < 41; ++i) tb[i] = b[i];
+      for (r = 20; 0 < r; --r) {
+        for (i = 0; i < r; ++i) ta[i] = (1 - x) * ta[i] + x * ta[i + 1];
+      }
+      for (r = 40; 0 < r; --r) {
+        for (i = 0; i < r; ++i) tb[i] = (1 - x) * tb[i] + x * tb[i + 1];
+      }
+      fine[q] = (ta[0] - tb[0]) * (ta[0] - tb[0]);
+    }
+    for (q = 0; q < 2001; ++q) {
+      ref += fine[q] * (0 == q || 2000 == q ? 1 : (1 == (q & 1) ? 4 : 2));
+    }
+    ref = sqrt(ref / (3.0 * 2000.0));
+    libxs_fprint_bernstein_diff(&dab, LIBXS_DATATYPE_F64, a, 21, b, 41, 3, w0);
+    if (1E-9 < LIBXS_DELTA(dab, ref)) {
+      FPRINTF(stderr, "ERROR line #%i: bernstein_diff=%.17g vs quadrature %.17g\n",
+        __LINE__, dab, ref);
+      exit(EXIT_FAILURE);
+    }
+    /* symmetry and the triangle inequality */
+    libxs_fprint_bernstein_diff(&dab, LIBXS_DATATYPE_F64, a, 21, b, 41, 3, NULL);
+    libxs_fprint_bernstein_diff(&dba, LIBXS_DATATYPE_F64, b, 41, a, 21, 3, NULL);
+    libxs_fprint_bernstein_diff(&dac, LIBXS_DATATYPE_F64, a, 21, c, 41, 3, NULL);
+    libxs_fprint_bernstein_diff(&dbc, LIBXS_DATATYPE_F64, b, 41, c, 41, 3, NULL);
+    if (1E-12 < LIBXS_DELTA(dab, dba) || dac > dab + dbc + 1E-12) {
+      FPRINTF(stderr, "ERROR line #%i: bernstein_diff %.17g %.17g %.17g %.17g\n",
+        __LINE__, dab, dba, dac, dbc);
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  /* stored Bernstein norms (LIBXS_FPRINT_WITH_BERNSTEIN) and their term in the distance */
+  { double a[33], b[33], norms[LIBXS_FPRINT_MAXORDER + 1], plain, both, mixed, extra = 0;
+    const size_t shape[] = {33};
+    libxs_fprint_t fa, fb, ga, gb;
+    double wk = 1;
+    int i, k;
+    for (i = 0; i < 33; ++i) {
+      a[i] = sin(4.0 * i / 32.0);
+      b[i] = (i < 13 ? 0.0 : 1.0);
+    }
+    libxs_fprint(&fa, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 4, 0, 0, 0);
+    libxs_fprint(&fb, LIBXS_DATATYPE_F64, b, 1, shape, NULL, 4, 0, 0, 0);
+    libxs_fprint(&ga, LIBXS_DATATYPE_F64, a, 1, shape, NULL, 4, 0, 0,
+      LIBXS_FPRINT_WITH_BERNSTEIN);
+    libxs_fprint(&gb, LIBXS_DATATYPE_F64, b, 1, shape, NULL, 4, 0, 0,
+      LIBXS_FPRINT_WITH_BERNSTEIN);
+    libxs_fprint_bernstein(norms, LIBXS_DATATYPE_F64, a, 33, 4);
+    if (0 != fa.nbernstein || 5 != ga.nbernstein) {
+      FPRINTF(stderr, "ERROR line #%i: nbernstein %d %d\n", __LINE__,
+        fa.nbernstein, ga.nbernstein);
+      exit(EXIT_FAILURE);
+    }
+    for (k = 0; k <= 4; ++k) {
+      if (norms[k] != ga.bernstein[k] || ga.l2[k] != fa.l2[k]) {
+        FPRINTF(stderr, "ERROR line #%i: stored bernstein[%d]=%.17g vs %.17g\n",
+          __LINE__, k, ga.bernstein[k], norms[k]);
+        exit(EXIT_FAILURE);
+      }
+      if (0 < k) wk /= k;
+      extra += wk * (ga.bernstein[k] - gb.bernstein[k]) * (ga.bernstein[k] - gb.bernstein[k]);
+    }
+    plain = libxs_fprint_diff(&fa, &fb, NULL);
+    both = libxs_fprint_diff(&ga, &gb, NULL);
+    mixed = libxs_fprint_diff(&ga, &fb, NULL);
+    if (1E-12 * both * both < LIBXS_DELTA(both * both, plain * plain + extra)
+      || plain != mixed)
+    {
+      FPRINTF(stderr, "ERROR line #%i: diff plain=%.17g both=%.17g mixed=%.17g\n",
+        __LINE__, plain, both, mixed);
+      exit(EXIT_FAILURE);
+    }
+  }
+
   return EXIT_SUCCESS;
 }

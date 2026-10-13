@@ -139,6 +139,13 @@ The derivative-order decomposition captures structural features at
 multiple scales: order 0 measures value magnitude, order 1 measures
 slope/trend, order 2 measures curvature, and so on.
 
+Uses: compare datasets across resolutions or shapes (`libxs_fprint_diff`),
+judge smoothness and compressibility (`libxs_fprint_decay`), discover the
+element type of opaque data (see below), fingerprint streams or merge partial
+results (`libxs_fprint_partial`, `libxs_fprint_join`), rate roughness
+against a smooth reference (`libxs_fprint_bernstein`), and measure an exact
+distance between two sample sets (`libxs_fprint_bernstein_diff`).
+
 ```C
 #define LIBXS_FPRINT_MAXORDER 8
 
@@ -151,8 +158,10 @@ typedef struct libxs_fprint_t {
   double acc_abs[LIBXS_FPRINT_MAXORDER + 1];
   double acc_sum[LIBXS_FPRINT_MAXORDER + 1];
   double tail[LIBXS_FPRINT_MAXORDER + 1];
+  double bernstein[LIBXS_FPRINT_MAXORDER + 1];
   int order, n;
   int nk[LIBXS_FPRINT_MAXORDER + 1];
+  int nbernstein;
   libxs_data_t datatype;
 } libxs_fprint_t;
 ```
@@ -171,6 +180,8 @@ order k = 0..order:
 | `acc_sum[k]`| Accumulator: sum of raw signed differences    |
 | `tail[k]`  | Last value at derivative level k (for partial) |
 | `nk[k]`    | Count of differences accumulated at order k    |
+| `bernstein[k]` | Bernstein derivative norm (if requested)   |
+| `nbernstein` | Orders held in bernstein (0: none)           |
 
 All norms are normalized to the unit interval (h = 1/(n-1)).
 The signed mean preserves the dominant direction of the k-th
@@ -231,7 +242,8 @@ typedef enum libxs_fprint_flags_t {
   LIBXS_FPRINT_DEFAULT  = 0,
   LIBXS_FPRINT_SORT     = 1,
   LIBXS_FPRINT_AUTOCORR = 2,
-  LIBXS_FPRINT_PERAXIS  = 4
+  LIBXS_FPRINT_PERAXIS  = 4,
+  LIBXS_FPRINT_WITH_BERNSTEIN = 8
 } libxs_fprint_flags_t;
 
 int libxs_fprint(libxs_fprint_t* info,
@@ -259,6 +271,11 @@ The flags parameter is a bitwise OR of preprocessing options:
                          dimension 'axis' only and takes the
                          per-order maximum of each norm across
                          all positions in the remaining dimensions.
+
+  LIBXS_FPRINT_WITH_BERNSTEIN  Also store the libxs_fprint_bernstein
+                         norms of the samples as differenced (1-D only,
+                         at the cost of that call); libxs_fprint_diff
+                         then compares them as well.
 
 Without LIBXS_FPRINT_PERAXIS, hierarchical mode is used (sweeps
 the innermost dimension first, collapses via Sobolev self-norms).
@@ -326,7 +343,10 @@ d = sqrt( sum over k of weights[k] \* [(a->l2[k] - b->l2[k])^2
 + (a->mean[k] - b->mean[k])^2] ).
 The number of orders compared is min(a->order, b->order) + 1.
 If weights is NULL, default weights w(k) = 1/k! are used, which
-naturally dampens higher-order (noisier) derivatives.
+naturally dampens higher-order (noisier) derivatives. Where both
+fingerprints hold Bernstein norms, w(k) \* (a->bernstein[k] -
+b->bernstein[k])^2 is added for those orders; streamed and joined
+fingerprints hold none.
 
 The inclusion of the signed mean difference breaks collisions from
 negation (identical L2 norms but opposite means) and reflection
@@ -335,6 +355,43 @@ is a metric in fingerprint space: symmetric, non-negative, zero if
 and only if the fingerprints are identical. The same function
 serves both as a distance measure and as a fingerprint comparator
 since the fingerprint is the decomposed form of the Sobolev norm.
+
+```C
+#define LIBXS_FPRINT_BANDED 1024
+
+int libxs_fprint_bernstein(double norms[], libxs_data_t datatype,
+  const void* data, int n, int order);
+```
+
+L2 norms on [0,1] of the derivatives of the Bernstein approximant of the n
+samples: norms[k] = ‖B⁽ᵏ⁾‖ for k = 0..order. The order is clamped to
+LIBXS_FPRINT_MAXORDER, and orders beyond the degree n − 1 give zero. For any
+data, norms[k] ≤ l2[k] of `libxs_fprint` on the same samples, so the ratio
+norms[k] / l2[k] rates roughness independently of the amplitude: near 1 for
+smooth data, small for edges and noise.
+
+The cost is O(n²) per order up to LIBXS_FPRINT_BANDED samples and O(n^1.5)
+above, where weights below 10⁻¹⁷ of their largest are skipped. Both are well
+above the cost of `libxs_fprint`, hence the separate call. The Fortran generic
+`libxs_fprint_bernstein(norms, data[, order])` takes REAL(C_DOUBLE) or
+REAL(C_FLOAT) data and fills norms(0:order).
+
+```C
+int libxs_fprint_bernstein_diff(double* dist, libxs_data_t datatype,
+  const void* a, int na, const void* b, int nb, int order,
+  const double weights[]);
+```
+
+Exact Sobolev distance between the Bernstein approximants of two sample
+sets of any lengths: dist = sqrt(Σₖ w(k) ‖(B_a − B_b)⁽ᵏ⁾‖²) for k = 0..order,
+with w(k) = 1/k! if weights is NULL. Unlike `libxs_fprint_diff`, which
+compares summaries, it is a metric on the data themselves (zero only for
+equal samples), and it needs both sample sets. The shorter set is
+degree-elevated exactly to the longer one's degree, so similar data do not
+suffer cancellation; this adds O(n (n − m)) to the cost of
+`libxs_fprint_bernstein`. The Fortran generic
+`libxs_fprint_bernstein_diff(dist, a, b[, order][, weights])` takes
+REAL(C_DOUBLE) or REAL(C_FLOAT) samples.
 
 ## Type Discovery for Opaque Data
 

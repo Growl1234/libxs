@@ -337,6 +337,70 @@
         END FUNCTION
 
         !> Streaming fingerprint for REAL(C_DOUBLE).
+        !> Bernstein derivative norms for REAL(C_DOUBLE): norms(0:order).
+        FUNCTION libxs_fprint_bernstein_f64(norms, data, order)         &
+     &  RESULT(rc)
+          REAL(C_DOUBLE), INTENT(OUT) :: norms(0:)
+          REAL(C_DOUBLE), INTENT(IN), TARGET :: data(:)
+          INTEGER(C_INT), INTENT(IN), OPTIONAL :: order
+          INTEGER(C_INT) :: rc, oo
+          IF (PRESENT(order)) THEN; oo = order
+          ELSE; oo = INT(SIZE(norms), C_INT) - 1; END IF
+          oo = MIN(oo, INT(SIZE(norms), C_INT) - 1)
+          rc = internal_fprint_bernstein(norms, LIBXS_DATATYPE_F64,     &
+     &      C_LOC(data), INT(SIZE(data), C_INT), oo)
+        END FUNCTION
+
+        !> Bernstein derivative norms for REAL(C_FLOAT): norms(0:order).
+        FUNCTION libxs_fprint_bernstein_f32(norms, data, order)         &
+     &  RESULT(rc)
+          REAL(C_DOUBLE), INTENT(OUT) :: norms(0:)
+          REAL(C_FLOAT), INTENT(IN), TARGET :: data(:)
+          INTEGER(C_INT), INTENT(IN), OPTIONAL :: order
+          INTEGER(C_INT) :: rc, oo
+          IF (PRESENT(order)) THEN; oo = order
+          ELSE; oo = INT(SIZE(norms), C_INT) - 1; END IF
+          oo = MIN(oo, INT(SIZE(norms), C_INT) - 1)
+          rc = internal_fprint_bernstein(norms, LIBXS_DATATYPE_F32,     &
+     &      C_LOC(data), INT(SIZE(data), C_INT), oo)
+        END FUNCTION
+
+        !> Bernstein Sobolev distance for REAL(C_DOUBLE) samples.
+        FUNCTION libxs_fprint_bernstein_diff_f64(dist, a, b, order,     &
+     &  weights) RESULT(rc)
+          REAL(C_DOUBLE), INTENT(OUT) :: dist
+          REAL(C_DOUBLE), INTENT(IN), TARGET :: a(:), b(:)
+          INTEGER(C_INT), INTENT(IN), OPTIONAL :: order
+          REAL(C_DOUBLE), INTENT(IN), OPTIONAL, TARGET :: weights(0:)
+          INTEGER(C_INT) :: rc, oo
+          TYPE(C_PTR) :: pw
+          IF (PRESENT(order)) THEN; oo = order
+          ELSE; oo = LIBXS_FPRINT_MAXORDER; END IF
+          IF (PRESENT(weights)) THEN; pw = C_LOC(weights)
+          ELSE; pw = C_NULL_PTR; END IF
+          rc = internal_fprint_bernstein_diff(dist, LIBXS_DATATYPE_F64, &
+     &      C_LOC(a), INT(SIZE(a), C_INT), C_LOC(b),                    &
+     &      INT(SIZE(b), C_INT), oo, pw)
+        END FUNCTION
+
+        !> Bernstein Sobolev distance for REAL(C_FLOAT) samples.
+        FUNCTION libxs_fprint_bernstein_diff_f32(dist, a, b, order,     &
+     &  weights) RESULT(rc)
+          REAL(C_DOUBLE), INTENT(OUT) :: dist
+          REAL(C_FLOAT), INTENT(IN), TARGET :: a(:), b(:)
+          INTEGER(C_INT), INTENT(IN), OPTIONAL :: order
+          REAL(C_DOUBLE), INTENT(IN), OPTIONAL, TARGET :: weights(0:)
+          INTEGER(C_INT) :: rc, oo
+          TYPE(C_PTR) :: pw
+          IF (PRESENT(order)) THEN; oo = order
+          ELSE; oo = LIBXS_FPRINT_MAXORDER; END IF
+          IF (PRESENT(weights)) THEN; pw = C_LOC(weights)
+          ELSE; pw = C_NULL_PTR; END IF
+          rc = internal_fprint_bernstein_diff(dist, LIBXS_DATATYPE_F32, &
+     &      C_LOC(a), INT(SIZE(a), C_INT), C_LOC(b),                    &
+     &      INT(SIZE(b), C_INT), oo, pw)
+        END FUNCTION
+
         FUNCTION libxs_fprint_partial_f64(info, data, order)            &
      &  RESULT(rc)
           TYPE(libxs_fprint_t), INTENT(INOUT) :: info

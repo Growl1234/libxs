@@ -21,6 +21,14 @@
 # define LIBXS_FPRINT_MAXORDER 8
 #endif
 
+/**
+ * Largest input of libxs_fprint_bernstein computed exactly (O(n^2) per
+ * order); above, negligible weights are skipped (O(n^1.5) per order).
+ */
+#if !defined(LIBXS_FPRINT_BANDED)
+# define LIBXS_FPRINT_BANDED 1024
+#endif
+
 
 /**
  * Structure of differences with matrix norms according
@@ -103,10 +111,14 @@ LIBXS_EXTERN_C typedef struct libxs_fprint_t {
   double acc_sum[LIBXS_FPRINT_MAXORDER + 1];
   /** Tail values at each derivative level for junction bridging. */
   double tail[LIBXS_FPRINT_MAXORDER + 1];
+  /** Derivative norms of the Bernstein approximant (LIBXS_FPRINT_WITH_BERNSTEIN). */
+  double bernstein[LIBXS_FPRINT_MAXORDER + 1];
   /** Derivative orders used and original data length. */
   int order, n;
   /** Number of difference values accumulated per order. */
   int nk[LIBXS_FPRINT_MAXORDER + 1];
+  /** Orders held in bernstein (0: not requested or not available). */
+  int nbernstein;
   /** Discovered or given data type. */
   libxs_data_t datatype;
 } libxs_fprint_t;
@@ -115,7 +127,8 @@ typedef enum libxs_fprint_flags_t {
   LIBXS_FPRINT_DEFAULT  = 0,
   LIBXS_FPRINT_SORT     = 1,
   LIBXS_FPRINT_AUTOCORR = 2,
-  LIBXS_FPRINT_PERAXIS  = 4
+  LIBXS_FPRINT_PERAXIS  = 4,
+  LIBXS_FPRINT_WITH_BERNSTEIN = 8
 } libxs_fprint_flags_t;
 
 /** BF16 storage type (raw uint16_t encoding: 1 sign + 8 exponent + 7 fraction). */
@@ -234,7 +247,9 @@ LIBXS_API int libxs_setdiff_min(
  * axis:   dimension index, only used when LIBXS_FPRINT_PERAXIS is set.
  * smooth: box-filter radius applied before differencing (0 = off).
  * flags:  bitwise OR of LIBXS_FPRINT_SORT, LIBXS_FPRINT_AUTOCORR,
- *         and LIBXS_FPRINT_PERAXIS.
+ *         LIBXS_FPRINT_PERAXIS, and LIBXS_FPRINT_WITH_BERNSTEIN (1-D only:
+ *         also stores the libxs_fprint_bernstein norms of the samples
+ *         as differenced, at the cost of that call).
  * Default (axis=0, smooth=0, flags=0) gives hierarchical mode.
  */
 LIBXS_API int libxs_fprint(libxs_fprint_t* info,
@@ -272,7 +287,9 @@ LIBXS_API int libxs_fprint_join(libxs_fprint_t* output,
 /**
  * Weighted Sobolev distance between two fingerprints:
  *   d = sqrt(sum_k w_k * [(a->l2[k] - b->l2[k])^2
- *                        + (a->mean[k] - b->mean[k])^2]).
+ *                        + (a->mean[k] - b->mean[k])^2]),
+ * plus w_k * (a->bernstein[k] - b->bernstein[k])^2 for the orders both
+ * fingerprints hold (LIBXS_FPRINT_WITH_BERNSTEIN).
  * The signed mean breaks collisions from negation and reflection.
  * The number of orders used is min(a->order, b->order) + 1.
  * If weights is NULL, default weights w_k = 1/(k!) are used.
@@ -298,6 +315,34 @@ LIBXS_API double libxs_fprint_raw(
  * Decaying fingerprints have r < 1; noise/random data has r > 1.
  */
 LIBXS_API double libxs_fprint_decay(const libxs_fprint_t* info);
+
+/**
+ * L2 norms on [0,1] of the derivatives of the Bernstein approximant of
+ * n samples, B(x) = sum_i f_i C(n-1,i) x^i (1-x)^(n-1-i):
+ *   norms[k] = ||B^(k)||_L2 for k = 0..order.
+ * The k-th derivative has the fingerprint's order-k differences, times
+ * c = (n-1)! / ((n-1-k)! (n-1)^k) <= 1, as its Bernstein coefficients,
+ * hence norms[k] <= l2[k] of libxs_fprint for any data: the ratio is a
+ * roughness indicator, near one for smooth data and small for edges or
+ * noise. Order is clamped to LIBXS_FPRINT_MAXORDER; orders beyond the
+ * degree n-1 give zero. Exact up to LIBXS_FPRINT_BANDED samples; above,
+ * weights below 1E-17 of their largest are skipped.
+ * Supported types: as libxs_fprint (integer types are promoted).
+ */
+LIBXS_API int libxs_fprint_bernstein(double norms[], libxs_data_t datatype,
+  const void* data, int n, int order);
+
+/**
+ * Exact Sobolev distance between the Bernstein approximants of two sample
+ * sets of any lengths (a true metric on the data, unlike libxs_fprint_diff):
+ *   dist = sqrt(sum_k weights[k] * ||(B_a - B_b)^(k)||_L2^2), k = 0..order.
+ * The shorter set is degree-elevated exactly, so no cancellation occurs for
+ * similar data. If weights is NULL, w_k = 1/k! as for libxs_fprint_diff.
+ * Order and cost as for libxs_fprint_bernstein, plus O(n (n - m)) for the
+ * elevation from m to n samples. Both sets share the given datatype.
+ */
+LIBXS_API int libxs_fprint_bernstein_diff(double* dist, libxs_data_t datatype,
+  const void* a, int na, const void* b, int nb, int order, const double weights[]);
 
 /**
  * Generalized binomial coefficient C(t, k) for real-valued t:

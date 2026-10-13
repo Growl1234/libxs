@@ -90,6 +90,63 @@ LIBXS_API_INTERN int internal_libxs_fprint_load(
 #undef LIBXS_FPRINT_LOAD
 
 
+/**
+ * Squared L2 norm of sum_i a[i] b_{i,m}: the product of two Bernstein
+ * polynomials of degree m has degree 2m, and its coefficient s weighs the
+ * pairs i + j = s by the hypergeometric C(m,i) C(m,j) / C(2m,s), which sums
+ * to one; each is integrated over [0,1] to 1/(2m+1). The weights are built
+ * outward from their mode, so they shrink and cannot overflow.
+ */
+LIBXS_API_INTERN double internal_libxs_bernstein_sq(const double a[], int m, double tol)
+{
+  double acc = 0, comp = 0;
+  int s;
+  for (s = 0; s <= 2 * m; ++s) {
+    const int lo = LIBXS_MAX(0, s - m), hi = LIBXS_MIN(m, s);
+    const int mode = LIBXS_CLMP((int)(((double)s + 1) * ((double)m + 1)
+      / (2.0 * (double)m + 2)), lo, hi);
+    double sum = a[mode] * a[s - mode], wsum = 1, w = 1;
+    int i;
+    for (i = mode; i < hi && tol <= w; ++i) {
+      w *= ((double)(m - i) * (double)(s - i))
+        / ((double)(i + 1) * (double)(m - s + i + 1));
+      sum += w * a[i + 1] * a[s - i - 1];
+      wsum += w;
+    }
+    w = 1;
+    for (i = mode; i > lo && tol <= w; --i) {
+      w *= ((double)i * (double)(m - s + i))
+        / ((double)(m - i + 1) * (double)(s - i + 1));
+      sum += w * a[i - 1] * a[s - i + 1];
+      wsum += w;
+    }
+    libxs_neumaier_sum(sum / wsum, &acc, &comp);
+  }
+  return (0 < acc ? acc : 0) / (2.0 * (double)m + 1);
+}
+
+
+/* Bernstein derivative norms of x[0..n-1] for k = 0..kmax; work holds n doubles */
+LIBXS_API_INTERN void internal_libxs_fprint_bernstein(double norms[], const double x[],
+  int n, int kmax, double work[])
+{
+  const int degree = n - 1;
+  const double invh = (double)LIBXS_MAX(degree, 1);
+  const double tol = (n <= LIBXS_FPRINT_BANDED ? 0 : 1E-17);
+  double scale = 1;
+  int k, i;
+  for (i = 0; i < n; ++i) work[i] = x[i];
+  for (k = 0; k <= kmax; ++k) {
+    const int m = degree - k;
+    if (0 < k && 0 <= m) { /* derivative-scaled differences, one order up */
+      for (i = 0; i <= m; ++i) work[i] = (work[i + 1] - work[i]) * invh;
+      scale *= (double)(m + 1) / invh;
+    }
+    norms[k] = (0 <= m ? scale * sqrt(internal_libxs_bernstein_sq(work, m, tol)) : 0);
+  }
+}
+
+
 LIBXS_API int libxs_fprint(libxs_fprint_t* info,
   libxs_data_t datatype, const void* data,
   int ndims, const size_t shape[], const size_t stride[],
@@ -246,6 +303,15 @@ LIBXS_API int libxs_fprint(libxs_fprint_t* info,
             internal_libxs_autocorr(cur, n, 1, tmp, n);
             cur = tmp;
           }
+          if (0 != (flags & LIBXS_FPRINT_WITH_BERNSTEIN)) { /* the core overwrites cur */
+            int pool_w = 0;
+            double *const work = (double*)LIBXS_MATH_MALLOC((size_t)n * sizeof(double), pool_w);
+            if (NULL != work) {
+              internal_libxs_fprint_bernstein(info->bernstein, cur, n, kmax, work);
+              info->nbernstein = kmax + 1;
+            }
+            LIBXS_MATH_FREE(work, pool_w);
+          }
           internal_libxs_fprint_core(info, buf, cur, n, kmax);
         }
       }
@@ -317,9 +383,11 @@ LIBXS_API double libxs_fprint_diff(
   for (k = 0; k <= kmax; ++k) {
     const double dl2 = a->l2[k] - b->l2[k];
     const double dm = a->mean[k] - b->mean[k];
+    const double db = (k < a->nbernstein && k < b->nbernstein
+      ? a->bernstein[k] - b->bernstein[k] : 0);
     if (NULL != weights) wk = weights[k];
     else if (0 < k) wk /= k; /* 1/k! */
-    libxs_neumaier_sum(wk * (dl2 * dl2 + dm * dm), &acc, &comp);
+    libxs_neumaier_sum(wk * (dl2 * dl2 + dm * dm + db * db), &acc, &comp);
   }
   return sqrt(acc);
 }
@@ -344,6 +412,66 @@ LIBXS_API double libxs_fprint_decay(const libxs_fprint_t* info)
   if (0 < info->order && 0 < info->l2[0] && 1 < info->n) {
     const int k = LIBXS_MIN(info->order, LIBXS_FPRINT_MAXORDER);
     result = pow(info->l2[k] / info->l2[0], 1.0 / k) / (info->n - 1);
+  }
+  return result;
+}
+
+
+LIBXS_API int libxs_fprint_bernstein(double norms[], libxs_data_t datatype,
+  const void* data, int n, int order)
+{
+  int result = EXIT_FAILURE, pool = 0;
+  if (NULL != norms && NULL != data && 0 < n) {
+    double *const buf = (double*)LIBXS_MATH_MALLOC(2 * (size_t)n * sizeof(double), pool);
+    if (NULL != buf) result = internal_libxs_fprint_load(buf, datatype, data, 1, n);
+    if (EXIT_SUCCESS == result) {
+      internal_libxs_fprint_bernstein(norms, buf, n,
+        LIBXS_CLMP(order, 0, LIBXS_FPRINT_MAXORDER), buf + n);
+    }
+    LIBXS_MATH_FREE(buf, pool);
+  }
+  return result;
+}
+
+
+LIBXS_API int libxs_fprint_bernstein_diff(double* dist, libxs_data_t datatype,
+  const void* a, int na, const void* b, int nb, int order, const double weights[])
+{
+  int result = EXIT_FAILURE, pool = 0;
+  if (NULL != dist && NULL != a && NULL != b && 0 < na && 0 < nb) {
+    const int lower = LIBXS_MIN(na, nb), upper = LIBXS_MAX(na, nb), degree = upper - 1;
+    const int kmax = LIBXS_CLMP(order, 0, LIBXS_FPRINT_MAXORDER);
+    const double tol = (upper <= LIBXS_FPRINT_BANDED ? 0 : 1E-17);
+    double *const buf = (double*)LIBXS_MATH_MALLOC(2 * (size_t)upper * sizeof(double), pool);
+    if (NULL != buf) {
+      result = internal_libxs_fprint_load(buf, datatype, na <= nb ? a : b, 1, lower);
+    }
+    if (EXIT_SUCCESS == result) {
+      result = internal_libxs_fprint_load(buf + upper, datatype, na <= nb ? b : a, 1, upper);
+    }
+    if (EXIT_SUCCESS == result) {
+      double *const d = buf, *const e = buf + upper, acc = 0, comp = 0, scale = 1, w = 1;
+      int p, i, k;
+      for (p = lower - 1; p < degree; ++p) { /* elevate from degree p to p + 1 */
+        d[p + 1] = d[p];
+        for (i = p; 0 < i; --i) {
+          d[i] = ((double)i * d[i - 1] + (double)(p + 1 - i) * d[i]) / (double)(p + 1);
+        }
+      }
+      for (i = 0; i < upper; ++i) d[i] -= e[i];
+      for (k = 0; k <= kmax && k <= degree; ++k) {
+        if (0 < k) { /* B^(k) has coefficients n!/(n-k)! times the k-th differences */
+          for (i = 0; i <= degree - k; ++i) d[i] = d[i + 1] - d[i];
+          scale *= (double)(degree - k + 1);
+          w = (NULL != weights ? weights[k] : w / k);
+        }
+        else if (NULL != weights) w = weights[0];
+        libxs_neumaier_sum(w * scale * scale * internal_libxs_bernstein_sq(d, degree - k, tol),
+          &acc, &comp);
+      }
+      *dist = sqrt(0 < acc ? acc : 0);
+    }
+    LIBXS_MATH_FREE(buf, pool);
   }
   return result;
 }

@@ -321,9 +321,11 @@
      &    LIBXS_FPRINT_DEFAULT  = 0,                                    &
      &    LIBXS_FPRINT_SORT     = 1,                                    &
      &    LIBXS_FPRINT_AUTOCORR = 2,                                    &
-     &    LIBXS_FPRINT_PERAXIS  = 4
+     &    LIBXS_FPRINT_PERAXIS  = 4,                                    &
+     &    LIBXS_FPRINT_WITH_BERNSTEIN = 8
         PUBLIC :: LIBXS_FPRINT_DEFAULT, LIBXS_FPRINT_SORT
         PUBLIC :: LIBXS_FPRINT_AUTOCORR, LIBXS_FPRINT_PERAXIS
+        PUBLIC :: LIBXS_FPRINT_WITH_BERNSTEIN
 
         !> Polynomial fingerprint norms per derivative order.
         TYPE, BIND(C) :: libxs_fprint_t
@@ -335,8 +337,10 @@
           REAL(C_DOUBLE) :: acc_abs(LIBXS_FPRINT_MAXORDER + 1)
           REAL(C_DOUBLE) :: acc_sum(LIBXS_FPRINT_MAXORDER + 1)
           REAL(C_DOUBLE) :: tail(LIBXS_FPRINT_MAXORDER + 1)
+          REAL(C_DOUBLE) :: bernstein(LIBXS_FPRINT_MAXORDER + 1)
           INTEGER(C_INT) :: order, n
           INTEGER(C_INT) :: nk(LIBXS_FPRINT_MAXORDER + 1)
+          INTEGER(C_INT) :: nbernstein
           INTEGER(C_INT) :: datatype
         END TYPE
 
@@ -1135,6 +1139,29 @@
             REAL(C_DOUBLE) :: internal_fprint_diff
           END FUNCTION
 
+          FUNCTION internal_fprint_bernstein(norms,                     &
+     &    datatype, data, n, order)                                     &
+     &    BIND(C, NAME="libxs_fprint_bernstein")
+            IMPORT :: C_PTR, C_INT, C_DOUBLE
+            REAL(C_DOUBLE), INTENT(OUT)         :: norms(*)
+            INTEGER(C_INT), INTENT(IN), VALUE   :: datatype
+            TYPE(C_PTR), INTENT(IN), VALUE      :: data
+            INTEGER(C_INT), INTENT(IN), VALUE   :: n, order
+            INTEGER(C_INT) :: internal_fprint_bernstein
+          END FUNCTION
+
+          FUNCTION internal_fprint_bernstein_diff(dist,                 &
+     &    datatype, a, na, b, nb, order, weights)                       &
+     &    BIND(C, NAME="libxs_fprint_bernstein_diff")
+            IMPORT :: C_PTR, C_INT, C_DOUBLE
+            REAL(C_DOUBLE), INTENT(OUT)         :: dist
+            INTEGER(C_INT), INTENT(IN), VALUE   :: datatype
+            TYPE(C_PTR), INTENT(IN), VALUE      :: a, b
+            INTEGER(C_INT), INTENT(IN), VALUE   :: na, nb, order
+            TYPE(C_PTR), INTENT(IN), VALUE      :: weights
+            INTEGER(C_INT) :: internal_fprint_bernstein_diff
+          END FUNCTION
+
           FUNCTION internal_fprint_partial(info,                        &
      &    datatype, data, n, order)                                     &
      &    BIND(C, NAME="libxs_fprint_partial")
@@ -1586,6 +1613,18 @@
           MODULE PROCEDURE libxs_fprint_f32
           MODULE PROCEDURE libxs_fprint_i32
           MODULE PROCEDURE libxs_fprint_i8
+        END INTERFACE
+
+        !> Derivative norms of the Bernstein approximant (roughness).
+        INTERFACE libxs_fprint_bernstein
+          MODULE PROCEDURE libxs_fprint_bernstein_f64
+          MODULE PROCEDURE libxs_fprint_bernstein_f32
+        END INTERFACE
+
+        !> Exact Sobolev distance of two Bernstein approximants.
+        INTERFACE libxs_fprint_bernstein_diff
+          MODULE PROCEDURE libxs_fprint_bernstein_diff_f64
+          MODULE PROCEDURE libxs_fprint_bernstein_diff_f32
         END INTERFACE
 
         !> Streaming fingerprint accumulation.

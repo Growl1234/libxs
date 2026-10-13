@@ -660,7 +660,7 @@ static int run_collision(void)
   if (EXIT_SUCCESS == result) {
     data_a = (double*)malloc(count * sizeof(double));
     data_b = (double*)malloc(count * sizeof(double));
-    fprintf(file, "case_a,case_b,fprint_distance,rms_diff,"
+    fprintf(file, "case_a,case_b,fprint_distance,rms_diff,bernstein_distance,"
       "mean_0_a,mean_1_a,mean_0_b,mean_1_b,"
       "l2_0_a,l2_1_a,l2_2_a,l2_3_a,l2_4_a,"
       "l2_0_b,l2_1_b,l2_2_b,l2_3_b,l2_4_b\n");
@@ -670,13 +670,13 @@ static int run_collision(void)
   }
   if (EXIT_SUCCESS == result) {
     static const char* const case_a[] = {
-      "sin(2pi*x)", "arch", "rising_ramp", "sin(2pi*x)" };
+      "sin(2pi*x)", "arch", "rising_ramp", "sin(2pi*x)", "skewed_arch" };
     static const char* const case_b[] = {
-      "-sin(2pi*x)", "-arch", "falling_ramp", "cos(2pi*x)" };
+      "-sin(2pi*x)", "-arch", "falling_ramp", "cos(2pi*x)", "reversed" };
     size_t pair;
-    for (pair = 0; pair < 4 && EXIT_SUCCESS == result; ++pair) {
+    for (pair = 0; pair < 5 && EXIT_SUCCESS == result; ++pair) {
       libxs_fprint_t fp_a, fp_b;
-      double rms = 0.0;
+      double rms = 0.0, bern = 0.0;
       size_t index;
       for (index = 0; index < count; ++index) {
         const double pos = (double)index / (double)(count - 1);
@@ -692,22 +692,47 @@ static int run_collision(void)
           data_a[index] = pos;
           data_b[index] = 1.0 - pos;
         }
-        else {
+        else if (3 == pair) {
           data_a[index] = sin(2.0 * M_PI * pos);
           data_b[index] = cos(2.0 * M_PI * pos);
         }
+        else {
+          const double odd = pos * (1.0 - pos) * (pos - 0.5);
+          data_a[index] = 4.0 * pos * (1.0 - pos) * (1.0 + pos);
+          data_b[index] = odd * (pos - 0.5) * (pos - 0.5);
+        }
+      }
+      if (4 == pair) {
+        /**
+         * The means telescope to boundary differences: a sequence with equal end
+         * values and equal end curvatures (odd orders up to 4) shares every norm
+         * and mean with its reversal. The second polynomial equalizes the end
+         * curvatures; both vanish at the ends.
+         */
+        const double ca = data_a[count - 1] - 2.0 * data_a[count - 2] + data_a[count - 3]
+                        - data_a[2] + 2.0 * data_a[1] - data_a[0];
+        const double cb = data_b[count - 1] - 2.0 * data_b[count - 2] + data_b[count - 3]
+                        - data_b[2] + 2.0 * data_b[1] - data_b[0];
+        for (index = 0; index < count; ++index) data_a[index] -= ca / cb * data_b[index];
+        for (index = 0; index < count; ++index) data_b[index] = data_a[count - 1 - index];
+      }
+      for (index = 0; index < count; ++index) {
         rms += (data_a[index] - data_b[index])
           * (data_a[index] - data_b[index]);
       }
       rms = sqrt(rms / (double)count);
+      if (EXIT_SUCCESS == result) {
+        result = libxs_fprint_bernstein_diff(&bern, LIBXS_DATATYPE_F64,
+          data_a, (int)count, data_b, (int)count, FPRINT_ORDER, NULL);
+      }
       result = fingerprint_sequence(&fp_a, data_a, count, FPRINT_ORDER);
       if (EXIT_SUCCESS == result) {
         result = fingerprint_sequence(&fp_b, data_b, count, FPRINT_ORDER);
       }
       if (EXIT_SUCCESS == result) {
-        fprintf(file, "%s,%s,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g",
+        fprintf(file, "%s,%s,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g",
           case_a[pair], case_b[pair],
-          libxs_fprint_diff(&fp_a, &fp_b, NULL), rms,
+          libxs_fprint_diff(&fp_a, &fp_b, NULL), rms, bern,
           fp_a.mean[0], fp_a.mean[1], fp_b.mean[0], fp_b.mean[1]);
         write_fprint_values(file, &fp_a);
         write_fprint_values(file, &fp_b);
