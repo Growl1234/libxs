@@ -500,21 +500,21 @@ void internal_libxs_shuffle2_u32_avx2(
   unsigned int* LIBXS_RESTRICT dst, const unsigned int* LIBXS_RESTRICT src,
   size_t count, size_t stride)
 {
-  const size_t count8 = count & ~(size_t)7;
-  size_t i = 0, j = 1;
+  /* index of element k is count - 1 - (k * stride) % count: per vector, a scalar offset plus lane offsets */
+  const size_t count8 = count & ~(size_t)7, step = (8 * stride) % count;
+  const __m256i vlast = _mm256_set1_epi32((int)(count - 1)), vcount = _mm256_set1_epi32((int)count);
+  const __m256i voffs = _mm256_setr_epi32(0, (int)(stride % count), (int)((2 * stride) % count),
+    (int)((3 * stride) % count), (int)((4 * stride) % count), (int)((5 * stride) % count),
+    (int)((6 * stride) % count), (int)((7 * stride) % count));
+  size_t i = 0, j, r = 0;
   for (; i < count8; i += 8) {
-    LIBXS_ALIGNED(int idx[8], LIBXS_ALIGNMENT);
-    __m256i vidx, vdata;
-    int lane;
-    for (lane = 0; lane < 8; ++lane) {
-      if (count < j) j -= count;
-      idx[lane] = (int)(count - j);
-      j += stride;
-    }
-    vidx = _mm256_load_si256((__m256i*)idx);
-    vdata = _mm256_i32gather_epi32((const int*)src, vidx, 4);
-    _mm256_storeu_si256((__m256i*)(dst + i), vdata);
+    const __m256i v = _mm256_add_epi32(_mm256_set1_epi32((int)r), voffs); /* below 2 * count */
+    const __m256i vidx = _mm256_sub_epi32(vlast, _mm256_min_epu32(v, _mm256_sub_epi32(v, vcount)));
+    _mm256_storeu_si256((__m256i*)(dst + i), _mm256_i32gather_epi32((const int*)src, vidx, 4));
+    r += step;
+    if (count <= r) r -= count;
   }
+  j = r + 1;
   for (; i < count; ++i) {
     if (count < j) j -= count;
     dst[i] = src[count - j];
@@ -528,21 +528,21 @@ void internal_libxs_shuffle2_u64_avx2(
   unsigned long long* LIBXS_RESTRICT dst, const unsigned long long* LIBXS_RESTRICT src,
   size_t count, size_t stride)
 {
-  const size_t count4 = count & ~(size_t)3;
-  size_t i = 0, j = 1;
+  /* index of element k is count - 1 - (k * stride) % count: per vector, a scalar offset plus lane offsets */
+  const size_t count4 = count & ~(size_t)3, step = (4 * stride) % count;
+  const __m256i vlast = _mm256_set1_epi64x((long long)(count - 1)), vcount = _mm256_set1_epi64x((long long)count);
+  const __m256i voffs = _mm256_setr_epi64x(0, (long long)(stride % count), (long long)((2 * stride) % count),
+    (long long)((3 * stride) % count));
+  size_t i = 0, j, r = 0;
   for (; i < count4; i += 4) {
-    LIBXS_ALIGNED(long long idx[4], LIBXS_ALIGNMENT);
-    __m256i vidx, vdata;
-    int lane;
-    for (lane = 0; lane < 4; ++lane) {
-      if (count < j) j -= count;
-      idx[lane] = (long long)(count - j);
-      j += stride;
-    }
-    vidx = _mm256_load_si256((__m256i*)idx);
-    vdata = _mm256_i64gather_epi64((const long long*)src, vidx, 8);
-    _mm256_storeu_si256((__m256i*)(dst + i), vdata);
+    const __m256i v = _mm256_add_epi64(_mm256_set1_epi64x((long long)r), voffs); /* below 2 * count */
+    const __m256i wrap = _mm256_and_si256(_mm256_cmpgt_epi64(v, vlast), vcount);
+    const __m256i vidx = _mm256_sub_epi64(vlast, _mm256_sub_epi64(v, wrap));
+    _mm256_storeu_si256((__m256i*)(dst + i), _mm256_i64gather_epi64((const long long*)src, vidx, 8));
+    r += step;
+    if (count <= r) r -= count;
   }
+  j = r + 1;
   for (; i < count; ++i) {
     if (count < j) j -= count;
     dst[i] = src[count - j];
@@ -558,21 +558,24 @@ void internal_libxs_shuffle2_u32_avx512(
   unsigned int* LIBXS_RESTRICT dst, const unsigned int* LIBXS_RESTRICT src,
   size_t count, size_t stride)
 {
-  const size_t count16 = count & ~(size_t)15;
-  size_t i = 0, j = 1;
+  /* index of element k is count - 1 - (k * stride) % count: per vector, a scalar offset plus lane offsets */
+  const size_t count16 = count & ~(size_t)15, step = (16 * stride) % count;
+  const __m512i vlast = _mm512_set1_epi32((int)(count - 1)), vcount = _mm512_set1_epi32((int)count);
+  const __m512i voffs = _mm512_setr_epi32(0, (int)(stride % count), (int)((2 * stride) % count),
+    (int)((3 * stride) % count), (int)((4 * stride) % count), (int)((5 * stride) % count),
+    (int)((6 * stride) % count), (int)((7 * stride) % count), (int)((8 * stride) % count),
+    (int)((9 * stride) % count), (int)((10 * stride) % count), (int)((11 * stride) % count),
+    (int)((12 * stride) % count), (int)((13 * stride) % count), (int)((14 * stride) % count),
+    (int)((15 * stride) % count));
+  size_t i = 0, j, r = 0;
   for (; i < count16; i += 16) {
-    LIBXS_ALIGNED(int idx[16], LIBXS_ALIGNMENT);
-    __m512i vidx, vdata;
-    int lane;
-    for (lane = 0; lane < 16; ++lane) {
-      if (count < j) j -= count;
-      idx[lane] = (int)(count - j);
-      j += stride;
-    }
-    vidx = _mm512_load_si512((__m512i*)idx);
-    vdata = _mm512_i32gather_epi32(vidx, src, 4);
-    _mm512_storeu_si512((__m512i*)(dst + i), vdata);
+    const __m512i v = _mm512_add_epi32(_mm512_set1_epi32((int)r), voffs); /* below 2 * count */
+    const __m512i vidx = _mm512_sub_epi32(vlast, _mm512_min_epu32(v, _mm512_sub_epi32(v, vcount)));
+    _mm512_storeu_si512((__m512i*)(dst + i), _mm512_i32gather_epi32(vidx, src, 4));
+    r += step;
+    if (count <= r) r -= count;
   }
+  j = r + 1;
   for (; i < count; ++i) {
     if (count < j) j -= count;
     dst[i] = src[count - j];
@@ -586,21 +589,21 @@ void internal_libxs_shuffle2_u64_avx512(
   unsigned long long* LIBXS_RESTRICT dst, const unsigned long long* LIBXS_RESTRICT src,
   size_t count, size_t stride)
 {
-  const size_t count8 = count & ~(size_t)7;
-  size_t i = 0, j = 1;
+  /* index of element k is count - 1 - (k * stride) % count: per vector, a scalar offset plus lane offsets */
+  const size_t count8 = count & ~(size_t)7, step = (8 * stride) % count;
+  const __m512i vlast = _mm512_set1_epi64((long long)(count - 1)), vcount = _mm512_set1_epi64((long long)count);
+  const __m512i voffs = _mm512_setr_epi64(0, (long long)(stride % count), (long long)((2 * stride) % count),
+    (long long)((3 * stride) % count), (long long)((4 * stride) % count), (long long)((5 * stride) % count),
+    (long long)((6 * stride) % count), (long long)((7 * stride) % count));
+  size_t i = 0, j, r = 0;
   for (; i < count8; i += 8) {
-    LIBXS_ALIGNED(long long idx[8], LIBXS_ALIGNMENT);
-    __m512i vidx, vdata;
-    int lane;
-    for (lane = 0; lane < 8; ++lane) {
-      if (count < j) j -= count;
-      idx[lane] = (long long)(count - j);
-      j += stride;
-    }
-    vidx = _mm512_load_si512((__m512i*)idx);
-    vdata = _mm512_i64gather_epi64(vidx, src, 8);
-    _mm512_storeu_si512((__m512i*)(dst + i), vdata);
+    const __m512i v = _mm512_add_epi64(_mm512_set1_epi64((long long)r), voffs); /* below 2 * count */
+    const __m512i vidx = _mm512_sub_epi64(vlast, _mm512_min_epu64(v, _mm512_sub_epi64(v, vcount)));
+    _mm512_storeu_si512((__m512i*)(dst + i), _mm512_i64gather_epi64(vidx, src, 8));
+    r += step;
+    if (count <= r) r -= count;
   }
+  j = r + 1;
   for (; i < count; ++i) {
     if (count < j) j -= count;
     dst[i] = src[count - j];

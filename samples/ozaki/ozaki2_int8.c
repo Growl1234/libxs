@@ -266,7 +266,8 @@ LIBXS_INLINE double oz2_hier_horner(const unsigned int d[], const uint32_t* gpro
   return result;
 }
 
-LIBXS_INLINE void oz2_reconstruct_batch(unsigned int batch_res[OZ2_BATCH][OZ2_NMODULI_MAX],
+/* Residue of batch element bi for modulus p is res[p * ldr + bi] (modulus-major). */
+LIBXS_INLINE void oz2_reconstruct_batch(const uint8_t* res, size_t ldr,
   uint8_t garner_inv[OZ2_NMODULI_MAX][OZ2_NMODULI_MAX],
   const uint32_t* l2_garner_inv, const uint32_t* gprod, const uint64_t* l2_barrett,
   int nmoduli, int bsz, double result[OZ2_BATCH])
@@ -285,7 +286,7 @@ LIBXS_INLINE void oz2_reconstruct_batch(unsigned int batch_res[OZ2_BATCH][OZ2_NM
       const int hi = (lo + HIER_GS <= nmoduli) ? (lo + HIER_GS) : nmoduli;
       unsigned int gr[HIER_GS];
       int li;
-      for (li = 0; li < hi - lo; ++li) gr[li] = batch_res[bi][lo + li];
+      for (li = 0; li < hi - lo; ++li) gr[li] = res[(size_t)(lo + li) * ldr + bi];
       gval[g] = oz2_hier_l1_garner(gr, g, garner_inv, nmoduli);
     }
 
@@ -308,12 +309,13 @@ LIBXS_INLINE void oz2_reconstruct_batch(unsigned int batch_res[OZ2_BATCH][OZ2_NM
  * Level 2: scalar Garner + Horner per element (only HIER_NGROUPS_MAX steps).
  */
 LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void oz2_reconstruct_batch_avx512(
-  unsigned int batch_res[OZ2_BATCH][OZ2_NMODULI_MAX],
+  const uint8_t* res, size_t ldr,
   uint8_t garner_inv[OZ2_NMODULI_MAX][OZ2_NMODULI_MAX],
   const uint32_t* l2_garner_inv, const uint32_t* gprod, const uint64_t* l2_barrett,
   int nmoduli, int bsz, double result[OZ2_BATCH])
 {
   const int ngroups = LIBXS_UPDIV(nmoduli, HIER_GS);
+  const __mmask16 batch = (__mmask16)(OZ2_BATCH > bsz ? ((1u << bsz) - 1) : 0xFFFF);
   unsigned int gval_all[OZ2_BATCH][HIER_NGROUPS_MAX];
   int g, bi;
 
@@ -325,22 +327,14 @@ LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void oz2_reconstruct_batch_avx51
     __m512i u_vec;
     int li, lj;
 
-    { unsigned int tmp[OZ2_BATCH];
-      for (bi = 0; bi < bsz; ++bi) tmp[bi] = batch_res[bi][lo];
-      for (bi = bsz; bi < OZ2_BATCH; ++bi) tmp[bi] = 0;
-      u_vec = _mm512_loadu_si512((__m512i*)tmp);
-      _mm512_storeu_si512((__m512i*)vt[0], u_vec);
-    }
+    u_vec = _mm512_cvtepu8_epi32(_mm_maskz_loadu_epi8(batch, res + (size_t)lo * ldr));
+    _mm512_storeu_si512((__m512i*)vt[0], u_vec);
 
     for (li = 1; li < gsz; ++li) {
       const unsigned int pi = oz2_moduli[lo + li];
       const unsigned int rcp_i = oz2_rcp[lo + li];
       const __m512i vpi = _mm512_set1_epi32((int)pi);
-      { unsigned int tmp[OZ2_BATCH];
-        for (bi = 0; bi < bsz; ++bi) tmp[bi] = batch_res[bi][lo + li];
-        for (bi = bsz; bi < OZ2_BATCH; ++bi) tmp[bi] = 0;
-        u_vec = _mm512_loadu_si512((__m512i*)tmp);
-      }
+      u_vec = _mm512_cvtepu8_epi32(_mm_maskz_loadu_epi8(batch, res + (size_t)(lo + li) * ldr));
 
       for (lj = 0; lj < li; ++lj) {
         const unsigned int inv_ji = garner_inv[lo + lj][lo + li];
@@ -447,7 +441,7 @@ LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void oz2_amx_release(void)
 LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void oz2_amx_gemm(
   GEMM_INT_TYPE K, int pidx, int npanel, const oz2_res_t* a, GEMM_INT_TYPE lda,
   const int32_t* b, GEMM_INT_TYPE ldb, size_t bpanel_stride,
-  uint8_t tile_res[OZ2_AMX_NACC][BLOCK_M * BLOCK_N][OZ2_NMODULI_MAX])
+  uint8_t tile_res[OZ2_AMX_NACC][OZ2_NMODULI_MAX][BLOCK_M * BLOCK_N])
 {
   LIBXS_ALIGNED(int32_t partial[OZ2_AMX_NACC][BLOCK_M * BLOCK_N], LIBXS_ALIGNMENT);
   GEMM_INT_TYPE kb;
@@ -495,19 +489,14 @@ LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void oz2_amx_gemm(
 
   for (panel = 0; panel < npanel; ++panel) {
     for (mi = 0; mi < BLOCK_M; ++mi) {
-      __m512i vr;
-      LIBXS_ALIGNED(unsigned int tmp[BLOCK_N], LIBXS_ALIGNMENT);
-      __m512i vacc;
-      int nj;
-      vr = libxs_mod_u32x16(_mm512_load_si512((const __m512i*)(partial[panel] + mi * BLOCK_N)), pi, rcp_i);
-      for (nj = 0; nj < BLOCK_N; ++nj) tmp[nj] = tile_res[panel][mi * BLOCK_N + nj][pidx];
-      vacc = _mm512_add_epi32(_mm512_load_si512((const __m512i*)tmp), vr);
+      uint8_t *const row = tile_res[panel][pidx] + mi * BLOCK_N;
+      const __m512i vr = libxs_mod_u32x16(_mm512_load_si512((const __m512i*)(partial[panel] + mi * BLOCK_N)), pi, rcp_i);
+      __m512i vacc = _mm512_add_epi32(_mm512_cvtepu8_epi32(_mm_loadu_si128((const __m128i*)row)), vr);
       {
         const __mmask16 ge = _mm512_cmpge_epu32_mask(vacc, vpi);
         vacc = _mm512_mask_sub_epi32(vacc, ge, vacc, vpi);
       }
-      _mm512_store_si512((__m512i*)tmp, vacc);
-      for (nj = 0; nj < BLOCK_N; ++nj) tile_res[panel][mi * BLOCK_N + nj][pidx] = (uint8_t)tmp[nj];
+      _mm_storeu_si128((__m128i*)row, _mm512_cvtepi32_epi8(vacc));
     }
   }
 }
@@ -522,7 +511,7 @@ LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512_AMX) void oz2_amx_gemm(
 LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void oz2_tile_vnni512(int nmoduli,
   const oz2_res_t* a_res, const oz2_res_t* b_res, GEMM_INT_TYPE M, GEMM_INT_TYPE N, GEMM_INT_TYPE K_grp_pad,
   GEMM_INT_TYPE ib, GEMM_INT_TYPE jb, GEMM_INT_TYPE iblk, GEMM_INT_TYPE kchunk, const int32_t* a_rowsum,
-  GEMM_INT_TYPE nchunk, uint8_t tile_res[BLOCK_M * BLOCK_N][OZ2_NMODULI_MAX])
+  GEMM_INT_TYPE nchunk, uint8_t tile_res[OZ2_NMODULI_MAX][BLOCK_M * BLOCK_N])
 {
   GEMM_INT_TYPE kb, mi;
   int pidx;
@@ -573,18 +562,14 @@ LIBXS_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX512) void oz2_tile_vnni512(int nmodul
           }
         }
         {
+          uint8_t *const row = tile_res[pidx] + mi * BLOCK_N;
           const __m512i vr = libxs_mod_u32x16(_mm512_add_epi32(acc[mi], _mm512_set1_epi32(128 * asum)), pi, rcp_i);
-          LIBXS_ALIGNED(unsigned int tmp[BLOCK_N], LIBXS_ALIGNMENT);
-          __m512i vacc;
-          int nj2;
-          for (nj2 = 0; nj2 < BLOCK_N; ++nj2) tmp[nj2] = tile_res[mi * BLOCK_N + nj2][pidx];
-          vacc = _mm512_add_epi32(_mm512_loadu_si512((__m512i*)tmp), vr);
+          __m512i vacc = _mm512_add_epi32(_mm512_cvtepu8_epi32(_mm_loadu_si128((const __m128i*)row)), vr);
           {
             const __mmask16 ge = _mm512_cmpge_epu32_mask(vacc, vpi);
             vacc = _mm512_mask_sub_epi32(vacc, ge, vacc, vpi);
           }
-          _mm512_storeu_si512((__m512i*)tmp, vacc);
-          for (nj2 = 0; nj2 < BLOCK_N; ++nj2) tile_res[mi * BLOCK_N + nj2][pidx] = tmp[nj2];
+          _mm_storeu_si128((__m128i*)row, _mm512_cvtepi32_epi8(vacc));
         }
       }
     }
@@ -921,7 +906,7 @@ LIBXS_INLINE void gemm_oz2_diff(const char* transa, const char* transb, const GE
               const GEMM_INT_TYPE N_blocks = LIBXS_UPDIV(N, BLOCK_N);
               const GEMM_INT_TYPE bp_stride = (K_grp_pad / 4) * BLOCK_N;
               const size_t bmod_stride = (size_t)N_blocks * bp_stride;
-              uint8_t amx_res[OZ2_AMX_NACC][BLOCK_M * BLOCK_N][OZ2_NMODULI_MAX];
+              uint8_t amx_res[OZ2_AMX_NACC][OZ2_NMODULI_MAX][BLOCK_M * BLOCK_N];
               int panel;
               memset(amx_res, 0, sizeof(amx_res));
               for (pidx = 0; pidx < nmoduli; ++pidx) {
@@ -936,31 +921,29 @@ LIBXS_INLINE void gemm_oz2_diff(const char* transa, const char* transb, const GE
               for (panel = 0; panel < npanel; ++panel) {
                 GEMM_REAL_TYPE* const amx_cb = c + (jw + panel * BLOCK_N) * ldcv + ib;
                 for (mi = 0; mi < BLOCK_M; ++mi) {
-                  unsigned int batch_res[OZ2_BATCH][OZ2_NMODULI_MAX];
+                  const uint8_t* const batch_res = amx_res[panel][0] + mi * BLOCK_N;
                   double batch_val[OZ2_BATCH];
                   int bi;
-                  for (bi = 0; bi < OZ2_BATCH; ++bi) {
-                    LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NMODULI_MAX, OZ2_NMODULI_DEFAULT)
-                    for (pidx = 0; pidx < nmoduli; ++pidx) {
-                      batch_res[bi][pidx] = amx_res[panel][mi * BLOCK_N + bi][pidx];
-                    }
-                  }
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == OZ2_BATCH
 # if (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH)
-                  oz2_reconstruct_batch_avx512(batch_res, garner_inv, l2_garner_inv, hier_gprod, hier_l2_barrett,
+                  oz2_reconstruct_batch_avx512(batch_res, BLOCK_M * BLOCK_N, garner_inv,
+                    l2_garner_inv, hier_gprod, hier_l2_barrett,
                     nmoduli, OZ2_BATCH, batch_val);
 # else
                   if (LIBXS_X86_AVX512 <= ozaki_target_arch) {
-                    oz2_reconstruct_batch_avx512(batch_res, garner_inv, l2_garner_inv, hier_gprod, hier_l2_barrett,
+                    oz2_reconstruct_batch_avx512(batch_res, BLOCK_M * BLOCK_N, garner_inv,
+                      l2_garner_inv, hier_gprod, hier_l2_barrett,
                       nmoduli, OZ2_BATCH, batch_val);
                   }
                   else {
-                    oz2_reconstruct_batch(batch_res, garner_inv, l2_garner_inv, hier_gprod, hier_l2_barrett,
+                    oz2_reconstruct_batch(batch_res, BLOCK_M * BLOCK_N, garner_inv,
+                      l2_garner_inv, hier_gprod, hier_l2_barrett,
                       nmoduli, OZ2_BATCH, batch_val);
                   }
 # endif
 #else
-                  oz2_reconstruct_batch(batch_res, garner_inv, l2_garner_inv, hier_gprod, hier_l2_barrett,
+                  oz2_reconstruct_batch(batch_res, BLOCK_M * BLOCK_N, garner_inv,
+                    l2_garner_inv, hier_gprod, hier_l2_barrett,
                     nmoduli, OZ2_BATCH, batch_val);
 #endif
                   for (bi = 0; bi < OZ2_BATCH; ++bi) {
@@ -978,7 +961,7 @@ LIBXS_INLINE void gemm_oz2_diff(const char* transa, const char* transb, const GE
           for (jb = jamx; jb < jend; jb += BLOCK_N) {
             const GEMM_INT_TYPE jblk = LIBXS_MIN(BLOCK_N, N - jb);
             GEMM_REAL_TYPE* const cb = c + jb * ldcv + ib;
-            uint8_t tile_res[BLOCK_M * BLOCK_N][OZ2_NMODULI_MAX];
+            uint8_t tile_res[OZ2_NMODULI_MAX][BLOCK_M * BLOCK_N];
             memset(tile_res, 0, sizeof(tile_res));
 
 #if defined(__LIBXSMM)
@@ -997,9 +980,9 @@ LIBXS_INLINE void gemm_oz2_diff(const char* transa, const char* transb, const GE
                   for (mi = 0; mi < iblk; ++mi) {
                     for (nj = 0; nj < jblk; ++nj) {
                       unsigned int r = oz2_mod((uint32_t)partial[mi * BLOCK_N + nj], pidx);
-                      r += tile_res[mi * jblk + nj][pidx];
+                      r += tile_res[pidx][mi * jblk + nj];
                       if (r >= oz2_moduli[pidx]) r -= oz2_moduli[pidx];
-                      tile_res[mi * jblk + nj][pidx] = (uint8_t)r;
+                      tile_res[pidx][mi * jblk + nj] = (uint8_t)r;
                     }
                   }
                 }
@@ -1033,9 +1016,9 @@ LIBXS_INLINE void gemm_oz2_diff(const char* transa, const char* transb, const GE
                     for (nj = 0; nj < jblk; ++nj) {
                       const int32_t dot = partial[mi * jblk + nj];
                       unsigned int r = oz2_mod((uint32_t)dot, pidx);
-                      r += tile_res[mi * jblk + nj][pidx];
+                      r += tile_res[pidx][mi * jblk + nj];
                       if (r >= oz2_moduli[pidx]) r -= oz2_moduli[pidx];
-                      tile_res[mi * jblk + nj][pidx] = (uint8_t)r;
+                      tile_res[pidx][mi * jblk + nj] = (uint8_t)r;
                     }
                   }
                 }
@@ -1046,29 +1029,27 @@ LIBXS_INLINE void gemm_oz2_diff(const char* transa, const char* transb, const GE
             for (mi = 0; mi < iblk; ++mi) {
               for (nj = 0; nj < jblk; nj += OZ2_BATCH) {
                 const GEMM_INT_TYPE bsz = LIBXS_MIN(OZ2_BATCH, (int)(jblk - nj));
-                unsigned int batch_res[OZ2_BATCH][OZ2_NMODULI_MAX];
+                const uint8_t* const batch_res = tile_res[0] + mi * jblk + nj;
                 double batch_val[OZ2_BATCH];
                 int bi;
-                for (bi = 0; bi < (int)bsz; ++bi) {
-                  LIBXS_PRAGMA_LOOP_COUNT(1, OZ2_NMODULI_MAX, OZ2_NMODULI_DEFAULT)
-                  for (pidx = 0; pidx < nmoduli; ++pidx) {
-                    batch_res[bi][pidx] = tile_res[mi * jblk + nj + bi][pidx];
-                  }
-                }
 
 #if defined(LIBXS_INTRINSICS_AVX512) && 16 == OZ2_BATCH
 # if (LIBXS_X86_AVX512 <= LIBXS_STATIC_TARGET_ARCH)
-                oz2_reconstruct_batch_avx512(batch_res, garner_inv, l2_garner_inv, hier_gprod, hier_l2_barrett, nmoduli, (int)bsz, batch_val);
+                oz2_reconstruct_batch_avx512(batch_res, BLOCK_M * BLOCK_N, garner_inv,
+                  l2_garner_inv, hier_gprod, hier_l2_barrett, nmoduli, (int)bsz, batch_val);
 # else
                 if (LIBXS_X86_AVX512 <= ozaki_target_arch) {
-                  oz2_reconstruct_batch_avx512(batch_res, garner_inv, l2_garner_inv, hier_gprod, hier_l2_barrett, nmoduli, (int)bsz, batch_val);
+                  oz2_reconstruct_batch_avx512(batch_res, BLOCK_M * BLOCK_N, garner_inv,
+                    l2_garner_inv, hier_gprod, hier_l2_barrett, nmoduli, (int)bsz, batch_val);
                 }
                 else {
-                  oz2_reconstruct_batch(batch_res, garner_inv, l2_garner_inv, hier_gprod, hier_l2_barrett, nmoduli, (int)bsz, batch_val);
+                  oz2_reconstruct_batch(batch_res, BLOCK_M * BLOCK_N, garner_inv,
+                    l2_garner_inv, hier_gprod, hier_l2_barrett, nmoduli, (int)bsz, batch_val);
                 }
 # endif
 #else
-                oz2_reconstruct_batch(batch_res, garner_inv, l2_garner_inv, hier_gprod, hier_l2_barrett, nmoduli, (int)bsz, batch_val);
+                oz2_reconstruct_batch(batch_res, BLOCK_M * BLOCK_N, garner_inv,
+                  l2_garner_inv, hier_gprod, hier_l2_barrett, nmoduli, (int)bsz, batch_val);
 #endif
 
                 for (bi = 0; bi < (int)bsz; ++bi) {
