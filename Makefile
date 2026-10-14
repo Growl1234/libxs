@@ -19,10 +19,10 @@ DOCDIR := documentation
 # subdirectories (relative) to PREFIX (install targets)
 PINCDIR ?= include/$(PROJECT)
 PSRCDIR ?= src
-POUTDIR ?= $(OUTDIR)
-PPKGDIR ?= $(OUTDIR)/pkgconfig
-PCMKDIR ?= $(OUTDIR)/cmake/$(PROJECT)
-PMODDIR ?= $(OUTDIR)
+POUTDIR ?= lib
+PPKGDIR ?= lib/pkgconfig
+PCMKDIR ?= lib/cmake/$(PROJECT)
+PMODDIR ?= lib
 PBINDIR ?= $(BINDIR)
 PTSTDIR ?= $(TSTDIR)
 PSHRDIR ?= share/$(PROJECT)
@@ -71,9 +71,9 @@ endif
 # Timeout when downloading documentation parts
 TIMEOUT := 30
 
-# fixed .state file directory (included by source)
-DIRSTATE := $(OUTDIR)/..
-LIBXS_BUILD_STATE := $(abspath $(DIRSTATE)/.state)
+# fixed .state file directory (included by source), one per target
+DIRSTATE = lib/$(LIBARCH)
+LIBXS_BUILD_STATE = $(abspath $(DIRSTATE)/.state)
 
 # avoid to link with C++ standard library
 FORCE_CXX := 0
@@ -89,6 +89,11 @@ EXCLUDE_STATE := \
 
 # include common Makefile artifacts
 include $(ROOTDIR)/Makefile.inc
+
+# build per target (lib/<target>), lib/ refers to the latest build
+OUTTOP := $(OUTDIR)
+OUTDIR := $(OUTTOP)/$(LIBARCH)
+BLDDIR := $(BLDDIR)/$(LIBARCH)
 
 # 0: static, 1: shared, 2: static and shared
 ifneq (,$(filter-out file,$(origin STATIC)))
@@ -298,6 +303,7 @@ $(INCDIR)/$(PROJECT).mod: $(BLDDIR)/intel64/$(PROJECT)-mod.o
 	@if [ -e $(BLDDIR)/intel64/$(PROJECT).mod ]; then $(CP) $(BLDDIR)/intel64/$(PROJECT).mod $(INCDIR); fi
 	@if [ -e $(PROJECT).mod ]; then $(MV) $(PROJECT).mod $(INCDIR); fi
 	@if [ -e $(PROJECT).mod ]; then $(MV) $(PROJECT).mod $(INCDIR); fi
+	@if [ -e $@ ]; then $(MKDIR) -p $(OUTDIR) && $(CP) $@ $(OUTDIR); fi
 	@-touch $@
 else
 .PHONY: $(BLDDIR)/intel64/$(PROJECT)-mod.o
@@ -306,6 +312,10 @@ endif
 
 .PHONY: clib
 clib: cheader $(PPKGDIR)/$(PROJECT)-static.pc $(PPKGDIR)/$(PROJECT)-shared.pc $(PCMKDIR)/$(PROJECT)Config.cmake
+	@-rm -f $(OUTTOP)/$(PROJECT)*.$(SLIBEXT) $(OUTTOP)/$(PROJECT)*.$(DLIBEXT)*
+	@if [ -d $(OUTTOP) ]; then cd $(OUTTOP) && for LIB in $(LIBARCH)/$(PROJECT)*.$(SLIBEXT) $(LIBARCH)/$(PROJECT)*.$(DLIBEXT)*; do \
+		if [ -e "$${LIB}" ]; then ln -fs "$${LIB}" .; fi; \
+	done; fi
 ifeq (,$(filter-out 0 2,$(BUILD)))
 $(OUTDIR)/$(PROJECT).$(SLIBEXT): $(OUTDIR)/.make $(OBJFILES) $(FTNOBJS)
 	$(MAKE_AR) $(OUTDIR)/$(PROJECT).$(SLIBEXT) $(call tailwords,$^)
@@ -456,13 +466,13 @@ endif
 
 .PHONY: realclean
 realclean: clean
-ifneq ($(call qapath,$(OUTDIR)),$(ROOTDIR))
-ifneq ($(call qapath,$(OUTDIR)),$(HEREDIR))
-	@-rm -rf $(OUTDIR)
+ifneq ($(call qapath,$(OUTTOP)),$(ROOTDIR))
+ifneq ($(call qapath,$(OUTTOP)),$(HEREDIR))
+	@-rm -rf $(OUTTOP)
 endif
 endif
-ifneq (,$(wildcard $(OUTDIR))) # still exists
-	@-rm -f $(OUTDIR)/$(PROJECT)*.$(SLIBEXT) $(OUTDIR)/$(PROJECT)*.$(DLIBEXT)*
+ifneq (,$(wildcard $(OUTTOP))) # still exists
+	@-rm -f $(OUTTOP)/$(PROJECT)*.$(SLIBEXT) $(OUTTOP)/$(PROJECT)*.$(DLIBEXT)*
 	@-rm -rf $(PPKGDIR) $(PCMKDIR)
 endif
 ifneq ($(call qapath,$(BINDIR)),$(ROOTDIR))
@@ -618,8 +628,10 @@ PCSUBST_SHARED = $(PCSUBST_BASE) -e 's|@LIBS@|-L$${libdir} -l$(patsubst lib%,%,$
 ifeq (,$(filter-out 0 2,$(BUILD)))
 $(PPKGDIR)/$(PROJECT)-static.pc: $(OUTDIR)/$(PROJECT).$(SLIBEXT) $(PPKGDIR)/.make $(PCTEMPLATE)
 	@$(PCSUBST_STATIC) <$(PCTEMPLATE) >$@
+	@$(MKDIR) -p $(OUTDIR)/pkgconfig && $(SED) -e 's|^libdir=\(..*\)$$|libdir=\1/$(LIBARCH)|' <$@ >$(OUTDIR)/pkgconfig/$(notdir $@)
   ifeq (,$(filter-out 0 2,$(BUILD)))
 	@ln -fs $(notdir $@) $(PPKGDIR)/$(PROJECT).pc
+	@ln -fs $(notdir $@) $(OUTDIR)/pkgconfig/$(PROJECT).pc
   endif
 else
 .PHONY: $(PPKGDIR)/$(PROJECT)-static.pc
@@ -628,8 +640,10 @@ endif
 ifeq (,$(filter-out 1 2,$(BUILD)))
 $(PPKGDIR)/$(PROJECT)-shared.pc: $(OUTDIR)/$(PROJECT).$(DLIBEXT) $(PPKGDIR)/.make $(PCTEMPLATE)
 	@$(PCSUBST_SHARED) <$(PCTEMPLATE) >$@
+	@$(MKDIR) -p $(OUTDIR)/pkgconfig && $(SED) -e 's|^libdir=\(..*\)$$|libdir=\1/$(LIBARCH)|' <$@ >$(OUTDIR)/pkgconfig/$(notdir $@)
   ifeq (,$(filter-out 1,$(BUILD)))
 	@ln -fs $(notdir $@) $(PPKGDIR)/$(PROJECT).pc
+	@ln -fs $(notdir $@) $(OUTDIR)/pkgconfig/$(PROJECT).pc
   endif
 else
 .PHONY: $(PPKGDIR)/$(PROJECT)-shared.pc
@@ -644,6 +658,7 @@ $(PCMKDIR)/$(PROJECT)Config.cmake: $(ROOTSCR)/$(PROJECT)Config.cmake $(PCMKDIR)/
 	@$(SED) -e 's|@LIBXS_OPENMP@|$(if $(strip $(FC)),ON,OFF)|g' <$< >$@
 	@$(SED) -e 's|@VERSION@|$(VERSION_STRING)|g' \
 		<$(ROOTSCR)/$(PROJECT)ConfigVersion.cmake.in >$(PCMKDIR)/$(PROJECT)ConfigVersion.cmake
+	@$(MKDIR) -p $(OUTDIR)/cmake/$(PROJECT) && $(CP) $(PCMKDIR)/$(PROJECT)Config*.cmake $(OUTDIR)/cmake/$(PROJECT)
 
 $(OUTDIR)/$(PROJECT).env: $(OUTDIR)/.make $(INCDIR)/$(PROJECT).h
 	@echo "#%Module1.0" >$@

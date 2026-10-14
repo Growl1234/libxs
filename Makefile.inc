@@ -2031,6 +2031,18 @@ ifeq ($(CTARGET),$(FTARGET))
   TARGET ?= $(CTARGET)
 endif
 
+# Folder per target (lib/<name>), e.g., the CPU selected by native flags.
+# Portable targets run on the whole architecture family (uname -m).
+ifeq (,$(LIBARCH))
+  LIBARCH := $(shell echo | $(CC) $(CTARGET) -x c -E -v - 2>&1 | $(SED) -n \
+    -e 's/.*-target-cpu"* "*\([^" ]*\).*/\1/p' \
+    -e 's/.*\/cc1 .* -mcpu=\([^ +]*\).*/\1/p' \
+    -e 's/.*\/cc1 .* -march=\([^ +]*\).*/\1/p' | head -n1)
+  ifneq (,$(filter x86-64% armv% generic,$(LIBARCH))$(if $(LIBARCH),,0))
+    LIBARCH := $(MNAME)
+  endif
+endif
+
 # Intrinsics support level (0: None, 1: Static, 2: Dynamic)
 # 1003<=INTRINSICS<1999: CPUID
 ifneq (0,$(INTEL))
@@ -2329,9 +2341,12 @@ OMPFLAG ?= $(NULL)
 # prerequisite nothing can produce ("No rule to make target"), and it also hides
 # the header-only fallback that the absence of a library is supposed to select.
 libexists = $(if $(realpath $1),$1)
-SLIB := $(call libexists,$(wildcard $(DEPDIR)/lib/$(PROJECT).$(SLIBEXT)))
-DLIB := $(call libexists,$(wildcard $(DEPDIR)/lib/$(PROJECT).$(DLIBEXT)))
-XLIB := $(call libexists,$(wildcard $(DEPDIR)/lib/$(PROJECT).$(LIBEXT)))
+# lib/<target>, lib/<machine> (portable), then lib/ (latest build)
+LIBSUBDIR := $(firstword $(foreach D,$(LIBARCH) $(MNAME),$(if $(realpath $(wildcard \
+  $(DEPDIR)/lib/$(D)/$(PROJECT).$(SLIBEXT) $(DEPDIR)/lib/$(D)/$(PROJECT).$(DLIBEXT))),lib/$(D))) lib)
+SLIB := $(call libexists,$(wildcard $(DEPDIR)/$(LIBSUBDIR)/$(PROJECT).$(SLIBEXT)))
+DLIB := $(call libexists,$(wildcard $(DEPDIR)/$(LIBSUBDIR)/$(PROJECT).$(DLIBEXT)))
+XLIB := $(call libexists,$(wildcard $(DEPDIR)/$(LIBSUBDIR)/$(PROJECT).$(LIBEXT)))
 XLIB := $(if $(XLIB),$(XLIB),$(if $(SLIB),$(SLIB),$(DLIB)))
 
 ifeq (libxs,$(PROJECT))
