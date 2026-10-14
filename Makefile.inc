@@ -1979,9 +1979,17 @@ ifeq (undefined,$(origin TARGET))
         endif
       endif
     else ifneq (,$(filter arm64 aarch64,$(MNAME)))
+      # native on aarch64 is -mcpu (-march=native -mtune=native loses the CPU)
+      ifeq (0,$(SSE))
+      ifneq (,$(call ctest,$(CC),-mcpu=native,$(NULL) $(NULL)))
+        CTARGET := -mcpu=native
+      endif
+      endif
       ifeq (Darwin,$(UNAME))
+      ifeq (,$(CTARGET))
       ifneq (,$(call ctest,$(CC),-target arm64-apple-macos -mcpu=apple-m1,$(NULL) $(NULL)))
         CTARGET := -target arm64-apple-macos -mcpu=apple-m1
+      endif
       endif
       endif
       ifeq (,$(CTARGET))
