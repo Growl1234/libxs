@@ -139,3 +139,10 @@ void libxs_stdio_release(void);
 ```
 
 Acquire/release a global lock around console output. The macros `LIBXS_STDIO_ACQUIRE()` and `LIBXS_STDIO_RELEASE()` expand to these calls.
+
+```C
+int libxs_singleton_acquire(const char key[]);
+void libxs_singleton_release(int handle);
+```
+
+Elect one process per node for a key: of the user's processes on a node, the first to acquire the key owns it until it releases the handle or exits, and every other acquisition fails, including a second one by the owner. A non-negative handle means the calling process owns the key. Unlike `libxs_nrank`, the election does not depend on what the launcher states, so it also holds across jobs and without MPI. On POSIX the lock is a file `/tmp/.libxs.<uid>.<key>`, hence `/tmp` must be local to the node; the key carries no path separator, and an empty key is the one LIBXS uses itself.

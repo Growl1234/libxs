@@ -871,6 +871,19 @@ LIBXS_API void libxs_stdio_acquire(void);
 /** Synchronize console output (unlock). */
 LIBXS_API void libxs_stdio_release(void);
 
+/**
+ * Node-wide named singleton: of the user's processes on a node, the first to
+ * acquire a key owns it until it releases the handle or exits (the system
+ * drops the lock with the process). A second acquisition of an owned key
+ * fails, including from the owning process. Returns a non-negative handle
+ * if the calling process now owns the key, or a negative value. The key is
+ * part of a file name, hence carries no path separator, and an empty key
+ * names the singleton LIBXS itself uses.
+ */
+LIBXS_API int libxs_singleton_acquire(const char key[]);
+/** Releases a handle of libxs_singleton_acquire (a negative one is ignored). */
+LIBXS_API void libxs_singleton_release(int handle);
+
 /* header-only: include implementation (deferred from libxs_macros.h) */
 #if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \
  && !defined(LIBXS_MALLOC_H) && !defined(LIBXS_HIST_H) \

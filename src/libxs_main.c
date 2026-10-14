@@ -67,15 +67,9 @@ LIBXS_APIVAR_PRIVATE_DEF(int libxs_stdio_handle);
 LIBXS_APIVAR_PRIVATE_DEF(int libxs_verbosity);
 LIBXS_APIVAR_PRIVATE_DEF(int libxs_se);
 
-#if defined(_WIN32)
-# define INTERNAL_SINGLETON_HANDLE HANDLE
-# define INTERNAL_SINGLETON(HANDLE) (NULL != (HANDLE))
-#else
-# define INTERNAL_SINGLETON_HANDLE int
-# define INTERNAL_SINGLETON(HANDLE) (0 <= (HANDLE) && '\0' != *internal_libxs_singleton_fname)
-LIBXS_APIVAR_DEFINE(char internal_libxs_singleton_fname[64]);
-#endif
-LIBXS_APIVAR_DEFINE(INTERNAL_SINGLETON_HANDLE internal_libxs_singleton_handle);
+/* handle of libxs_singleton_acquire plus one, hence zero (not acquired) before initialization */
+#define INTERNAL_SINGLETON(HANDLE) (0 < (HANDLE))
+LIBXS_APIVAR_DEFINE(int internal_libxs_singleton_handle);
 LIBXS_APIVAR_DEFINE(char internal_libxs_stdio_fname[64]);
 LIBXS_APIVAR_DEFINE(libxs_cpuid_t internal_libxs_cpuid_info);
 LIBXS_APIVAR_DEFINE(const char* internal_libxs_build_state);
@@ -305,14 +299,8 @@ LIBXS_API_INTERN void internal_libxs_finalize(void)
   /* determine whether this instance is unique or not */
   if (INTERNAL_SINGLETON(internal_libxs_singleton_handle)) {
     internal_libxs_dump(stdout, 0/*urgent*/);
-    /* cleanup singleton */
-# if defined(_WIN32)
-    ReleaseMutex(internal_libxs_singleton_handle);
-    CloseHandle(internal_libxs_singleton_handle);
-# else
-    unlink(internal_libxs_singleton_fname);
-    close(internal_libxs_singleton_handle);
-# endif
+    libxs_singleton_release(internal_libxs_singleton_handle - 1);
+    internal_libxs_singleton_handle = 0;
   }
 #endif
   if (0 != libxs_verbosity) LIBXS_STDIO_RELEASE(); /* synchronize I/O */
@@ -578,24 +566,13 @@ LIBXS_API_CTOR void libxs_init(void)
 #endif
       { /* determine whether this instance is unique or not */
 #if (0 != LIBXS_SYNC)
-# if defined(_WIN32)
-        internal_libxs_singleton_handle = CreateMutex(NULL, TRUE, "GlobalLIBXS");
-# else
+# if !defined(_WIN32)
         const unsigned int userid = (unsigned int)getuid();
-        const int result_sgltn = LIBXS_SNPRINTF(internal_libxs_singleton_fname, sizeof(internal_libxs_singleton_fname), "/tmp/.libxs.%u",
-          /*rely on user id to avoid permission issues in case of left-over files*/userid);
         const int result_stdio = LIBXS_SNPRINTF(internal_libxs_stdio_fname, sizeof(internal_libxs_stdio_fname), "/tmp/.libxs.stdio.%u",
           /*rely on user id to avoid permission issues in case of left-over files*/userid);
-        struct flock singleton_flock;
-        int file_handle;
-        singleton_flock.l_start = 0;
-        singleton_flock.l_len = 0; /* entire file */
-        singleton_flock.l_type = F_WRLCK; /* exclusive across PIDs */
-        singleton_flock.l_whence = SEEK_SET;
-        file_handle = ((0 < result_sgltn && (int)sizeof(internal_libxs_singleton_fname) > result_sgltn)
-          ? open(internal_libxs_singleton_fname, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR) : -1);
-        internal_libxs_singleton_handle = fcntl(file_handle, F_SETLK, &singleton_flock);
-        if (0 <= file_handle && 0 > internal_libxs_singleton_handle) close(file_handle);
+# endif
+        internal_libxs_singleton_handle = libxs_singleton_acquire("") + 1;
+# if !defined(_WIN32)
         libxs_stdio_handle = ((0 < result_stdio && (int)sizeof(internal_libxs_stdio_fname) > result_stdio)
           ? (open(internal_libxs_stdio_fname, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR) + 1) : 0);
 # endif  /* coverity[leaked_handle] */

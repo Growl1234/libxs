@@ -284,6 +284,8 @@ libxs_setdiff
 libxs_setdiff_min
 libxs_shuffle
 libxs_shuffle2
+libxs_singleton_acquire
+libxs_singleton_release
 libxs_sort
 libxs_sort_smooth
 libxs_span_create

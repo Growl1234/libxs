@@ -116,7 +116,7 @@ endfunction()
 
 # C tests discovered by tests/test.sh.
 set(LIBXS_HEADER_ONLY_TESTS hash headeronly matdiff memory sync_atomics
-    sync_barrier)
+    sync_barrier sync_singleton)
 set(LIBXS_C_TESTS
   fprint
   gemm_dispatch
@@ -144,6 +144,7 @@ set(LIBXS_C_TESTS
   str
   sync_atomics
   sync_barrier
+  sync_singleton
   timer
   token)
 
