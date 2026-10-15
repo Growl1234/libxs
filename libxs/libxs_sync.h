@@ -747,6 +747,47 @@ LIBXS_EXTERN_C typedef struct libxs_barrier_t {
   int ntasks;
 } libxs_barrier_t;
 
+/** Who may wait on a ring: threads of one process, or processes sharing its memory. */
+LIBXS_EXTERN_C typedef enum libxs_ring_kind_t {
+  LIBXS_RING_PRIVATE = 0,
+  LIBXS_RING_SHARED = 1
+} libxs_ring_kind_t;
+
+/** One side of a ring: its position, and what only that side writes. */
+LIBXS_EXTERN_C typedef union libxs_ring_side_t {
+  struct {
+    /** Bytes published (producer) or released (consumer) so far, modulo 2^32. */
+    volatile unsigned int pos;
+    /** Non-zero while this side sleeps: the other side then wakes it. */
+    volatile unsigned int wait;
+    /** Bytes of the record this side holds (reserved or peeked) but has not passed on. */
+    unsigned int size;
+  } v;
+  char pad[LIBXS_CACHELINE];
+} libxs_ring_side_t;
+
+/**
+ * Ring of variable-length records between one producer and one consumer, which
+ * may be threads or processes (libxs_ring_init). The ring is a header followed
+ * by its records in one block of memory, and holds no pointer, so two processes
+ * may map the block at different addresses.
+ *
+ * Each side owns a cache line, written by that side alone: the other side only
+ * reads it, except to see whether it has to wake a sleeper.
+ */
+LIBXS_EXTERN_C typedef struct libxs_ring_t {
+  libxs_ring_side_t head; /* producer */
+  libxs_ring_side_t tail; /* consumer */
+  union {
+    struct {
+      unsigned int capacity; /* bytes of records, a power of two */
+      volatile int closed;
+      int kind; /* libxs_ring_kind_t */
+    } v;
+    char pad[LIBXS_CACHELINE];
+  } info;
+} libxs_ring_t;
+
 
 /**
  * Initialize for a team of ntasks. Called once, before any task waits, and by
@@ -883,6 +924,40 @@ LIBXS_API void libxs_stdio_release(void);
 LIBXS_API int libxs_singleton_acquire(const char key[]);
 /** Releases a handle of libxs_singleton_acquire (a negative one is ignored). */
 LIBXS_API void libxs_singleton_release(int handle);
+
+/**
+ * Bytes of memory a ring (libxs_ring_t) needs to hold capacity bytes of records,
+ * where capacity is rounded up to a power of two. A record takes its size rounded
+ * up to eight bytes, plus eight.
+ */
+LIBXS_API size_t libxs_ring_size(size_t capacity);
+/**
+ * Initialize a ring in the given memory (size bytes, aligned to a cache line):
+ * the records take the largest power of two that fits behind the header. For two
+ * processes the memory is shared (MAP_SHARED) and the kind is LIBXS_RING_SHARED.
+ * One side initializes the ring, before the other uses the same memory as its
+ * libxs_ring_t. Returns NULL if the memory cannot hold a ring.
+ */
+LIBXS_API libxs_ring_t* libxs_ring_init(void* memory, size_t size, libxs_ring_kind_t kind);
+/**
+ * Producer: room for a record of nbytes, contiguous and aligned to eight bytes,
+ * which is published by libxs_ring_commit. Waits up to timeout_ms for room (zero
+ * does not wait, negative waits until there is room). Returns NULL if there was
+ * no room in time, the ring is closed, or the record exceeds half the capacity.
+ */
+LIBXS_API void* libxs_ring_reserve(libxs_ring_t* ring, size_t nbytes, int timeout_ms);
+/** Producer: publishes the record of the last libxs_ring_reserve, and wakes the consumer. */
+LIBXS_API void libxs_ring_commit(libxs_ring_t* ring);
+/**
+ * Consumer: the oldest record, which stays in the ring until libxs_ring_release.
+ * Waits as libxs_ring_reserve does. Returns NULL if no record arrived in time, or
+ * the ring is closed and empty; a closed ring still delivers what was committed.
+ */
+LIBXS_API const void* libxs_ring_peek(libxs_ring_t* ring, size_t* nbytes, int timeout_ms);
+/** Consumer: passes the record of the last libxs_ring_peek back, and wakes the producer. */
+LIBXS_API void libxs_ring_release(libxs_ring_t* ring);
+/** Either side: no record is reserved anymore, and both sides stop waiting. */
+LIBXS_API void libxs_ring_close(libxs_ring_t* ring);
 
 /* header-only: include implementation (deferred from libxs_macros.h) */
 #if defined(LIBXS_SOURCE) && !defined(LIBXS_SOURCE_H) \

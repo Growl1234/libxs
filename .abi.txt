@@ -232,6 +232,7 @@ libxs_predict_recalibrate_prob
 libxs_predict_save
 libxs_predict_set_central
 libxs_predict_set_consistency
+libxs_predict_set_coordinate
 libxs_predict_set_decompose
 libxs_predict_set_diff
 libxs_predict_set_floor
@@ -275,6 +276,13 @@ libxs_registry_size
 libxs_registry_value_size
 libxs_remainder
 libxs_rid
+libxs_ring_close
+libxs_ring_commit
+libxs_ring_init
+libxs_ring_peek
+libxs_ring_release
+libxs_ring_reserve
+libxs_ring_size
 libxs_rng_f64
 libxs_rng_seq
 libxs_rng_set_seed

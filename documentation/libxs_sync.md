@@ -87,6 +87,24 @@ It is flat, one counter for the whole team, which suits a team that meets betwee
 
 Note that a lock is not a barrier and cannot stand in for one. A task holding a lock while waiting for tasks that need that lock to arrive does not proceed, so the two serve opposite purposes: a lock admits one task and needs to know nothing about the team, a barrier requires the whole team.
 
+## Ring
+
+```C
+const size_t size = libxs_ring_size(capacity);
+libxs_ring_t* ring = libxs_ring_init(memory, size, LIBXS_RING_SHARED);
+void* record = libxs_ring_reserve(ring, nbytes, timeout_ms); /* producer */
+libxs_ring_commit(ring);
+const void* data = libxs_ring_peek(ring, &nbytes, timeout_ms); /* consumer */
+libxs_ring_release(ring);
+libxs_ring_close(ring);
+```
+
+Records of varying size passed from one producer to one consumer, in order. The caller owns the memory (aligned to a cache line), and the ring keeps no pointer in it, so two processes can map the same memory (`MAP_SHARED`) at different addresses; one side calls `libxs_ring_init` and the other uses the memory as is. `LIBXS_RING_PRIVATE` is for threads of one process, `LIBXS_RING_SHARED` for processes.
+
+A record is written in place: `libxs_ring_reserve` returns room for it, contiguous and aligned to eight bytes, and `libxs_ring_commit` publishes it. The consumer reads it in place as well, until `libxs_ring_release`. A record takes at most half the capacity.
+
+A side that has to wait spins briefly and then sleeps (a futex on Linux) until the other side moves; `timeout_ms` of zero does not wait and a negative one waits indefinitely. `libxs_ring_close` ends the waiting on both sides, while the consumer still receives what was committed. A process that dies does not close its side, hence a timeout is how the other side notices.
+
 ## File Locking
 
 ```C
