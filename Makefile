@@ -177,9 +177,14 @@ OBJFILES := $(patsubst %,$(BLDDIR)/intel64/%.o,$(basename $(notdir $(SRCFILES)))
 ifneq (,$(strip $(FC)))
   FTNOBJS := $(BLDDIR)/intel64/$(PROJECT)-mod.o
 endif
-# the Fortran runtime is linked only if the Fortran objects reference it
-FTNRTLINK = $(if $(and $(FTNOBJS),$(LIBGFORTRAN),$(NM)),$$($(NM) -u $(FTNOBJS) 2>/dev/null \
+# the Fortran runtime is linked only if the Fortran objects reference it: an executable
+# linking the shared library must not have to know which compiler built the module
+FTNRTGNU = $(if $(LIBGFORTRAN),$$($(NM) -u $(FTNOBJS) 2>/dev/null \
   | $(GREP) -q _gfortran_ && echo $(LIBGFORTRAN) $(call abslibrpath,$(LIBGFORTRAN))))
+FTNRTIFC = $(if $(filter ifx ifort,$(call qndir,$(FC))),$(call libpath,$(FLD),$(SLDFLAGS),ifcore))
+FTNRTINTEL = $(if $(FTNRTIFC),$$($(NM) -u $(FTNOBJS) 2>/dev/null \
+  | $(GREP) -qE "[ _](for_|iso_c_binding_mp_)" && echo $(FTNRTIFC) $(call abslibrpath,$(FTNRTIFC))))
+FTNRTLINK = $(if $(and $(FTNOBJS),$(NM)),$(FTNRTGNU) $(FTNRTINTEL))
 
 # no warning conversion for released versions
 ifneq (0,$(VERSION_RELEASED))
