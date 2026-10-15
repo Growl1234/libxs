@@ -106,7 +106,13 @@ int main(void)
       }
     }
   }
-  /* the penalty reaches the reloaded model, so both answer the same */
+  /**
+   * The penalty reaches the reloaded model, so both answer the same. The value
+   * is compared exactly and the confidence to rounding: a loaded corpus is
+   * rebuilt from the stored normalized points, so its inputs, and the round
+   * trip the penalty measures, are exact only where the compiler's floating
+   * point inverts the normalization exactly, which -fp-model=fast does not.
+   */
   if (EXIT_SUCCESS == result) {
     for (i = 0; i < NQUERY && EXIT_SUCCESS == result; ++i) {
       double inputs[NINPUT], outputs[NOUTPUT], pa[NOUTPUT], pb[NOUTPUT];
@@ -117,10 +123,12 @@ int main(void)
       libxs_predict_eval(NULL, loaded, inputs, pb, &ib, 1);
       for (j = 0; j < NOUTPUT && EXIT_SUCCESS == result; ++j) {
         if (pa[j] != pb[j] || NULL == ia.confidence || NULL == ib.confidence
-          || ia.confidence[j] != ib.confidence[j])
+          || 1e-9 < LIBXS_FABS(ia.confidence[j] - ib.confidence[j]))
         {
-          fprintf(stderr, "query %i output %i: built %g, reloaded %g\n",
-            i, j, pa[j], pb[j]);
+          fprintf(stderr, "query %i output %i: built %g (confidence %.17g),"
+            " reloaded %g (confidence %.17g)\n", i, j, pa[j],
+            NULL != ia.confidence ? ia.confidence[j] : -1.0, pb[j],
+            NULL != ib.confidence ? ib.confidence[j] : -1.0);
           result = EXIT_FAILURE;
         }
       }
