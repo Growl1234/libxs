@@ -19,6 +19,12 @@
 #define TEST_RING_NRECORDS 100000
 #define TEST_RING_MAXSIZE 200
 
+#if defined(_DEBUG)
+# define FPRINTF(STREAM, ...) do { fprintf(STREAM, __VA_ARGS__); } while(0)
+#else
+# define FPRINTF(STREAM, ...) do {} while(0)
+#endif
+
 
 /* Size and contents of the i-th record: varying sizes make records wrap at varying offsets. */
 static size_t test_ring_size(unsigned int i)
@@ -88,6 +94,7 @@ static int test_single(void)
   for (i = 0; i < n && EXIT_SUCCESS == result; ++i) result = test_ring_consume(ring, i, 0);
   if (EXIT_SUCCESS == result && NULL != libxs_ring_peek(ring, NULL, -1)) result = EXIT_FAILURE;
   libxs_free(memory);
+  if (EXIT_SUCCESS != result) FPRINTF(stderr, "ERROR: ring within one process failed\n");
   return result;
 }
 
@@ -109,6 +116,7 @@ static int test_processes(void)
   if (0 == child) {
     unsigned int i;
     for (i = 0; i < TEST_RING_NRECORDS && EXIT_SUCCESS == result; ++i) result = test_ring_produce(ring, i, 10000);
+    if (EXIT_SUCCESS != result) FPRINTF(stderr, "ERROR: producer failed at record %u\n", i - 1);
     libxs_ring_close(ring);
     _exit(result);
   }
@@ -116,6 +124,7 @@ static int test_processes(void)
     int status = 0;
     unsigned int i;
     for (i = 0; i < TEST_RING_NRECORDS && EXIT_SUCCESS == result; ++i) result = test_ring_consume(ring, i, 10000);
+    if (EXIT_SUCCESS != result) FPRINTF(stderr, "ERROR: consumer failed at record %u\n", i - 1);
     if (EXIT_SUCCESS == result && NULL != libxs_ring_peek(ring, NULL, 10000)) result = EXIT_FAILURE;
     if (EXIT_SUCCESS != result) libxs_ring_close(ring); /* the producer must not wait for room forever */
     if (child != waitpid(child, &status, 0) || !WIFEXITED(status) || 0 != WEXITSTATUS(status)) result = EXIT_FAILURE;

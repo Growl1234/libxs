@@ -240,6 +240,24 @@ LIBXS_API void libxs_singleton_release(int handle)
 }
 
 
+/* Milliseconds of a monotonic clock: a deadline must not depend on calibrating a cycle counter. */
+LIBXS_API_INTERN int64_t internal_libxs_ring_msec(void);
+LIBXS_API_INTERN int64_t internal_libxs_ring_msec(void)
+{
+  int64_t result;
+#if defined(_WIN32)
+  result = (int64_t)GetTickCount64();
+#else
+  struct timespec now;
+  if (0 == clock_gettime(CLOCK_MONOTONIC, &now)) {
+    result = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+  }
+  else result = (int64_t)(1E3 * libxs_timer_duration(0, libxs_timer_tick()));
+#endif
+  return result;
+}
+
+
 /* Sleeps while the word holds what was seen (wake is zero), or wakes whoever sleeps on the word. */
 LIBXS_API_INTERN void internal_libxs_ring_futex(const libxs_ring_t* ring, volatile unsigned int* word,
   int wake, unsigned int seen, int nap_ms);
@@ -283,7 +301,7 @@ LIBXS_API_INTERN int internal_libxs_ring_wait(libxs_ring_t* ring, int producer, 
   int closed = LIBXS_ATOMIC_LOAD(&ring->info.v.closed, LIBXS_ATOMIC_SEQ_CST);
   int result = (need <= (0 != producer ? (capacity - (own - seen)) : (seen - own)) && (0 == producer || 0 == closed));
   if (0 == result && 0 == closed && 0 != timeout_ms) {
-    const libxs_timer_tick_t start = libxs_timer_tick();
+    const int64_t start = internal_libxs_ring_msec();
     int npause = 0, expired = 0;
     while (0 == result && 0 == closed && 0 == expired) {
       if (INTERNAL_LIBXS_RING_NSPIN > npause) {
@@ -291,10 +309,10 @@ LIBXS_API_INTERN int internal_libxs_ring_wait(libxs_ring_t* ring, int producer, 
         ++npause;
       }
       else {
-        const int elapsed = (int)(1E3 * libxs_timer_duration(start, libxs_timer_tick()));
+        const int64_t elapsed = internal_libxs_ring_msec() - start;
         if (0 > timeout_ms || elapsed < timeout_ms) {
           const int nap = (0 > timeout_ms ? INTERNAL_LIBXS_RING_NAP
-            : LIBXS_MIN(INTERNAL_LIBXS_RING_NAP, timeout_ms - elapsed));
+            : (int)LIBXS_MIN(INTERNAL_LIBXS_RING_NAP, timeout_ms - elapsed));
           LIBXS_ATOMIC_STORE(&self->v.wait, 1, LIBXS_ATOMIC_SEQ_CST);
           if (seen == LIBXS_ATOMIC_LOAD(other, LIBXS_ATOMIC_SEQ_CST)) {
             internal_libxs_ring_futex(ring, other, 0 /*wait*/, seen, LIBXS_MAX(nap, 1));
