@@ -155,6 +155,8 @@ LIBXS_API_INLINE int internal_libxs_predict_load_entries(libxs_predict_t* model)
       if (0 < cl->nentries && NULL == cl->sorted_idx) recoverable = 0;
     }
   }
+  /* a score maps a whole bin to one point, so its input cannot come back */
+  if (NULL != model->input_score) recoverable = 0;
   if (0 != recoverable && NULL != model->weights) {
     /**
      * Feature selection (Fisher, setdiff, PCA) zeroes the weight of a dropped
@@ -205,7 +207,7 @@ LIBXS_API_INLINE int internal_libxs_predict_load_entries(libxs_predict_t* model)
             }
             else {
               internal_libxs_predict_denormalize(model,
-                cl->kd_pts + (size_t)k * m, e->inputs);
+                cl->kd_pts + (size_t)k * model->ncoord, e->inputs);
               memcpy(e->outputs, cl->raw_outputs + (size_t)k * n,
                 (size_t)n * sizeof(double));
               model->assignments[gi] = c;
@@ -244,7 +246,7 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
   const libxs_predict_t* model, void* buffer, size_t* size)
 {
   int result = EXIT_SUCCESS;
-  const int m = model->ninputs, n = model->noutputs;
+  const int m = model->ninputs, mc = model->ncoord, n = model->noutputs;
   const int p = model->nentries;
   size_t required = 0;
   int c, j;
@@ -258,14 +260,17 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
   }
   required += (size_t)m * 2 * sizeof(double);
   if (NULL != model->input_knot) required += (size_t)m * LIBXS_PREDICT_KNOTS * sizeof(double);
+  if (NULL != model->input_score) {
+    required += (size_t)m * (sizeof(uint8_t) + LIBXS_PREDICT_SCORESIZE * sizeof(double));
+  }
   if (NULL != model->weights) required += (size_t)m * sizeof(double);
   for (c = 0; c < model->nclusters; ++c) {
     const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
-    required += (size_t)m * sizeof(double);
+    required += (size_t)mc * sizeof(double);
     required += sizeof(double) + sizeof(uint16_t) + sizeof(uint8_t);
     required += (size_t)n;
     required += (size_t)n * sizeof(uint16_t);
-    required += (size_t)cl->nentries * (size_t)m * sizeof(double);
+    required += (size_t)cl->nentries * (size_t)mc * sizeof(double);
     required += (size_t)cl->nentries * (size_t)n * sizeof(double);
     required += (size_t)n; /* one tag per encoded column, never more */
     required += (size_t)n * sizeof(double);
@@ -291,9 +296,9 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
             &model->hknn_po_clusters[j][c];
           required += sizeof(uint16_t) + sizeof(uint8_t) + sizeof(double);
           required += (size_t)gsz * (sizeof(uint8_t) + sizeof(uint16_t));
-          required += (size_t)m * sizeof(double);
+          required += (size_t)mc * sizeof(double);
           if (pcl->nentries > 0) {
-            required += (size_t)pcl->nentries * (size_t)m * sizeof(double);
+            required += (size_t)pcl->nentries * (size_t)mc * sizeof(double);
             required += (size_t)pcl->nentries * (size_t)gsz * sizeof(double);
             required += (size_t)gsz; /* one tag per encoded column */
           }
@@ -335,7 +340,8 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
       for (ks = 0; ks < model->noutputs; ++ks) WRITE_U8(model->k_sel[ks]);
     }
     /* introduced with version 2; an older file has no rank coordinate */
-    WRITE_U16(NULL != model->input_knot ? LIBXS_PREDICT_KNOTS : 0);
+    WRITE_U16((NULL != model->input_knot ? LIBXS_PREDICT_KNOTS : 0)
+      | (NULL != model->input_score ? LIBXS_PREDICT_SCOREFLAG : 0));
     WRITE_F64(model->quality);
     /**
      * Introduced with version 2. These change how a model ANSWERS, not what it
@@ -361,20 +367,25 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     if (NULL != model->input_knot) {
       WRITE_BLK(model->input_knot, (size_t)m * LIBXS_PREDICT_KNOTS * sizeof(double));
     }
+    if (NULL != model->input_score) {
+      for (j = 0; j < m; ++j) WRITE_U8(model->input_sdim[j]);
+      WRITE_BLK(model->input_score,
+        (size_t)m * LIBXS_PREDICT_SCORESIZE * sizeof(double));
+    }
     if (NULL != model->weights) {
       WRITE_BLK(model->weights, (size_t)m * sizeof(double));
     }
     for (c = 0; c < model->nclusters; ++c) {
       const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
       int k;
-      WRITE_BLK(cl->centroid, (size_t)m * sizeof(double));
+      WRITE_BLK(cl->centroid, (size_t)mc * sizeof(double));
       WRITE_F64(cl->dmax);
       WRITE_U16(cl->nentries);
       WRITE_U8(cl->k_eff);
       for (j = 0; j < n; ++j) WRITE_U8(cl->mode[j]);
       for (j = 0; j < n; ++j) WRITE_U16(cl->ndistinct[j]);
       WRITE_BLK(cl->kd_pts,
-        (size_t)cl->nentries * (size_t)m * sizeof(double));
+        (size_t)cl->nentries * (size_t)mc * sizeof(double));
       /* per column, where the cardinality is; an entry mixes every output */
       { int qj;
         for (qj = 0; qj < n; ++qj) {
@@ -429,10 +440,10 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
               WRITE_U16(NULL != pcl->ndistinct ? pcl->ndistinct[gi] : 0);
             }
             WRITE_F64(pcl->dmax);
-            WRITE_BLK(pcl->centroid, (size_t)m * sizeof(double));
+            WRITE_BLK(pcl->centroid, (size_t)mc * sizeof(double));
             if (pcl->nentries > 0) {
               WRITE_BLK(pcl->kd_pts,
-                (size_t)pcl->nentries * (size_t)m * sizeof(double));
+                (size_t)pcl->nentries * (size_t)mc * sizeof(double));
               { int qj;
                 for (qj = 0; qj < gsz; ++qj) {
                   dst += internal_libxs_predict_denc_write(dst,
@@ -510,6 +521,10 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
     if (NULL != model->input_knot) {
       required += (size_t)model->ninputs * LIBXS_PREDICT_KNOTS * sizeof(double);
     }
+    if (NULL != model->input_score) {
+      required += (size_t)model->ninputs
+        * (sizeof(uint8_t) + LIBXS_PREDICT_SCORESIZE * sizeof(double));
+    }
     if (NULL != model->weights) required += (size_t)model->ninputs * sizeof(double);
     if (NULL != model->transforms) required += (size_t)model->noutputs * sizeof(uint8_t);
     if (NULL != model->decompose_mat) {
@@ -517,14 +532,14 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
     }
     for (c = 0; c < model->nclusters; ++c) {
       const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
-      required += (size_t)model->ninputs * sizeof(double);
+      required += (size_t)model->ncoord * sizeof(double);
       required += sizeof(double);
       required += sizeof(uint16_t) + 2 * sizeof(uint8_t);
       required += (size_t)model->noutputs * 3;
       required += (size_t)model->noutputs * sizeof(uint16_t);
       required += (size_t)model->noutputs * sizeof(double);
       required += (size_t)model->noutputs * sizeof(double);
-      required += (size_t)cl->nentries * (size_t)model->ninputs * sizeof(double);
+      required += (size_t)cl->nentries * (size_t)model->ncoord * sizeof(double);
       required += (size_t)cl->nentries * (size_t)model->noutputs * sizeof(double);
       /* one tag per column; the encoding never exceeds the verbatim form, so this
        * bound holds without repeating the choice the writer makes */
@@ -623,7 +638,8 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       WRITE_U8(model->iterations);
       WRITE_U32(model->nentries);
       /* introduced with version 2; an older file has no rank coordinate */
-      WRITE_U16(NULL != model->input_knot ? LIBXS_PREDICT_KNOTS : 0);
+      WRITE_U16((NULL != model->input_knot ? LIBXS_PREDICT_KNOTS : 0)
+        | (NULL != model->input_score ? LIBXS_PREDICT_SCOREFLAG : 0));
       WRITE_F64(model->quality);
       /**
        * Introduced with version 2. These change how a model ANSWERS, not what it
@@ -652,6 +668,11 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
         WRITE_BLK(model->input_knot,
           (size_t)model->ninputs * LIBXS_PREDICT_KNOTS * sizeof(double));
       }
+      if (NULL != model->input_score) {
+        for (j = 0; j < model->ninputs; ++j) WRITE_U8(model->input_sdim[j]);
+        WRITE_BLK(model->input_score,
+          (size_t)model->ninputs * LIBXS_PREDICT_SCORESIZE * sizeof(double));
+      }
       if (NULL != model->weights) {
         WRITE_BLK(model->weights, (size_t)model->ninputs * sizeof(double));
       }
@@ -664,7 +685,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       }
       for (c = 0; c < model->nclusters; ++c) {
         const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
-        WRITE_BLK(cl->centroid, (size_t)model->ninputs * sizeof(double));
+        WRITE_BLK(cl->centroid, (size_t)model->ncoord * sizeof(double));
         WRITE_F64(cl->dmax);
         WRITE_U16(cl->nentries);
         WRITE_U8(cl->maxorder);
@@ -675,7 +696,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
         for (j = 0; j < model->noutputs; ++j) WRITE_U16(cl->ndistinct[j]);
         WRITE_BLK(cl->errors, (size_t)model->noutputs * sizeof(double));
         WRITE_BLK(cl->out_rms, (size_t)model->noutputs * sizeof(double));
-        WRITE_BLK(cl->kd_pts, (size_t)cl->nentries * (size_t)model->ninputs * sizeof(double));
+        WRITE_BLK(cl->kd_pts, (size_t)cl->nentries * (size_t)model->ncoord * sizeof(double));
         /* per column and not per entry: the cardinality is a property of the
          * parameter, and an entry mixes all of them together */
         { int qj;
@@ -1025,13 +1046,36 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
       model->input_rng, (size_t)ninp * sizeof(double));
   }
   if (EXIT_SUCCESS == ok && 0 != nknots) {
-    if (LIBXS_PREDICT_KNOTS == nknots) {
+    /* a score table rides on the knots, flagged in their count */
+    if (LIBXS_PREDICT_KNOTS == (nknots & ~LIBXS_PREDICT_SCOREFLAG)) {
       model->input_knot = (double*)malloc(
         (size_t)ninp * LIBXS_PREDICT_KNOTS * sizeof(double));
       if (NULL == model->input_knot) ok = EXIT_FAILURE;
       else {
         ok = internal_libxs_predict_read(&src, end, model->input_knot,
           (size_t)ninp * LIBXS_PREDICT_KNOTS * sizeof(double));
+      }
+      if (EXIT_SUCCESS == ok && 0 != (nknots & LIBXS_PREDICT_SCOREFLAG)) {
+        model->input_score = (double*)malloc(
+          (size_t)ninp * LIBXS_PREDICT_SCORESIZE * sizeof(double));
+        model->input_sdim = (int*)malloc((size_t)ninp * sizeof(int));
+        if (NULL == model->input_score || NULL == model->input_sdim) {
+          ok = EXIT_FAILURE;
+        }
+        else {
+          int sj;
+          for (sj = 0; sj < (int)ninp && EXIT_SUCCESS == ok; ++sj) {
+            uint8_t width = 0;
+            ok = internal_libxs_predict_read(&src, end, &width, 1);
+            model->input_sdim[sj] = LIBXS_MIN((int)width, LIBXS_PREDICT_SCOREDIMS);
+          }
+          if (EXIT_SUCCESS == ok) {
+            ok = internal_libxs_predict_read(&src, end, model->input_score,
+              (size_t)ninp * LIBXS_PREDICT_SCORESIZE * sizeof(double));
+          }
+          /* the clusters below are read at the width this settles */
+          if (EXIT_SUCCESS == ok) internal_libxs_predict_coords(model);
+        }
       }
     }
     else ok = EXIT_FAILURE;
@@ -1057,7 +1101,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     uint16_t ne = 0;
     uint8_t ke = 0;
     int k;
-    cl->centroid = (double*)malloc((size_t)ninp * sizeof(double));
+    cl->centroid = (double*)malloc((size_t)model->ncoord * sizeof(double));
     cl->mode = (int*)malloc((size_t)nout * sizeof(int));
     cl->ndistinct = (int*)malloc((size_t)nout * sizeof(int));
     if (NULL == cl->centroid || NULL == cl->mode || NULL == cl->ndistinct) {
@@ -1065,7 +1109,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     }
     if (EXIT_SUCCESS == ok) {
       ok = internal_libxs_predict_read(&src, end,
-        cl->centroid, (size_t)ninp * sizeof(double));
+        cl->centroid, (size_t)model->ncoord * sizeof(double));
     }
     if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &cl->dmax, 8);
     if (EXIT_SUCCESS == ok) {
@@ -1089,15 +1133,15 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     }
     if (EXIT_SUCCESS == ok) {
       ok = internal_libxs_predict_avail(src, end,
-        (size_t)ne * (size_t)ninp, sizeof(double));
+        (size_t)ne * (size_t)model->ncoord, sizeof(double));
     }
     if (EXIT_SUCCESS == ok) {
       cl->kd_pts = (double*)malloc(
-        (size_t)ne * (size_t)ninp * sizeof(double));
+        (size_t)ne * (size_t)model->ncoord * sizeof(double));
       if (NULL == cl->kd_pts) ok = EXIT_FAILURE;
       else {
         ok = internal_libxs_predict_read(&src, end,
-          cl->kd_pts, (size_t)ne * (size_t)ninp * sizeof(double));
+          cl->kd_pts, (size_t)ne * (size_t)model->ncoord * sizeof(double));
       }
     }
     /* no size check ahead of the read: the encoded form is smaller than the
@@ -1261,7 +1305,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
               cls[ci].k_eff = (int)ke;
               cls[ci].mode = (int*)calloc((size_t)gsz, sizeof(int));
               cls[ci].ndistinct = (int*)calloc((size_t)gsz, sizeof(int));
-              cls[ci].centroid = (double*)malloc((size_t)ninp * sizeof(double));
+              cls[ci].centroid = (double*)malloc((size_t)model->ncoord * sizeof(double));
               if (NULL == cls[ci].mode || NULL == cls[ci].ndistinct || NULL == cls[ci].centroid) {
                 ok = EXIT_FAILURE;
               }
@@ -1279,14 +1323,14 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
             if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &cls[ci].dmax, 8);
             if (EXIT_SUCCESS == ok) {
               ok = internal_libxs_predict_read(&src, end,
-                cls[ci].centroid, (size_t)ninp * sizeof(double));
+                cls[ci].centroid, (size_t)model->ncoord * sizeof(double));
             }
             if (EXIT_SUCCESS == ok && ne > 0) {
               ok = internal_libxs_predict_avail(src, end,
-                (size_t)ne * ((size_t)ninp + (size_t)gsz), sizeof(double));
+                (size_t)ne * ((size_t)model->ncoord + (size_t)gsz), sizeof(double));
               if (EXIT_SUCCESS == ok) {
                 cls[ci].kd_pts = (double*)malloc(
-                  (size_t)ne * (size_t)ninp * sizeof(double));
+                  (size_t)ne * (size_t)model->ncoord * sizeof(double));
                 cls[ci].raw_outputs = (double*)malloc(
                   (size_t)ne * (size_t)gsz * sizeof(double));
                 if (NULL == cls[ci].kd_pts || NULL == cls[ci].raw_outputs) {
@@ -1295,7 +1339,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
               }
               if (EXIT_SUCCESS == ok) {
                 ok = internal_libxs_predict_read(&src, end,
-                  cls[ci].kd_pts, (size_t)ne * (size_t)ninp * sizeof(double));
+                  cls[ci].kd_pts, (size_t)ne * (size_t)model->ncoord * sizeof(double));
               }
               if (EXIT_SUCCESS == ok) {
                 ok = internal_libxs_predict_read_outputs(&src, end,
@@ -1575,13 +1619,36 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
           model->input_rng, (size_t)ninp * sizeof(double));
       }
       if (EXIT_SUCCESS == ok && 0 != nknots) {
-        if (LIBXS_PREDICT_KNOTS == nknots) {
+        /* a score table rides on the knots, flagged in their count */
+        if (LIBXS_PREDICT_KNOTS == (nknots & ~LIBXS_PREDICT_SCOREFLAG)) {
           model->input_knot = (double*)malloc(
             (size_t)ninp * LIBXS_PREDICT_KNOTS * sizeof(double));
           if (NULL == model->input_knot) ok = EXIT_FAILURE;
           else {
             ok = internal_libxs_predict_read(&src, end, model->input_knot,
               (size_t)ninp * LIBXS_PREDICT_KNOTS * sizeof(double));
+          }
+          if (EXIT_SUCCESS == ok && 0 != (nknots & LIBXS_PREDICT_SCOREFLAG)) {
+            model->input_score = (double*)malloc(
+              (size_t)ninp * LIBXS_PREDICT_SCORESIZE * sizeof(double));
+            model->input_sdim = (int*)malloc((size_t)ninp * sizeof(int));
+            if (NULL == model->input_score || NULL == model->input_sdim) {
+              ok = EXIT_FAILURE;
+            }
+            else {
+              int sj;
+              for (sj = 0; sj < (int)ninp && EXIT_SUCCESS == ok; ++sj) {
+                uint8_t width = 0;
+                ok = internal_libxs_predict_read(&src, end, &width, 1);
+                model->input_sdim[sj] = LIBXS_MIN((int)width, LIBXS_PREDICT_SCOREDIMS);
+              }
+              if (EXIT_SUCCESS == ok) {
+                ok = internal_libxs_predict_read(&src, end, model->input_score,
+                  (size_t)ninp * LIBXS_PREDICT_SCORESIZE * sizeof(double));
+              }
+              /* the clusters below are read at the width this settles */
+              if (EXIT_SUCCESS == ok) internal_libxs_predict_coords(model);
+            }
           }
         }
         else ok = EXIT_FAILURE;
@@ -1630,7 +1697,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         uint16_t ne = 0;
         uint8_t mo = 0;
         int j;
-        cl->centroid = (double*)malloc((size_t)ninp * sizeof(double));
+        cl->centroid = (double*)malloc((size_t)model->ncoord * sizeof(double));
         cl->order = (int*)malloc((size_t)nout * sizeof(int));
         cl->interpolated = (int*)malloc((size_t)nout * sizeof(int));
         cl->mode = (int*)malloc((size_t)nout * sizeof(int));
@@ -1643,7 +1710,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         }
         if (EXIT_SUCCESS == ok) {
           ok = internal_libxs_predict_read(&src, end,
-            cl->centroid, (size_t)ninp * sizeof(double));
+            cl->centroid, (size_t)model->ncoord * sizeof(double));
         }
         if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &cl->dmax, 8);
         if (EXIT_SUCCESS == ok) {
@@ -1708,15 +1775,15 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         }
         if (EXIT_SUCCESS == ok) {
           ok = internal_libxs_predict_avail(src, end,
-            (size_t)cl->nentries * (size_t)ninp, sizeof(double));
+            (size_t)cl->nentries * (size_t)model->ncoord, sizeof(double));
         }
         if (EXIT_SUCCESS == ok) {
           cl->kd_pts = (double*)malloc(
-            (size_t)cl->nentries * (size_t)ninp * sizeof(double));
+            (size_t)cl->nentries * (size_t)model->ncoord * sizeof(double));
           if (NULL == cl->kd_pts) ok = EXIT_FAILURE;
           if (EXIT_SUCCESS == ok) {
             ok = internal_libxs_predict_read(&src, end,
-              cl->kd_pts, (size_t)cl->nentries * (size_t)ninp * sizeof(double));
+              cl->kd_pts, (size_t)cl->nentries * (size_t)model->ncoord * sizeof(double));
           }
         }
         /* no size check ahead of the read: an encoded block is smaller than the
@@ -1974,7 +2041,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         int c;
         for (c = 0; c < model->nclusters; ++c) {
           internal_libxs_predict_cluster_tangent(
-            &model->clusters[c], model->ninputs, model->tangent);
+            &model->clusters[c], model->ncoord, model->tangent);
         }
       }
       model->built = 1;

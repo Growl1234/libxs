@@ -35,6 +35,7 @@ int main(int argc, char* argv[])
   double split = 0.8, quality = 0, consistency = 0, gaps = 0;
   int order = 2, nclusters = 0;
   int decompose = LIBXS_PREDICT_AUTO_DECOMPOSE;
+  int coordinate = LIBXS_PREDICT_AUTO_COORD;
   int argi, npos = 0, use_xgb = 0, bad = 0, result = EXIT_FAILURE;
 
   libxs_init();
@@ -65,6 +66,8 @@ int main(int argc, char* argv[])
     else if (0 != predict_iskey(arg, "none")) decompose = LIBXS_PREDICT_RAW;
     else if (0 != predict_iskey(arg, "pca")) decompose = LIBXS_PREDICT_PCA;
     else if (0 != predict_iskey(arg, "xgb")) use_xgb = 1;
+    else if (0 != predict_iskey(arg, "rank")) coordinate = LIBXS_PREDICT_RANK;
+    else if (0 != predict_iskey(arg, "score")) coordinate = LIBXS_PREDICT_SCORE;
     else bad = argi;
   }
   if (0 != bad) {
@@ -73,7 +76,8 @@ int main(int argc, char* argv[])
   if (NULL == filename || 0 != bad || 0 == predict_split_ok(split)) {
     fprintf(stdout,
       "Usage: %s <crystal_csv> [train_fraction] [order] [nclusters]"
-      " [compress[Q]] [fisher|hknn|setdiff|rf|pca|none] [gaps[F]] [xgb]\n"
+      " [compress[Q]] [fisher|hknn|setdiff|rf|pca|none] [rank|score]"
+      " [gaps[F]] [xgb]\n"
       "  Crystal system prediction from composition features.\n"
       "  xgb: also train XGBoost on the same split and compare.\n"
       "  Input: CSV with numeric features + crystal_system label (last col).\n"
@@ -113,6 +117,7 @@ int main(int argc, char* argv[])
           double* lconf = (double*)malloc((size_t)total * sizeof(double));
           char* lok = (char*)calloc((size_t)total, 1);
           libxs_predict_set_decompose(model, decompose);
+          libxs_predict_set_coordinate(model, coordinate);
           libxs_predict_set_neighbors(model, -1);
           if (0.0 != consistency) libxs_predict_set_consistency(model, consistency);
           if (0.0 < gaps) libxs_predict_set_missing(model, 1);
@@ -155,6 +160,10 @@ int main(int argc, char* argv[])
             fprintf(stdout, "Decomposition: %s (%s)\n", mode_name(qi.decompose),
               (LIBXS_PREDICT_AUTO_DECOMPOSE == decompose)
                 ? "selected at build" : "requested");
+            fprintf(stdout, "Coordinate: %s (%d for %d inputs)\n",
+              (LIBXS_PREDICT_SCORE == qi.coordinate) ? "score"
+                : ((LIBXS_PREDICT_RANK == qi.coordinate) ? "rank" : "extent"),
+              qi.ncoord, qi.ninputs);
             fprintf(stdout, "Built: %d clusters, %.1fx compression, order=%d"
               " (%.2f s)\n", qi.nclusters, qi.compression, qi.order, dt_build);
             tick = libxs_timer_tick();

@@ -35,6 +35,7 @@ int main(int argc, char* argv[])
   int nrows = 200000, stride = 0, mode = LIBXS_PREDICT_RF, refine = 0;
   int nclusters = 0, order = 1, help = 0, i;
   int depth = 0, ntrees = 0, use_xgb = 0;
+  int coordinate = LIBXS_PREDICT_AUTO_COORD;
   double split = 0.8, v;
   int result = EXIT_FAILURE;
 
@@ -47,6 +48,8 @@ int main(int argc, char* argv[])
     else if (0 == strcmp("hknn", a)) mode = LIBXS_PREDICT_HKNN;
     else if (0 == strcmp("rf", a)) mode = LIBXS_PREDICT_RF;
     else if (0 == strcmp("auto", a)) mode = LIBXS_PREDICT_AUTO_DECOMPOSE;
+    else if (0 == strcmp("rank", a)) coordinate = LIBXS_PREDICT_RANK;
+    else if (0 == strcmp("score", a)) coordinate = LIBXS_PREDICT_SCORE;
     else if (0 == strcmp("refine", a)) refine = -1;
     else if (0 == strcmp("xgb", a)) use_xgb = 1;
     /* a value that is not a number leaves the token unmatched, so it is taken
@@ -71,7 +74,7 @@ int main(int argc, char* argv[])
 #endif
   if (0 != help) {
     fprintf(stdout, "Usage: %s [file] [rows<N>] [stride<N>] [raw|hknn|rf|auto]\n"
-      "         [clusters<N>] [order<N>] [split<F>] [refine]\n"
+      "         [rank|score] [clusters<N>] [order<N>] [split<F>] [refine]\n"
       "  HIGGS: 11M rows, 28 features, binary label (column 0). Get it from\n"
       "    https://archive.ics.uci.edu/dataset/280/higgs and gunzip it here.\n"
       "  rows<N>: entries to load (0: the whole file). Default 200000.\n"
@@ -130,6 +133,7 @@ int main(int argc, char* argv[])
           double* lpred = (double*)malloc((size_t)total * sizeof(double));
           char* lok = (char*)calloc((size_t)total, 1);
           libxs_predict_set_decompose(model, mode);
+          libxs_predict_set_coordinate(model, coordinate);
           libxs_predict_set_refine(model, refine);
           if (0 != depth || 0 != ntrees) {
             libxs_predict_set_forest(model, ntrees, depth);
@@ -243,6 +247,10 @@ int main(int argc, char* argv[])
             }
             fprintf(stdout, "Decomposition: %d, clusters=%d, order=%d\n",
               q.decompose, q.nclusters, q.order);
+            fprintf(stdout, "Coordinate: %s (%d for %d inputs)\n",
+              (LIBXS_PREDICT_SCORE == q.coordinate) ? "score"
+                : ((LIBXS_PREDICT_RANK == q.coordinate) ? "rank" : "extent"),
+              q.ncoord, q.ninputs);
             fprintf(stdout, "Scan per query: %d worst, %.0f average"
               " (of %d entries)\n", q.nscan, q.escan, q.nentries);
             fprintf(stdout, "Build: %.2f s, eval: %.2f s (%.3f ms per query)\n",

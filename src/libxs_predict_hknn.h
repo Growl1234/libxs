@@ -597,7 +597,7 @@ LIBXS_API_INLINE void internal_libxs_predict_hknn_refine(libxs_barrier_t* barrie
   libxs_predict_t* model, int nclusters, int tid, int ntasks)
 {
   const int p = model->nentries;
-  const int m = model->ninputs;
+  const int m = model->ncoord; /* coordinates, not inputs */
   const int max_iter = LIBXS_MIN(LIBXS_PREDICT_MAXITER, 10);
   int cnt_pool = 0, cen_pool = 0;
   const double* pts;
@@ -693,7 +693,7 @@ LIBXS_API_INLINE int internal_libxs_predict_hknn_build_po(
   libxs_predict_t* model)
 {
   const int p = model->nentries;
-  const int m = model->ninputs;
+  const int m = model->ncoord; /* coordinates, not inputs */
   const int n = model->noutputs;
   const int ngroups = (model->hknn_ngroups > 0) ? model->hknn_ngroups : n;
   int result = EXIT_SUCCESS;

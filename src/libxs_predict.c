@@ -52,6 +52,37 @@
 #if !defined(LIBXS_PREDICT_KNOTS)
 #  define LIBXS_PREDICT_KNOTS 256
 #endif
+/* Equal-population bins over an input's rank that the score coordinate places. */
+#if !defined(LIBXS_PREDICT_SCOREBINS)
+#  define LIBXS_PREDICT_SCOREBINS 16
+#endif
+/* Score coordinates one input spans at most (three of six on seven classes). */
+#if !defined(LIBXS_PREDICT_SCOREDIMS)
+#  define LIBXS_PREDICT_SCOREDIMS 3
+#endif
+/**
+ * Share of an input's signal above chance its coordinates must carry (1: all).
+ * A coordinate that is real but weak adds more noise to a distance than it
+ * separates: keeping all of them cost accuracy against 0.9 and spent a third
+ * more coordinates, while shares from 0.85 to 1 were level within the noise.
+ */
+#if !defined(LIBXS_PREDICT_SCORESHARE)
+#  define LIBXS_PREDICT_SCORESHARE 0.9
+#endif
+/* Score table entries per input: every coordinate it may span, every bin. */
+#define LIBXS_PREDICT_SCORESIZE (LIBXS_PREDICT_SCOREDIMS * LIBXS_PREDICT_SCOREBINS)
+/* Inputs below which the coordinate trial leaves the rank alone. */
+#if !defined(LIBXS_PREDICT_SCOREMIN)
+#  define LIBXS_PREDICT_SCOREMIN 8
+#endif
+/* Classes a score coordinate is fitted for at most. */
+#if !defined(LIBXS_PREDICT_SCOREMAXK)
+#  define LIBXS_PREDICT_SCOREMAXK 64
+#endif
+/* Set in the stored knot count when the score table follows the knots. */
+#define LIBXS_PREDICT_SCOREFLAG 0x8000
+/* Candidates a decomposition trial holds at most (see libxs_predict_select.h). */
+#define LIBXS_PREDICT_NTRIAL 16
 /* Outputs a window bank can average without allocating (see libxs_predict_eval). */
 #if !defined(LIBXS_PREDICT_HMAX)
 #  define LIBXS_PREDICT_HMAX 128
@@ -402,6 +433,13 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   double* input_min;
   double* input_rng;
   double* input_knot;
+  /**
+   * Score coordinates per input, coordinate and rank bin, NULL where the rank
+   * is used, and how many of them each input spans: zero drops an input whose
+   * bins say nothing about the classes that chance would not.
+   */
+  double* input_score;
+  int* input_sdim;
   double* weights;
   int* transforms;
   double* ts_buf;
@@ -411,6 +449,8 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   libxs_lock_t lock;
   int order;
   int ninputs, noutputs;
+  /** Coordinates a normalized point has: ninputs unless a score reshapes them. */
+  int ncoord;
   int nentries, capacity;
   int nclusters;
   int hknn_nclusters;
@@ -448,6 +488,15 @@ LIBXS_EXTERN_C struct libxs_predict_t {
    */
   int kreq;
   int* k_sel;
+  /**
+   * Requested coordinate (see set_coordinate), and the build's resolution of
+   * it: negative until resolved, then non-zero where the score is fitted. The
+   * resolution is the build's own, so the order search inside one build does
+   * not repeat the trial, while the next build starts it again.
+   */
+  int coord, coord_sel;
+  /** Classes the score would be fitted for, or zero where it cannot apply. */
+  int coord_ok;
   /** Requested central tendency (0/negative: decide per output at build). */
   int central;
   /** Per-output resolved choice, noutputs entries, NULL until built. */
@@ -515,7 +564,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   /* Set by any task whose RF tree slice could not be built. */
   volatile int sync_failed;
   /* Per-candidate scores of a collective trial, indexed by candidate. */
-  double sync_score[8];
+  double sync_score[LIBXS_PREDICT_NTRIAL];
   /**
    * Per-task partial errors of the mean/median trial, 2*noutputs per task. It is
    * a pointer and not a fixed array because the width is the output count, and
@@ -801,22 +850,68 @@ LIBXS_API_INLINE const double* internal_libxs_predict_knot(
 }
 
 
+/* Score coordinate t of input j at rank u: the value of the bin u falls into. */
+LIBXS_API_INLINE double internal_libxs_predict_score(
+  const libxs_predict_t* model, int j, int t, double u)
+{
+  const int bin = LIBXS_CLMP((int)(u * LIBXS_PREDICT_SCOREBINS), 0,
+    LIBXS_PREDICT_SCOREBINS - 1);
+  return model->input_score[((size_t)j * LIBXS_PREDICT_SCOREDIMS + t)
+    * LIBXS_PREDICT_SCOREBINS + bin];
+}
+
+
+/* Coordinates input j spans, by the same rule internal_libxs_predict_normalize writes them. */
+LIBXS_API_INLINE int internal_libxs_predict_width(
+  const libxs_predict_t* model, int j)
+{
+  return (NULL != model->input_score && NULL != internal_libxs_predict_knot(model, j))
+    ? model->input_sdim[j] : 1;
+}
+
+
+/* The coordinate count follows the maps: set wherever they are fitted, loaded or dropped. */
+LIBXS_API_INLINE void internal_libxs_predict_coords(libxs_predict_t* model)
+{
+  int j, nc = 0;
+  for (j = 0; j < model->ninputs; ++j) nc += internal_libxs_predict_width(model, j);
+  model->ncoord = nc;
+}
+
+
 LIBXS_API_INLINE void internal_libxs_predict_normalize(
   const libxs_predict_t* model, const double* inputs, double* norm)
 {
   const int m = model->ninputs;
-  int i;
+  int i, c = 0, t;
   for (i = 0; i < m; ++i) {
     const double* knot = internal_libxs_predict_knot(model, i);
     const double v = inputs[i];
-    if (NULL != knot && LIBXS_NOTNAN(v)) {
-      norm[i] = internal_libxs_predict_rank(knot, v);
+    const double w = (NULL != model->weights) ? model->weights[i] : 1.0;
+    if (NULL != knot && NULL != model->input_score) {
+      const int width = model->input_sdim[i];
+      if (LIBXS_NOTNAN(v)) {
+        const double u = internal_libxs_predict_rank(knot, v);
+        for (t = 0; t < width; ++t) {
+          norm[c + t] = internal_libxs_predict_score(model, i, t, u) * w;
+        }
+      }
+      else {
+        for (t = 0; t < width; ++t) norm[c + t] = v;
+      }
+      c += width;
     }
     else {
-      norm[i] = (NULL != model->input_rng && model->input_rng[i] > 0)
-        ? (v - model->input_min[i]) / model->input_rng[i] : v;
+      if (NULL != knot && LIBXS_NOTNAN(v)) {
+        norm[c] = internal_libxs_predict_rank(knot, v);
+      }
+      else {
+        norm[c] = (NULL != model->input_rng && model->input_rng[i] > 0)
+          ? (v - model->input_min[i]) / model->input_rng[i] : v;
+      }
+      norm[c] *= w;
+      ++c;
     }
-    if (NULL != model->weights) norm[i] *= model->weights[i];
   }
 }
 
@@ -824,23 +919,31 @@ LIBXS_API_INLINE void internal_libxs_predict_normalize(
 /**
  * Inverse of internal_libxs_predict_normalize. Kept adjacent to it so the two
  * cannot drift apart. A zero weight is not invertible (feature selection drops
- * the coordinate), which callers must check before relying on the result.
+ * the coordinate), which callers must check before relying on the result. A
+ * score is not invertible either, since every value of a bin maps to one
+ * point; such an input comes back absent rather than as a plausible value.
  */
 LIBXS_API_INLINE void internal_libxs_predict_denormalize(
   const libxs_predict_t* model, const double* norm, double* inputs)
 {
   const int m = model->ninputs;
-  int i;
+  int i, c = 0;
   for (i = 0; i < m; ++i) {
     const double* knot = internal_libxs_predict_knot(model, i);
-    double v = norm[i];
-    if (NULL != model->weights && 0 != model->weights[i]) v /= model->weights[i];
-    if (NULL != knot && LIBXS_NOTNAN(v)) {
-      inputs[i] = internal_libxs_predict_unrank(knot, v);
+    if (NULL != knot && NULL != model->input_score) {
+      inputs[i] = internal_libxs_predict_absent();
+      c += model->input_sdim[i];
     }
     else {
-      inputs[i] = (NULL != model->input_rng && model->input_rng[i] > 0)
-        ? (v * model->input_rng[i] + model->input_min[i]) : v;
+      double v = norm[c++];
+      if (NULL != model->weights && 0 != model->weights[i]) v /= model->weights[i];
+      if (NULL != knot && LIBXS_NOTNAN(v)) {
+        inputs[i] = internal_libxs_predict_unrank(knot, v);
+      }
+      else {
+        inputs[i] = (NULL != model->input_rng && model->input_rng[i] > 0)
+          ? (v * model->input_rng[i] + model->input_min[i]) : v;
+      }
     }
   }
 }
@@ -911,6 +1014,9 @@ LIBXS_API_INLINE void internal_libxs_predict_extent(libxs_predict_t* model)
   const int p = model->nentries;
   free(model->input_min); free(model->input_rng);
   free(model->input_knot); model->input_knot = NULL;
+  free(model->input_score); model->input_score = NULL;
+  free(model->input_sdim); model->input_sdim = NULL;
+  model->ncoord = m;
   internal_libxs_predict_normpts_free(model);
   model->input_min = (double*)malloc((size_t)m * sizeof(double));
   model->input_rng = (double*)malloc((size_t)m * sizeof(double));
@@ -954,7 +1060,7 @@ LIBXS_API_INLINE void internal_libxs_predict_extent(libxs_predict_t* model)
 /* normalized inputs for every entry; NULL means the partition cannot run */
 LIBXS_API_INLINE double* internal_libxs_predict_normpts(libxs_predict_t* model)
 {
-  const int m = model->ninputs;
+  const int m = model->ncoord; /* coordinates, not inputs */
   const int p = model->nentries;
   if (NULL == model->norm_pts && 0 < p && 0 < m) {
     model->norm_pts = (double*)LIBXS_PREDICT_MALLOC(
@@ -996,7 +1102,7 @@ LIBXS_API_INLINE void internal_libxs_predict_normpts_free(libxs_predict_t* model
 LIBXS_API_INLINE int internal_libxs_predict_kdpart(libxs_predict_t* model,
   int nclusters)
 {
-  const int m = model->ninputs;
+  const int m = model->ncoord; /* coordinates, not inputs */
   const int p = model->nentries;
   const double* pts = internal_libxs_predict_normpts(model);
   int pool_idx = 0, result = 0;
@@ -1030,7 +1136,7 @@ LIBXS_API_INLINE void internal_libxs_predict_centroids(
   libxs_predict_t* model, int nclusters)
 {
   const int p = model->nentries;
-  const int m = model->ninputs;
+  const int m = model->ncoord; /* coordinates, not inputs */
   int counts_pool = 0, norm_pool = 0, i, c, j;
   int* counts = (int*)LIBXS_PREDICT_MALLOC(
     (size_t)nclusters * sizeof(int), counts_pool);
@@ -1067,7 +1173,7 @@ LIBXS_API_INLINE void internal_libxs_predict_centroids(
 LIBXS_API_INLINE void internal_libxs_predict_kmeans(libxs_barrier_t* barrier,
   libxs_predict_t* model, int nclusters, int tid, int ntasks)
 {
-  const int m = model->ninputs;
+  const int m = model->ncoord; /* coordinates, not inputs */
   const int p = model->nentries;
   const int missing = model->has_missing;
   int pool_comp = 0, pool_cnt = 0, pool_dist = 0;
@@ -1345,7 +1451,7 @@ LIBXS_API_INLINE double internal_libxs_predict_position(
   const double* inputs)
 {
   const int nc = cl->nentries;
-  const int m = model->ninputs;
+  const int m = model->ncoord; /* coordinates, not inputs */
   /* linear scan: clusters are small (sqrt(P) entries typically) */
   double best = DBL_MAX;
   int best_k = 0, k;
@@ -1988,10 +2094,12 @@ LIBXS_API libxs_predict_t* libxs_predict_create(int ninputs, int noutputs)
     model = (libxs_predict_t*)calloc(1, sizeof(libxs_predict_t));
     if (NULL != model) {
       model->ninputs = ninputs;
+      model->ncoord = ninputs;
       model->noutputs = noutputs;
       model->version = LIBXS_PREDICT_VERSION;
       model->eval_mode = LIBXS_PREDICT_AUTO;
       model->diff_mode = -1;
+      model->coord_sel = -1;
       model->nbank = 1;
     }
   }
@@ -2036,6 +2144,8 @@ LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
     free(model->input_min);
     free(model->input_rng);
     free(model->input_knot);
+    free(model->input_score);
+    free(model->input_sdim);
     free(model->weights);
     free(model->transforms);
     free(model->ts_buf);
@@ -2301,7 +2411,7 @@ LIBXS_API void libxs_predict_set_diff(libxs_predict_t* model, int order)
  */
 LIBXS_API_INLINE void internal_libxs_predict_missing_all(libxs_predict_t* model)
 {
-  const int m = model->ninputs;
+  const int m = model->ninputs, mc = model->ncoord;
   int i;
   model->has_missing = 0;
   if (NULL != model->entries) {
@@ -2318,7 +2428,7 @@ LIBXS_API_INLINE void internal_libxs_predict_missing_all(libxs_predict_t* model)
       if (NULL != cl->kd_pts) {
         for (i = 0; i < cl->nentries && 0 == model->has_missing; ++i) {
           if (0 != internal_libxs_predict_incomplete(
-            cl->kd_pts + (size_t)i * m, m))
+            cl->kd_pts + (size_t)i * mc, mc))
           {
             model->has_missing = 1;
           }
@@ -2367,6 +2477,14 @@ LIBXS_API void libxs_predict_set_neighbors(libxs_predict_t* model, int k)
     free(model->k_sel);
     model->k_sel = NULL;
   }
+}
+
+
+LIBXS_API void libxs_predict_set_coordinate(libxs_predict_t* model,
+  int coordinate)
+{
+  LIBXS_ASSERT(NULL != model);
+  if (NULL != model) model->coord = coordinate;
 }
 
 
@@ -2726,6 +2844,220 @@ LIBXS_API_INLINE void internal_libxs_predict_fisher_build(libxs_predict_t* model
       }
     }
   }
+}
+
+
+/**
+ * Classes of the single output in ascending order, or zero where a score
+ * cannot apply: more than one output, a series, or an output with more
+ * distinct values than the trial would read as discrete (sqrt of the entries,
+ * as in internal_libxs_predict_decompose_kind) or than LIBXS_PREDICT_SCOREMAXK.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_score_classes(
+  const libxs_predict_t* model, int label[])
+{
+  const int p = model->nentries;
+  const int kmax = LIBXS_MIN(LIBXS_PREDICT_SCOREMAXK,
+    (int)(sqrt((double)p) + 0.5));
+  int nk = 0, i, k;
+  if (1 == model->noutputs && 0 >= model->nseries && 0 < model->ninputs) {
+    for (i = 0; i < p && 0 <= nk; ++i) {
+      const double v = model->entries[i].outputs[0];
+      if (LIBXS_NOTNAN(v)) {
+        const int y = LIBXS_ROUNDX(int, v);
+        k = nk;
+        while (0 < k && label[k - 1] > y) --k;
+        if (0 == k || label[k - 1] != y) {
+          if (nk < kmax) {
+            memmove(label + k + 1, label + k, (size_t)(nk - k) * sizeof(int));
+            label[k] = y;
+            ++nk;
+          }
+          else nk = -1;
+        }
+      }
+    }
+  }
+  return (2 <= nk) ? nk : 0;
+}
+
+
+/**
+ * Modes a score applies to. Fisher is not one: its weights come from the raw
+ * inputs and multiply a score that already carries what they measure, so the
+ * inputs it keeps were weighed twice and the ones it drops lost their score,
+ * which cost 1.4 to 3.7 points on the crystal corpus against its rank.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_score_mode(int decompose)
+{
+  return (LIBXS_PREDICT_RAW == decompose || LIBXS_PREDICT_HKNN == decompose)
+    ? 1 : 0;
+}
+
+
+/**
+ * Fits the score coordinates over the rank knots: per input, the entries are
+ * counted into equal-population bins of their rank by class, and a bin is
+ * placed by the leading principal coordinates of a correspondence analysis of
+ * that table. Principal rather than standard coordinates keep the inertia, so
+ * an axis that separates the classes is long and one that does not is short.
+ *
+ * One coordinate cannot hold more than two classes apart: with several classes
+ * of similar weight the leading eigenvalues tie, and any one direction in their
+ * span merges some of them. An input therefore spans every coordinate whose
+ * eigenvalue rises above what chance gives a table of its shape, at most
+ * LIBXS_PREDICT_SCOREDIMS, and none where nothing does. The chance level is the
+ * edge of the eigenvalue spectrum of an independent table, (sqrt(B-1) +
+ * sqrt(K-1))^2 / n for B bins and K classes, so nothing about it is tuned.
+ *
+ * The table is fitted on every entry and the corpus is placed with it, which
+ * is safe here and would not be for a learner fitting on the placed values:
+ * a neighbour distance passes stored entries and queries through the same
+ * function, whereas a tree splitting on such a column finds the label each
+ * entry put into its own bin. A forest reads raw inputs and never sees this.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_fit_scores(libxs_predict_t* model)
+{
+  const int m = model->ninputs, p = model->nentries;
+  const int nb = LIBXS_PREDICT_SCOREBINS;
+  /* one pseudo-entry spread by the prior keeps an empty bin at the prior */
+  const double alpha = 1.0;
+  int label[LIBXS_PREDICT_SCOREMAXK];
+  double prior[LIBXS_PREDICT_SCOREMAXK];
+  int cls_pool = 0, tab_pool = 0, result = EXIT_SUCCESS;
+  const int nk = internal_libxs_predict_score_classes(model, label);
+  const int nd = LIBXS_PREDICT_SCOREDIMS;
+  int* cls = (int*)LIBXS_PREDICT_MALLOC((size_t)p * sizeof(int), cls_pool);
+  /* counts and shares (nb x nk), cross product and eigenvectors (nb x nb),
+   * eigenvalues, masses and bin populations (nb each) */
+  double* tab = (double*)LIBXS_PREDICT_MALLOC(((size_t)2 * nb * nk
+    + (size_t)2 * nb * nb + (size_t)3 * nb) * sizeof(double), tab_pool);
+  free(model->input_score);
+  free(model->input_sdim);
+  model->input_score = (double*)malloc((size_t)m * nd * nb * sizeof(double));
+  model->input_sdim = (int*)malloc((size_t)m * sizeof(int));
+  if (0 < nk && NULL != cls && NULL != tab && NULL != model->input_score
+    && NULL != model->input_sdim && NULL != model->input_knot)
+  {
+    double* const cnt = tab;
+    double* const shr = cnt + (size_t)nb * nk;
+    double* const cross = shr + (size_t)nb * nk;
+    double* const evec = cross + (size_t)nb * nb;
+    double* const eval = evec + (size_t)nb * nb;
+    double* const mass = eval + nb;
+    double* const pop = mass + nb;
+    int nlab = 0, nkept = 0, jbest = -1, i, j, k, b, c, t;
+    double lbest = 0;
+    for (k = 0; k < nk; ++k) prior[k] = 0;
+    for (i = 0; i < p; ++i) {
+      const double v = model->entries[i].outputs[0];
+      cls[i] = -1;
+      if (LIBXS_NOTNAN(v)) {
+        const int y = LIBXS_ROUNDX(int, v);
+        k = 0;
+        while (k < nk && label[k] != y) ++k;
+        if (k < nk) {
+          cls[i] = k;
+          prior[k] += 1;
+          ++nlab;
+        }
+      }
+    }
+    for (k = 0; k < nk; ++k) prior[k] /= nlab;
+    for (j = 0; j < m; ++j) {
+      const double* knot = internal_libxs_predict_knot(model, j);
+      double* const score = model->input_score + (size_t)j * nd * nb;
+      double total = 0;
+      for (b = 0; b < nd * nb; ++b) score[b] = 0;
+      model->input_sdim[j] = 0;
+      if (NULL != knot) {
+        memset(cnt, 0, (size_t)nb * nk * sizeof(double));
+        memset(pop, 0, (size_t)nb * sizeof(double));
+        for (i = 0; i < p; ++i) {
+          const double v = model->entries[i].inputs[j];
+          if (0 <= cls[i] && LIBXS_NOTNAN(v)) {
+            const double u = internal_libxs_predict_rank(knot, v);
+            b = LIBXS_CLMP((int)(u * nb), 0, nb - 1);
+            cnt[(size_t)b * nk + cls[i]] += 1;
+            pop[b] += 1;
+          }
+        }
+        for (b = 0; b < nb; ++b) total += pop[b] + alpha;
+        for (b = 0; b < nb; ++b) {
+          const double r = (pop[b] + alpha) / total;
+          mass[b] = r;
+          for (k = 0; k < nk; ++k) {
+            const double share = (cnt[(size_t)b * nk + k] + alpha * prior[k])
+              / (pop[b] + alpha);
+            shr[(size_t)b * nk + k] = sqrt(r) * (share - prior[k])
+              / sqrt(prior[k]);
+          }
+        }
+        for (b = 0; b < nb; ++b) {
+          for (c = 0; c < nb; ++c) {
+            double s = 0;
+            for (k = 0; k < nk; ++k) {
+              s += shr[(size_t)b * nk + k] * shr[(size_t)c * nk + k];
+            }
+            cross[(size_t)b * nb + c] = s;
+          }
+        }
+        internal_libxs_predict_jacobi(cross, nb, evec, eval);
+        { const double nval = total - nb * alpha;
+          const double edge = sqrt((double)nb - 1) + sqrt((double)nk - 1);
+          const double chance = (0 < nval) ? (edge * edge / nval) : DBL_MAX;
+          const int tmax = LIBXS_MIN(nd, LIBXS_MIN(nk - 1, nb));
+          for (t = 0; t < tmax; ++t) {
+            double* const st = score + (size_t)t * nb;
+            double top = 0;
+            for (b = 0; b < nb; ++b) {
+              st[b] = evec[(size_t)b * nb + t] * sqrt(LIBXS_MAX(eval[t], 0.0))
+                / sqrt(mass[b]);
+              if (LIBXS_FABS(st[b]) > LIBXS_FABS(top)) top = st[b];
+            }
+            /* an eigenvector's sign is arbitrary; fixing it makes a rebuild exact */
+            if (0 > top) {
+              for (b = 0; b < nb; ++b) st[b] = -st[b];
+            }
+            if (eval[t] > chance && t == model->input_sdim[j]) {
+              ++model->input_sdim[j];
+            }
+          }
+          /* the fewest leading coordinates that carry the share asked for */
+          if (LIBXS_PREDICT_SCORESHARE < 1.0 && 1 < model->input_sdim[j]) {
+            const int width = model->input_sdim[j];
+            double signal = 0, cum = 0;
+            int keep = 0;
+            for (t = 0; t < width; ++t) signal += eval[t] - chance;
+            while (keep < width && cum < LIBXS_PREDICT_SCORESHARE * signal) {
+              cum += eval[keep] - chance;
+              ++keep;
+            }
+            model->input_sdim[j] = keep;
+          }
+          if (eval[0] > lbest || 0 > jbest) {
+            lbest = eval[0];
+            jbest = j;
+          }
+          nkept += model->input_sdim[j];
+        }
+      }
+    }
+    /* a space of no dimension answers nothing; the strongest input is kept */
+    if (0 == nkept && 0 <= jbest) model->input_sdim[jbest] = 1;
+    internal_libxs_predict_coords(model);
+  }
+  else {
+    free(model->input_score);
+    free(model->input_sdim);
+    model->input_score = NULL;
+    model->input_sdim = NULL;
+    model->ncoord = m;
+    result = EXIT_FAILURE;
+  }
+  LIBXS_PREDICT_FREE(tab, tab_pool);
+  LIBXS_PREDICT_FREE(cls, cls_pool);
+  return result;
 }
 
 
@@ -3689,10 +4021,21 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
        * sentinel, is resolved, so a mode that cannot apply can be ruled out
        * before any of them is built.
        */
-      if (0 > model->decompose) {
+      if (0 > model->coord_sel) {
+        int label[LIBXS_PREDICT_SCOREMAXK];
+        model->coord_ok = internal_libxs_predict_score_classes(model, label);
+      }
+      if (0 > model->decompose
+        || (0 > model->coord_sel
+          && 0 != internal_libxs_predict_coord_trial(model)))
+      {
         const char* fenv = getenv("LIBXS_PREDICT_DECOMPOSE_FOLDS");
-        model->decompose = internal_libxs_predict_decompose_select(model,
-          (NULL != fenv) ? atoi(fenv) : 0);
+        internal_libxs_predict_cand_apply(model,
+          internal_libxs_predict_decompose_select(model,
+            (NULL != fenv) ? atoi(fenv) : 0));
+      }
+      else if (0 > model->coord_sel) {
+        internal_libxs_predict_cand_apply(model, -1);
       }
       /**
        * A tree reads one coordinate per node and has nowhere to record which way
@@ -3900,7 +4243,7 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
     const int p = model->nentries;
     const int m = model->ninputs;
     const int n = model->noutputs;
-    int c, i;
+    int c, i, mc;
     int pool_cursor = 0;
     int* cursor = NULL;
     /* laying out the corpus is the builder's; its verdict is published below */
@@ -3917,7 +4260,10 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
          * and ranking each lag on its own distribution discards exactly the level
          * relationship that makes two windows comparable.
          */
-        if (0 >= model->nseries) internal_libxs_predict_fit_knots(model);
+        if (0 >= model->nseries) {
+          internal_libxs_predict_fit_knots(model);
+          if (0 < model->coord_sel) internal_libxs_predict_fit_scores(model);
+        }
       }
       if (0 >= nclusters) {
         nclusters = (int)(sqrt((double)p) + 0.5);
@@ -3950,12 +4296,14 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
       if (EXIT_SUCCESS == result) {
         model->nclusters = nclusters;
         for (c = 0; c < nclusters && EXIT_SUCCESS == result; ++c) {
-          model->clusters[c].centroid = (double*)malloc((size_t)m * sizeof(double));
+          model->clusters[c].centroid = (double*)malloc((size_t)model->ncoord * sizeof(double));
           if (NULL == model->clusters[c].centroid) result = EXIT_FAILURE;
         }
       }
     } /* end of the builder's layout */
     result = libxs_barrier_bcast(barrier, tid, 0, result);
+    /* past the builder's fitting, which is what settles the coordinates */
+    mc = model->ncoord;
     if (EXIT_SUCCESS == result) {
       /* the count the builder settled on, which the local one need not match */
       const int pnc = model->nclusters;
@@ -4107,16 +4455,8 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
               LIBXS_DATATYPE_F64, sort_perm);
             for (k = 0; k < nc; ++k) {
               cl->sorted_idx[k] = entry_map[sort_perm[k]];
-              cl->sorted_dist[k] = sqrt(internal_libxs_predict_dist2(
-                model->entries[cl->sorted_idx[k]].inputs,
-                cl->centroid, m, model->has_missing));
             }
-            cl->dmax = 0;
-            for (k = 0; k < nc; ++k) {
-              if (cl->sorted_dist[k] > cl->dmax) cl->dmax = cl->sorted_dist[k];
-            }
-            if (cl->dmax <= 0.0) cl->dmax = 1.0;
-            cl->kd_pts = (double*)malloc((size_t)nc * (size_t)m * sizeof(double));
+            cl->kd_pts = (double*)malloc((size_t)nc * (size_t)mc * sizeof(double));
             if (0 != model->has_eweight && NULL == cl->eweight) {
               cl->eweight = (double*)malloc((size_t)nc * sizeof(double));
             }
@@ -4128,16 +4468,24 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
               cres = EXIT_FAILURE;
             }
             else {
+              cl->dmax = 0;
               for (k = 0; k < nc; ++k) {
                 internal_libxs_predict_normalize(model,
                   model->entries[cl->sorted_idx[k]].inputs,
-                  cl->kd_pts + (size_t)k * m);
+                  cl->kd_pts + (size_t)k * mc);
                 if (NULL != cl->eweight) {
                   cl->eweight[k] = model->entries[cl->sorted_idx[k]].weight;
                 }
+                /* normalized, as the centroid and every distance compared with
+                 * dmax are; the raw inputs measured against it mixed units */
+                cl->sorted_dist[k] = sqrt(internal_libxs_predict_dist2(
+                  cl->kd_pts + (size_t)k * mc, cl->centroid, mc,
+                  model->has_missing));
+                if (cl->sorted_dist[k] > cl->dmax) cl->dmax = cl->sorted_dist[k];
               }
+              if (cl->dmax <= 0.0) cl->dmax = 1.0;
               if (0 != model->tangent) {
-                internal_libxs_predict_cluster_tangent(cl, m, model->tangent);
+                internal_libxs_predict_cluster_tangent(cl, mc, model->tangent);
               }
             }
           }
@@ -4326,6 +4674,8 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
 LIBXS_API int libxs_predict_build(libxs_predict_t* model,
   int nclusters, int order, double quality)
 {
+  /* a build resolves the coordinate afresh; the order search inside it does not */
+  if (NULL != model) model->coord_sel = -1;
   /* one task, so no rendezvous is needed and none is required of the caller */
   return internal_libxs_predict_build_impl(NULL, model, nclusters, order,
     quality, 0, 1);
@@ -4362,20 +4712,25 @@ LIBXS_API int libxs_predict_build_task(libxs_predict_t* model,
    * barrier rather than another meaning for a shared word.
    */
   if (0 == tid) { /* the corpus exists before a candidate can be scored */
+    int label[LIBXS_PREDICT_SCOREMAXK];
     if (0 < model->nts && 0 == model->nentries) {
       internal_libxs_predict_ts_expand(model);
     }
     if (0 < model->nentries) internal_libxs_predict_missing_all(model);
+    model->coord_sel = -1;
+    model->coord_ok = internal_libxs_predict_score_classes(model, label);
   }
   libxs_barrier_wait(team);
-  if (0 > model->decompose && 0 < model->nentries) {
+  if ((0 > model->decompose || 0 != internal_libxs_predict_coord_trial(model))
+    && 0 < model->nentries)
+  {
     const char* fenv = getenv("LIBXS_PREDICT_DECOMPOSE_FOLDS");
     internal_libxs_predict_decompose_score(model,
       (NULL != fenv) ? atoi(fenv) : 0, tid, ntasks, model->sync_score);
     libxs_barrier_wait(team);
     if (0 == tid) {
-      model->decompose =
-        internal_libxs_predict_decompose_reduce(model, model->sync_score);
+      internal_libxs_predict_cand_apply(model,
+        internal_libxs_predict_decompose_reduce(model, model->sync_score));
     }
     libxs_barrier_wait(team);
   }
@@ -4445,7 +4800,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
 {
   LIBXS_ASSERT(NULL != model && 0 != model->built && NULL != inputs);
   {
-    const int m = model->ninputs, n = model->noutputs;
+    const int m = model->ninputs, mc = model->ncoord, n = model->noutputs;
     const int mode = model->eval_mode;
     const int diff_d = (model->diff_mode >= 0) ? model->diff_order : 0;
     /**
@@ -4474,7 +4829,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
     int norm_pool = 0, decomp_pool = 0, diff_pool = 0;
     double* decomp_inputs = NULL;
     double* diff_inputs = NULL;
-    double* norm_inputs = (double*)LIBXS_PREDICT_MALLOC((size_t)m * sizeof(double), norm_pool);
+    double* norm_inputs = (double*)LIBXS_PREDICT_MALLOC((size_t)mc * sizeof(double), norm_pool);
     double local_buf[256];
     double *vals, *errs, *conf, *var, *lo, *hi, best_dist = 0;
     int *rels, c, j, best_c = 0;
@@ -4599,10 +4954,10 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
       || model->floor > 0 || model->quantile > 0))
     {
       best_dist = internal_libxs_predict_viewdist2(norm_inputs,
-        model->clusters[0].centroid, m, view, model->has_missing);
+        model->clusters[0].centroid, mc, view, model->has_missing);
       for (c = 1; c < model->nclusters; ++c) {
         const double d = internal_libxs_predict_viewdist2(norm_inputs,
-          model->clusters[c].centroid, m, view, model->has_missing);
+          model->clusters[c].centroid, mc, view, model->has_missing);
         if (d < best_dist && model->clusters[c].nentries > 0) {
           best_dist = d; best_c = c;
         }
@@ -4672,7 +5027,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
               { double po_conf = 0, po_var = 0;
                 if (pcl->nentries > 0 && NULL != pcl->kd_pts) {
                   vals[j] = internal_libxs_predict_classify2(
-                    pcl, m, norm_inputs,
+                    pcl, mc, norm_inputs,
                     lj, gsz, pcl->ndistinct[lj], extrapolate, -1, NULL,
                     NULL, -1,
                     &po_conf, &po_var, qi, &lo[j], &hi[j],
@@ -4684,7 +5039,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                 }
                 else {
                   vals[j] = internal_libxs_predict_classify2(
-                    cl, m, norm_inputs, j, n,
+                    cl, mc, norm_inputs, j, n,
                     cl->ndistinct[j], extrapolate, -1, NULL, NULL, -1,
                     &po_conf, &po_var, qi, &lo[j], &hi[j],
                     internal_libxs_predict_central(model, j), view,
@@ -4696,7 +5051,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                 if (NULL != src_mode) src_mode[j] = LIBXS_PREDICT_SRC_CLASSIFY;
               }
               internal_libxs_predict_classify(
-                cl, m, norm_inputs, j, n,
+                cl, mc, norm_inputs, j, n,
                 cl->ndistinct[j], extrapolate, -1, &conf[j], &var[j],
                 internal_libxs_predict_central(model, j), view,
                 model->has_missing);
@@ -4705,7 +5060,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
             }
             else {
               vals[j] = internal_libxs_predict_classify2(
-                cl, m, norm_inputs, j, n,
+                cl, mc, norm_inputs, j, n,
                 cl->ndistinct[j], extrapolate, -1, NULL, NULL, -1,
                 &conf[j], &var[j], qi, &lo[j], &hi[j],
                 internal_libxs_predict_central(model, j), view,
@@ -4720,7 +5075,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
           }
           else if (0 != use_classify) {
             vals[j] = internal_libxs_predict_classify2(
-              cl, m, norm_inputs, j, n,
+              cl, mc, norm_inputs, j, n,
               cl->ndistinct[j], extrapolate, -1, NULL, NULL, -1,
               &conf[j], &var[j], qi, &lo[j], &hi[j],
               internal_libxs_predict_central(model, j), view,
@@ -4832,7 +5187,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
           for (c = 0; c < model->nclusters; ++c) {
             if (c != best_c) {
               const double d = sqrt(internal_libxs_predict_dist2(
-                norm_inputs, model->clusters[c].centroid, m,
+                norm_inputs, model->clusters[c].centroid, mc,
                 model->has_missing));
               if (d <= radius) ++nb;
             }
@@ -4856,7 +5211,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
       LIBXS_ASSERT(NULL != dists);
       for (c = 0; c < model->nclusters; ++c) {
         dists[c].dist = sqrt(internal_libxs_predict_dist2(norm_inputs,
-          model->clusters[c].centroid, m, model->has_missing));
+          model->clusters[c].centroid, mc, model->has_missing));
         dists[c].idx = c;
       }
       for (b = 0; b < nblend; ++b) {
@@ -4891,7 +5246,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
               if (0 != use_classify) {
                 double cj_conf = 1.0, cj_var = 0, cj_lo = 0, cj_hi = 0;
                 const double v = internal_libxs_predict_classify2(
-                  cl2, m, norm_inputs, j, n,
+                  cl2, mc, norm_inputs, j, n,
                   cl2->ndistinct[j], extrapolate, -1, NULL, NULL, -1,
                   &cj_conf, &cj_var, qi, &cj_lo, &cj_hi,
                   internal_libxs_predict_central(model, j), view,
@@ -5015,7 +5370,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
              */
             const double vj = (0 == internal_libxs_predict_central(model, j))
               ? vals[j]
-              : internal_libxs_predict_classify(&model->clusters[best_c], m, norm_inputs, j, n,
+              : internal_libxs_predict_classify(&model->clusters[best_c], mc, norm_inputs, j, n,
                   model->clusters[best_c].ndistinct[j], extrapolate, -1,
                   NULL, NULL, 0, view, model->has_missing);
             target[j] = (NULL != model->transforms)
@@ -5026,7 +5381,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
           { double refined[128], rconf[128];
             int rpool = 0;
             double* rnorm = (double*)LIBXS_PREDICT_MALLOC(
-              (size_t)m * sizeof(double), rpool);
+              (size_t)mc * sizeof(double), rpool);
             if (NULL != rnorm) {
               int decomp2_pool = 0;
               double* dcinp = NULL;
@@ -5045,7 +5400,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
               { const int rc = best_c;
                 const internal_libxs_predict_cluster_t* rcl = &model->clusters[rc];
                 const double rt_dist = sqrt(internal_libxs_predict_dist2(
-                  norm_inputs, rnorm, m, model->has_missing));
+                  norm_inputs, rnorm, mc, model->has_missing));
                 if (rt_dist <= rcl->dmax) {
                   for (j = 0; j < n; ++j) {
                     if (conf[j] >= 0.9) continue;
@@ -5054,7 +5409,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                       if (0 != use_classify) {
                         double rc_conf = 0;
                         refined[j] = internal_libxs_predict_classify(
-                          rcl, m, rnorm, j, n,
+                          rcl, mc, rnorm, j, n,
                           rcl->ndistinct[j], extrapolate, -1, &rc_conf, NULL,
                           internal_libxs_predict_central(model, j), view,
                           model->has_missing);
@@ -5827,7 +6182,7 @@ LIBXS_API_INLINE int internal_libxs_predict_dist(
   const int nvoc = (vocabulary > ns) ? vocabulary : ns;
   const int outside = nvoc - ns;
   internal_libxs_predict_evidence(cl,
-    model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL,
+    model->ncoord, norm_inputs, out_j, nouts, extrapolate, -1, NULL,
     NULL, -1, candidates, dists, &nfound, &exact, &settled, &best, NULL,
     model->has_missing, NULL, NULL, NULL, 0);
   for (i = 0; i < ns; ++i) local[i] = 0;
@@ -5922,7 +6277,7 @@ LIBXS_API_INLINE int internal_libxs_predict_point(
   const double den = tot + (double)nvoc;
   const int si = internal_libxs_predict_support_index(sv, ns, v);
   internal_libxs_predict_evidence(cl,
-    model->ninputs, norm_inputs, out_j, nouts, extrapolate, -1, NULL,
+    model->ncoord, norm_inputs, out_j, nouts, extrapolate, -1, NULL,
     NULL, -1, candidates, dists, &nfound, &exact, &settled, &best, NULL,
     model->has_missing, NULL, NULL, NULL, 0);
   /* Accumulate evidence per DISTINCT support entry, as the dense path does by
@@ -6276,7 +6631,7 @@ LIBXS_API_INLINE void internal_libxs_predict_loo_gather(
   int e, int g, int depth, internal_libxs_predict_scan_t* scan)
 {
   const int n = model->noutputs;
-  const int m = model->ninputs;
+  const int m = model->ncoord; /* coordinates, not inputs */
   scan->best = cl->raw_outputs[g];
   scan->exact_idx = -1;
   internal_libxs_predict_evidence(cl, m, cl->kd_pts + (size_t)e * m, g, n,
@@ -7148,7 +7503,7 @@ LIBXS_API void libxs_predict_query(
     int c;
     for (c = 0; c < model->nclusters; ++c) {
       const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
-      compressed += model->ninputs;
+      compressed += model->ncoord;
       /**
        * Per-output polynomials exist only where the model kind has them: an
        * hkNN model predicts from neighbours, so its clusters carry no order
@@ -7176,6 +7531,9 @@ LIBXS_API void libxs_predict_query(
   info->window = (model->nseries > 0) ? model->window : 0;
   info->nbank = (0 < model->nbank) ? model->nbank : 1;
   info->decompose = model->decompose;
+  info->coordinate = (NULL != model->input_score) ? LIBXS_PREDICT_SCORE
+    : ((NULL != model->input_knot) ? LIBXS_PREDICT_RANK : 0);
+  info->ncoord = model->ncoord;
   { double sqsum = 0;
     int c;
     info->nscan = 0;
@@ -7230,7 +7588,7 @@ LIBXS_API void libxs_predict_get(const libxs_predict_t* model, int index,
       if (0 <= local) {
         found = 1;
         if (NULL != inputs) {
-          const double* pt = cl->kd_pts + (size_t)local * model->ninputs;
+          const double* pt = cl->kd_pts + (size_t)local * model->ncoord;
           internal_libxs_predict_denormalize(model, pt, inputs);
           if (NULL != model->decompose_mat) {
             int tmp_pool = 0;

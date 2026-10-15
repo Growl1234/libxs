@@ -45,6 +45,11 @@
 #if !defined(LIBXS_PREDICT_TRIALCAP)
 # define LIBXS_PREDICT_TRIALCAP 8192
 #endif
+/* Candidates: the modes, then the two a score applies to again with one. */
+#define LIBXS_PREDICT_NCAND (LIBXS_PREDICT_NDECOMPOSE + 2)
+#if (LIBXS_PREDICT_NCAND > LIBXS_PREDICT_NTRIAL)
+# error "LIBXS_PREDICT_NTRIAL is too small for the candidates of the mode trial"
+#endif
 
 
 /** Candidate by index, ordered so that a prefix is a sensible shortlist. */
@@ -96,6 +101,91 @@ LIBXS_API_INLINE int internal_libxs_predict_decompose_ok(
     result = 0;
   }
   return result;
+}
+
+
+/* Mode of a candidate: the modes in order, then those a score applies to. */
+LIBXS_API_INLINE int internal_libxs_predict_cand_mode(int c)
+{
+  int result;
+  if (c < LIBXS_PREDICT_NDECOMPOSE) {
+    result = internal_libxs_predict_decompose_cand(c);
+  }
+  else {
+    result = (LIBXS_PREDICT_NDECOMPOSE == c)
+      ? LIBXS_PREDICT_RAW : LIBXS_PREDICT_HKNN;
+  }
+  return result;
+}
+
+
+/**
+ * Non-zero if a candidate places its inputs by score: a twin always, a mode
+ * itself only where the caller asked for the score and it can apply.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_cand_score(
+  const libxs_predict_t* model, int c)
+{
+  return (LIBXS_PREDICT_NDECOMPOSE <= c
+    || (LIBXS_PREDICT_SCORE == model->coord && 0 < model->coord_ok
+      && 0 != internal_libxs_predict_score_mode(
+        internal_libxs_predict_cand_mode(c)))) ? 1 : 0;
+}
+
+
+/**
+ * Non-zero if a candidate takes part. A mode the caller named admits only
+ * itself and its twin, which is how a named neighbour mode still has its
+ * coordinate chosen; a twin needs the coordinate left open and enough inputs
+ * for a score to be worth a build.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_cand_ok(
+  const libxs_predict_t* model, int c)
+{
+  const int mode = internal_libxs_predict_cand_mode(c);
+  int result = internal_libxs_predict_decompose_ok(model, mode);
+  if (0 <= model->decompose && mode != model->decompose) {
+    result = 0;
+  }
+  else if (LIBXS_PREDICT_NDECOMPOSE <= c
+    && (LIBXS_PREDICT_AUTO_COORD != model->coord || 0 >= model->coord_ok
+      || LIBXS_PREDICT_SCOREMIN > model->ninputs))
+  {
+    result = 0;
+  }
+  return result;
+}
+
+
+/* Non-zero if a named mode still leaves its coordinate to a trial. */
+LIBXS_API_INLINE int internal_libxs_predict_coord_trial(
+  const libxs_predict_t* model)
+{
+  return (0 <= model->decompose && LIBXS_PREDICT_AUTO_COORD == model->coord
+    && 0 < model->coord_ok && LIBXS_PREDICT_SCOREMIN <= model->ninputs
+    && 0 != internal_libxs_predict_score_mode(model->decompose)) ? 1 : 0;
+}
+
+
+/**
+ * Resolve mode and coordinate from the winning candidate. Where nothing was
+ * scored the caller is left where one who never asked would be: a named mode
+ * is kept, an open one falls back to the default, and the coordinate is the
+ * one requested wherever it can apply.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_cand_apply(
+  libxs_predict_t* model, int c)
+{
+  if (0 <= c) {
+    model->decompose = internal_libxs_predict_cand_mode(c);
+    model->coord_sel = internal_libxs_predict_cand_score(model, c);
+  }
+  else {
+    if (0 > model->decompose) model->decompose = LIBXS_PREDICT_RAW;
+    model->coord_sel = (LIBXS_PREDICT_SCORE == model->coord
+      && 0 < model->coord_ok
+      && 0 != internal_libxs_predict_score_mode(model->decompose)) ? 1 : 0;
+  }
 }
 
 
@@ -157,8 +247,8 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_kind(
  * that fails on this corpus takes itself out of the running.
  */
 LIBXS_API_INLINE double internal_libxs_predict_decompose_probe(
-  const libxs_predict_t* model, int mode, const char role[], const int kind[],
-  const double mad[])
+  const libxs_predict_t* model, int mode, int score, const char role[],
+  const int kind[], const double mad[])
 {
   const int m = model->ninputs, n = model->noutputs;
   libxs_predict_t* probe = libxs_predict_create(m, n);
@@ -169,6 +259,8 @@ LIBXS_API_INLINE double internal_libxs_predict_decompose_probe(
       (size_t)n * sizeof(double), pred_pool);
     probe->eval_mode = model->eval_mode;
     probe->decompose = mode;
+    /* told its coordinate, the probe's own build holds no trial of it */
+    probe->coord = (0 != score) ? LIBXS_PREDICT_SCORE : LIBXS_PREDICT_RANK;
     probe->central = model->central;
     probe->consistency = model->consistency;
     probe->smooth = model->smooth;
@@ -251,13 +343,12 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_score(
   const int series = (0 < model->nts && 0 < model->nseries) ? 1 : 0;
   const int nfold = (0 < folds) ? folds : ((0 != series) ? 3 : 1);
   int c;
-  for (c = tid; c < LIBXS_PREDICT_NDECOMPOSE; c += ntasks) total[c] = 1e30;
+  for (c = tid; c < LIBXS_PREDICT_NCAND; c += ntasks) total[c] = 1e30;
   if (0 != series) {
-    for (c = tid; c < LIBXS_PREDICT_NDECOMPOSE; c += ntasks) {
-      const int mode = internal_libxs_predict_decompose_cand(c);
-      if (0 != internal_libxs_predict_decompose_ok(model, mode)) {
+    for (c = tid; c < LIBXS_PREDICT_NCAND; c += ntasks) {
+      if (0 != internal_libxs_predict_cand_ok(model, c)) {
         total[c] = internal_libxs_predict_ts_window_probe(
-          model, model->window, nfold, mode);
+          model, model->window, nfold, internal_libxs_predict_cand_mode(c));
       }
     }
   }
@@ -275,7 +366,7 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_score(
       const size_t co = libxs_coprime2((size_t)p);
       const int nfit = (int)(p * 0.8 + 0.5);
       int f, i;
-      for (c = tid; c < LIBXS_PREDICT_NDECOMPOSE; c += ntasks) total[c] = 0;
+      for (c = tid; c < LIBXS_PREDICT_NCAND; c += ntasks) total[c] = 0;
       /**
        * Every task derives the same split rather than sharing one, which costs
        * a scan of the corpus per task and removes the only thing they would
@@ -287,11 +378,11 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_score(
             (char)((i < nfit) ? 0 : 1);
         }
         internal_libxs_predict_decompose_kind(model, role, kind, mad, buf);
-        for (c = tid; c < LIBXS_PREDICT_NDECOMPOSE; c += ntasks) {
-          const int mode = internal_libxs_predict_decompose_cand(c);
-          total[c] += (0 != internal_libxs_predict_decompose_ok(model, mode))
-            ? internal_libxs_predict_decompose_probe(model, mode, role, kind,
-              mad)
+        for (c = tid; c < LIBXS_PREDICT_NCAND; c += ntasks) {
+          total[c] += (0 != internal_libxs_predict_cand_ok(model, c))
+            ? internal_libxs_predict_decompose_probe(model,
+              internal_libxs_predict_cand_mode(c),
+              internal_libxs_predict_cand_score(model, c), role, kind, mad)
             : 1e30;
         }
       }
@@ -305,19 +396,19 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_score(
 
 
 /**
- * The mode with the lowest total, or the default where nothing was scoreable.
- * Taken in candidate order by one task, so the answer does not depend on how
- * the scoring was distributed.
+ * The candidate with the lowest total, or -1 where nothing was scoreable (see
+ * internal_libxs_predict_cand_apply). Taken in candidate order by one task, so
+ * the answer does not depend on how the scoring was distributed.
  */
 LIBXS_API_INLINE int internal_libxs_predict_decompose_reduce(
   const libxs_predict_t* model, const double total[])
 {
   double best = 1e30;
-  int c, result = LIBXS_PREDICT_RAW;
-  for (c = 0; c < LIBXS_PREDICT_NDECOMPOSE; ++c) {
+  int c, result = -1;
+  for (c = 0; c < LIBXS_PREDICT_NCAND; ++c) {
     if (total[c] < best) {
       best = total[c];
-      result = internal_libxs_predict_decompose_cand(c);
+      result = c;
     }
   }
   LIBXS_UNUSED(model);
@@ -326,9 +417,10 @@ LIBXS_API_INLINE int internal_libxs_predict_decompose_reduce(
 
 
 /**
- * Choose the mode, and fall back to the default rather than to a mode no
- * measurement supported: an empty or unscoreable corpus has to leave the caller
- * where a caller who never asked would have been.
+ * Choose the candidate, a mode and its coordinate, for
+ * internal_libxs_predict_cand_apply to resolve. That falls back to the default
+ * rather than to a mode no measurement supported: an empty or unscoreable
+ * corpus has to leave the caller where a caller who never asked would have been.
  *
  * A timeseries is scored on rolling cuts and a table on one split. The cut
  * walks forward for the same reason the window trial's does, and there is more
@@ -344,7 +436,7 @@ LIBXS_API_INLINE int internal_libxs_predict_decompose_reduce(
 LIBXS_API_INLINE int internal_libxs_predict_decompose_select(
   const libxs_predict_t* model, int folds)
 {
-  double total[LIBXS_PREDICT_NDECOMPOSE];
+  double total[LIBXS_PREDICT_NCAND];
   internal_libxs_predict_decompose_score(model, folds, 0, 1, total);
   return internal_libxs_predict_decompose_reduce(model, total);
 }

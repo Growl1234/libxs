@@ -290,13 +290,16 @@ composition features.
 
 ### Usage
 
-    ./predict_crystal.x <crystal_csv> [train_fraction] [order] [nclusters] [compress[Q]] [fisher|hknn|setdiff|rf|none] [xgb]
+    ./predict_crystal.x <crystal_csv> [train_fraction] [order] [nclusters] [compress[Q]] [fisher|hknn|setdiff|rf|none] [rank|score] [xgb]
 
     fisher     Fisher discriminant feature weighting.
     hknn       Hierarchical kNN (Gini-guided partition).
     setdiff    Setdiff feature selection.
     rf         Random Forest classification (default).
     none       Raw kNN without feature processing.
+    rank       Neighbour modes place inputs by rank.
+    score      Neighbour modes place inputs by what they say about the class
+               (default: chosen by trial between the two from 8 inputs on).
     xgb        Also train XGBoost on the same split and compare.
 
 ### Example

@@ -2,7 +2,7 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
   libxs_predict_t* model, int order, double quality)
 {
   const int p = model->nentries;
-  const int m = model->ninputs;
+  const int m = model->ninputs, mc = model->ncoord;
   const int n = model->noutputs;
   int maxn = 0, ci;
   int dropped_pool = 0;
@@ -46,7 +46,7 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
               double conf = 0, var = 0;
               const double actual = cl->raw_outputs[(size_t)li * n + j];
               const double predicted = internal_libxs_predict_classify2(
-                cl, m, cl->kd_pts + (size_t)li * m, j, n,
+                cl, mc, cl->kd_pts + (size_t)li * mc, j, n,
                 cl->ndistinct[j], 0, li, dropped, NULL, -1, &conf, &var,
                 0, NULL, NULL,
                 internal_libxs_predict_central(model, j), NULL,
@@ -123,8 +123,8 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
             const int gi = cl->sorted_idx[k];
             if (0 != keep[gi]) {
               if (dst != k) {
-                memcpy(cl->kd_pts + (size_t)dst * m,
-                  cl->kd_pts + (size_t)k * m, (size_t)m * sizeof(double));
+                memcpy(cl->kd_pts + (size_t)dst * mc,
+                  cl->kd_pts + (size_t)k * mc, (size_t)mc * sizeof(double));
                 memcpy(cl->raw_outputs + (size_t)dst * n,
                   cl->raw_outputs + (size_t)k * n, (size_t)n * sizeof(double));
                 cl->sorted_idx[dst] = gi;

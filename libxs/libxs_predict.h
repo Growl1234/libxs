@@ -52,6 +52,14 @@ typedef enum libxs_predict_decompose_t {
   LIBXS_PREDICT_HKNN    = 6
 } libxs_predict_decompose_t;
 
+/** Per-input coordinate the neighbour distance is taken in. */
+typedef enum libxs_predict_coord_t {
+  /** Sentinel: choose at build by trial, see libxs_predict_set_coordinate. */
+  LIBXS_PREDICT_AUTO_COORD = 0,
+  LIBXS_PREDICT_RANK       = 1,
+  LIBXS_PREDICT_SCORE      = 2
+} libxs_predict_coord_t;
+
 /** Opaque prediction model type. */
 LIBXS_EXTERN_C typedef struct libxs_predict_t libxs_predict_t;
 
@@ -190,6 +198,18 @@ LIBXS_EXTERN_C typedef struct libxs_predict_query_t {
    * LIBXS_PREDICT_AUTO_DECOMPOSE.
    */
   int decompose;
+  /**
+   * Coordinate in force (see set_coordinate): LIBXS_PREDICT_RANK or
+   * LIBXS_PREDICT_SCORE, or zero where the inputs are only scaled to their
+   * extent, which is the case for a series and for a named forest.
+   */
+  int coordinate;
+  /**
+   * Coordinates a stored point has, which is what one distance costs: ninputs
+   * under a rank, and under a score as many as the inputs carry about the
+   * classes, which may be more or fewer.
+   */
+  int ncoord;
 } libxs_predict_query_t;
 
 /** Kind of quantity libxs_predict_prob reports for an output. */
@@ -542,6 +562,45 @@ LIBXS_API void libxs_predict_set_decompose(libxs_predict_t* model,
  * way the built one did.
  */
 LIBXS_API void libxs_predict_set_neighbors(libxs_predict_t* model, int k);
+
+/**
+ * Set the coordinate each input contributes to the neighbour distance
+ * (default LIBXS_PREDICT_AUTO_COORD).
+ *
+ * LIBXS_PREDICT_RANK places an input by its rank among the stored entries.
+ * LIBXS_PREDICT_SCORE places it by what its value says about the output:
+ * the rank is cut into equal-population bins, and a bin is placed by the
+ * leading correspondence-analysis coordinates of its class shares, so inputs
+ * that separate the classes span long axes and inputs that do not collapse.
+ * An input spans up to three coordinates, the fewest that carry 90% of what
+ * rises above chance, and none where nothing does; libxs_predict_query_t::ncoord
+ * reports the total, which is what a distance costs.
+ *
+ * A score needs one discrete output and does not apply to a series; it is
+ * used by LIBXS_PREDICT_RAW and LIBXS_PREDICT_HKNN and ignored by the other
+ * modes. LIBXS_PREDICT_FISHER keeps the rank: its weights measure what a
+ * score already carries, and weighing a score by them lost accuracy. Where a
+ * score cannot apply the rank is used, whatever was requested.
+ *
+ * It pays with many inputs and costs with few. On 37 composition features
+ * with seven classes plain kNN gained 4.5 and 2.5 points of accuracy at 8k and
+ * 48k entries, at 72 and 82 coordinates; on 28 physics features
+ * with two classes, one coordinate each, 5 points at 80k entries, where it
+ * also raised the share of queries answered at confidence 0.9 from 1% to 10%.
+ * Subsets of the same features showed the other side: 4 to 8 inputs lost up
+ * to 5 points. The boundary moves with which inputs carry the label rather
+ * than with their count alone, hence the trial: LIBXS_PREDICT_AUTO_COORD
+ * scores both coordinates on entries held back from a probe build, alongside
+ * the mode trial when the mode is chosen too, and only from 8 inputs on. The
+ * trial roughly doubles the build; a query costs the same either way.
+ *
+ * The score is part of the saved model. Reconstructing the corpus of a loaded
+ * model needs every coordinate to be invertible, which a score is not, so such
+ * a model reports no corpus (see libxs_predict_query_t::corpus). Read the
+ * coordinate in force from libxs_predict_query_t::coordinate.
+ */
+LIBXS_API void libxs_predict_set_coordinate(libxs_predict_t* model,
+  int coordinate);
 
 /**
  * Floor that every confidence rescaling at eval pulls toward (0..1, default 0
