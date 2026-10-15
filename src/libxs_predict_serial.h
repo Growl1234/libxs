@@ -274,7 +274,7 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     required += (size_t)cl->nentries * (size_t)n * sizeof(double);
     required += (size_t)n; /* one tag per encoded column, never more */
     required += (size_t)n * sizeof(double);
-    required += (size_t)cl->nentries * sizeof(uint16_t);
+    required += (size_t)cl->nentries * sizeof(uint32_t);
   }
   required += 1;
   /* the entry-weight flag, introduced with version 2 */
@@ -397,7 +397,9 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
         WRITE_BLK(cl->eweight, (size_t)cl->nentries * sizeof(double));
       }
       WRITE_BLK(cl->out_rms, (size_t)n * sizeof(double));
-      for (k = 0; k < cl->nentries; ++k) WRITE_U16(cl->sorted_idx[k]);
+      /* 32 bits since version 2: a 16-bit index wrapped past 65535 entries,
+       * and a wrapped index still passes the bound the reader checks */
+      for (k = 0; k < cl->nentries; ++k) WRITE_U32(cl->sorted_idx[k]);
     }
     if (NULL != model->hknn_po_assignments
       && NULL != model->hknn_po_clusters)
@@ -1191,16 +1193,24 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
       ok = internal_libxs_predict_load_var(cl, nout);
     }
     if (EXIT_SUCCESS == ok) {
-      ok = internal_libxs_predict_avail(src, end, (size_t)ne, sizeof(uint16_t));
+      ok = internal_libxs_predict_avail(src, end, (size_t)ne,
+        (1 < version) ? sizeof(uint32_t) : sizeof(uint16_t));
     }
     if (EXIT_SUCCESS == ok) {
       cl->sorted_idx = (int*)malloc((size_t)ne * sizeof(int));
       if (NULL == cl->sorted_idx) ok = EXIT_FAILURE;
       else {
         for (k = 0; k < (int)ne && EXIT_SUCCESS == ok; ++k) {
-          uint16_t v = 0;
-          ok = internal_libxs_predict_read(&src, end, &v, 2);
-          cl->sorted_idx[k] = (int)v;
+          if (1 < version) {
+            uint32_t v = 0;
+            ok = internal_libxs_predict_read(&src, end, &v, 4);
+            cl->sorted_idx[k] = (INT_MAX >= v) ? (int)v : -1;
+          }
+          else {
+            uint16_t v = 0;
+            ok = internal_libxs_predict_read(&src, end, &v, 2);
+            cl->sorted_idx[k] = (int)v;
+          }
         }
       }
     }
@@ -1216,9 +1226,11 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
       const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
       int k;
       for (k = 0; k < cl->nentries && EXIT_SUCCESS == ok; ++k) {
-        if (cl->sorted_idx[k] >= total) ok = EXIT_FAILURE;
+        if (0 > cl->sorted_idx[k] || cl->sorted_idx[k] >= total) ok = EXIT_FAILURE;
       }
     }
+    /* set for every output count: only the multi-output branch below did */
+    model->nentries = total;
   }
   if (EXIT_SUCCESS == ok && src < end && (int)nout > 1) {
     int p = 0, i, ng = (int)nout;
@@ -1326,8 +1338,16 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
                 cls[ci].centroid, (size_t)model->ncoord * sizeof(double));
             }
             if (EXIT_SUCCESS == ok && ne > 0) {
-              ok = internal_libxs_predict_avail(src, end,
-                (size_t)ne * ((size_t)model->ncoord + (size_t)gsz), sizeof(double));
+              /**
+               * The outputs are only raw in version 1. Since version 2 they are
+               * dictionary-encoded and can be far smaller, so demanding their raw
+               * size refused a valid file whose last cluster ends close to the
+               * end; the coordinates alone bound the allocation, and reading the
+               * outputs checks its own bounds.
+               */
+              ok = internal_libxs_predict_avail(src, end, (size_t)ne
+                * ((size_t)model->ncoord + (1 < version ? 0 : (size_t)gsz)),
+                sizeof(double));
               if (EXIT_SUCCESS == ok) {
                 cls[ci].kd_pts = (double*)malloc(
                   (size_t)ne * (size_t)model->ncoord * sizeof(double));
@@ -1377,6 +1397,14 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
       const unsigned char* esc = end - esclen;
       internal_libxs_predict_read_escape(model, &esc, end);
     }
+    /**
+     * The corpus, as the flat reader recovers it. Without it a loaded hKNN
+     * model skipped the round-trip pass silently, so a consistency penalty
+     * or a refinement it was saved with did nothing after loading.
+     */
+    ok = internal_libxs_predict_load_entries(model);
+  }
+  if (EXIT_SUCCESS == ok && NULL != model) {
     model->built = 1;
     ++model->nbuild;
     internal_libxs_predict_missing_all(model);
