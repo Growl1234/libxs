@@ -313,9 +313,12 @@ endif
 
 .PHONY: clib
 clib: cheader $(PPKGDIR)/$(PROJECT)-static.pc $(PPKGDIR)/$(PROJECT)-shared.pc $(PCMKDIR)/$(PROJECT)Config.cmake
-	@-rm -f $(OUTTOP)/$(PROJECT)*.$(SLIBEXT) $(OUTTOP)/$(PROJECT)*.$(DLIBEXT)*
-	@if [ -d $(OUTTOP) ]; then cd $(OUTTOP) && for LIB in $(LIBARCH)/$(PROJECT)*.$(SLIBEXT) $(LIBARCH)/$(PROJECT)*.$(DLIBEXT)*; do \
-		if [ -e "$${LIB}" ]; then ln -fs "$${LIB}" .; fi; \
+	@if [ -d $(OUTDIR) ]; then cd $(OUTTOP) && for LINK in *; do \
+		if [ -L "$${LINK}" ]; then case "$$(readlink "$${LINK}")" in \
+			/*) ;; */*) if [ -d "$$(dirname "$$(readlink "$${LINK}")")" ]; then rm -f "$${LINK}"; fi;; \
+		esac; fi; \
+	done && for FILE in $(LIBARCH)/*; do \
+		if [ -f "$${FILE}" ]; then ln -fs "$${FILE}" .; fi; \
 	done; fi
 ifeq (,$(filter-out 0 2,$(BUILD)))
 $(OUTDIR)/$(PROJECT).$(SLIBEXT): $(OUTDIR)/.make $(OBJFILES) $(FTNOBJS)

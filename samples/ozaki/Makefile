@@ -40,9 +40,10 @@ ifneq (0,$(LIBXSTREAM))
   # symlink, and lib/ can hold one whenever a build of that library was
   # interrupted or never ran (the soname links are created while the link recipe
   # is expanded). Linking against one stops with "No rule to make target".
-  XSTREAM_SLIB := $(call libexists,$(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(SLIBEXT)))
-  XSTREAM_DLIB := $(call libexists,$(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(DLIBEXT)))
-  XSTREAM_LIB := $(call libexists,$(wildcard $(LIBXSTREAMROOT)/lib/libxstream.$(LIBEXT)))
+  XSTREAM_LIBDIR := $(call archlibdir,$(LIBXSTREAMROOT),libxstream)
+  XSTREAM_SLIB := $(call libexists,$(wildcard $(XSTREAM_LIBDIR)/libxstream.$(SLIBEXT)))
+  XSTREAM_DLIB := $(call libexists,$(wildcard $(XSTREAM_LIBDIR)/libxstream.$(DLIBEXT)))
+  XSTREAM_LIB := $(call libexists,$(wildcard $(XSTREAM_LIBDIR)/libxstream.$(LIBEXT)))
   XSTREAM_LIB := $(strip $(if $(XSTREAM_LIB),$(XSTREAM_LIB), \
     $(if $(XSTREAM_SLIB),$(XSTREAM_SLIB),$(XSTREAM_DLIB))))
   XSTREAM_SOURCE := $(wildcard $(LIBXSTREAMROOT)/libxstream/libxstream_source.h)

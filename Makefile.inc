@@ -2341,9 +2341,10 @@ OMPFLAG ?= $(NULL)
 # prerequisite nothing can produce ("No rule to make target"), and it also hides
 # the header-only fallback that the absence of a library is supposed to select.
 libexists = $(if $(realpath $1),$1)
-# lib/<target>, lib/<machine> (portable), then lib/ (latest build)
-LIBSUBDIR := $(firstword $(foreach D,$(LIBARCH) $(MNAME),$(if $(realpath $(wildcard \
-  $(DEPDIR)/lib/$(D)/$(PROJECT).$(SLIBEXT) $(DEPDIR)/lib/$(D)/$(PROJECT).$(DLIBEXT))),lib/$(D))) lib)
+# library folder of root $1 holding library $2: lib/<target>, lib/<machine> (portable), then lib/ (latest build)
+archlibdir = $(firstword $(foreach D,$(LIBARCH) $(MNAME),$(if $(realpath $(wildcard \
+  $1/lib/$(D)/$2.$(SLIBEXT) $1/lib/$(D)/$2.$(DLIBEXT))),$1/lib/$(D))) $1/lib)
+LIBSUBDIR := $(patsubst $(DEPDIR)/%,%,$(call archlibdir,$(DEPDIR),$(PROJECT)))
 SLIB := $(call libexists,$(wildcard $(DEPDIR)/$(LIBSUBDIR)/$(PROJECT).$(SLIBEXT)))
 DLIB := $(call libexists,$(wildcard $(DEPDIR)/$(LIBSUBDIR)/$(PROJECT).$(DLIBEXT)))
 XLIB := $(call libexists,$(wildcard $(DEPDIR)/$(LIBSUBDIR)/$(PROJECT).$(LIBEXT)))
