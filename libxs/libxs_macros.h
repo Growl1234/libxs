@@ -1305,6 +1305,13 @@ LIBXS_EXTERN double erf(double) LIBXS_NOTHROW;
 
 #if defined(LIBXS_INTERCEPT_DYNAMIC)
 # include <dlfcn.h>
+# if defined(__GLIBC__) && !defined(__USE_GNU) /* strict C hides them unless _GNU_SOURCE precedes the first system header */
+typedef struct Dl_info {
+  const char* dli_fname; void* dli_fbase;
+  const char* dli_sname; void* dli_saddr;
+} Dl_info;
+LIBXS_EXTERN int dladdr(const void*, Dl_info*) LIBXS_NOTHROW;
+# endif
 # if !defined(RTLD_NEXT)
 #   define LIBXS_RTLD_NEXT ((void*)-1l)
 # else
