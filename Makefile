@@ -93,7 +93,8 @@ include $(ROOTDIR)/Makefile.inc
 # build per target (lib/<target>), lib/ refers to the latest build
 OUTTOP := $(OUTDIR)
 OUTDIR := $(OUTTOP)/$(LIBARCH)
-BLDDIR := $(BLDDIR)/$(LIBARCH)
+BLDTOP := $(BLDDIR)
+BLDDIR := $(BLDTOP)/$(LIBARCH)
 
 # 0: static, 1: shared, 2: static and shared
 ifneq (,$(filter-out file,$(origin STATIC)))
@@ -466,6 +467,11 @@ endif
 
 .PHONY: realclean
 realclean: clean
+ifneq ($(call qapath,$(BLDTOP)),$(ROOTDIR))
+ifneq ($(call qapath,$(BLDTOP)),$(HEREDIR))
+	@-rm -rf $(BLDTOP)
+endif
+endif
 ifneq ($(call qapath,$(OUTTOP)),$(ROOTDIR))
 ifneq ($(call qapath,$(OUTTOP)),$(HEREDIR))
 	@-rm -rf $(OUTTOP)
