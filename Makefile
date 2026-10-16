@@ -255,6 +255,7 @@ $(INCDIR)/$(PROJECT)_version.h: $(INCDIR)/.make $(DIRSTATE)/.state $(ROOTDIR)/ve
 	$(info --- $(PROJUPP) build log)
 	@$(CP) -r $(ROOTSCR) . 2>/dev/null || true
 	@$(CP) $(ROOTDIR)/Makefile.inc . 2>/dev/null || true
+	@$(CP) $(ROOTDIR)/.md2pdf.lua . 2>/dev/null || true
 	@$(CP) $(ROOTDIR)/.mktmp.sh . 2>/dev/null || true
 	@$(CP) $(ROOTDIR)/.flock.sh . 2>/dev/null || true
 	@$(CP) $(ROOTDIR)/.state.sh . 2>/dev/null || true
@@ -573,6 +574,7 @@ endif
 	@echo "$(PROJUPP) installing build infrastructure..."
 	@$(MKDIR) -p $(PREFIX)/$(PSHRDIR)
 	@$(CP) -v $(ROOTDIR)/Makefile.inc $(PREFIX)/$(PSHRDIR) 2>/dev/null || true
+	@$(CP) -v $(ROOTDIR)/.md2pdf.lua $(PREFIX)/$(PSHRDIR) 2>/dev/null || true
 	@$(CP) -v $(ROOTDIR)/.mktmp.sh $(PREFIX)/$(PSHRDIR) 2>/dev/null || true
 	@$(CP) -v $(ROOTDIR)/.flock.sh $(PREFIX)/$(PSHRDIR) 2>/dev/null || true
 	@$(CP) -v $(ROOTDIR)/.state.sh $(PREFIX)/$(PSHRDIR) 2>/dev/null || true

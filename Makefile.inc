@@ -2876,6 +2876,7 @@ md2pdf = { T=$$($(abspath $(MKTEMP)) /tmp/.pdf_XXXXXX.tex) && \
 	$(PANDOC) -D latex </dev/null | $(SED) $(PDF_TMPL_SED) >$${T} && \
 	$(SED) $(PDF_UTF8_SED) | $(PANDOC) \
 		--template=$${T} --listings \
+		$(if $(wildcard $(MAKEINC)/.md2pdf.lua),--lua-filter=$(abspath $(MAKEINC)/.md2pdf.lua)) \
 		-f gfm+subscript+superscript+smart \
 		-V documentclass=scrartcl \
 		-V title-meta="$(strip $1)" \

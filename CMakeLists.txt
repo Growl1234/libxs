@@ -303,6 +303,8 @@ install(
 )
 
 install(
-  FILES "${CMAKE_CURRENT_SOURCE_DIR}/Makefile.inc"
+  FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/Makefile.inc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/.md2pdf.lua"
   DESTINATION "${LIBXS_SHARE_DIR}"
 )
