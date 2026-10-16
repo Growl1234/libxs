@@ -10,7 +10,7 @@ Benchmarks three shuffling strategies and compares their throughput:
 
 Each iteration works on an array of unsigned integers initialized to
 0..n-1. On the final iteration the shuffled result can optionally be
-written as an MHD image file or analyzed for randomness quality.
+written as a PNG image file or analyzed for randomness quality.
 
 ## Build
 
@@ -72,11 +72,11 @@ Optional quality metrics:
 - imb — Partition imbalance, measuring how unevenly element sums
   are distributed across sub-partitions (SPLIT).
 
-### MHD Image Output
+### Image Output
 
 When RANDOM is not set and the element size is 1, 2, 4, or 8 bytes,
-the final shuffled array is written as an MHD image per method
-(shuffle_rng.mhd, shuffle_ds1.mhd, shuffle_ds2.mhd). The images are
+the final shuffled array is written as a PNG image per method
+(shuffle_rng.png, shuffle_ds1.png, shuffle_ds2.png). The images are
 shaped close to square (isqrt(n) x n/isqrt(n)) and converted to
 unsigned 8-bit via modulus.
 

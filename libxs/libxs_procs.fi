@@ -561,14 +561,16 @@
      &      TARGET :: key(:)
           INTEGER(C_INT), INTENT(IN) :: seed
           INTEGER(C_INT) :: libxs_hash_xchar
-          libxs_hash_xchar = libxs_hash_c(C_LOC(key), SIZE(key), seed)
+          libxs_hash_xchar = libxs_hash_c(                              &
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T), seed)
         END FUNCTION
 
         PURE FUNCTION libxs_hash_char(key)
           CHARACTER(C_CHAR), INTENT(IN), CONTIGUOUS,                    &
      &      TARGET :: key(:)
           INTEGER(C_INT) :: libxs_hash_char
-          libxs_hash_char = libxs_hash_c(C_LOC(key), SIZE(key), 0)
+          libxs_hash_char = libxs_hash_c(                               &
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T), 0)
         END FUNCTION
 
         PURE FUNCTION libxs_hash_xi8(key, seed)
@@ -576,14 +578,16 @@
      &      TARGET :: key(:)
           INTEGER(C_INT), INTENT(IN) :: seed
           INTEGER(C_INT) :: libxs_hash_xi8
-          libxs_hash_xi8 = libxs_hash_c(C_LOC(key), SIZE(key), seed)
+          libxs_hash_xi8 = libxs_hash_c(                                &
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T), seed)
         END FUNCTION
 
         PURE FUNCTION libxs_hash_i8(key)
           INTEGER(C_INT8_T), INTENT(IN), CONTIGUOUS,                    &
      &      TARGET :: key(:)
           INTEGER(C_INT) :: libxs_hash_i8
-          libxs_hash_i8 = libxs_hash_c(C_LOC(key), SIZE(key), 0)
+          libxs_hash_i8 = libxs_hash_c(                                 &
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T), 0)
         END FUNCTION
 
         PURE FUNCTION libxs_hash_xi32(key, seed)
@@ -592,7 +596,7 @@
           INTEGER(C_INT), INTENT(IN) :: seed
           INTEGER(C_INT) :: libxs_hash_xi32
           libxs_hash_xi32 = libxs_hash_c(                               &
-     &      C_LOC(key), SIZE(key) * 4, seed)
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T) * 4, seed)
         END FUNCTION
 
         PURE FUNCTION libxs_hash_i32(key)
@@ -600,7 +604,7 @@
      &      TARGET :: key(:)
           INTEGER(C_INT) :: libxs_hash_i32
           libxs_hash_i32 = libxs_hash_c(                                &
-     &      C_LOC(key), SIZE(key) * 4, 0)
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T) * 4, 0)
         END FUNCTION
 
         PURE FUNCTION libxs_hash_xi64(key, seed)
@@ -609,7 +613,7 @@
           INTEGER(C_INT), INTENT(IN) :: seed
           INTEGER(C_INT) :: libxs_hash_xi64
           libxs_hash_xi64 = libxs_hash_c(                               &
-     &      C_LOC(key), SIZE(key) * 8, seed)
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T) * 8, seed)
         END FUNCTION
 
         PURE FUNCTION libxs_hash_i64(key)
@@ -617,7 +621,76 @@
      &      TARGET :: key(:)
           INTEGER(C_INT) :: libxs_hash_i64
           libxs_hash_i64 = libxs_hash_c(                                &
-     &      C_LOC(key), SIZE(key) * 8, 0)
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T) * 8, 0)
+        END FUNCTION
+
+        ! 64-bit hash variants by element type
+        PURE FUNCTION libxs_hash64_xchar(key, seed)
+          CHARACTER(C_CHAR), INTENT(IN), CONTIGUOUS,                    &
+     &      TARGET :: key(:)
+          INTEGER(C_INT64_T), INTENT(IN) :: seed
+          INTEGER(C_INT64_T) :: libxs_hash64_xchar
+          libxs_hash64_xchar = libxs_hash64_c(                          &
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T), seed)
+        END FUNCTION
+
+        PURE FUNCTION libxs_hash64_char(key)
+          CHARACTER(C_CHAR), INTENT(IN), CONTIGUOUS,                    &
+     &      TARGET :: key(:)
+          INTEGER(C_INT64_T) :: libxs_hash64_char
+          libxs_hash64_char = libxs_hash64_c(                           &
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T), 0_C_INT64_T)
+        END FUNCTION
+
+        PURE FUNCTION libxs_hash64_xi8(key, seed)
+          INTEGER(C_INT8_T), INTENT(IN), CONTIGUOUS,                    &
+     &      TARGET :: key(:)
+          INTEGER(C_INT64_T), INTENT(IN) :: seed
+          INTEGER(C_INT64_T) :: libxs_hash64_xi8
+          libxs_hash64_xi8 = libxs_hash64_c(                            &
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T), seed)
+        END FUNCTION
+
+        PURE FUNCTION libxs_hash64_i8(key)
+          INTEGER(C_INT8_T), INTENT(IN), CONTIGUOUS,                    &
+     &      TARGET :: key(:)
+          INTEGER(C_INT64_T) :: libxs_hash64_i8
+          libxs_hash64_i8 = libxs_hash64_c(                             &
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T), 0_C_INT64_T)
+        END FUNCTION
+
+        PURE FUNCTION libxs_hash64_xi32(key, seed)
+          INTEGER(C_INT), INTENT(IN), CONTIGUOUS,                       &
+     &      TARGET :: key(:)
+          INTEGER(C_INT64_T), INTENT(IN) :: seed
+          INTEGER(C_INT64_T) :: libxs_hash64_xi32
+          libxs_hash64_xi32 = libxs_hash64_c(                           &
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T) * 4, seed)
+        END FUNCTION
+
+        PURE FUNCTION libxs_hash64_i32(key)
+          INTEGER(C_INT), INTENT(IN), CONTIGUOUS,                       &
+     &      TARGET :: key(:)
+          INTEGER(C_INT64_T) :: libxs_hash64_i32
+          libxs_hash64_i32 = libxs_hash64_c(                            &
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T) * 4, 0_C_INT64_T)
+        END FUNCTION
+
+        PURE FUNCTION libxs_hash64_xi64(key, seed)
+          INTEGER(C_LONG_LONG), INTENT(IN), CONTIGUOUS,                 &
+     &      TARGET :: key(:)
+          INTEGER(C_INT64_T), INTENT(IN) :: seed
+          INTEGER(C_INT64_T) :: libxs_hash64_xi64
+          libxs_hash64_xi64 = libxs_hash64_c(                           &
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T) * 8, seed)
+        END FUNCTION
+
+        PURE FUNCTION libxs_hash64_i64(key)
+          INTEGER(C_LONG_LONG), INTENT(IN), CONTIGUOUS,                 &
+     &      TARGET :: key(:)
+          INTEGER(C_INT64_T) :: libxs_hash64_i64
+          libxs_hash64_i64 = libxs_hash64_c(                            &
+     &      C_LOC(key), INT(SIZE(key), KIND=C_SIZE_T) * 8, 0_C_INT64_T)
         END FUNCTION
 
         ! diff variants by element type
@@ -1382,6 +1455,7 @@
           wrinfo%extension_header = C_NULL_PTR
           wrinfo%extension = C_NULL_PTR
           wrinfo%extension_size = 0
+          wrinfo%range = 0
           IF (PRESENT(extension)) THEN
             IF (0 .LT. SIZE(extension)) THEN
               wrinfo%extension = C_LOC(extension)
@@ -1447,6 +1521,86 @@
           INTEGER(C_INT) :: status
           status = internal_mhd_write_ptr(filename, C_LOC(data),        &
      &      LIBXS_DATATYPE_I64, shape, extension)
+        END FUNCTION
+
+        !> Write a PNG file (see libxs_png_write).
+        FUNCTION internal_png_write_ptr(filename, data, datatype,       &
+     &  shape, range) RESULT(status)
+          CHARACTER(LEN=*), INTENT(IN) :: filename
+          TYPE(C_PTR), INTENT(IN) :: data
+          INTEGER(C_INT), INTENT(IN) :: datatype
+          INTEGER, INTENT(IN) :: shape(:)
+          REAL(C_DOUBLE), INTENT(IN), OPTIONAL :: range(2)
+          INTEGER(C_INT) :: status
+          INTEGER(C_SIZE_T), TARGET :: extent(2)
+          TYPE(libxs_mhd_write_info_t), TARGET :: wrinfo
+          status = 1
+          IF (2 .EQ. SIZE(shape)) THEN
+            extent = INT(shape, KIND=C_SIZE_T)
+            wrinfo%handler_info = C_NULL_PTR
+            wrinfo%handler = C_NULL_FUNPTR
+            wrinfo%handler_context = C_NULL_PTR
+            wrinfo%extension_header = C_NULL_PTR
+            wrinfo%extension = C_NULL_PTR
+            wrinfo%extension_size = 0
+            wrinfo%range = 0
+            IF (PRESENT(range)) wrinfo%range = range
+            status = internal_png_write(TRIM(filename) // C_NULL_CHAR,  &
+     &        C_LOC(extent), C_NULL_PTR, 1_C_SIZE_T, datatype, data,    &
+     &        C_LOC(wrinfo))
+          END IF
+        END FUNCTION
+
+        !> Write a two-dimensional array as PNG file (libxs_png_write).
+        FUNCTION libxs_png_write_f64(filename, data, shape,             &
+     &  range) RESULT(status)
+          CHARACTER(LEN=*), INTENT(IN) :: filename
+          REAL(C_DOUBLE), INTENT(IN), CONTIGUOUS,                       &
+     &      TARGET :: data(:)
+          INTEGER, INTENT(IN) :: shape(:)
+          REAL(C_DOUBLE), INTENT(IN), OPTIONAL :: range(2)
+          INTEGER(C_INT) :: status
+          status = internal_png_write_ptr(filename, C_LOC(data),        &
+     &      LIBXS_DATATYPE_F64, shape, range)
+        END FUNCTION
+
+        !> Write a two-dimensional array as PNG file (libxs_png_write).
+        FUNCTION libxs_png_write_f32(filename, data, shape,             &
+     &  range) RESULT(status)
+          CHARACTER(LEN=*), INTENT(IN) :: filename
+          REAL(C_FLOAT), INTENT(IN), CONTIGUOUS,                        &
+     &      TARGET :: data(:)
+          INTEGER, INTENT(IN) :: shape(:)
+          REAL(C_DOUBLE), INTENT(IN), OPTIONAL :: range(2)
+          INTEGER(C_INT) :: status
+          status = internal_png_write_ptr(filename, C_LOC(data),        &
+     &      LIBXS_DATATYPE_F32, shape, range)
+        END FUNCTION
+
+        !> Write a two-dimensional array as PNG file (libxs_png_write).
+        FUNCTION libxs_png_write_i32(filename, data, shape,             &
+     &  range) RESULT(status)
+          CHARACTER(LEN=*), INTENT(IN) :: filename
+          INTEGER(C_INT), INTENT(IN), CONTIGUOUS,                       &
+     &      TARGET :: data(:)
+          INTEGER, INTENT(IN) :: shape(:)
+          REAL(C_DOUBLE), INTENT(IN), OPTIONAL :: range(2)
+          INTEGER(C_INT) :: status
+          status = internal_png_write_ptr(filename, C_LOC(data),        &
+     &      LIBXS_DATATYPE_I32, shape, range)
+        END FUNCTION
+
+        !> Write a two-dimensional array as PNG file (libxs_png_write).
+        FUNCTION libxs_png_write_i64(filename, data, shape,             &
+     &  range) RESULT(status)
+          CHARACTER(LEN=*), INTENT(IN) :: filename
+          INTEGER(C_LONG_LONG), INTENT(IN), CONTIGUOUS,                 &
+     &      TARGET :: data(:)
+          INTEGER, INTENT(IN) :: shape(:)
+          REAL(C_DOUBLE), INTENT(IN), OPTIONAL :: range(2)
+          INTEGER(C_INT) :: status
+          status = internal_png_write_ptr(filename, C_LOC(data),        &
+     &      LIBXS_DATATYPE_I64, shape, range)
         END FUNCTION
 
         !> Variable-width packing (see libxs_vpack).

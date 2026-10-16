@@ -104,12 +104,19 @@ int main(int argc, char* argv[])
         &src, &src_min, &src_max, 0, NULL);
       if (EXIT_SUCCESS == result && 255 != dst_u8) result = EXIT_FAILURE;
     }
+    /* an unsigned destination spans the whole range: the bottom maps to zero */
+    if (EXIT_SUCCESS == result) {
+      result = libxs_mhd_element_conversion(
+        &dst_u8, &dst_info, LIBXS_DATATYPE_F64/*src_type*/,
+        &src_min, &src_min, &src_max, 0, NULL);
+      if (EXIT_SUCCESS == result && 0 != dst_u8) result = EXIT_FAILURE;
+    }
     if (EXIT_SUCCESS == result) {
       src = -src;
       result = libxs_mhd_element_conversion(
         &dst_u8, &dst_info, LIBXS_DATATYPE_F64/*src_type*/,
         &src, &src_min, &src_max, 0, NULL);
-      if (EXIT_SUCCESS == result && 0 != dst_u8) result = EXIT_FAILURE;
+      if (EXIT_SUCCESS == result && 255 != dst_u8) result = EXIT_FAILURE;
     }
     dst_info.type = LIBXS_DATATYPE_I16;
     if (EXIT_SUCCESS == result) {

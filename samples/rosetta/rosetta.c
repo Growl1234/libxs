@@ -123,7 +123,7 @@ int main(void)
   stride = stride_sweep(blob, nbytes, &discovered);
   artifact_write_matrix("rosetta_original.mhd", blob, discovered,
     (size_t)(nbytes / (LIBXS_TYPESIZE(discovered) * stride)), stride);
-  artifact_write_field_image("rosetta_fields.mhd", blob, discovered,
+  artifact_write_field_image("rosetta_fields.png", blob, discovered,
     (size_t)(nbytes / (LIBXS_TYPESIZE(discovered) * stride)), stride);
   separator();
 
@@ -220,7 +220,6 @@ static void artifact_write_field_image(const char name[], const void* data,
     libxs_mhd_element_handler_info_t handler_info;
     libxs_mhd_write_info_t write_info;
     size_t size[2];
-    libxs_mhd_info_t info;
     int f;
     context.values = (const double*)data;
     context.nrows = nrows;
@@ -243,11 +242,7 @@ static void artifact_write_field_image(const char name[], const void* data,
     write_info.handler_context = &context;
     size[0] = nrows;
     size[1] = (size_t)stride;
-    info.ndims = 2;
-    info.ncomponents = 1;
-    info.type = dtype;
-    info.header_size = 0;
-    result = libxs_mhd_write(path, NULL, size, NULL, &info, data, &write_info);
+    result = libxs_png_write(path, size, NULL, 1, dtype, data, &write_info);
   }
   if (EXIT_SUCCESS != result && NULL != artifact_file) {
     fprintf(artifact_file, "artifact,,%s,not_written\n", name);
@@ -453,7 +448,7 @@ static void shuffle_test(const void* blob, size_t nbytes,
     }
     artifact_write_matrix("rosetta_shuffled.mhd", shuffled, dtype,
       nrows, stride);
-    artifact_write_field_image("rosetta_fields_shuffled.mhd", shuffled,
+    artifact_write_field_image("rosetta_fields_shuffled.png", shuffled,
       dtype, nrows, stride);
     free(shuffled);
   }

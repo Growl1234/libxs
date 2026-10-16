@@ -76,12 +76,11 @@ mkdir -p results/rosetta
 ROSETTA_OUTDIR=results/rosetta ./rosetta.x
 ```
 
-This writes `summary.csv`, `rosetta_original.mhd`,
-`rosetta_shuffled.mhd`, `rosetta_fields.mhd`, and
-`rosetta_fields_shuffled.mhd`. If `LIBXS_MHD_PNG=1` is also set, the
-MHD writer emits PNG files with the same basenames. The `fields`
-images are normalized per field, making the ordered and shuffled
-record traces easy to compare visually. The artifact mode is optional
+This writes `summary.csv`, the record matrices `rosetta_original.mhd`
+and `rosetta_shuffled.mhd`, and the images `rosetta_fields.png` and
+`rosetta_fields_shuffled.png`. The `fields` images are normalized per
+field, making the ordered and shuffled record traces easy to compare
+visually. The artifact mode is optional
 and leaves the interactive sample output unchanged.
 
 ## Example Output

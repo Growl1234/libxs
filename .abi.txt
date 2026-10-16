@@ -77,6 +77,15 @@ libxs_gss_min
 libxs_hash
 libxs_hash16
 libxs_hash32
+libxs_hash64
+libxs_hash64_char
+libxs_hash64_i32
+libxs_hash64_i64
+libxs_hash64_i8
+libxs_hash64_xchar
+libxs_hash64_xi32
+libxs_hash64_xi64
+libxs_hash64_xi8
 libxs_hash8
 libxs_hash_char
 libxs_hash_i32
@@ -201,6 +210,11 @@ libxs_pid
 libxs_pmalloc
 libxs_pmalloc_init
 libxs_pmalloc_lock
+libxs_png_write
+libxs_png_write_f32
+libxs_png_write_f64
+libxs_png_write_i32
+libxs_png_write_i64
 libxs_pow2
 libxs_predict_build
 libxs_predict_build_task

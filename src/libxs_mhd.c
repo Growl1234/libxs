@@ -60,25 +60,13 @@
     assert(mhd_s0_ <= mhd_s1_); \
   } \
   if (LIBXS_TYPEORDER(LIBXS_DATATYPE_I64) <= LIBXS_TYPEORDER(mhd_dst_) && mhd_s0_ < mhd_s1_) { /* scale (integer-type) */ \
-    if (LIBXS_ENUM_IS_UINT(mhd_dst_)) { \
-      const double mhd_s0pos_ = LIBXS_MAX(0, mhd_s0_); \
-      const double mhd_s1pos_ = LIBXS_MAX(0, mhd_s1_); \
-      const double mhd_scale_ = (mhd_s0pos_ < mhd_s1pos_ \
-        ? ((mhd_s1_ - mhd_s0_) / (mhd_s1pos_ - mhd_s0pos_)) : 1); \
-      if (IS_FLOAT) { /* float source: fractional part preserved in SRC_TYPE */ \
-        mhd_s_ = (SRC_TYPE)(mhd_scale_ * (double)LIBXS_MAX(0, mhd_s_)); \
-      } \
-      else { /* integer source: round before cast-back to avoid truncation */ \
-        const double mhd_ss_ = mhd_scale_ * (double)LIBXS_MAX(0, mhd_s_); \
-        mhd_s_ = (SRC_TYPE)(0 <= mhd_ss_ ? (mhd_ss_ + mhd_h_) : (mhd_ss_ - mhd_h_)); \
-      } \
-      mhd_s0_ = mhd_s0pos_; mhd_s1_ = mhd_s1pos_; \
-    } \
-    else if (0 == LIBXS_ENUM_PROMOTE(mhd_dst_, SRC_ENUM) && 0 > mhd_s0_ && 0 < mhd_s1_) { \
+    /* an unsigned destination spans the whole range, a signed one keeps zero in place */ \
+    const int mhd_u_ = (0 != LIBXS_ENUM_IS_UINT(mhd_dst_)); \
+    if (0 == mhd_u_ && 0 == LIBXS_ENUM_PROMOTE(mhd_dst_, SRC_ENUM) && 0 > mhd_s0_ && 0 < mhd_s1_) { \
       mhd_s1_ = LIBXS_MAX(-mhd_s0_, mhd_s1_); mhd_s0_ = -mhd_s1_; \
     } \
-    { const double mhd_d0_ = (0 <= mhd_s0_ ? 0 : (DST_MIN)); \
-      const double mhd_d1_ = (0 <= mhd_s1_ ? (DST_MAX) : 0); \
+    { const double mhd_d0_ = ((0 != mhd_u_ || 0 <= mhd_s0_) ? 0 : (DST_MIN)); \
+      const double mhd_d1_ = ((0 != mhd_u_ || 0 <= mhd_s1_) ? (DST_MAX) : 0); \
       const double mhd_d_ = ((double)mhd_s_ - mhd_s0_) \
         * (mhd_d1_ - mhd_d0_) / (mhd_s1_ - mhd_s0_) + mhd_d0_; \
       *((DST_TYPE*)PDST) = (DST_TYPE)LIBXS_CLMP(0 <= mhd_d_ ? (mhd_d_ + mhd_h_) : (mhd_d_ - mhd_h_), mhd_d0_, mhd_d1_); \
@@ -537,6 +525,43 @@ LIBXS_API_INLINE int internal_libxs_mhd_minmax(const void* data, size_t nelement
 }
 
 
+#define LIBXS_MHD_RANGE(TYPE, TMIN, TMAX) do { \
+  *(TYPE*)minval = (TYPE)LIBXS_CLMP(write_info->range[0], TMIN, TMAX); \
+  *(TYPE*)maxval = (TYPE)LIBXS_CLMP(write_info->range[1], TMIN, TMAX); \
+} while (0)
+/**
+ * The value range a caller fixed (libxs_mhd_write_info_t::range) as two elements of
+ * the given type. The bounds are cast, clamped to what the type holds, rather than
+ * converted: the element conversion clamps a floating-point value to [-1, 1].
+ * EXIT_FAILURE where no range is fixed.
+ */
+LIBXS_API_INLINE int internal_libxs_mhd_range(const libxs_mhd_write_info_t* write_info,
+  libxs_data_t type, void* minval, void* maxval)
+{
+  int result = EXIT_FAILURE;
+  if (NULL != write_info && write_info->range[0] < write_info->range[1]) {
+    result = EXIT_SUCCESS;
+    switch ((int)type) {
+      case LIBXS_DATATYPE_F64: LIBXS_MHD_RANGE(double, -DBL_MAX, DBL_MAX); break;
+      case LIBXS_DATATYPE_F32: LIBXS_MHD_RANGE(float, -FLT_MAX, FLT_MAX); break;
+      case LIBXS_DATATYPE_I64: LIBXS_MHD_RANGE(long long,
+        -9223372036854775808.0, 9223372036854775807.0); break;
+      case LIBXS_DATATYPE_I32: LIBXS_MHD_RANGE(int, -2147483648.0, 2147483647.0); break;
+      case LIBXS_DATATYPE_I16: LIBXS_MHD_RANGE(short, -32768.0, 32767.0); break;
+      case LIBXS_DATATYPE_I8: LIBXS_MHD_RANGE(signed char, -128.0, 127.0); break;
+      case LIBXS_DATATYPE_U64: LIBXS_MHD_RANGE(unsigned long long,
+        0.0, 18446744073709551615.0); break;
+      case LIBXS_DATATYPE_U32: LIBXS_MHD_RANGE(unsigned int, 0.0, 4294967295.0); break;
+      case LIBXS_DATATYPE_U16: LIBXS_MHD_RANGE(unsigned short, 0.0, 65535.0); break;
+      case LIBXS_DATATYPE_U8: LIBXS_MHD_RANGE(unsigned char, 0.0, 255.0); break;
+      default: result = EXIT_FAILURE;
+    }
+  }
+  return result;
+}
+#undef LIBXS_MHD_RANGE
+
+
 LIBXS_API_INTERN int internal_libxs_mhd_read(FILE* /*file*/, void* /*data*/, const size_t /*size*/[], const size_t /*pitch*/[],
   size_t /*ndims*/, size_t /*ncomponents*/, libxs_data_t /*type_stored*/, size_t /*typesize*/,
   const libxs_mhd_element_handler_info_t* /*handler_info*/, libxs_mhd_element_handler_t /*handler*/,
@@ -825,6 +850,8 @@ LIBXS_API_INTERN int internal_libxs_mhd_write_png(const char filename[],
     (NULL != write_info ? write_info->handler_context : NULL);
   const libxs_data_t elemtype =
     (NULL != handler_info ? handler_info->type : type_data);
+  /* what is scaled to U8: a handler's result, else the data itself */
+  const libxs_data_t srctype = (NULL != handler ? elemtype : type_data);
   unsigned char color_type;
   FILE* file = NULL;
   int result = EXIT_SUCCESS;
@@ -843,6 +870,7 @@ LIBXS_API_INTERN int internal_libxs_mhd_write_png(const char filename[],
   char minmax[2*(LIBXS_MHD_MAX_ELEMSIZE)] = { 0 };
   libxs_mhd_element_handler_info_t png_info;
   const unsigned char* src;
+  int ranged = 0;
 
   switch (ncomponents) {
     case 1: color_type = 0; break; /* grayscale */
@@ -870,10 +898,14 @@ LIBXS_API_INTERN int internal_libxs_mhd_write_png(const char filename[],
     result = internal_libxs_mhd_png_chunk(file, "IHDR", buf, 13);
   }
 
-  /* scan min/max for element conversion to U8 */
+  /* min/max for element conversion to U8: fixed by the caller, else given or scanned */
   png_info.type = LIBXS_DATATYPE_U8;
   png_info.hint = LIBXS_MHD_ELEMENT_CONVERSION_DEFAULT;
-  if (EXIT_SUCCESS == result && LIBXS_DATATYPE_U8 != elemtype) {
+  if (EXIT_SUCCESS == result) {
+    ranged = (EXIT_SUCCESS == internal_libxs_mhd_range(write_info, srctype,
+      minmax, minmax + (LIBXS_MHD_MAX_ELEMSIZE))) ? 1 : 0;
+  }
+  if (EXIT_SUCCESS == result && 0 == ranged && LIBXS_DATATYPE_U8 != srctype) {
     const size_t typesize_elem = LIBXS_TYPESIZE(elemtype);
     if (NULL == handler && NULL != src_minmax) {
       LIBXS_MEMCPY(minmax, src_minmax, typesize_data);
@@ -961,7 +993,7 @@ LIBXS_API_INTERN int internal_libxs_mhd_write_png(const char filename[],
       else {
         /* pixel component */
         c = x - 1;
-        if (LIBXS_DATATYPE_U8 == elemtype && NULL == handler) {
+        if (LIBXS_DATATYPE_U8 == type_data && NULL == handler && 0 == ranged) {
           pixel = src[y * src_stride + c];
         }
         else {
@@ -971,7 +1003,7 @@ LIBXS_API_INTERN int internal_libxs_mhd_write_png(const char filename[],
             result = handler(tmp, handler_info, type_data, elem, NULL, NULL,
               y * raw_row + c, handler_context);
             if (EXIT_SUCCESS == result) {
-              if (LIBXS_DATATYPE_U8 == elemtype) {
+              if (LIBXS_DATATYPE_U8 == elemtype && 0 == ranged) {
                 pixel = *(unsigned char*)tmp;
               }
               else {
@@ -1089,12 +1121,16 @@ LIBXS_API int libxs_mhd_write(const char filename[], const size_t offset[], cons
       result = ((0 <= file_position && (offset1 + size1) <= pitch1) ? EXIT_SUCCESS : EXIT_FAILURE);
       if (EXIT_SUCCESS == result && (NULL != handler /* slow-path */
         || (type_data != elemtype && LIBXS_MHD_ELEMENT_CONVERSION_DEFAULT == handler_info->hint)))
-      { /* conversion needed */
-        LIBXS_MEMCPY(minmax, data, typesize_data);
-        LIBXS_MEMCPY(minmax + (LIBXS_MHD_MAX_ELEMSIZE), data, typesize_data); /* initial condition */
-        result = internal_libxs_mhd_write(file, input, size, shape, ndims, ncomponents, type_data, typesize_data,
-          handler_info, handler, handler_context, 0,
-          minmax, minmax + (LIBXS_MHD_MAX_ELEMSIZE), 1/*search min-max*/);
+      { /* conversion needed: a fixed range replaces the search */
+        if (EXIT_SUCCESS != internal_libxs_mhd_range(write_info, type_data,
+          minmax, minmax + (LIBXS_MHD_MAX_ELEMSIZE)))
+        {
+          LIBXS_MEMCPY(minmax, data, typesize_data);
+          LIBXS_MEMCPY(minmax + (LIBXS_MHD_MAX_ELEMSIZE), data, typesize_data); /* initial condition */
+          result = internal_libxs_mhd_write(file, input, size, shape, ndims, ncomponents, type_data, typesize_data,
+            handler_info, handler, handler_context, 0,
+            minmax, minmax + (LIBXS_MHD_MAX_ELEMSIZE), 1/*search min-max*/);
+        }
         if (EXIT_SUCCESS == result) minmax_valid = 1;
       }
       if (EXIT_SUCCESS == result) {
@@ -1134,6 +1170,21 @@ LIBXS_API int libxs_mhd_write(const char filename[], const size_t offset[], cons
         0 != minmax_valid ? minmax : NULL);
     }
     else result = EXIT_FAILURE;
+  }
+  return result;
+}
+
+
+LIBXS_API int libxs_png_write(const char filename[], const size_t size[], const size_t pitch[],
+  size_t ncomponents, libxs_data_t type, const void* data,
+  const libxs_mhd_write_info_t* write_info)
+{
+  int result = EXIT_FAILURE;
+  if (NULL != filename && 0 != *filename && NULL != size && 0 != size[0] && 0 != size[1]
+    && NULL != data && 0 != LIBXS_TYPESIZE(type) && (NULL == pitch || size[0] <= pitch[0]))
+  {
+    result = internal_libxs_mhd_write_png(filename, data, size[0], size[1],
+      NULL != pitch ? pitch[0] : size[0], ncomponents, type, write_info, NULL);
   }
   return result;
 }

@@ -1,5 +1,5 @@
         USE, INTRINSIC :: ISO_C_BINDING, ONLY:                          &
-     &    C_DOUBLE, C_FLOAT, C_LONG_LONG, C_INT,                        &
+     &    C_DOUBLE, C_FLOAT, C_LONG_LONG, C_INT, C_INT64_T,             &
      &    C_CHAR, C_NULL_CHAR, C_INT8_T, C_SIZE_T, C_PTR, C_NULL_PTR,   &
      &    C_FUNPTR, C_NULL_FUNPTR,                                      &
      &    C_F_POINTER, C_ASSOCIATED, C_LOC, C_FUNLOC, C_SIZEOF
@@ -45,7 +45,7 @@
         PUBLIC :: libxs_malloc_arg, libxs_free_pool
         PUBLIC :: libxs_default_pool
         PUBLIC :: libxs_malloc_info, libxs_malloc_pool_info
-        PUBLIC :: libxs_hash, libxs_hash_string
+        PUBLIC :: libxs_hash, libxs_hash64, libxs_hash_string
         PUBLIC :: libxs_hash_iso3309, libxs_adler32
         PUBLIC :: libxs_diff
         PUBLIC :: libxs_matdiff, libxs_matdiff_reduce
@@ -74,7 +74,7 @@
         PUBLIC :: libxs_registry_value_size
         PUBLIC :: libxs_registry_save, libxs_registry_load
         PUBLIC :: libxs_memcmp
-        PUBLIC :: libxs_mhd_write
+        PUBLIC :: libxs_mhd_write, libxs_png_write
         PUBLIC :: libxs_vpack, libxs_vunpack, libxs_vpack_bound
         PUBLIC :: libxs_aligned
         PUBLIC :: libxs_matcopy, libxs_matcopy_task
@@ -151,7 +151,7 @@
         PUBLIC :: libxs_predict_load_csv
         PUBLIC :: libxs_strtoken
 
-        PUBLIC :: C_DOUBLE, C_FLOAT, C_INT, C_LONG_LONG
+        PUBLIC :: C_DOUBLE, C_FLOAT, C_INT, C_LONG_LONG, C_INT64_T
         PUBLIC :: C_CHAR, C_INT8_T, C_SIZE_T
         PUBLIC :: C_PTR, C_NULL_PTR
         PUBLIC :: C_FUNPTR, C_NULL_FUNPTR
@@ -304,6 +304,7 @@
           TYPE(C_PTR) :: handler_context
           TYPE(C_PTR) :: extension_header, extension
           INTEGER(C_SIZE_T) :: extension_size
+          REAL(C_DOUBLE) :: range(2)
         END TYPE
 
         !> CPU identification.
@@ -562,27 +563,37 @@
 
           !> 64-bit hash for a null-terminated string.
           PURE FUNCTION libxs_hash_string(string) BIND(C)
-            IMPORT :: C_CHAR, C_LONG_LONG
+            IMPORT :: C_CHAR, C_INT64_T
             CHARACTER(C_CHAR), INTENT(IN) :: string(*)
-            INTEGER(C_LONG_LONG) :: libxs_hash_string
+            INTEGER(C_INT64_T) :: libxs_hash_string
           END FUNCTION
 
           ! internal (use libxs_hash instead)
           PURE FUNCTION libxs_hash_c(data, size, seed)                  &
      &    BIND(C, NAME="libxs_hash")
-            IMPORT :: C_INT, C_PTR
+            IMPORT :: C_INT, C_SIZE_T, C_PTR
             TYPE(C_PTR), INTENT(IN), VALUE :: data
-            INTEGER(C_INT), INTENT(IN), VALUE :: size
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE :: size
             INTEGER(C_INT), INTENT(IN), VALUE :: seed
             INTEGER(C_INT) :: libxs_hash_c
+          END FUNCTION
+
+          ! internal (use libxs_hash64 instead)
+          PURE FUNCTION libxs_hash64_c(data, size, seed)                &
+     &    BIND(C, NAME="libxs_hash64")
+            IMPORT :: C_INT64_T, C_SIZE_T, C_PTR
+            TYPE(C_PTR), INTENT(IN), VALUE :: data
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE :: size
+            INTEGER(C_INT64_T), INTENT(IN), VALUE :: seed
+            INTEGER(C_INT64_T) :: libxs_hash64_c
           END FUNCTION
 
           !> CRC-32 (ISO 3309) checksum.
           PURE FUNCTION libxs_hash_iso3309(data, size, seed)            &
      &    BIND(C)
-            IMPORT :: C_INT, C_PTR
+            IMPORT :: C_INT, C_SIZE_T, C_PTR
             TYPE(C_PTR), INTENT(IN), VALUE :: data
-            INTEGER(C_INT), INTENT(IN), VALUE :: size
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE :: size
             INTEGER(C_INT), INTENT(IN), VALUE :: seed
             INTEGER(C_INT) :: libxs_hash_iso3309
           END FUNCTION
@@ -590,9 +601,9 @@
           !> Adler-32 checksum.
           PURE FUNCTION libxs_adler32(data, size, seed)                 &
      &    BIND(C)
-            IMPORT :: C_INT, C_PTR
+            IMPORT :: C_INT, C_SIZE_T, C_PTR
             TYPE(C_PTR), INTENT(IN), VALUE :: data
-            INTEGER(C_INT), INTENT(IN), VALUE :: size
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE :: size
             INTEGER(C_INT), INTENT(IN), VALUE :: seed
             INTEGER(C_INT) :: libxs_adler32
           END FUNCTION
@@ -1585,6 +1596,19 @@
             INTEGER(C_INT) :: internal_mhd_write
           END FUNCTION
 
+          ! internal (use libxs_png_write)
+          FUNCTION internal_png_write(filename, size, pitch,            &
+     &    ncomponents, datatype, data, write_info)                      &
+     &    BIND(C, NAME="libxs_png_write")
+            IMPORT :: C_PTR, C_INT, C_CHAR, C_SIZE_T
+            CHARACTER(C_CHAR), INTENT(IN) :: filename(*)
+            TYPE(C_PTR), INTENT(IN), VALUE :: size, pitch
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE :: ncomponents
+            INTEGER(C_INT), INTENT(IN), VALUE :: datatype
+            TYPE(C_PTR), INTENT(IN), VALUE :: data, write_info
+            INTEGER(C_INT) :: internal_png_write
+          END FUNCTION
+
         END INTERFACE
 
         !> Allocate memory.
@@ -1598,6 +1622,14 @@
           MODULE PROCEDURE libxs_hash_xi32, libxs_hash_xi64
           MODULE PROCEDURE libxs_hash_char, libxs_hash_i8
           MODULE PROCEDURE libxs_hash_i32, libxs_hash_i64
+        END INTERFACE
+
+        !> 64-bit hash value for a given array (see libxs_hash64).
+        INTERFACE libxs_hash64
+          MODULE PROCEDURE libxs_hash64_xchar, libxs_hash64_xi8
+          MODULE PROCEDURE libxs_hash64_xi32, libxs_hash64_xi64
+          MODULE PROCEDURE libxs_hash64_char, libxs_hash64_i8
+          MODULE PROCEDURE libxs_hash64_i32, libxs_hash64_i64
         END INTERFACE
 
         !> Check if two arrays differ.
@@ -1654,4 +1686,12 @@
         INTERFACE libxs_mhd_write
           MODULE PROCEDURE libxs_mhd_write_f64, libxs_mhd_write_f32
           MODULE PROCEDURE libxs_mhd_write_i32, libxs_mhd_write_i64
+        END INTERFACE
+
+        !> Write a two-dimensional array as 8-bit PNG file (libxs_mhd.h):
+        !> the given shape (width, height), scaled over the optional
+        !> range or else over the data. Returns zero on success.
+        INTERFACE libxs_png_write
+          MODULE PROCEDURE libxs_png_write_f64, libxs_png_write_f32
+          MODULE PROCEDURE libxs_png_write_i32, libxs_png_write_i64
         END INTERFACE

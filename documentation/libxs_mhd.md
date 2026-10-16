@@ -53,10 +53,11 @@ typedef struct libxs_mhd_write_info_t {
   const char* extension_header;
   const void* extension;
   size_t extension_size;
+  double range[2];
 } libxs_mhd_write_info_t;
 ```
 
-Optional write parameters (conversion, custom handler, extension data). NULL is accepted for all-defaults.
+Optional write parameters (conversion, custom handler, extension data, value range). NULL is accepted for all-defaults, and so is a zero-initialized struct. A `range` with `range[0] < range[1]` is mapped onto the destination type by a scaling conversion, in place of the minimum and maximum found in the data, so images written apart share one scale.
 
 ## Element Helpers
 
@@ -136,4 +137,20 @@ From Fortran (`USE libxs`), the generic `libxs_mhd_write` takes a contiguous arr
 status = libxs_mhd_write("blocks.mhd", values, [n], extension)
 ```
 
-When the environment variable `LIBXS_MHD_PNG` is set and the image is two-dimensional, an uncompressed PNG file is written alongside the MHD output (same base name, `.png` extension). Supported channel counts are 1 (grayscale), 3 (RGB), and 4 (RGBA) at 8-bit depth. Source data of any element type is converted to unsigned 8-bit using the built-in element conversion with automatic min/max scaling.
+When the environment variable `LIBXS_MHD_PNG` is set and the image is two-dimensional, an uncompressed PNG file is written alongside the MHD output (same base name, `.png` extension). Supported channel counts are 1 (grayscale), 3 (RGB), and 4 (RGBA) at 8-bit depth. Source data of any element type is converted to unsigned 8-bit using the built-in element conversion with automatic min/max scaling, or over `write_info->range` if one is fixed.
+
+```C
+int libxs_png_write(const char filename[],
+  const size_t size[], const size_t pitch[],
+  size_t ncomponents, libxs_data_t type,
+  const void* data,
+  const libxs_mhd_write_info_t* write_info);
+```
+
+Write the same PNG explicitly and without an MHD file: `size` holds width and height, `pitch` the leading dimension (NULL: same as `size`). With a handler in `write_info`, what the handler returns is scaled; the extension is not written.
+
+From Fortran (`USE libxs`), the generic `libxs_png_write` takes a contiguous array of `REAL(8)`, `REAL(4)`, `INTEGER(4)`, or `INTEGER(8)`, the two extents (width first), and optionally the range as two `REAL(8)`. It returns zero on success.
+
+```Fortran
+status = libxs_png_write("confidence.png", values, [nx, ny], [0.5d0, 1d0])
+```

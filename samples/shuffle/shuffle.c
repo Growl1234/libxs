@@ -110,7 +110,6 @@ int main(int argc, char* argv[])
       LIBXS_DATATYPE_U8
     };
     libxs_mhd_element_handler_info_t mhdinfo;
-    libxs_mhd_info_t mhd_write_info = { 2, 1, LIBXS_DATATYPE_UNKNOWN, 0 };
     libxs_mhd_write_info_t mhd_winfo;
     const size_t nelemtypes = sizeof(elemtypes) / sizeof(*elemtypes);
     const size_t nchannels = 1, mhdsize = n / nchannels;
@@ -128,7 +127,7 @@ int main(int argc, char* argv[])
     }
 
     /**
-     * Prepare writing MHD-image files.
+     * Prepare writing PNG-image files.
      * A 1D coprime shuffle has stride C ~ sqrt(N). Reshaping to a
      * sqrt(N) x sqrt(N) image creates diagonal ghost patterns because
      * the stride and image width are commensurate. To break this, we
@@ -145,7 +144,6 @@ int main(int argc, char* argv[])
       if (elsize == typesize) {
         mhdinfo.hint = LIBXS_MHD_ELEMENT_CONVERSION_DEFAULT;
         mhdinfo.type = LIBXS_DATATYPE_U8;
-        mhd_write_info.type = elemtypes[j];
         mhd_winfo.handler_info = &mhdinfo;
         mhd_winfo.handler = mhd_element_hash;
         elemtype = (int)j;
@@ -154,7 +152,7 @@ int main(int argc, char* argv[])
     }
     if (0 > elemtype) {
       printf("---------------------------------------\n");
-      printf("Unsupported type for writing MHD-file!\n");
+      printf("Unsupported type for writing PNG-file!\n");
     }
 
     if (0 != bias || 0 != offset || 0 != stats || 0 != random) {
@@ -190,8 +188,8 @@ int main(int argc, char* argv[])
         if (i == repeat && 0 == random) {
           if (0 <= elemtype) {
             mhd_element_hash_base = data2;
-            result = libxs_mhd_write("shuffle_rng.mhd", NULL, shape, NULL,
-              &mhd_write_info, data2, &mhd_winfo);
+            result = libxs_png_write("shuffle_rng.png", shape, NULL, nchannels,
+              elemtypes[elemtype], data2, &mhd_winfo);
           }
         }
         /* bandwidth: 2*n*elsize approximation (RNG skips ~37% of swaps) */
@@ -223,8 +221,8 @@ int main(int argc, char* argv[])
         if (i == repeat && 0 == random) {
           if (0 <= elemtype) {
             mhd_element_hash_base = data2;
-            result = libxs_mhd_write("shuffle_ds1.mhd", NULL, shape, NULL,
-              &mhd_write_info, data2, &mhd_winfo);
+            result = libxs_png_write("shuffle_ds1.png", shape, NULL, nchannels,
+              elemtypes[elemtype], data2, &mhd_winfo);
           }
         }
         if (0 < d0) printf("DS1-shuffle: %.8f s (%i MB/s)\n", d0,
@@ -255,8 +253,8 @@ int main(int argc, char* argv[])
         if (i == repeat && 0 == random) {
           if (0 <= elemtype) {
             mhd_element_hash_base = data2;
-            result = libxs_mhd_write("shuffle_ds2.mhd", NULL, shape, NULL,
-              &mhd_write_info, data2, &mhd_winfo);
+            result = libxs_png_write("shuffle_ds2.png", shape, NULL, nchannels,
+              elemtypes[elemtype], data2, &mhd_winfo);
           }
         }
         if (0 < d0) printf("DS2-shuffle: %.8f s (%i MB/s)\n", d0,
@@ -384,7 +382,7 @@ int main(int argc, char* argv[])
       }
     }
     if (0 > elemtype && 0 == random) {
-      printf("NOTE: MHD output skipped (unsupported element size %i)\n",
+      printf("NOTE: PNG output skipped (unsupported element size %i)\n",
         (int)elsize);
     }
     if (0 < repeat) {

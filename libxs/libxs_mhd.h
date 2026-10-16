@@ -66,6 +66,13 @@ LIBXS_EXTERN_C typedef struct libxs_mhd_write_info_t {
   const void* extension;
   /** Size of extension data in bytes (0: none). */
   size_t extension_size;
+  /**
+   * Value range a scaling conversion maps onto the destination type, in place of
+   * the minimum and maximum it would find in the data: images written apart then
+   * share one scale. With a handler, the PNG scales what the handler returns.
+   * range[0] < range[1] fixes it; zero-initialized, the range is found.
+   */
+  double range[2];
 } libxs_mhd_write_info_t;
 
 /**
@@ -173,6 +180,31 @@ LIBXS_API int libxs_mhd_write(
   /**
    * Optional write parameters (conversion, handler, extension).
    * NULL is accepted: no conversion, no extension.
+   */
+  const libxs_mhd_write_info_t* write_info);
+
+/**
+ * Save a two-dimensional image as an uncompressed 8-bit PNG file, which is what
+ * the environment variable LIBXS_MHD_PNG adds beside an MHD file, written here
+ * without one. Elements of any type are scaled to 8 bits, over the range fixed in
+ * write_info or else over the minimum and maximum of the data.
+ */
+LIBXS_API int libxs_png_write(
+  /* Filename of the output file. */
+  const char filename[],
+  /* Image dimensions: width and height. */
+  const size_t size[],
+  /* Leading buffer dimensions (NULL: same as size). */
+  const size_t pitch[],
+  /* Interleaved channels: 1 (grayscale), 3 (RGB), or 4 (RGBA). */
+  size_t ncomponents,
+  /* Element type of the data. */
+  libxs_data_t type,
+  /* Raw data to be saved. */
+  const void* data,
+  /**
+   * Optional parameters (NULL accepted): the range, and a conversion or handler
+   * as for libxs_mhd_write. The extension is not written.
    */
   const libxs_mhd_write_info_t* write_info);
 
