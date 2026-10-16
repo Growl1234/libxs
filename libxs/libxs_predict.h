@@ -676,7 +676,7 @@ LIBXS_API void libxs_predict_set_missing(libxs_predict_t* model, int enable);
 /**
  * Size of the forest LIBXS_PREDICT_RF grows, and how deep its trees may go.
  *
- * ntrees > 0: that many trees per output (default 100).
+ * ntrees > 0: that many trees per output (default 64).
  * max_depth > 0: that depth for every output.
  * max_depth == 0 (default): twice the base-2 logarithm of the entry count, as
  *   before.

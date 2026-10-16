@@ -18,14 +18,15 @@
  * forms, and returns the bytes written. NEVER more than the verbatim form takes:
  * the dictionary is chosen only where it is actually smaller, which is what lets
  * the size query remain a plain upper bound instead of a second copy of this
- * decision that has to agree with it.
+ * decision that has to agree with it. With dst NULL nothing is written and the
+ * size is returned, for a size query that has to be exact.
  */
 LIBXS_API_INLINE size_t internal_libxs_predict_denc_write(unsigned char* dst,
   const double* values, size_t count, size_t stride)
 {
   double dict[INTERNAL_LIBXS_PREDICT_DENC_DICTMAX];
   unsigned char* const start = dst;
-  size_t i, ndict = 0;
+  size_t i, ndict = 0, result;
   int tag = INTERNAL_LIBXS_PREDICT_DENC_RAW;
   if (0 != count) {
     for (i = 0; i < count && 0 != (ndict + 1); ++i) {
@@ -49,30 +50,38 @@ LIBXS_API_INLINE size_t internal_libxs_predict_denc_write(unsigned char* dst,
       }
     }
   }
-  *dst++ = (unsigned char)tag;
-  if (INTERNAL_LIBXS_PREDICT_DENC_CONST == tag) {
-    memcpy(dst, dict, sizeof(double));
-    dst += sizeof(double);
+  if (NULL == dst) {
+    result = 1 + ((INTERNAL_LIBXS_PREDICT_DENC_CONST == tag) ? sizeof(double)
+      : ((INTERNAL_LIBXS_PREDICT_DENC_DICT == tag)
+        ? (2 + ndict * sizeof(double) + count) : (count * sizeof(double))));
   }
-  else if (INTERNAL_LIBXS_PREDICT_DENC_DICT == tag) {
-    const uint16_t n16 = (uint16_t)ndict;
-    memcpy(dst, &n16, 2);
-    dst += 2;
-    memcpy(dst, dict, ndict * sizeof(double));
-    dst += ndict * sizeof(double);
-    for (i = 0; i < count; ++i) {
-      const double v = values[i * stride];
-      size_t d = 0;
-      while (dict[d] != v) ++d;
-      *dst++ = (unsigned char)d;
+  else {
+    *dst++ = (unsigned char)tag;
+    if (INTERNAL_LIBXS_PREDICT_DENC_CONST == tag) {
+      memcpy(dst, dict, sizeof(double));
+      dst += sizeof(double);
     }
+    else if (INTERNAL_LIBXS_PREDICT_DENC_DICT == tag) {
+      const uint16_t n16 = (uint16_t)ndict;
+      memcpy(dst, &n16, 2);
+      dst += 2;
+      memcpy(dst, dict, ndict * sizeof(double));
+      dst += ndict * sizeof(double);
+      for (i = 0; i < count; ++i) {
+        const double v = values[i * stride];
+        size_t d = 0;
+        while (dict[d] != v) ++d;
+        *dst++ = (unsigned char)d;
+      }
+    }
+    else for (i = 0; i < count; ++i) {
+      const double v = values[i * stride];
+      memcpy(dst, &v, sizeof(double));
+      dst += sizeof(double);
+    }
+    result = (size_t)(dst - start);
   }
-  else for (i = 0; i < count; ++i) {
-    const double v = values[i * stride];
-    memcpy(dst, &v, sizeof(double));
-    dst += sizeof(double);
-  }
-  return (size_t)(dst - start);
+  return result;
 }
 
 
@@ -82,6 +91,49 @@ LIBXS_API_INLINE int internal_libxs_predict_crc(const void* buffer,
   int result = EXIT_SUCCESS;
   if (size > (size_t)0xFFFFFFFFU) result = EXIT_FAILURE;
   else *crc = (uint32_t)libxs_hash_iso3309(buffer, size, 0);
+  return result;
+}
+
+
+/**
+ * One tree's nodes as columns: the feature and label of every node and the jump
+ * of every split, then the values and the leaves' confidences, each in the form
+ * internal_libxs_predict_denc_write finds smallest. Values repeat within a tree:
+ * a threshold sits between two of the values an input takes, and a leaf of a
+ * tuned parameter holds one of a few dozen. With dst NULL the size is returned.
+ * scratch holds as many doubles as the tree has nodes.
+ */
+LIBXS_API_INLINE size_t internal_libxs_predict_rf_tree_write(unsigned char* dst,
+  const internal_libxs_predict_rf_tree_t* tree, double* scratch)
+{
+  size_t result = 0;
+  int k, nleaf = 0;
+  for (k = 0; k < tree->nnodes; ++k) {
+    const internal_libxs_predict_rf_node_t* const nd = tree->nodes + k;
+    if (NULL != dst) {
+      const uint16_t f = nd->feature;
+      memcpy(dst + result, &f, 2);
+      dst[result + 2] = nd->label;
+    }
+    result += 3;
+    if (UINT16_MAX != nd->feature) { /* a split's jump, which a leaf has not */
+      if (NULL != dst) {
+        const int32_t r = (int32_t)nd->data.right;
+        memcpy(dst + result, &r, 4);
+      }
+      result += 4;
+    }
+    scratch[k] = nd->value;
+  }
+  result += internal_libxs_predict_denc_write(
+    (NULL != dst) ? (dst + result) : NULL, scratch, (size_t)tree->nnodes, 1);
+  for (k = 0; k < tree->nnodes; ++k) {
+    if (UINT16_MAX == tree->nodes[k].feature) {
+      scratch[nleaf++] = tree->nodes[k].data.leafp;
+    }
+  }
+  result += internal_libxs_predict_denc_write(
+    (NULL != dst) ? (dst + result) : NULL, scratch, (size_t)nleaf, 1);
   return result;
 }
 
@@ -537,6 +589,8 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
     int c, j, has_sidx = 1;
     const int has_ew = (0 != model->has_eweight) ? 1 : 0;
     const int has_ih = internal_libxs_predict_has_ihash(model);
+    double* rf_scratch = NULL;
+    int rf_scratch_pool = 0;
     /**
      * A model loaded from a version-1 flat file has no sorted_idx to write, so
      * its presence is a flag rather than an invariant. Fabricating indices
@@ -605,10 +659,19 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
         required += (size_t)model->rf->noutputs
           * LIBXS_PREDICT_RF_CALIB * sizeof(double);
       }
-      for (c = 0; c < total_trees; ++c) {
+      { int maxnodes = 1;
+        for (c = 0; c < total_trees; ++c) {
+          maxnodes = LIBXS_MAX(maxnodes, model->rf->trees[c].nnodes);
+        }
+        rf_scratch = (double*)LIBXS_PREDICT_MALLOC(
+          (size_t)maxnodes * sizeof(double), rf_scratch_pool);
+        if (NULL == rf_scratch) result = EXIT_FAILURE;
+      }
+      for (c = 0; c < total_trees && EXIT_SUCCESS == result; ++c) {
         required += sizeof(uint32_t) + sizeof(uint8_t);
-        /* feature, threshold/value, right-jump/leaf confidence, label */
-        required += (size_t)model->rf->trees[c].nnodes * (2 + 8 + 4 + 1);
+        /* exact rather than bounded, as the columns are encoded by content */
+        required += internal_libxs_predict_rf_tree_write(NULL,
+          &model->rf->trees[c], rf_scratch);
         if (NULL != model->rf->trees[c].incr) {
           required += (size_t)model->rf->trees[c].nnodes
             * (size_t)model->rf->nclass[c / model->rf->ntrees]
@@ -631,14 +694,15 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
     }
     else required += sizeof(uint8_t);
     required += sizeof(uint32_t); /* trailing CRC32 */
-    if (NULL == buffer) {
+    /* a failure here is the scratch the forest's columns are sized with */
+    if (EXIT_SUCCESS == result && NULL == buffer) {
       *size = required;
     }
-    else if (*size < required) {
+    else if (EXIT_SUCCESS == result && *size < required) {
       *size = required;
       result = EXIT_FAILURE;
     }
-    else {
+    else if (EXIT_SUCCESS == result) {
       unsigned char* dst = (unsigned char*)buffer;
 #define WRITE_U32(V) do { const uint32_t v_=(uint32_t)(V); memcpy(dst,&v_,4); dst+=4; } while(0)
 #define WRITE_U16(V) do { const uint16_t v_=(uint16_t)(V); memcpy(dst,&v_,2); dst+=2; } while(0)
@@ -801,23 +865,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
           int k;
           WRITE_U32(tree->nnodes);
           WRITE_U8(NULL != tree->incr ? 1 : 0);
-          for (k = 0; k < tree->nnodes; ++k) {
-            const internal_libxs_predict_rf_node_t* nd = &tree->nodes[k];
-            { const uint16_t f = nd->feature;
-              memcpy(dst, &f, 2); dst += 2;
-            }
-            WRITE_F64(nd->value);
-            /* right jump for a split, confidence for a leaf */
-            if (UINT16_MAX != nd->feature) {
-              const int32_t r = (int32_t)nd->data.right;
-              memcpy(dst, &r, 4); dst += 4;
-            }
-            else {
-              const float lp = nd->data.leafp;
-              memcpy(dst, &lp, 4); dst += 4;
-            }
-            WRITE_U8(nd->label);
-          }
+          dst += internal_libxs_predict_rf_tree_write(dst, tree, rf_scratch);
           if (NULL != tree->incr) {
             const int nk = tree->nnodes * model->rf->nclass[c / model->rf->ntrees];
             for (k = 0; k < nk; ++k) WRITE_F64(tree->incr[k]);
@@ -843,6 +891,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
 #undef WRITE_BLK
       if (EXIT_SUCCESS == result) *size = (size_t)(dst - (unsigned char*)buffer);
     }
+    LIBXS_PREDICT_FREE(rf_scratch, rf_scratch_pool);
   }
   return result;
 }
@@ -988,6 +1037,68 @@ LIBXS_API_INLINE void internal_libxs_predict_read_escape(
       }
     }
   }
+}
+
+
+/**
+ * A tree written by internal_libxs_predict_rf_tree_write, nn nodes as the count
+ * before it said. A split must name an input the model has and jump forward
+ * within the tree, since the tree is packed preorder: a split's left child is
+ * the next node and its right child the jump away.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_rf_tree_read(const unsigned char** src,
+  const unsigned char* end, int ninp, int nn, internal_libxs_predict_rf_tree_t* tree)
+{
+  int result = internal_libxs_predict_avail(*src, end, (size_t)nn, 3);
+  int scratch_pool = 0, nleaf = 0, k;
+  double* scratch = NULL;
+  if (EXIT_SUCCESS == result) {
+    tree->nodes = (internal_libxs_predict_rf_node_t*)malloc(
+      (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
+    scratch = (double*)LIBXS_PREDICT_MALLOC((size_t)nn * sizeof(double),
+      scratch_pool);
+    tree->nnodes = nn;
+    if (NULL == tree->nodes || NULL == scratch) result = EXIT_FAILURE;
+  }
+  for (k = 0; k < nn && EXIT_SUCCESS == result; ++k) {
+    internal_libxs_predict_rf_node_t* const nd = tree->nodes + k;
+    uint16_t f = 0;
+    uint8_t lab = 0;
+    result = internal_libxs_predict_read(src, end, &f, 2);
+    if (EXIT_SUCCESS == result) result = internal_libxs_predict_read(src, end, &lab, 1);
+    nd->feature = f;
+    nd->label = lab;
+    nd->value = 0;
+    if (EXIT_SUCCESS == result && UINT16_MAX != f) {
+      int32_t r = 0;
+      result = internal_libxs_predict_read(src, end, &r, 4);
+      if (EXIT_SUCCESS == result && (ninp <= f || 1 >= r || nn - k <= r)) {
+        result = EXIT_FAILURE;
+      }
+      nd->data.right = r;
+    }
+    else if (EXIT_SUCCESS == result) {
+      nd->data.leafp = 0;
+      ++nleaf;
+    }
+  }
+  if (EXIT_SUCCESS == result) {
+    result = internal_libxs_predict_denc_read(src, end, scratch, (size_t)nn, 1);
+  }
+  for (k = 0; k < nn && EXIT_SUCCESS == result; ++k) tree->nodes[k].value = scratch[k];
+  if (EXIT_SUCCESS == result) {
+    result = internal_libxs_predict_denc_read(src, end, scratch, (size_t)nleaf, 1);
+  }
+  if (EXIT_SUCCESS == result) {
+    int leaf = 0;
+    for (k = 0; k < nn; ++k) {
+      if (UINT16_MAX == tree->nodes[k].feature) {
+        tree->nodes[k].data.leafp = (float)scratch[leaf++];
+      }
+    }
+  }
+  LIBXS_PREDICT_FREE(scratch, scratch_pool);
+  return result;
 }
 
 
@@ -2055,46 +2166,8 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
               if (EXIT_SUCCESS == ok && nn > 0) {
                 if (INT_MAX < nn) ok = EXIT_FAILURE;
                 if (EXIT_SUCCESS == ok) {
-                  ok = internal_libxs_predict_avail(src, end, (size_t)nn,
-                    2 + 8 + 4 + 1);
-                }
-                if (EXIT_SUCCESS == ok) {
-                  rf->trees[ti].nodes = (internal_libxs_predict_rf_node_t*)malloc(
-                    (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
-                  rf->trees[ti].nnodes = (int)nn;
-                  if (NULL == rf->trees[ti].nodes) ok = EXIT_FAILURE;
-                }
-                for (k = 0; k < (int)nn && EXIT_SUCCESS == ok; ++k) {
-                  uint16_t f = 0;
-                  uint8_t lab = 0;
-                  ok = internal_libxs_predict_read(&src, end, &f, 2);
-                  if (EXIT_SUCCESS == ok) {
-                    ok = internal_libxs_predict_read(&src, end,
-                      &rf->trees[ti].nodes[k].value, 8);
-                  }
-                  if (EXIT_SUCCESS == ok && UINT16_MAX != f) {
-                    ok = internal_libxs_predict_read(&src, end,
-                      &rf->trees[ti].nodes[k].data.right, 4);
-                  }
-                  else if (EXIT_SUCCESS == ok) {
-                    ok = internal_libxs_predict_read(&src, end,
-                      &rf->trees[ti].nodes[k].data.leafp, 4);
-                  }
-                  if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &lab, 1);
-                  /* v2 is packed preorder: an internal node advances by one or
-                   * by its positive right-subtree jump; a leaf carries zero */
-                  if (EXIT_SUCCESS == ok && ((UINT16_MAX != f && f >= ninp)
-                    || (UINT16_MAX != f
-                      && (1 >= rf->trees[ti].nodes[k].data.right
-                      || (int)nn - k
-                        <= rf->trees[ti].nodes[k].data.right))))
-                  {
-                    ok = EXIT_FAILURE;
-                  }
-                  if (EXIT_SUCCESS == ok) {
-                    rf->trees[ti].nodes[k].feature = f;
-                    rf->trees[ti].nodes[k].label = lab;
-                  }
+                  ok = internal_libxs_predict_rf_tree_read(&src, end, (int)ninp,
+                    (int)nn, &rf->trees[ti]);
                 }
                 if (EXIT_SUCCESS == ok && 0 != hasincr) {
                   const int nk = (int)nn * rf->nclass[ti / (int)rf_ntrees];

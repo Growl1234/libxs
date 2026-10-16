@@ -97,8 +97,13 @@
 #if !defined(LIBXS_PREDICT_RF_MAXNODES)
 #  define LIBXS_PREDICT_RF_MAXNODES 524287
 #endif
+/**
+ * Trees per output. Against 100, 64 cost crystal 0.1 points and HIGGS 0.08, and
+ * a forecast 0.5% of its error, for a model a third smaller; at 48 the HIGGS
+ * gate answered 8.7 points fewer queries and a forecast's trial chose kNN.
+ */
 #if !defined(LIBXS_PREDICT_RF_NTREES)
-#  define LIBXS_PREDICT_RF_NTREES 100
+#  define LIBXS_PREDICT_RF_NTREES 64
 #endif
 /** Concurrent tree working sets when caller tasks outnumber trees. */
 #if !defined(LIBXS_PREDICT_RF_BUILD_TEAMS)
@@ -1650,6 +1655,8 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks_team(
   libxs_predict_t* model, int tid, int ntasks)
 {
   internal_libxs_predict_rf_t* const rf = model->rf;
+  /* read once and checked here, so no team context handed out can be NULL */
+  internal_libxs_predict_rf_team_t* const teams = rf->build_team;
   const int total_trees = rf->ntrees * rf->noutputs;
   int team = 0, task_begin = 0, task_end = 0;
   int rank, team_size, tree, result = EXIT_SUCCESS;
@@ -1659,7 +1666,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks_team(
     if (task_begin <= tid && tid < task_end) break;
     ++team;
   }
-  if (rf->build_nteams <= team) result = EXIT_FAILURE;
+  if (NULL == teams || rf->build_nteams <= team) result = EXIT_FAILURE;
   if (EXIT_SUCCESS == result) {
     rank = tid - task_begin;
     team_size = task_end - task_begin;
@@ -1667,7 +1674,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks_team(
       tree += rf->build_nteams)
     {
       result = internal_libxs_predict_rf_build_tree_team(model, tree,
-        rank, team_size, rf->build_team + team);
+        rank, team_size, teams + team);
     }
   }
   return result;
