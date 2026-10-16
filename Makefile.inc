@@ -210,8 +210,8 @@ endif
 LIBFIND ?= /usr/local/lib
 
 # Utilities
-MKTEMP := $(DEPDIR)/.mktmp.sh
-FLOCK := $(DEPDIR)/.flock.sh
+MKTEMP := $(MAKEINC)/.mktmp.sh
+FLOCK := $(MAKEINC)/.flock.sh
 
 # Special characters
 CHAR_OPEN := (
@@ -2724,7 +2724,7 @@ VALSTATE := $(foreach V,$(STATE),$V=$(subst \
   /$(HOMEDIR),$(if $(HOMEDIR),/$$HOME),$(patsubst $(HOMEDIR)%,$(if $(HOMEDIR),$$HOME%),$(filter-out \
   $(EXCLUDE_VALUE),$($V))))))))?)
 DIRSTATE ?= .
-PRESTATE := $(shell echo '$(VALSTATE)' | $(DEPDIR)/.state.sh $(DIRSTATE))
+PRESTATE := $(shell echo '$(VALSTATE)' | $(MAKEINC)/.state.sh $(DIRSTATE))
 
 $(DIRSTATE)/.state: $(firstword $(PRESTATE))
 
@@ -2738,7 +2738,7 @@ $(DIRSTATE)/.state: $(firstword $(PRESTATE))
 LNKSTATEVAR := BLAS_STATIC LDFLAGS CLDFLAGS SLDFLAGS FLDFLAGS BLAS_LDFLAGS
 LNKVALSTATE := $(foreach V,$(LNKSTATEVAR),$(if $($V),$V=$($V)?))
 LNKSTATE := $(DIRSTATE)/.state-link
-PRELNKSTATE := $(shell echo '$(LNKVALSTATE)' | STATENAME=.state-link $(DEPDIR)/.state.sh $(DIRSTATE))
+PRELNKSTATE := $(shell echo '$(LNKVALSTATE)' | STATENAME=.state-link $(MAKEINC)/.state.sh $(DIRSTATE))
 
 $(LNKSTATE): $(firstword $(PRELNKSTATE))
 
