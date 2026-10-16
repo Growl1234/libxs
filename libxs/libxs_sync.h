@@ -36,8 +36,8 @@
 # endif
 #endif
 
-#if !defined(LIBXS_GCC_BASELINE) && !defined(LIBXS_SYNC_LEGACY) && ((defined(_WIN32) && defined(__clang__)) || \
-    (defined(__GNUC__) && LIBXS_VERSION2(4, 7) <= LIBXS_VERSION2(__GNUC__, __GNUC_MINOR__)))
+/* a compiler with the __atomic builtins predefines their orders, whatever version of GCC it claims to be */
+#if !defined(LIBXS_GCC_BASELINE) && !defined(LIBXS_SYNC_LEGACY) && defined(__ATOMIC_SEQ_CST)
 # define LIBXS_GCC_BASELINE
 #endif
 
@@ -199,9 +199,10 @@
 #     define LIBXS_ATOMIC_STORE(DST_PTR, VALUE, KIND) do { \
               __asm__ __volatile__("" ::: "memory"); *(DST_PTR) = (VALUE); \
               __asm__ __volatile__("" ::: "memory"); } while(0)
-#   else
+#   else /* weakly ordered: what was written before must be visible before the store */
 #     define LIBXS_ATOMIC_SYNC_NOFENCE(KIND)
-#     define LIBXS_ATOMIC_STORE(DST_PTR, VALUE, KIND) *(DST_PTR) = (VALUE)
+#     define LIBXS_ATOMIC_STORE(DST_PTR, VALUE, KIND) do { \
+              __sync_synchronize(); *(DST_PTR) = (VALUE); __sync_synchronize(); } while(0)
 #   endif
 #   if !defined(LIBXS_ATOMIC_ZERO_STORE)
 #     define LIBXS_ATOMIC_STORE_ZERO(DST_PTR, KIND) do {} while (__sync_and_and_fetch(DST_PTR, 0))
