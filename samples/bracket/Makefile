@@ -15,6 +15,13 @@ BLAS = 1
 OMP = 0
 SYM = 1
 
+# setup XGBoost as an optional dependency
+XGB ?= 1
+ifneq (0,$(XGB))
+  # must be set before including Makefile.inc
+  override PEDANTIC := 0
+endif
+
 include $(DEPDIR)/Makefile.inc
 
 ifeq (,$(XLIB))
@@ -23,6 +30,9 @@ ifneq (,$(wildcard $(DEPDIR)/libxs/libxs_source.h))
   HEADERONLY = 1
 endif
 endif
+
+# XGBoost as a baseline, configured as samples/predict does
+include $(DEPDIR)/samples/predict/xgboost.mk
 
 IFLAGS += -I$(call quote,$(INCDIR))
 IFLAGS += -I$(call quote,$(DEPDIR))
@@ -46,7 +56,7 @@ all: $(XFILES)
 compile: $(OBJECTS) $(FTNOBJS)
 
 $(OUTDIR)/$(OUTNAME).x: $(OUTDIR)/.make $(OBJECTS) $(XLIB)
-	$(LD) -o $@ $(OBJECTS) $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+	$(LD) -o $@ $(OBJECTS) $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(XGBLDFLAGS) $(CLDFLAGS)
 
 $(BLDDIR)/%-cpp.o: $(SRCDIR)/%.cpp .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc
 	$(CXX) $(DFLAGS) $(IFLAGS) $(CXXFLAGS) $(CTARGET) -c $< -o $@

@@ -25,6 +25,13 @@ are pixels, i.e., averages over cells, as an image sensor records them.
 | `box`           | Products of clamped ramps (⟨x − a⟩¹ − ⟨x − b⟩¹)(⟨y − e⟩¹ − ⟨y − g⟩¹), fitted to the pixels. |
 | `box_int`       | The same fitted to the summed-area table, then ∂²/∂x∂y: a sum of rectangles. |
 | `box_greedy`    | Rectangles added one at a time where the residual gains most, over a background; refined on the pixels. |
+| `knn`           | libxs_predict on the class (sign) of each pixel: nearest neighbours. |
+| `knn_score`     | As `knn`, in the label-aware score coordinate.                         |
+| `fisher`        | As `knn`, with Fisher-weighted inputs.                                 |
+| `hknn`          | As `knn`, over a kd-partition.                                          |
+| `rf`            | A random forest on the class of each pixel.                            |
+| `knn_avg`       | Nearest neighbours regressing the pixel values (pixel data only).      |
+| `xgb`           | XGBoost on the class of each pixel, if built with it.                  |
 
 ## Build and Run
 
@@ -36,6 +43,8 @@ make
 
 The two-dimensional networks dominate the runtime. The sample links BLAS by
 default; `make BLAS=0` falls back to the built-in GEMM, which is about 20× slower.
+XGBoost is found as in the predict sample (`XGBOOST_ROOT`), and `make XGB=0`
+builds without it.
 
 Each row of the printed table reports:
 
@@ -48,6 +57,10 @@ Each row of the printed table reports:
 | `fpdist` | Fingerprint distance (`libxs_fprint_diff`, orders 0 and 1) to the noise-free target.     |
 
 For the checkerboard, the fingerprint norms are the root mean square over image rows.
+
+Each classifier from `knn` to `xgb` also prints the share of the evaluation grid
+it answers at confidence 0.9 and the precision there, the precision of its most
+confident 50% and 80%, and, for libxs_predict, its number of coordinates (`ncoord`).
 
 ## Environment Variables
 
@@ -68,9 +81,8 @@ For the checkerboard, the fingerprint norms are the root mean square over image 
 `bracket_1d_<target>.mhd` stacks the target and each variant's output as rows.
 `bracket_2d_<target>.mhd` holds a target (`checker`, `turned`, or `disc`), and
 `bracket_2d_<target>_<variant>.mhd` each model's image, clamped to the target's
-range [−1, 1] after the metrics are taken. The directory must exist. Set `LIBXS_MHD_PNG=1` to also write a PNG next to each two-dimensional
-MHD file:
-
-```bash
-LIBXS_MHD_PNG=1 ./bracket.x
-```
+range [−1, 1] after the metrics are taken. The variants from `knn` on also write
+their confidence as `bracket_2d_<target>_<variant>_conf.mhd`. The directory must
+exist. Each MHD file has a PNG beside it: the two-dimensional images on [−1, 1]
+and the confidence on [0.5, 1], so that images compare side by side, and a 1-D
+stack over its own range.

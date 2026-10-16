@@ -13,9 +13,9 @@
 #include <libxs/libxs_mhd.h>
 #include <libxs/libxs_rng.h>
 #include <libxs/libxs_timer.h>
+#include "bracket.h"
 
 #define BRACKET_PATH_MAX 1024
-#define BRACKET_MAX_EDGES 8
 #define BRACKET_PI 3.14159265358979323846
 #define BRACKET_PHASE 0.37
 #define BRACKET_NOISE 0.1
@@ -48,15 +48,6 @@
 #define BRACKET_DISC_X 0.53
 #define BRACKET_DISC_Y 0.48
 
-
-/* piecewise-constant profile: level[i] holds on [edge[i-1], edge[i]) */
-typedef struct target1_t {
-  const char* name;
-  double edge[BRACKET_MAX_EDGES];
-  double level[BRACKET_MAX_EDGES + 1];
-  double noise;
-  int nedges;
-} target1_t;
 
 typedef struct train_t {
   int nsteps;
@@ -99,22 +90,9 @@ typedef struct rotdata_t {
   int n;
 } rotdata_t;
 
-typedef int (*eval_fn_t)(const void* model, size_t n, double out[]);
-typedef double (*value_fn_t)(double x, double y, double angle);
-
-typedef struct study_t {
-  const target1_t* row;
-  const double* image;
-  double* buffer;
-  size_t nimage, nlo, nhi, rowindex;
-  double htrain, sumjsq;
-  int ndims;
-} study_t;
-
 
 static char output_dir[BRACKET_PATH_MAX] = ".";
 
-static int write_mhd(const char name[], const double data[], size_t ncols, size_t nrows);
 static double gaussian(void);
 static double cosine_lr(double lr, int step, int nsteps);
 static void adam_update(double param[], const double grad[], double m[], double v[],
@@ -185,8 +163,6 @@ static int rot_eval(const void* model, size_t n, double out[]);
 static double edge_error(const double y[], size_t n, const target1_t* target);
 static int fprint_field(libxs_fprint_t* info, const double data[], int ndims, size_t n,
   int order);
-static int report(const study_t* study, const char target[], const char variant[],
-  const void* model, eval_fn_t eval, double seconds, double image[]);
 static int env_int(const char name[], int value, int lo, int hi);
 static int run_1d(const train_t* train, const setup_t* setup, unsigned int seed);
 static int run_2d(const train_t* train, const setup_t* setup, unsigned int seed);
@@ -244,18 +220,21 @@ static int env_int(const char name[], int value, int lo, int hi)
 }
 
 
-static int write_mhd(const char name[], const double data[], size_t ncols, size_t nrows)
+int write_image(const char name[], const double data[], size_t ncols, size_t nrows,
+  const double range[2])
 {
   int result = EXIT_SUCCESS;
   if (0 != output_dir[0]) {
     char path[BRACKET_PATH_MAX];
     const size_t dir_len = strlen(output_dir);
     if (dir_len + strlen(name) + 6 < sizeof(path)) {
+      libxs_mhd_write_info_t write_info;
       libxs_mhd_info_t info;
-      size_t size[2];
+      size_t size[2], len;
       strcpy(path, output_dir);
       if ('/' != path[dir_len - 1]) strcat(path, "/");
       strcat(path, name);
+      len = strlen(path);
       strcat(path, ".mhd");
       size[0] = ncols;
       size[1] = nrows;
@@ -264,6 +243,15 @@ static int write_mhd(const char name[], const double data[], size_t ncols, size_
       info.type = LIBXS_DATATYPE_F64;
       info.header_size = 0;
       result = libxs_mhd_write(path, NULL, size, NULL, &info, data, NULL);
+      memset(&write_info, 0, sizeof(write_info));
+      if (NULL != range) {
+        write_info.range[0] = range[0];
+        write_info.range[1] = range[1];
+      }
+      strcpy(path + len, ".png");
+      if (EXIT_SUCCESS == result) {
+        result = libxs_png_write(path, size, NULL, 1, LIBXS_DATATYPE_F64, data, &write_info);
+      }
     }
     else result = EXIT_FAILURE;
   }
@@ -1825,7 +1813,7 @@ static int fprint_field(libxs_fprint_t* info, const double data[], int ndims, si
  * Order-1 norm of a jump J grows as J/sqrt(h) but saturates at J/sqrt(eps) for an edge
  * of width eps: slope 0.5 is a true jump, slope 0 a smooth edge of width sum(J^2)/norm^2.
  */
-static int report(const study_t* study, const char target[], const char variant[],
+int report(const study_t* study, const char target[], const char variant[],
   const void* model, eval_fn_t eval, double seconds, double image[])
 {
   const size_t nimage = (2 == study->ndims ? study->nimage * study->nimage : study->nimage);
@@ -1974,7 +1962,7 @@ static int run_1d(const train_t* train, const setup_t* setup, unsigned int seed)
     }
     if (EXIT_SUCCESS == result) {
       LIBXS_SNPRINTF(name, sizeof(name), "bracket_1d_%s", target->name);
-      result = write_mhd(name, stack, BRACKET_IMAGE1, (size_t)nvariants + 1);
+      result = write_image(name, stack, BRACKET_IMAGE1, (size_t)nvariants + 1, NULL);
     }
   }
   return result;
@@ -2014,6 +2002,8 @@ static int run_checker(const train_t* train, const setup_t* setup, unsigned int 
     "mlp", "mlp_int", "tensor", "tensor_int", "sep", "sep_int", "rot", "rot_int",
     "box", "box_int", "box_greedy"
   };
+  /* the targets' levels, so every image shares one scale */
+  static const double image_range[2] = { -1.0, 1.0 };
   const size_t n = BRACKET_N2, nc = n + 1, ni = BRACKET_IMAGE2;
   double *const data = work, *const area = data + n * n, *const tmp = area + nc * nc;
   double *const diag = tmp + nc * nc, *const image = diag + nc * nc;
@@ -2113,7 +2103,7 @@ static int run_checker(const train_t* train, const setup_t* setup, unsigned int 
     study.sumjsq += jump * jump;
   }
   LIBXS_SNPRINTF(name, sizeof(name), "bracket_2d_%s", target);
-  result = write_mhd(name, image, ni, ni);
+  result = write_image(name, image, ni, ni, image_range);
   for (k = 0; k < 11 && EXIT_SUCCESS == result; ++k) {
     const int integrated = (10 == k ? 1 : (k & 1));
     const libxs_timer_tick_t start = libxs_timer_tick();
@@ -2187,10 +2177,13 @@ static int run_checker(const train_t* train, const setup_t* setup, unsigned int 
     if (EXIT_SUCCESS == result) { /* metrics are taken; the image shows the target's range */
       for (i = 0; i < ni * ni; ++i) model_image[i] = LIBXS_CLMP(model_image[i], -1.0, 1.0);
       LIBXS_SNPRINTF(name, sizeof(name), "bracket_2d_%s_%s", target, variants[k]);
-      result = write_mhd(name, model_image, ni, ni);
+      result = write_image(name, model_image, ni, ni, image_range);
     }
     free(mlp.param);
     free(tensor.param);
+  }
+  if (EXIT_SUCCESS == result) {
+    result = bracket_predict(&study, target, data, n, lo, h, pixel, model_image);
   }
   return result;
 }
