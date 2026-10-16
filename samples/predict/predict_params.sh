@@ -13,7 +13,9 @@ if [ ! -x "${HERE}/predict_params.x" ]; then
   make -C "${HERE}" predict_params.x 2>&1 | tail -3
 fi
 
-#ARGS="${@:-hknn compress}"
+# Deployed models are embedded, so the default names the method rather than
+# leaving it to the trial, which would choose a forest many times their size.
+ARGS="${@:-knn}"
 
 for csv in "${PARAMS_DIR}"/tune_multiply_*.csv; do
   if [ -f "${csv}" ]; then

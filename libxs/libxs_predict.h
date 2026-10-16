@@ -521,10 +521,10 @@ LIBXS_API void libxs_predict_set_target(libxs_predict_t* model, int target);
  * none, because a loaded corpus is reconstructed from the per-cluster storage
  * this model does not carry, and it abstains as any corpus-less model does.
  *
- * A regressing output also gives up the shrink toward the nearest cluster's mean
- * that a high-variance query receives, which is worth about half a percent of
- * the average error (earthquake magnitude: 0.268 against 0.269). A classifying
- * output is unaffected, the shrink never applying to it.
+ * Whether named or chosen, a forest's answer is not shrunk toward the nearest
+ * cluster's mean, which a high-variance neighbour answer is: the trees'
+ * disagreement is not a cluster's spread, and applying the shrink to a forest
+ * chosen by trial cost GFLOPS 26 to 76% of its error on GPU tuning tables.
  */
 LIBXS_API void libxs_predict_set_decompose(libxs_predict_t* model,
   int decompose);
@@ -572,6 +572,7 @@ LIBXS_API void libxs_predict_set_neighbors(libxs_predict_t* model, int k);
  * the rank is cut into equal-population bins, and a bin is placed by the
  * leading correspondence-analysis coordinates of its class shares, so inputs
  * that separate the classes span long axes and inputs that do not collapse.
+ * A rank between two bin centres takes the line between their places.
  * An input spans up to three coordinates, the fewest that carry 90% of what
  * rises above chance, and none where nothing does; libxs_predict_query_t::ncoord
  * reports the total, which is what a distance costs.
@@ -583,7 +584,7 @@ LIBXS_API void libxs_predict_set_neighbors(libxs_predict_t* model, int k);
  * score cannot apply the rank is used, whatever was requested.
  *
  * It pays with many inputs and costs with few. On 37 composition features
- * with seven classes plain kNN gained 4.5 and 2.5 points of accuracy at 8k and
+ * with seven classes plain kNN gained 3.6 and 3.1 points of accuracy at 8k and
  * 48k entries, at 72 and 82 coordinates; on 28 physics features
  * with two classes, one coordinate each, 5 points at 80k entries, where it
  * also raised the share of queries answered at confidence 0.9 from 1% to 10%.

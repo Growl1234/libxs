@@ -56,6 +56,10 @@
 #if !defined(LIBXS_PREDICT_SCOREBINS)
 #  define LIBXS_PREDICT_SCOREBINS 16
 #endif
+/* Non-zero: a score is interpolated between bin centres rather than constant per bin. */
+#if !defined(LIBXS_PREDICT_SCORELERP)
+#  define LIBXS_PREDICT_SCORELERP 1
+#endif
 /* Score coordinates one input spans at most (three of six on seven classes). */
 #if !defined(LIBXS_PREDICT_SCOREDIMS)
 #  define LIBXS_PREDICT_SCOREDIMS 3
@@ -859,10 +863,29 @@ LIBXS_API_INLINE const double* internal_libxs_predict_knot(
 LIBXS_API_INLINE double internal_libxs_predict_score(
   const libxs_predict_t* model, int j, int t, double u)
 {
+  const double* const score = model->input_score
+    + ((size_t)j * LIBXS_PREDICT_SCOREDIMS + t) * LIBXS_PREDICT_SCOREBINS;
+#if (0 != LIBXS_PREDICT_SCORELERP)
+  /**
+   * A bin's score belongs to its centre, and a rank between two centres takes
+   * the line between their scores: constant per bin, every input of a bin was
+   * one point, and a query found a crowd of stored entries at distance zero.
+   */
+  const double x = u * LIBXS_PREDICT_SCOREBINS - 0.5;
+  double result;
+  if (x <= 0) result = score[0];
+  else if (x >= LIBXS_PREDICT_SCOREBINS - 1) result = score[LIBXS_PREDICT_SCOREBINS - 1];
+  else {
+    const int lo = (int)x;
+    const double w = x - lo;
+    result = (1 - w) * score[lo] + w * score[lo + 1];
+  }
+  return result;
+#else
   const int bin = LIBXS_CLMP((int)(u * LIBXS_PREDICT_SCOREBINS), 0,
     LIBXS_PREDICT_SCOREBINS - 1);
-  return model->input_score[((size_t)j * LIBXS_PREDICT_SCOREDIMS + t)
-    * LIBXS_PREDICT_SCOREBINS + bin];
+  return score[bin];
+#endif
 }
 
 
@@ -1711,9 +1734,10 @@ LIBXS_API_INLINE int internal_libxs_predict_depth(
 
 /**
  * Non-zero if a distance of zero means the same inputs, which is what lets an
- * exact match answer for its neighbourhood. A score places every value of a bin
- * on one point and a zero weight drops its input, so under either, distinct
- * inputs coincide; a match there must also carry the query's input hash.
+ * exact match answer for its neighbourhood. A score folds an input's ranks, so
+ * that two ranks can take one score, and a zero weight drops its input: under
+ * either, distinct inputs coincide, and a match must also carry the query's
+ * input hash.
  */
 LIBXS_API_INLINE int internal_libxs_predict_coincide(const libxs_predict_t* model)
 {
@@ -4312,9 +4336,8 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
      *
      * The model that results carries no clusters, so libxs_predict_prob has no
      * support to score against and yields nothing, libxs_predict_query reports
-     * no partition, libxs_predict_set_floor and libxs_predict_set_quantile have
-     * no nearest cluster to read, and a regressing output gives up the shrink
-     * toward that cluster's mean. libxs_predict_inverse still answers while the
+     * no partition, and libxs_predict_set_floor and libxs_predict_set_quantile
+     * have no nearest cluster to read. libxs_predict_inverse still answers while the
      * model is in memory; saved and loaded again it abstains, a loaded corpus
      * being reconstructed from exactly the storage this model does not carry.
      * Under LIBXS_PREDICT_AUTO_DECOMPOSE none of this applies.
@@ -4771,6 +4794,9 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
         && NULL != model->entries && NULL != model->assignments)
       {
         internal_libxs_predict_compress(model, order, quality);
+        /* the counts of the clusters compression left, as a load derives them */
+        internal_libxs_predict_keff_all(model);
+        internal_libxs_predict_kapply(model);
       }
     } /* end of the builder's tail: the assembly and the trial are the team's */
   }
@@ -5418,7 +5444,13 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
         vals[k] = 0.75 * vals[k] + 0.25 * avg;
       }
     }
-    if (0 == extrapolate && NULL != model->clusters) {
+    /**
+     * The shrink reads a cluster's spread, so it applies to what a cluster
+     * answered. A forest's variance is its trees' disagreement, and pulling its
+     * answer toward a partition it never read cost GFLOPS 26 to 76% of its
+     * error on GPU tuning tables, against the same forest named.
+     */
+    if (0 == extrapolate && NULL != model->clusters && NULL == model->rf) {
       const internal_libxs_predict_cluster_t* cl = &model->clusters[best_c];
       for (j = 0; j < n; ++j) {
         if (var[j] > 0 && 0 != cl->mode[j]) {

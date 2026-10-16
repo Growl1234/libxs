@@ -54,7 +54,8 @@ int main(int argc, char* argv[])
   const char *filename, *modelfile, *confidence_prefix;
   double quality = 0, smooth = 0, consistency = 0;
   double quantile = 0, eval_fraction = 0.8;
-  int argi = 1, mode = LIBXS_PREDICT_AUTO, use_rf = 0, use_hknn = 0;
+  int argi = 1, mode = LIBXS_PREDICT_AUTO;
+  int decompose = LIBXS_PREDICT_AUTO_DECOMPOSE;
   int order_arg = 0, shuffle_split = 0, use_xgb = 0;
   int result = EXIT_FAILURE;
 
@@ -88,8 +89,9 @@ int main(int argc, char* argv[])
         mode = LIBXS_PREDICT_INTERPOLATE;
       }
       else if (0 != predict_iskey(arg, "mix")) shuffle_split = 1;
-      else if (0 != predict_iskey(arg, "rf")) use_rf = 1;
-      else if (0 != predict_iskey(arg, "hknn")) use_hknn = 1;
+      else if (0 != predict_iskey(arg, "rf")) decompose = LIBXS_PREDICT_RF;
+      else if (0 != predict_iskey(arg, "hknn")) decompose = LIBXS_PREDICT_HKNN;
+      else if (0 != predict_iskey(arg, "knn")) decompose = LIBXS_PREDICT_RAW;
       else if (0 != predict_iskey(arg, "xgb")) use_xgb = 1;
       else if (0 != predict_keyval(arg, "compress", 0.9, &quality)
         || 0 != predict_keyval(arg, "consist", 0.9, &consistency)
@@ -130,7 +132,7 @@ int main(int argc, char* argv[])
   }
   if (NULL == filename) {
     fprintf(stdout,
-      "Usage: %s [fraction] [auto|cat|compress[Q]|consist[C]|interp|quantile[Q]|rf|hknn|smooth[A]|xgb]"
+      "Usage: %s [fraction] [auto|cat|compress[Q]|consist[C]|interp|quantile[Q]|rf|hknn|knn|smooth[A]|xgb]"
       " [-N] <csvfile> [modelfile [confidence-prefix]]\n"
       "  fraction: validation split 0..1 for quality report (default: 0.8)\n"
       "  auto:     auto-detect mode per output (default)\n"
@@ -144,6 +146,7 @@ int main(int argc, char* argv[])
       "  quantile: prediction intervals (Q: level 0..0.5, default 0.1)\n"
       "  rf:       Random Forest classification\n"
       "  hknn:     hierarchical kNN (Fisher-guided partition)\n"
+      "  knn:      plain kNN; without rf, hknn or knn the build chooses by trial\n"
       "  smooth:   multi-cluster blending (A: radius or -1=auto, default: auto)\n"
       "  xgb:      also train XGBoost on the same split and compare\n"
 
@@ -171,8 +174,7 @@ int main(int argc, char* argv[])
           int i, build_ok = EXIT_FAILURE;
           double inputs[NINPUTS], outputs[NOUTPUTS], dt_build;
           libxs_predict_set_mode(model, mode);
-          if (0 != use_rf) libxs_predict_set_decompose(model, LIBXS_PREDICT_RF);
-          else if (0 != use_hknn) libxs_predict_set_decompose(model, LIBXS_PREDICT_HKNN);
+          libxs_predict_set_decompose(model, decompose);
           if (0.0 != smooth) libxs_predict_set_smooth(model, smooth);
           if (0.0 != consistency) libxs_predict_set_consistency(model, consistency);
           if (0.0 != quantile) libxs_predict_set_quantile(model, quantile);
@@ -198,7 +200,7 @@ int main(int argc, char* argv[])
               libxs_predict_query(model, &qi);
               fprintf(stdout, "Decomposition: %s (%s)\n",
                 mode_name(qi.decompose),
-                (0 == use_rf && 0 == use_hknn)
+                (LIBXS_PREDICT_AUTO_DECOMPOSE == decompose)
                   ? "selected at build" : "requested");
               fprintf(stdout, "Built: %d clusters, %.1fx compression, order=%d"
                 " (%d entries, %.2f s)\n", qi.nclusters, qi.compression,
@@ -212,12 +214,7 @@ int main(int argc, char* argv[])
               if (NULL != val_model && NULL != trained) {
                 double vi[NINPUTS], vo[NOUTPUTS];
                 libxs_predict_set_mode(val_model, mode);
-                if (0 != use_rf) {
-                  libxs_predict_set_decompose(val_model, LIBXS_PREDICT_RF);
-                }
-                else if (0 != use_hknn) {
-                  libxs_predict_set_decompose(val_model, LIBXS_PREDICT_HKNN);
-                }
+                libxs_predict_set_decompose(val_model, decompose);
                 if (0.0 != smooth) libxs_predict_set_smooth(val_model, smooth);
                 if (0.0 != consistency) {
                   libxs_predict_set_consistency(val_model, consistency);

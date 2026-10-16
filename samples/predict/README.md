@@ -138,7 +138,7 @@ Reports validation quality on a held-out subset.
 
 ### Usage
 
-    ./predict_params.x [fraction] [auto|cat|compress[Q]|interp|rf|hknn|xgb] [-N] <csvfile> [modelfile [confidence-prefix]]
+    ./predict_params.x [fraction] [auto|cat|compress[Q]|interp|rf|hknn|knn|xgb] [-N] <csvfile> [modelfile [confidence-prefix]]
 
     fraction   Validation split 0..1 for quality report (default: 0.8).
     auto       Auto-detect mode per output (default).
@@ -147,15 +147,17 @@ Reports validation quality on a held-out subset.
     interp     Force interpolation for all outputs.
     rf         Random Forest classification.
     hknn       Hierarchical kNN (Fisher-guided partition).
+    knn        Plain kNN.
     xgb        Also train XGBoost on the same split and compare.
     -N         Max polynomial order (default: 0 = auto).
     csvfile    Delimited text file.
     modelfile  Output path for the binary model.
     confidence-prefix  Optional prefix for confidence map files: MHD, and PNG for the slices.
 
-Naming a mode fixes it: the saved model keeps only what that mode reads and
-cannot be evaluated by another one. Under `auto` the model stays open to all of
-them. The difference shows on `rf`, which answers from its trees and therefore
+Without `rf`, `hknn` or `knn`, the build chooses the method by trial on entries it holds
+back, as the other samples do. Naming a mode fixes it: the saved model keeps only
+what that mode reads and cannot be evaluated by another one. A chosen mode leaves
+the model open to all of them. The difference shows on `rf`, which answers from its trees and therefore
 stores no partition.
 
 ### Example

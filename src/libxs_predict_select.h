@@ -45,6 +45,17 @@
 #if !defined(LIBXS_PREDICT_TRIALCAP)
 # define LIBXS_PREDICT_TRIALCAP 8192
 #endif
+/**
+ * Values an integer output may take and still be scored by its misses. A tuned
+ * tile size is one choice among a few dozen and is judged by whether it is the
+ * one; its error over its spread hardly separates a mode that places a jump
+ * from one that blurs it, and on eight GPU tables the trial kept kNN on five,
+ * where a forest matched 7 to 28 points more of these parameters. A count with
+ * more values than this stays a regression.
+ */
+#if !defined(LIBXS_PREDICT_TRIALMAXK)
+# define LIBXS_PREDICT_TRIALMAXK 64
+#endif
 /* Candidates: the modes, then the two a score applies to again with one. */
 #define LIBXS_PREDICT_NCAND (LIBXS_PREDICT_NDECOMPOSE + 2)
 #if (LIBXS_PREDICT_NCAND > LIBXS_PREDICT_NTRIAL)
@@ -195,7 +206,8 @@ LIBXS_API_INLINE void internal_libxs_predict_cand_apply(
  * Outputs are scored together and do not share a unit, so each contributes a
  * dimensionless number: a discrete output its miss rate, a continuous one its
  * absolute error over its own mean absolute deviation. The threshold on
- * distinct values is the one the cluster refit uses to decide the same question.
+ * distinct values is the one the cluster refit uses to decide the same question;
+ * an output of integers is discrete up to LIBXS_PREDICT_TRIALMAXK values.
  */
 LIBXS_API_INLINE void internal_libxs_predict_decompose_kind(
   const libxs_predict_t* model, const char role[], int kind[], double mad[],
@@ -221,6 +233,13 @@ LIBXS_API_INLINE void internal_libxs_predict_decompose_kind(
         if (buf[i] != buf[i - 1]) ++ndistinct;
       }
       kind[j] = (ndistinct <= (int)(sqrt((double)nfit) + 0.5)) ? 1 : 0;
+      if (0 == kind[j] && ndistinct <= LIBXS_PREDICT_TRIALMAXK) {
+        int integral = 1;
+        for (i = 0; i < nfit && 0 != integral; ++i) {
+          if (buf[i] != floor(buf[i])) integral = 0;
+        }
+        kind[j] = integral;
+      }
       sum = 0;
       for (i = 0; i < model->nentries; ++i) {
         if (0 == role[i]) {
