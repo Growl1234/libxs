@@ -145,7 +145,7 @@ Reports validation quality on a held-out subset.
     -N         Max polynomial order (default: 0 = auto).
     csvfile    Delimited text file.
     modelfile  Output path for the binary model.
-    confidence-prefix  Optional prefix for confidence map MHD files.
+    confidence-prefix  Optional prefix for confidence map files: MHD, and PNG for the slices.
 
 Naming a mode fixes it: the saved model keeps only what that mode reads and
 cannot be evaluated by another one. Under `auto` the model stays open to all of

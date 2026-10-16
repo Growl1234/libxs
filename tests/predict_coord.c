@@ -14,6 +14,7 @@
 #define NINPUT 16
 #define NQUERY 400
 #define NWIDE 8
+#define NGRID 48
 
 
 /**
@@ -163,6 +164,69 @@ static int multiclass(int wide, int decompose, double quality, int* ncorrect)
 }
 
 
+/**
+ * A board every row and column of which holds both classes equally, so no input
+ * says anything alone and a score lumps distinct inputs into one point. Every
+ * cell is stored twice. A stored input must still be answered as an exact match,
+ * by the model as built and as reloaded: the inputs, not their score, decide it.
+ * The inputs between them share the score of points of both classes, and their
+ * vote must say so rather than take whichever tied points were stored first.
+ */
+static int collide(int decompose)
+{
+  libxs_predict_t* model = libxs_predict_create(2, 1);
+  libxs_predict_t* loaded = NULL;
+  int result = (NULL != model) ? EXIT_SUCCESS : EXIT_FAILURE, i, j, r;
+  if (EXIT_SUCCESS == result) {
+    libxs_predict_set_decompose(model, decompose);
+    libxs_predict_set_coordinate(model, LIBXS_PREDICT_SCORE);
+  }
+  for (r = 0; r < 2 && EXIT_SUCCESS == result; ++r) {
+    for (j = 0; j < NGRID && EXIT_SUCCESS == result; ++j) {
+      for (i = 0; i < NGRID && EXIT_SUCCESS == result; ++i) {
+        const double inputs[2] = { (double)i, (double)j };
+        const double output = (double)((i / 12 + j / 12) & 1);
+        result = libxs_predict_push(NULL, model, inputs, &output);
+      }
+    }
+  }
+  if (EXIT_SUCCESS == result) result = libxs_predict_build(model, 0, 1, 0.0);
+  if (EXIT_SUCCESS == result) {
+    loaded = reload(model);
+    if (NULL == loaded) result = EXIT_FAILURE;
+  }
+  for (r = 0; r < 2 && EXIT_SUCCESS == result; ++r) {
+    const libxs_predict_t* const m = (0 == r ? model : loaded);
+    int nexact = 0, nsure = 0;
+    for (j = 0; j < NGRID; ++j) {
+      for (i = 0; i < NGRID; ++i) {
+        const double stored[2] = { (double)i, (double)j };
+        const double between[2] = { i + 0.5, j + 0.5 };
+        libxs_predict_info_t info;
+        double predicted;
+        libxs_predict_eval(NULL, m, stored, &predicted, &info, 0);
+        if (LIBXS_ROUNDX(int, predicted) == ((i / 12 + j / 12) & 1)
+          && NULL != info.confidence && 1.0 == info.confidence[0])
+        {
+          ++nexact;
+        }
+        libxs_predict_eval(NULL, m, between, &predicted, &info, 0);
+        if (NULL != info.confidence && 0.9 <= info.confidence[0]) ++nsure;
+      }
+    }
+    if (NGRID * NGRID != nexact || NGRID * NGRID / 4 <= nsure) {
+      fprintf(stderr, "a score on a board (mode %i, %s): %i of %i stored inputs"
+        " exact, %i unstored ones at confidence 0.9\n", decompose,
+        0 == r ? "built" : "reloaded", nexact, NGRID * NGRID, nsure);
+      result = EXIT_FAILURE;
+    }
+  }
+  libxs_predict_destroy(loaded);
+  libxs_predict_destroy(model);
+  return result;
+}
+
+
 int main(void)
 {
   libxs_predict_t* rank = libxs_predict_create(NINPUT, 1);
@@ -257,6 +321,9 @@ int main(void)
       }
     }
   }
+  /* a stored input is still an exact match where a score collides inputs */
+  if (EXIT_SUCCESS == result) result = collide(LIBXS_PREDICT_RAW);
+  if (EXIT_SUCCESS == result) result = collide(LIBXS_PREDICT_HKNN);
   libxs_predict_destroy(chosen);
   libxs_predict_destroy(score);
   libxs_predict_destroy(rank);

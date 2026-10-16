@@ -186,6 +186,10 @@ typedef struct internal_libxs_predict_cluster_t {
   int* k_out;
   /** Entry weights in kd order, parallel to kd_pts; NULL when all are 1. */
   double* eweight;
+  /** Hashes of the entries' inputs in kd order, parallel to kd_pts, where a
+   *  distance of zero is not the same inputs (internal_libxs_predict_coincide);
+   *  NULL otherwise, and in a cluster loaded from a file that has none. */
+  uint64_t* ihash;
   int* sorted_idx;
   double* sorted_dist;
   double* tangent;
@@ -669,6 +673,7 @@ LIBXS_API_INLINE void internal_libxs_predict_free_clusters(libxs_predict_t* mode
       free(cl->ndistinct);
       free(cl->k_out);
       free(cl->eweight);
+      free(cl->ihash);
       free(cl->sorted_idx);
       free(cl->sorted_dist);
       free(cl->tangent);
@@ -1705,6 +1710,74 @@ LIBXS_API_INLINE int internal_libxs_predict_depth(
 
 
 /**
+ * Non-zero if a distance of zero means the same inputs, which is what lets an
+ * exact match answer for its neighbourhood. A score places every value of a bin
+ * on one point and a zero weight drops its input, so under either, distinct
+ * inputs coincide; a match there must also carry the query's input hash.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_coincide(const libxs_predict_t* model)
+{
+  int result = (NULL == model->input_score) ? 1 : 0, i;
+  for (i = 0; i < model->ninputs && 0 != result && NULL != model->weights; ++i) {
+    if (0 == model->weights[i]) result = 0;
+  }
+  return result;
+}
+
+
+/**
+ * Hash of m inputs (libxs_hash64). Zero has one sign and an absent input one
+ * pattern, so inputs that compare equal hash equal.
+ */
+LIBXS_API_INLINE uint64_t internal_libxs_predict_ihash(const double* inputs, int m)
+{
+  uint64_t result = 0;
+  int i;
+  for (i = 0; i < m; ++i) {
+    uint64_t bits = 0x7FF8000000000000uLL;
+    if (LIBXS_NOTNAN(inputs[i])) {
+      const double v = (0 != inputs[i] ? inputs[i] : 0.0);
+      memcpy(&bits, &v, sizeof(bits));
+    }
+    result = libxs_hash64(&bits, sizeof(bits), result);
+  }
+  return result;
+}
+
+
+/* the input hashes of a built cluster, wherever internal_libxs_predict_coincide asks for them */
+LIBXS_API_INLINE int internal_libxs_predict_cluster_ihash(const libxs_predict_t* model,
+  internal_libxs_predict_cluster_t* cl)
+{
+  int result = EXIT_SUCCESS, k;
+  free(cl->ihash);
+  cl->ihash = NULL;
+  if (0 == internal_libxs_predict_coincide(model) && 0 < cl->nentries
+    && NULL != cl->sorted_idx && NULL != model->entries)
+  {
+    cl->ihash = (uint64_t*)malloc((size_t)cl->nentries * sizeof(uint64_t));
+    if (NULL != cl->ihash) {
+      for (k = 0; k < cl->nentries; ++k) {
+        cl->ihash[k] = internal_libxs_predict_ihash(
+          model->entries[cl->sorted_idx[k]].inputs, model->ninputs);
+      }
+    }
+    else result = EXIT_FAILURE;
+  }
+  return result;
+}
+
+
+/* the hash an exact match of stored entry e must carry, NULL where its distance says enough */
+LIBXS_API_INLINE const uint64_t* internal_libxs_predict_ehash(const libxs_predict_t* model,
+  const internal_libxs_predict_cluster_t* cl, int e)
+{
+  return (0 == internal_libxs_predict_coincide(model) && NULL != cl->ihash)
+    ? (cl->ihash + e) : NULL;
+}
+
+
+/**
  * The local evidence a query draws on for one output: the k nearest neighbors
  * within the cluster, their output values and distances, plus whether the query
  * coincides with a stored point. Every scoring rule in this file reads this
@@ -1720,8 +1793,8 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
   const int* po_groups, int query_group,
   double* candidates, double* dists, int* out_nfound,
   int* out_exact, int* out_settled, double* out_best,
-  const internal_libxs_predict_view_t* view, int missing, double* out_iw,
-  int* out_idx, int* out_exact_idx, int depth)
+  const internal_libxs_predict_view_t* view, int missing, const uint64_t* qhash,
+  double* out_iw, int* out_idx, int* out_exact_idx, int depth)
 {
   const double* kd_pts = cl->kd_pts;
   const int nc = cl->nentries;
@@ -1732,7 +1805,8 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
   const double* qpts = inputs;
   const double* dpts = kd_pts;
   int dm = m;
-  int nfound = 0, exact = 0, settled = 0, i, max_idx = 0;
+  int nfound = 0, exact = 0, settled = 0, i, max_idx = 0, ntie = 0;
+  double tie_d = -1;
   if (NULL != cl->tangent && NULL != cl->kd_tan
     && cl->tdim > 0 && cl->tdim <= 512)
   {
@@ -1788,9 +1862,16 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
     {
       continue;
     }
-    /* an exact match is authoritative for the value wherever the scan finds
-     * it, not only when it happens to be admitted first */
-    if (0.0 == d2 && 0 == exact) {
+    /**
+     * An exact match is authoritative for the value wherever the scan finds it,
+     * not only when it happens to be admitted first, and only where it is one:
+     * given qhash, a point at distance zero must also have the query's inputs
+     * (internal_libxs_predict_coincide). A cluster without hashes, as a file
+     * written before them carries, keeps the distance as its only test.
+     */
+    if (0.0 == d2 && 0 == exact
+      && (NULL == qhash || NULL == cl->ihash || *qhash == cl->ihash[i]))
+    {
       *out_best = cl->raw_outputs[(size_t)i * nouts + output_j];
       if (NULL != out_exact_idx) *out_exact_idx = i;
       exact = 1;
@@ -1805,17 +1886,40 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
       ++nfound;
     }
     else {
-      int worst = 0, wi;
+      const double d = sqrt(d2);
+      int worst = 0, slot = -1, wi;
       for (wi = 1; wi < nfound; ++wi) {
         if (dists[wi] > dists[worst]) worst = wi;
       }
-      if (sqrt(d2) < dists[worst]) {
-        candidates[worst] = cl->raw_outputs[(size_t)i * nouts + output_j];
-        dists[worst] = sqrt(d2);
-        if (NULL != out_iw) {
-          out_iw[worst] = (NULL != cl->eweight) ? cl->eweight[i] : 1.0;
+      if (d < dists[worst]) slot = worst;
+      else if (d == dists[worst]) {
+        /**
+         * A tie at the farthest kept distance. The members there are kept as a
+         * uniform sample of every point tied so far (reservoir sampling, drawn
+         * from the point's index so a scan repeats), not as the first scanned:
+         * the storage order makes those neighbours of each other, and where a
+         * coordinate lumps inputs together they agreed whatever the rest held.
+         */
+        int nat = 0;
+        for (wi = 0; wi < nfound; ++wi) nat += (dists[wi] == d) ? 1 : 0;
+        if (d != tie_d) {
+          tie_d = d;
+          ntie = nat;
         }
-        if (NULL != out_idx) out_idx[worst] = i;
+        ++ntie;
+        { int r = (int)(libxs_hash64(&i, sizeof(i), (uint64_t)ntie) % (uint64_t)ntie);
+          for (wi = 0; wi < nfound && r < nat && 0 > slot; ++wi) {
+            if (dists[wi] == d && 0 == r--) slot = wi;
+          }
+        }
+      }
+      if (0 <= slot) {
+        candidates[slot] = cl->raw_outputs[(size_t)i * nouts + output_j];
+        dists[slot] = d;
+        if (NULL != out_iw) {
+          out_iw[slot] = (NULL != cl->eweight) ? cl->eweight[i] : 1.0;
+        }
+        if (NULL != out_idx) out_idx[slot] = i;
       }
     }
   }
@@ -2044,7 +2148,8 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
   const int* po_groups, int query_group,
   double* confidence, double* out_variance,
   double quantile, double* out_lower, double* out_upper,
-  int central, const internal_libxs_predict_view_t* view, int missing)
+  int central, const internal_libxs_predict_view_t* view, int missing,
+  const uint64_t* qhash)
 {
   const int nc = cl->nentries;
   double candidates[LIBXS_PREDICT_KNN];
@@ -2059,7 +2164,7 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
     internal_libxs_predict_evidence(cl, m, inputs, output_j, nouts,
       extrapolate, skip_local, skip_set, po_groups, query_group,
       candidates, dists, &nfound, &exact, &settled, &best_val, view,
-      missing, iw, NULL, NULL, 0);
+      missing, qhash, iw, NULL, NULL, 0);
     best_val = internal_libxs_predict_vote(cl, output_j, nouts, ndistinct,
       extrapolate, central, candidates, dists, iw, nfound, exact,
       settled, best_val, confidence, out_variance, quantile,
@@ -2078,12 +2183,12 @@ LIBXS_API_INLINE double internal_libxs_predict_classify(
   int m, const double* inputs, int output_j, int nouts,
   int ndistinct, int extrapolate, int skip_local,
   double* confidence, double* out_variance, int central,
-  const internal_libxs_predict_view_t* view, int missing)
+  const internal_libxs_predict_view_t* view, int missing, const uint64_t* qhash)
 {
   return internal_libxs_predict_classify2(cl, m, inputs,
     output_j, nouts, ndistinct, extrapolate, skip_local, NULL,
     NULL, -1, confidence, out_variance, 0, NULL, NULL, central, view,
-    missing);
+    missing, qhash);
 }
 
 
@@ -2185,6 +2290,7 @@ LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
             free(cl->ndistinct);
             free(cl->k_out);
             free(cl->eweight);
+            free(cl->ihash);
             free(cl->interpolated);
             free(cl->coeffs);
             free(cl->errors);
@@ -4487,6 +4593,7 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
               if (0 != model->tangent) {
                 internal_libxs_predict_cluster_tangent(cl, mc, model->tangent);
               }
+              cres = internal_libxs_predict_cluster_ihash(model, cl);
             }
           }
           LIBXS_PREDICT_FREE(entry_map, pool_emap);
@@ -4801,6 +4908,9 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
   LIBXS_ASSERT(NULL != model && 0 != model->built && NULL != inputs);
   {
     const int m = model->ninputs, mc = model->ncoord, n = model->noutputs;
+    /* a match must be the same inputs where a distance of zero is not */
+    const uint64_t* qhash = NULL;
+    uint64_t qhash_value = 0;
     const int mode = model->eval_mode;
     const int diff_d = (model->diff_mode >= 0) ? model->diff_order : 0;
     /**
@@ -4904,6 +5014,10 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
     }
     if (NULL != lock) LIBXS_LOCK_ACQUIRE(LIBXS_LOCK, lock);
     internal_libxs_predict_normalize(model, inputs, norm_inputs);
+    if (0 == internal_libxs_predict_coincide(model)) {
+      qhash_value = internal_libxs_predict_ihash(inputs, m);
+      qhash = &qhash_value;
+    }
     /**
      * The model's buffer is the last resort, because it is shared: info points
      * into whichever buffer this picks, so two callers writing the model's at
@@ -5032,7 +5146,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                     NULL, -1,
                     &po_conf, &po_var, qi, &lo[j], &hi[j],
                     internal_libxs_predict_central(model, j), view,
-                    model->has_missing);
+                    model->has_missing, qhash);
                   if (NULL != src) src[j] = pcl;
                   if (NULL != src_out) src_out[j] = lj;
                   if (NULL != src_nout) src_nout[j] = gsz;
@@ -5043,7 +5157,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                     cl->ndistinct[j], extrapolate, -1, NULL, NULL, -1,
                     &po_conf, &po_var, qi, &lo[j], &hi[j],
                     internal_libxs_predict_central(model, j), view,
-                    model->has_missing);
+                    model->has_missing, qhash);
                   if (NULL != src) src[j] = cl;
                   if (NULL != src_out) src_out[j] = j;
                   if (NULL != src_nout) src_nout[j] = n;
@@ -5054,7 +5168,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                 cl, mc, norm_inputs, j, n,
                 cl->ndistinct[j], extrapolate, -1, &conf[j], &var[j],
                 internal_libxs_predict_central(model, j), view,
-                model->has_missing);
+                model->has_missing, qhash);
               errs[j] = 0;
               rels[j] = 0;
             }
@@ -5064,7 +5178,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                 cl->ndistinct[j], extrapolate, -1, NULL, NULL, -1,
                 &conf[j], &var[j], qi, &lo[j], &hi[j],
                 internal_libxs_predict_central(model, j), view,
-                model->has_missing);
+                model->has_missing, qhash);
               errs[j] = 0;
               rels[j] = 0;
               if (NULL != src) src[j] = cl;
@@ -5079,7 +5193,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
               cl->ndistinct[j], extrapolate, -1, NULL, NULL, -1,
               &conf[j], &var[j], qi, &lo[j], &hi[j],
               internal_libxs_predict_central(model, j), view,
-              model->has_missing);
+              model->has_missing, qhash);
             errs[j] = 0;
             rels[j] = 0;
             if (NULL != src) src[j] = cl;
@@ -5250,7 +5364,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                   cl2->ndistinct[j], extrapolate, -1, NULL, NULL, -1,
                   &cj_conf, &cj_var, qi, &cj_lo, &cj_hi,
                   internal_libxs_predict_central(model, j), view,
-                  model->has_missing);
+                  model->has_missing, qhash);
                 blend_val += w * v;
                 blend_conf += w * cj_conf;
                 blend_var += w * cj_var;
@@ -5372,7 +5486,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
               ? vals[j]
               : internal_libxs_predict_classify(&model->clusters[best_c], mc, norm_inputs, j, n,
                   model->clusters[best_c].ndistinct[j], extrapolate, -1,
-                  NULL, NULL, 0, view, model->has_missing);
+                  NULL, NULL, 0, view, model->has_missing, qhash);
             target[j] = (NULL != model->transforms)
               ? internal_libxs_predict_inv(model->transforms[j], vj)
               : vj;
@@ -5412,7 +5526,7 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
                           rcl, mc, rnorm, j, n,
                           rcl->ndistinct[j], extrapolate, -1, &rc_conf, NULL,
                           internal_libxs_predict_central(model, j), view,
-                          model->has_missing);
+                          model->has_missing, qhash);
                         rconf[j] = rc_conf;
                       }
                       else {
@@ -6184,7 +6298,7 @@ LIBXS_API_INLINE int internal_libxs_predict_dist(
   internal_libxs_predict_evidence(cl,
     model->ncoord, norm_inputs, out_j, nouts, extrapolate, -1, NULL,
     NULL, -1, candidates, dists, &nfound, &exact, &settled, &best, NULL,
-    model->has_missing, NULL, NULL, NULL, 0);
+    model->has_missing, NULL, NULL, NULL, NULL, 0);
   for (i = 0; i < ns; ++i) local[i] = 0;
   for (i = 0; i < nfound; ++i) {
     const int si = internal_libxs_predict_support_index(sv, ns, candidates[i]);
@@ -6279,7 +6393,7 @@ LIBXS_API_INLINE int internal_libxs_predict_point(
   internal_libxs_predict_evidence(cl,
     model->ncoord, norm_inputs, out_j, nouts, extrapolate, -1, NULL,
     NULL, -1, candidates, dists, &nfound, &exact, &settled, &best, NULL,
-    model->has_missing, NULL, NULL, NULL, 0);
+    model->has_missing, NULL, NULL, NULL, NULL, 0);
   /* Accumulate evidence per DISTINCT support entry, as the dense path does by
    * indexing into local[]; a value can be returned by several neighbors. */
   for (i = 0; i < nfound; ++i) {
@@ -6636,8 +6750,9 @@ LIBXS_API_INLINE void internal_libxs_predict_loo_gather(
   scan->exact_idx = -1;
   internal_libxs_predict_evidence(cl, m, cl->kd_pts + (size_t)e * m, g, n,
     0, e, NULL, NULL, -1, scan->candidates, scan->dists, &scan->nfound,
-    &scan->exact, &scan->settled, &scan->best, NULL,
-    model->has_missing, scan->iw, scan->idx, &scan->exact_idx, depth);
+    &scan->exact, &scan->settled, &scan->best, NULL, model->has_missing,
+    internal_libxs_predict_ehash(model, cl, e), scan->iw, scan->idx,
+    &scan->exact_idx, depth);
 }
 
 

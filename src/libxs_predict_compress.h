@@ -50,7 +50,7 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
                 cl->ndistinct[j], 0, li, dropped, NULL, -1, &conf, &var,
                 0, NULL, NULL,
                 internal_libxs_predict_central(model, j), NULL,
-                model->has_missing);
+                model->has_missing, internal_libxs_predict_ehash(model, cl, li));
               /**
                * Unanimity is required, not merely a confident majority, and that
                * is load-bearing rather than redundant: it also pins the vote
@@ -127,6 +127,8 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
                   cl->kd_pts + (size_t)k * mc, (size_t)mc * sizeof(double));
                 memcpy(cl->raw_outputs + (size_t)dst * n,
                   cl->raw_outputs + (size_t)k * n, (size_t)n * sizeof(double));
+                if (NULL != cl->eweight) cl->eweight[dst] = cl->eweight[k];
+                if (NULL != cl->ihash) cl->ihash[dst] = cl->ihash[k];
                 cl->sorted_idx[dst] = gi;
               }
               ++dst;

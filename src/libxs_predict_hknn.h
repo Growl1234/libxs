@@ -809,6 +809,7 @@ LIBXS_API_INLINE int internal_libxs_predict_hknn_build_po(
             if (d > cls[c].dmax) cls[c].dmax = d;
           }
           if (cls[c].dmax <= 0.0) cls[c].dmax = 1.0;
+          result = internal_libxs_predict_cluster_ihash(model, &cls[c]);
           { int li = 0;
             for (oi = 0; oi < n; ++oi) {
               if ((NULL != model->hknn_po_groups

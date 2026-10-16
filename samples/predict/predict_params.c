@@ -1063,6 +1063,22 @@ static int write_confidence_maps(const char* prefix, const void* buffer,
         }
         if (EXIT_SUCCESS == result) {
           fprintf(stdout, "Saved confidence meanK projection to %s\n", filename);
+        }
+        /* a look at both slices on one scale: confidence is in [0, 1] */
+        if (EXIT_SUCCESS == result) {
+          libxs_mhd_write_info_t write_info;
+          memset(&write_info, 0, sizeof(write_info));
+          write_info.range[1] = 1.0;
+          LIBXS_SNPRINTF(filename, sizeof(filename), "%s_minK.png", prefix);
+          result = libxs_png_write(filename, ext2, NULL, 1, LIBXS_DATATYPE_F32,
+            min_k, &write_info);
+          if (EXIT_SUCCESS == result) {
+            LIBXS_SNPRINTF(filename, sizeof(filename), "%s_meanK.png", prefix);
+            result = libxs_png_write(filename, ext2, NULL, 1, LIBXS_DATATYPE_F32,
+              mean_k, &write_info);
+          }
+        }
+        if (EXIT_SUCCESS == result) {
           fprintf(stdout, "Confidence maps: M=%d..%d N=%d..%d K=%d..%d"
             " (%lu queries, %.2f s)\n", mmin, mmax, nmin, nmax, kmin, kmax,
             (unsigned long)nelements,

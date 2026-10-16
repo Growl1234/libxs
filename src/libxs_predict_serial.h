@@ -81,7 +81,7 @@ LIBXS_API_INLINE int internal_libxs_predict_crc(const void* buffer,
 {
   int result = EXIT_SUCCESS;
   if (size > (size_t)0xFFFFFFFFU) result = EXIT_FAILURE;
-  else *crc = (uint32_t)libxs_hash_iso3309(buffer, (unsigned int)size, 0);
+  else *crc = (uint32_t)libxs_hash_iso3309(buffer, size, 0);
   return result;
 }
 
@@ -242,12 +242,40 @@ LIBXS_API_INLINE int internal_libxs_predict_gsize(const int* po_groups,
 }
 
 
+/**
+ * Non-zero if the input hashes are written: where a distance of zero is not the
+ * same inputs, and every cluster with entries has them. A model loaded from a
+ * file without them has none to write, and its clusters keep the distance test.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_has_ihash(const libxs_predict_t* model)
+{
+  int result = (0 == internal_libxs_predict_coincide(model)) ? 1 : 0, c, j;
+  for (c = 0; c < model->nclusters && 0 != result; ++c) {
+    const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
+    if (0 < cl->nentries && NULL == cl->ihash) result = 0;
+  }
+  if (NULL != model->hknn_po_clusters && NULL != model->hknn_po_nclusters) {
+    const int ng = (model->hknn_ngroups > 0) ? model->hknn_ngroups : model->noutputs;
+    for (j = 0; j < ng && 0 != result; ++j) {
+      for (c = 0; NULL != model->hknn_po_clusters[j]
+        && c < model->hknn_po_nclusters[j] && 0 != result; ++c)
+      {
+        const internal_libxs_predict_cluster_t* pcl = &model->hknn_po_clusters[j][c];
+        if (0 < pcl->nentries && NULL == pcl->ihash) result = 0;
+      }
+    }
+  }
+  return result;
+}
+
+
 LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
   const libxs_predict_t* model, void* buffer, size_t* size)
 {
   int result = EXIT_SUCCESS;
   const int m = model->ninputs, mc = model->ncoord, n = model->noutputs;
   const int p = model->nentries;
+  const int has_ih = internal_libxs_predict_has_ihash(model);
   size_t required = 0;
   int c, j;
   required += sizeof(uint32_t) + sizeof(uint16_t);
@@ -275,10 +303,11 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     required += (size_t)n; /* one tag per encoded column, never more */
     required += (size_t)n * sizeof(double);
     required += (size_t)cl->nentries * sizeof(uint32_t);
+    if (0 != has_ih) required += (size_t)cl->nentries * sizeof(uint64_t);
   }
   required += 1;
-  /* the entry-weight flag, introduced with version 2 */
-  required += sizeof(uint8_t);
+  /* the entry-weight and input-hash flags, introduced with version 2 */
+  required += 2 * sizeof(uint8_t);
   /* the resolved neighbour counts, one byte each behind a flag */
   required += sizeof(uint8_t);
   if (NULL != model->k_sel) required += (size_t)n;
@@ -301,6 +330,7 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
             required += (size_t)pcl->nentries * (size_t)mc * sizeof(double);
             required += (size_t)pcl->nentries * (size_t)gsz * sizeof(double);
             required += (size_t)gsz; /* one tag per encoded column */
+            if (0 != has_ih) required += (size_t)pcl->nentries * sizeof(uint64_t);
           }
         }
       }
@@ -334,6 +364,7 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     WRITE_U16(NULL != model->weights ? 1 : 0);
     /* introduced with version 2; an older file simply has no weights */
     WRITE_U8(0 != model->has_eweight ? 1 : 0);
+    WRITE_U8(has_ih);
     WRITE_U8(NULL != model->k_sel ? 1 : 0);
     if (NULL != model->k_sel) {
       int ks;
@@ -396,6 +427,9 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
       if (0 != model->has_eweight) {
         WRITE_BLK(cl->eweight, (size_t)cl->nentries * sizeof(double));
       }
+      if (0 != has_ih && 0 < cl->nentries) {
+        WRITE_BLK(cl->ihash, (size_t)cl->nentries * sizeof(uint64_t));
+      }
       WRITE_BLK(cl->out_rms, (size_t)n * sizeof(double));
       /* 32 bits since version 2: a 16-bit index wrapped past 65535 entries,
        * and a wrapped index still passes the bound the reader checks */
@@ -453,6 +487,9 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
                     (size_t)gsz);
                 }
               }
+              if (0 != has_ih) {
+                WRITE_BLK(pcl->ihash, (size_t)pcl->nentries * sizeof(uint64_t));
+              }
             }
           }
         }
@@ -499,6 +536,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
     size_t required = 0;
     int c, j, has_sidx = 1;
     const int has_ew = (0 != model->has_eweight) ? 1 : 0;
+    const int has_ih = internal_libxs_predict_has_ihash(model);
     /**
      * A model loaded from a version-1 flat file has no sorted_idx to write, so
      * its presence is a flag rather than an invariant. Fabricating indices
@@ -517,6 +555,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
     if (0 != model->qconform_ok && NULL != model->qconform) {
       required += (size_t)model->noutputs * sizeof(double);
     }
+    required += sizeof(uint8_t); /* whether input hashes follow the clusters */
     /* the resolved neighbour counts, one byte each behind a flag */
     if (NULL != model->k_sel) required += (size_t)model->noutputs;
     required += (size_t)model->ninputs * 2 * sizeof(double);
@@ -548,6 +587,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       required += (size_t)model->noutputs;
       if (0 != has_sidx) required += (size_t)cl->nentries * sizeof(uint32_t);
       if (0 != has_ew) required += (size_t)cl->nentries * sizeof(double);
+      if (0 != has_ih) required += (size_t)cl->nentries * sizeof(uint64_t);
       for (j = 0; j < model->noutputs; ++j) {
         required += (size_t)(cl->order[j] + 1) * sizeof(double);
       }
@@ -631,6 +671,7 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       WRITE_U8(has_sidx);
       /* introduced with version 2; an older file simply has no weights */
       WRITE_U8(has_ew);
+      WRITE_U8(has_ih);
       /* introduced with version 2; an older file derives the count instead */
       WRITE_U8(NULL != model->k_sel ? 1 : 0);
       if (NULL != model->k_sel) {
@@ -710,6 +751,9 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
         }
         if (0 != has_ew) {
           WRITE_BLK(cl->eweight, (size_t)cl->nentries * sizeof(double));
+        }
+        if (0 != has_ih && 0 < cl->nentries) {
+          WRITE_BLK(cl->ihash, (size_t)cl->nentries * sizeof(uint64_t));
         }
         /**
          * sorted_idx is what recency weighting and the local-error diagnostic
@@ -947,12 +991,26 @@ LIBXS_API_INLINE void internal_libxs_predict_read_escape(
 }
 
 
+/* ne input hashes into an array of their own (see internal_libxs_predict_has_ihash) */
+LIBXS_API_INLINE int internal_libxs_predict_read_ihash(const unsigned char** src,
+  const unsigned char* end, int ne, uint64_t** ihash)
+{
+  int result = internal_libxs_predict_avail(*src, end, (size_t)ne, sizeof(uint64_t));
+  if (EXIT_SUCCESS == result) {
+    *ihash = (uint64_t*)malloc((size_t)ne * sizeof(uint64_t));
+    result = (NULL != *ihash) ? internal_libxs_predict_read(src, end, *ihash,
+      (size_t)ne * sizeof(uint64_t)) : EXIT_FAILURE;
+  }
+  return result;
+}
+
+
 LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
   const unsigned char* src, const unsigned char* end, int version)
 {
   libxs_predict_t* model = NULL;
   uint16_t ninp = 0, nout = 0, nclust = 0, has_weights = 0, nknots = 0;
-  int ok = EXIT_SUCCESS, c, j, has_ew = 0;
+  int ok = EXIT_SUCCESS, c, j, has_ew = 0, has_ih = 0;
   uint8_t* ksel = NULL;
   int ksel_pool = 0;
   ok = internal_libxs_predict_read(&src, end, &ninp, 2);
@@ -963,6 +1021,11 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     uint8_t v = 0;
     ok = internal_libxs_predict_read(&src, end, &v, 1);
     if (EXIT_SUCCESS == ok) has_ew = (0 != v);
+  }
+  if (EXIT_SUCCESS == ok && 1 < version) {
+    uint8_t v = 0;
+    ok = internal_libxs_predict_read(&src, end, &v, 1);
+    if (EXIT_SUCCESS == ok) has_ih = (0 != v);
   }
   if (EXIT_SUCCESS == ok && 1 < version) {
     uint8_t v = 0;
@@ -1170,6 +1233,9 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
         if (EXIT_SUCCESS == ok) model->has_eweight = 1;
       }
     }
+    if (EXIT_SUCCESS == ok && 0 != has_ih && 0 < ne) {
+      ok = internal_libxs_predict_read_ihash(&src, end, ne, &cl->ihash);
+    }
     /**
      * out_rms arrived with version 2. A version-1 file carries no fit residual,
      * and every consumer reads it as "no calibration" when it is zero and falls
@@ -1365,6 +1431,9 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
                 ok = internal_libxs_predict_read_outputs(&src, end,
                   cls[ci].raw_outputs, (size_t)ne, (size_t)gsz, version);
               }
+              if (EXIT_SUCCESS == ok && 0 != has_ih) {
+                ok = internal_libxs_predict_read_ihash(&src, end, ne, &cls[ci].ihash);
+              }
             }
           }
         }
@@ -1495,7 +1564,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
     const unsigned char* end = src + size;
     uint32_t magic = 0;
     uint16_t version = 0, ninp = 0, nout = 0, nclust = 0;
-    int has_sidx = 0, has_ew = 0;
+    int has_sidx = 0, has_ew = 0, has_ih = 0;
     int ok = internal_libxs_predict_read(&src, end, &magic, 4);
     if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &version, 2);
     if (EXIT_SUCCESS == ok && (0 == version || LIBXS_PREDICT_VERSION < version)) {
@@ -1562,6 +1631,11 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
         uint8_t v = 0;
         ok = internal_libxs_predict_read(&src, end, &v, 1);
         if (EXIT_SUCCESS == ok) has_ew = (0 != v);
+      }
+      if (EXIT_SUCCESS == ok && 1 < version) {
+        uint8_t v = 0;
+        ok = internal_libxs_predict_read(&src, end, &v, 1);
+        if (EXIT_SUCCESS == ok) has_ih = (0 != v);
       }
       if (EXIT_SUCCESS == ok && 1 < version) {
         uint8_t v = 0;
@@ -1839,6 +1913,9 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
               (size_t)cl->nentries * sizeof(double));
             if (EXIT_SUCCESS == ok) model->has_eweight = 1;
           }
+        }
+        if (EXIT_SUCCESS == ok && 0 != has_ih && 0 < cl->nentries) {
+          ok = internal_libxs_predict_read_ihash(&src, end, cl->nentries, &cl->ihash);
         }
         /**
          * A version-1 flat file has no sorted_idx, and so has no global order to
