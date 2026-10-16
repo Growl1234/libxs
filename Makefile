@@ -348,7 +348,7 @@ endif
 
 # use dir not qdir to avoid quotes
 SAMPLES := $(dir $(shell $(if $(GIT),$(GIT) ls-files,ls -1) $(SPLDIR)/*/Makefile 2>/dev/null))
-SPLMDS := $(addprefix $(ABSDIR)/,$(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
+SPLMDS := $(addprefix $(ABSDIR)/,$(shell cd $(ROOTDIR) && $(if $(GIT),$(GIT) ls-files,ls -1) \
   $(SPLDIR)/*/README.md 2>/dev/null))
 DOCMDS := $(addprefix $(ABSDIR)/,$(filter-out \
     $(DOCDIR)/$(PROJECT)_present.md \
@@ -356,14 +356,14 @@ DOCMDS := $(addprefix $(ABSDIR)/,$(filter-out \
     $(DOCDIR)/$(PROJECT)_scripts.md \
     $(DOCDIR)/$(PROJECT)_fortran.md \
     $(DOCDIR)/$(PROJECT)_contrib.md, \
-  $(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
+  $(shell cd $(ROOTDIR) && $(if $(GIT),$(GIT) ls-files,ls -1) \
     $(DOCDIR)/$(PROJECT)_*.md 2>/dev/null)))
-INSTMDS := $(DOCMDS) $(addprefix $(ABSDIR)/,$(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
+INSTMDS := $(DOCMDS) $(addprefix $(ABSDIR)/,$(shell cd $(ROOTDIR) && $(if $(GIT),$(GIT) ls-files,ls -1) \
     $(DOCDIR)/index.md $(DOCDIR)/LICENSE.md 2>/dev/null))
 TSTSRC := $(filter-out $(TSTDIR)/headeronly_aux.c, \
-  $(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
+  $(shell cd $(ROOTDIR) && $(if $(GIT),$(GIT) ls-files,ls -1) \
     $(TSTDIR)/*.c 2>/dev/null))
-TSTMDS := $(patsubst $(TSTDIR)/%.c,$(DOCDIR)/tests/%.md,$(TSTSRC))
+TSTMDS := $(patsubst $(TSTDIR)/%.c,$(ROOTDIR)/$(DOCDIR)/tests/%.md,$(TSTSRC))
 
 .PHONY: samples $(SAMPLES)
 samples: $(SAMPLES)
@@ -387,17 +387,17 @@ build-tests: $(if $(XLIB),libs)
 tests: $(if $(XLIB),libs)
 	@$(FLOCK) $(ROOTDIR)/$(TSTDIR) "$(MAKE) --no-print-directory test"
 
-$(DOCDIR)/index.md: $(DOCDIR)/.make $(ROOTDIR)/Makefile $(ROOTDIR)/README.md
+$(ROOTDIR)/$(DOCDIR)/index.md: $(ROOTDIR)/$(DOCDIR)/.make $(ROOTDIR)/Makefile $(ROOTDIR)/README.md
 	@$(SED) $(DOC_MD_SED) <$(ROOTDIR)/README.md >$@
-	@$(CP) $(ROOTDIR)/LICENSE.md $(DOCDIR)/LICENSE.md
+	@$(CP) $(ROOTDIR)/LICENSE.md $(ROOTDIR)/$(DOCDIR)/LICENSE.md
 
-$(DOCDIR)/$(PROJECT)_scripts.md: $(DOCDIR)/.make $(ROOTDIR)/Makefile $(ROOTSCR)/README.md
+$(ROOTDIR)/$(DOCDIR)/$(PROJECT)_scripts.md: $(ROOTDIR)/$(DOCDIR)/.make $(ROOTDIR)/Makefile $(ROOTSCR)/README.md
 	@$(SED) $(DOC_MD_SED) <$(ROOTSCR)/README.md >$@
 
-$(DOCDIR)/$(PROJECT)_samples.md: $(DOCDIR)/.make $(DOCDIR)/$(SPLDIR)/.make $(ROOTDIR)/Makefile $(SPLMDS)
+$(ROOTDIR)/$(DOCDIR)/$(PROJECT)_samples.md: $(ROOTDIR)/$(DOCDIR)/.make $(ROOTDIR)/$(DOCDIR)/$(SPLDIR)/.make $(ROOTDIR)/Makefile $(SPLMDS)
 	@for MD in $(SPLMDS); do \
 		$(SED) $(DOC_MD_SED) \
-			<$${MD} >$(DOCDIR)/$(SPLDIR)/$(PROJECT)_$$(basename $$(dirname $${MD})).md; \
+			<$${MD} >$(ROOTDIR)/$(DOCDIR)/$(SPLDIR)/$(PROJECT)_$$(basename $$(dirname $${MD})).md; \
 	done
 	@for MD in $(SPLMDS); do cat $${MD} && echo; done | $(SED) \
 		-e 's/^#/##/' \
@@ -407,7 +407,8 @@ $(DOCDIR)/$(PROJECT)_samples.md: $(DOCDIR)/.make $(DOCDIR)/$(SPLDIR)/.make $(ROO
 		>$@
 
 MDAUTHOR := Hans Pabst
-$(DOCDIR)/$(PROJECT).$(DOCEXT): $(DOCDIR)/.make $(ROOTDIR)/Makefile $(DOCDIR)/index.md $(DOCDIR)/$(PROJECT)_scripts.md $(DOCDIR)/$(PROJECT)_contrib.md $(DOCMDS)
+$(ROOTDIR)/$(DOCDIR)/$(PROJECT).$(DOCEXT): $(ROOTDIR)/$(DOCDIR)/.make $(ROOTDIR)/Makefile \
+    $(ROOTDIR)/$(DOCDIR)/index.md $(ROOTDIR)/$(DOCDIR)/$(PROJECT)_scripts.md $(ROOTDIR)/$(DOCDIR)/$(PROJECT)_contrib.md $(DOCMDS)
 	@cd $(ROOTDIR)/$(DOCDIR) && ( \
 		cat $(ABSDIR)/$(DOCDIR)/index.md && echo && \
 		echo "# $(PROJUPP) Domains" && \
@@ -422,14 +423,18 @@ $(DOCDIR)/$(PROJECT).$(DOCEXT): $(DOCDIR)/.make $(ROOTDIR)/Makefile $(DOCDIR)/in
 	| $(call md2pdf,$(PROJUPP) Documentation,$(MDAUTHOR),$(call qndir,$@))
 
 MDFILE := $(ROOTDIR)/$(DOCDIR)/$(PROJECT)_samples.md
-DOCFILE := $(if $(filter file,$(origin MDFILE)),$(DOCDIR)/$(PROJECT)_samples,$(basename $(MDFILE))).$(DOCEXT)
+DOCFILE := $(if $(filter file,$(origin MDFILE)),$(ROOTDIR)/$(DOCDIR)/$(PROJECT)_samples,$(basename $(MDFILE))).$(DOCEXT)
 $(DOCFILE): $(ROOTDIR)/Makefile $(MDFILE)
 	@cat $(MDFILE) | $(call md2pdf, \
 		$(if $(filter file,$(origin MDFILE)),$(PROJUPP) Sample Code Summary), \
 		$(if $(filter file,$(origin MDFILE)),$(MDAUTHOR)),$@)
 
 .PHONY: documentation
-documentation: $(POLICYMDS) $(DOCDIR)/$(PROJECT).$(DOCEXT) $(DOCFILE)
+ifneq (,$(filter file,$(origin MDFILE)))
+documentation: $(POLICYMDS) $(ROOTDIR)/$(DOCDIR)/$(PROJECT).$(DOCEXT) $(DOCFILE)
+else
+documentation: $(DOCFILE)
+endif
 
 .PHONY: mkdocs
 mkdocs: $(POLICYMDS) mkdocs-tests $(ROOTDIR)/$(DOCDIR)/index.md
@@ -445,7 +450,7 @@ mkslides:
 .PHONY: mkdocs-tests
 mkdocs-tests: $(TSTMDS)
 
-$(DOCDIR)/tests/%.md: $(TSTDIR)/%.c $(DOCDIR)/tests/.make
+$(ROOTDIR)/$(DOCDIR)/tests/%.md: $(ROOTDIR)/$(TSTDIR)/%.c $(ROOTDIR)/$(DOCDIR)/tests/.make
 	@TITLE=$$(printf '%s\n' "$*" | $(SED) \
 		-e 's/_/ /g' \
 		-e 's/-/ /g' \

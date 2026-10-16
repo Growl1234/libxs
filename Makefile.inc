@@ -38,7 +38,7 @@ endif
 GIT := $(call which,git)
 # imply rootdir is repository
 ifneq (,$(GIT))
-ifeq (,$(shell $(GIT) ls-files $(MAKEINC)/Makefile.inc 2>/dev/null))
+ifeq (,$(shell $(GIT) $(if $(ROOTDIR),-C $(ROOTDIR)) ls-files $(abspath $(MAKEINC)/Makefile.inc) 2>/dev/null))
   GIT := $(NULL)
 endif
 endif
@@ -2752,8 +2752,8 @@ $(LNKSTATE): $(firstword $(PRELNKSTATE))
 # collect sources under source control and fall back to a plain filesystem glob otherwise
 ifneq ($(DEPDIR),$(ROOTDIR))
 ifneq (,$(wildcard $(DEPDIR)/$(PROJECT)/$(PROJECT)_source.h))
-$(DEPDIR)/$(PROJECT)/$(PROJECT)_source.h: $(shell $(if $(GIT),$(GIT) ls-files,ls -1) \
-    $(DEPDIR)/src/*.c $(DEPDIR)/src/*.h 2>/dev/null)
+$(DEPDIR)/$(PROJECT)/$(PROJECT)_source.h: $(addprefix $(DEPDIR)/,$(shell cd $(DEPDIR) && \
+    $(if $(GIT),$(GIT) ls-files,ls -1) src/*.c src/*.h 2>/dev/null))
 	@-touch $@
 endif
 endif
