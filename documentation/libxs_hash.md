@@ -9,7 +9,7 @@ with a software fallback.
 ## Buffer Hashing
 
 ```C
-unsigned int libxs_hash(const void* data, unsigned int size,
+unsigned int libxs_hash(const void* data, size_t size,
   unsigned int seed);
 ```
 
@@ -17,12 +17,22 @@ Produce a 32-bit hash from a byte buffer of the given size.
 NULL buffer is accepted (returns seed). Uses CRC32-C when
 SSE4.2 is available, otherwise a software table-based CRC32.
 
+```C
+uint64_t libxs_hash64(const void* data, size_t size, uint64_t seed);
+```
+
+Produce a 64-bit hash from a byte buffer of the given size. NULL
+buffer or zero size is accepted (returns seed). It is not a CRC:
+each 8-byte word is mixed non-linearly (splitmix64 finalizer), so
+two inputs collide by chance and not by a difference a CRC cancels.
+The value does not depend on the byte order of the host.
+
 ## Fixed-Width Hashing
 
 ```C
 unsigned int libxs_hash8(unsigned int data);
 unsigned int libxs_hash16(unsigned int data);
-unsigned int libxs_hash32(unsigned long long data);
+unsigned int libxs_hash32(uint64_t data);
 ```
 
 Hash an 8-, 16-, or 32-bit value. The input is split into a
@@ -33,19 +43,23 @@ bits).
 ## String Hashing
 
 ```C
-unsigned long long libxs_hash_string(const char string[]);
+uint64_t libxs_hash_string(const char string[]);
 ```
 
 64-bit hash of a character string. Short strings (up to 8
-bytes) are stored directly; longer strings use two CRC32 passes
-combined into a 64-bit result. NULL-string is accepted (returns
-zero).
+bytes) are stored directly, which cannot collide; longer strings
+use `libxs_hash64`. NULL-string is accepted (returns zero).
+
+From Fortran (`USE libxs`), the generic `libxs_hash64` takes a
+contiguous array of `CHARACTER(C_CHAR)`, `INTEGER(C_INT8_T)`,
+`INTEGER(C_INT)`, or `INTEGER(C_LONG_LONG)` and an optional seed,
+and returns `INTEGER(C_INT64_T)`, as `libxs_hash` does for 32 bits.
 
 ## CRC32 (ISO 3309)
 
 ```C
 unsigned int libxs_hash_iso3309(const void* data,
-  unsigned int size, unsigned int seed);
+  size_t size, unsigned int seed);
 ```
 
 CRC-32 using the ISO 3309 polynomial (used by PNG, gzip, and
@@ -57,7 +71,7 @@ responsibility. NULL buffer is accepted.
 
 ```C
 unsigned int libxs_adler32(const void* data,
-  unsigned int size, unsigned int seed);
+  size_t size, unsigned int seed);
 ```
 
 Adler-32 checksum (the variant used by zlib). The standard

@@ -282,6 +282,8 @@ static libxs_registry_t* corpus_parents = NULL;
 static unsigned int corpus_blob_max = 0;
 static long corpus_span_mismatch = 0;
 static long corpus_span_stored = 0;
+/* full records whose key corpus_key_from_text no longer makes (corpus_fixup) */
+static long corpus_key_stale = 0;
 static libxs_registry_t* corpus_views = NULL;
 static libxs_lexicon_t* corpus_view_lexicon = NULL;
 static const libxs_lexrule_t* corpus_view_rules = NULL;
@@ -372,6 +374,7 @@ static void answer_lexnorms_build(void);
 static void converse_namespace_init(const char* prefix);
 static libxs_registry_t* corpus_load(void);
 static int corpus_save(const libxs_registry_t* corpus);
+static int corpus_save_file(const libxs_registry_t* registry, const char* path);
 static libxs_lexicon_t* converse_lexicon_load(int* stale);
 static int converse_lexicon_save(const libxs_lexicon_t* lexicon);
 static libxs_predict_t* converse_predict_load(void);
@@ -394,8 +397,11 @@ static unsigned int corpus_word_id(libxs_lexicon_t* lexicon, const char* word,
   int word_len);
 static int corpus_section_at(size_t offset, const char** text);
 static unsigned int corpus_chain_max(void);
+static void corpus_key_of(const char* text, int len, const char* section,
+  int section_len, unsigned char key[], size_t* key_size);
 static void corpus_key_from_text(const corpus_entry_t* entry,
   unsigned char key[], size_t* key_size);
+static libxs_registry_t* corpus_rekey(libxs_registry_t* corpus);
 static int corpus_record_text(const void* value, size_t value_size,
   const char** text, int* len, const char** section, int* section_len);
 static unsigned int corpus_store_blob(const unsigned char* text, int len,
@@ -498,7 +504,9 @@ static int corpus_ingest_file(libxs_registry_t* corpus, const char* path,
  * parses whatever bytes land under it, which is exactly what makes the misreading
  * silent. The kind tag catches what the size alone cannot, namely a layout that
  * merely PERMUTED its fields and so kept every record the same length. Counting
- * mismatches lets the caller discard the file and re-ingest instead.
+ * mismatches lets the caller discard the file and re-ingest instead. A key that
+ * corpus_key_from_text no longer makes is counted apart: the record is sound,
+ * and the caller re-keys the corpus (corpus_rekey) rather than discarding it.
  */
 static void corpus_fixup(void* value, const void* key,
   size_t key_size, size_t value_size, void* udata)
@@ -510,6 +518,12 @@ static void corpus_fixup(void* value, const void* key,
       case ENTRY_KIND_FULL: {
         want = CORPUS_ENTRY_META_SIZE
           + ((0 < entry->text_len) ? (size_t)entry->text_len : 0) + 1;
+        if (value_size == want && NULL != key && 16 <= key_size) {
+          unsigned char expect[20];
+          size_t expect_size = 0;
+          corpus_key_from_text(entry, expect, &expect_size);
+          if (0 != memcmp(key, expect, expect_size)) ++corpus_key_stale;
+        }
       } break;
       case ENTRY_KIND_SPAN: {
         want = sizeof(corpus_span_t);
@@ -2031,6 +2045,7 @@ static libxs_registry_t* corpus_load(void)
         if ((long)fread(buf, 1, (size_t)len, f) == len) {
           size_t stale = 0;
           corpus_span_stored = 0;
+          corpus_key_stale = 0;
           result = libxs_registry_load(buf, (size_t)len, corpus_fixup, &stale);
           if (0 != stale && NULL != result) {
             fprintf(stderr, "corpus %s: %lu entries do not match this build's"
@@ -2048,6 +2063,15 @@ static libxs_registry_t* corpus_load(void)
               converse_path_parent);
             libxs_registry_destroy(result);
             result = NULL;
+          }
+          /* once per file: the re-keyed corpus replaces it */
+          if (NULL != result && 0 < corpus_key_stale) {
+            result = corpus_rekey(result);
+            if (NULL != result) {
+              fprintf(stderr, "corpus %s: re-keyed (%ld records had keys of an"
+                " older build)\n", converse_path_corpus, corpus_key_stale);
+              corpus_save_file(result, converse_path_corpus);
+            }
           }
         }
         free(buf);
@@ -3017,20 +3041,74 @@ static unsigned int corpus_chain_max(void)
  * registry supports mixed key sizes, so the common case stays 16 bytes and no
  * entry is lost to a genuine hash collision.
  */
+static void corpus_key_of(const char* text, int len, const char* section,
+  int section_len, unsigned char key[], size_t* key_size)
+{
+  const unsigned int ulen = (unsigned int)len;
+  const uint64_t ht = libxs_hash64(text, (size_t)ulen, 0);
+  const unsigned int hs = (0 < section_len)
+    ? libxs_hash(section, (size_t)section_len, 0xc2b2ae35u)
+    : 0u;
+  memcpy(key, &ht, 8);
+  memcpy(key + 8, &hs, 4);
+  memcpy(key + 12, &ulen, 4);
+  *key_size = 16;
+}
+
+
 static void corpus_key_from_text(const corpus_entry_t* entry,
   unsigned char key[], size_t* key_size)
 {
-  const unsigned int len = (unsigned int)entry->text_len;
-  const unsigned int h1 = libxs_hash(entry->text, len, 0x9e3779b9u);
-  const unsigned int h2 = libxs_hash(entry->text, len, 0x85ebca6bu);
-  const unsigned int hs = (0 < entry->section_len)
-    ? libxs_hash(entry->section, (unsigned int)entry->section_len, 0xc2b2ae35u)
-    : 0u;
-  memcpy(key, &h1, 4);
-  memcpy(key + 4, &h2, 4);
-  memcpy(key + 8, &hs, 4);
-  memcpy(key + 12, &len, 4);
-  *key_size = 16;
+  corpus_key_of(entry->text, entry->text_len, entry->section,
+    (int)entry->section_len, key, key_size);
+}
+
+
+/**
+ * The same records under the keys corpus_key_from_text makes now, for a corpus
+ * whose keys an older build made. Each record's text is read back, a window's
+ * from its parent, and the record moves to the first free slot of its key, as
+ * corpus_store_record would place it; duplicates were collapsed when the corpus
+ * was built, so none are compared here. The old registry is released.
+ */
+static libxs_registry_t* corpus_rekey(libxs_registry_t* corpus)
+{
+  libxs_registry_t* result = libxs_registry_create();
+  if (NULL != result) {
+    const void* old_key = NULL;
+    size_t old_key_size = 0, cursor = 0;
+    void* value = libxs_registry_begin_length(corpus, &old_key, &old_key_size, &cursor);
+    for (; NULL != value;
+      value = libxs_registry_next_length(corpus, &old_key, &old_key_size, &cursor))
+    {
+      const size_t value_size = libxs_registry_value_size(corpus, old_key,
+        old_key_size, NULL);
+      const char *text = NULL, *section = NULL;
+      int len = 0, section_len = 0;
+      if (EXIT_SUCCESS == corpus_record_text(value, value_size, &text, &len,
+        &section, &section_len))
+      {
+        unsigned char key[20];
+        size_t key_size = 0;
+        unsigned int seq;
+        corpus_key_of(text, len, section, section_len, key, &key_size);
+        for (seq = 0; seq < corpus_chain_max(); ++seq) {
+          if (0 < seq) {
+            const unsigned short seq_key = (unsigned short)seq;
+            memcpy(key + 16, &seq_key, 2);
+            key_size = 18;
+          }
+          if (NULL == libxs_registry_get(result, key, key_size, NULL)) {
+            libxs_registry_set(result, key, key_size, value, value_size, NULL);
+            break;
+          }
+        }
+      }
+    }
+    libxs_registry_destroy(corpus);
+  }
+  else result = corpus;
+  return result;
 }
 
 

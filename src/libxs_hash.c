@@ -886,20 +886,59 @@ LIBXS_API_INTERN unsigned int libxs_crc32(unsigned int seed, const void* data, s
 }
 
 
-LIBXS_API unsigned int libxs_hash(const void* data, unsigned int size, unsigned int seed)
+LIBXS_API unsigned int libxs_hash(const void* data, size_t size, unsigned int seed)
 {
   /*LIBXS_INIT*/
   return libxs_crc32(seed, data, size);
 }
 
 
-LIBXS_API unsigned int libxs_hash_iso3309(const void* data, unsigned int size, unsigned int seed)
+/* splitmix64 finalizer: every input bit reaches every output bit */
+LIBXS_API_INLINE uint64_t internal_libxs_hash_mix64(uint64_t z)
+{
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9uLL;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EBuLL;
+  return z ^ (z >> 31);
+}
+
+
+/* up to eight bytes as a little-endian word, so a hash is the same on every host */
+LIBXS_API_INLINE uint64_t internal_libxs_hash_word(const unsigned char bytes[], size_t n)
+{
+  uint64_t result = 0;
+  size_t i;
+  for (i = 0; i < n; ++i) result |= (uint64_t)bytes[i] << (8 * i);
+  return result;
+}
+
+
+LIBXS_API uint64_t libxs_hash64(const void* data, size_t size, uint64_t seed)
+{
+  uint64_t result = seed;
+  if (NULL != data && 0 < size) {
+    const unsigned char *const bytes = (const unsigned char*)data;
+    size_t i = 0;
+    for (; i + 8 <= size; i += 8) {
+      result = internal_libxs_hash_mix64(result + 0x9E3779B97F4A7C15uLL
+        + internal_libxs_hash_word(bytes + i, 8));
+    }
+    if (i < size) { /* the tail, zero-padded: the length below tells it apart */
+      result = internal_libxs_hash_mix64(result + 0x9E3779B97F4A7C15uLL
+        + internal_libxs_hash_word(bytes + i, size - i));
+    }
+    result = internal_libxs_hash_mix64(result ^ (uint64_t)size);
+  }
+  return result;
+}
+
+
+LIBXS_API unsigned int libxs_hash_iso3309(const void* data, size_t size, unsigned int seed)
 {
   return libxs_crc32_iso3309(seed, data, size);
 }
 
 
-LIBXS_API unsigned int libxs_adler32(const void* data, unsigned int size, unsigned int seed)
+LIBXS_API unsigned int libxs_adler32(const void* data, size_t size, unsigned int seed)
 {
   return internal_libxs_adler32(seed, data, size);
 }
@@ -922,7 +961,7 @@ LIBXS_API unsigned int libxs_hash16(unsigned int data)
 }
 
 
-LIBXS_API unsigned int libxs_hash32(unsigned long long data)
+LIBXS_API unsigned int libxs_hash32(uint64_t data)
 {
   uint32_t tmp_data = (uint32_t)data;
   unsigned int tmp_seed = (unsigned int)(data >> 32);
@@ -930,17 +969,12 @@ LIBXS_API unsigned int libxs_hash32(unsigned long long data)
 }
 
 
-LIBXS_API unsigned long long libxs_hash_string(const char string[])
+LIBXS_API uint64_t libxs_hash_string(const char string[])
 {
-  unsigned long long result = 0;
+  uint64_t result = 0;
   const size_t length = (NULL != string ? strlen(string) : 0);
   if (sizeof(result) < length) {
-    const size_t length2 = LIBXS_MAX(length / 2, sizeof(result));
-    unsigned int hash32, seed32 = 0; /* seed=0: match else-optimization */
-    /*LIBXS_INIT*/
-    seed32 = libxs_crc32(seed32, string, length2);
-    hash32 = libxs_crc32(seed32, string + length2, length - length2);
-    result = hash32; result = (result << 32) | seed32;
+    result = libxs_hash64(string, length, 0);
   }
   else { /* length <= sizeof(result) */
     char *const s = (char*)&result; signed char i;

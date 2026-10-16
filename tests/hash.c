@@ -105,32 +105,63 @@ int main(void)
     result = EXIT_FAILURE;
   }
 
-  a = 17777927841313886634ULL;
+  a = 4175490866569031060ULL;
   b = libxs_hash_string("01234567890");
   if (a != b) {
     FPRINTF(stderr, "ERROR line #%i: %llu != %llu\n", __LINE__, a, b);
     result = EXIT_FAILURE;
   }
 
-  a = 3199039660;
+  a = 3162869570;
   b = libxs_hash32(b);
   if (a != b) {
     FPRINTF(stderr, "ERROR line #%i: %llu != %llu\n", __LINE__, a, b);
     result = EXIT_FAILURE;
   }
 
-  a = 22875;
+  a = 20477;
   b = libxs_hash16((unsigned int)b);
   if (a != b) {
     FPRINTF(stderr, "ERROR line #%i: %llu != %llu\n", __LINE__, a, b);
     result = EXIT_FAILURE;
   }
 
-  a = 242;
+  a = 196;
   b = libxs_hash8((unsigned int)b);
   if (a != b) {
     FPRINTF(stderr, "ERROR line #%i: %llu != %llu\n", __LINE__, a, b);
     result = EXIT_FAILURE;
+  }
+
+  /* 64-bit hash: nothing to hash leaves the seed, and the value is pinned */
+  a = seed;
+  b = libxs_hash64(NULL/*data*/, 0/*size*/, seed);
+  if (a != b || a != libxs_hash64("1", 0/*size*/, seed)) {
+    FPRINTF(stderr, "ERROR line #%i: %llu != %llu\n", __LINE__, a, b);
+    result = EXIT_FAILURE;
+  }
+  a = 7670245160507918504ULL;
+  b = libxs_hash64("123456789", 9, 0);
+  if (a != b) {
+    FPRINTF(stderr, "ERROR line #%i: %llu != %llu\n", __LINE__, a, b);
+    result = EXIT_FAILURE;
+  }
+  /* a zero-padded tail is not the shorter input */
+  a = libxs_hash64("ab", 2, 0);
+  b = libxs_hash64("ab\0", 3, 0);
+  if (a == b) {
+    FPRINTF(stderr, "ERROR line #%i: %llu == %llu\n", __LINE__, a, b);
+    result = EXIT_FAILURE;
+  }
+  /* not linear: a CRC of x^y^z is the XOR of the three, this is not */
+  { const uint64_t x = 0x0123456789ABCDEFULL, y = 0x0F1E2D3C4B5A6978ULL;
+    const uint64_t z = 0x1122334455667788ULL, w = x ^ y ^ z;
+    a = libxs_hash64(&w, 8, 0);
+    b = libxs_hash64(&x, 8, 0) ^ libxs_hash64(&y, 8, 0) ^ libxs_hash64(&z, 8, 0);
+    if (a == b) {
+      FPRINTF(stderr, "ERROR line #%i: %llu == %llu\n", __LINE__, a, b);
+      result = EXIT_FAILURE;
+    }
   }
 
   /* CRC-32 ISO 3309: standard check value for "123456789" */
