@@ -15,7 +15,9 @@ fi
 
 # Deployed models are embedded, so the default names the method rather than
 # leaving it to the trial, which would choose a forest many times their size.
-ARGS="${@:-knn}"
+# hKNN over kNN: it matches 4.8 points more of the tuned parameters on shapes
+# it was not built from, at twice the size of a kNN model.
+ARGS="${@:-hknn}"
 
 for csv in "${PARAMS_DIR}"/tune_multiply_*.csv; do
   if [ -f "${csv}" ]; then

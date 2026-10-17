@@ -45,17 +45,6 @@
 #if !defined(LIBXS_PREDICT_TRIALCAP)
 # define LIBXS_PREDICT_TRIALCAP 8192
 #endif
-/**
- * Values an integer output may take and still be scored by its misses. A tuned
- * tile size is one choice among a few dozen and is judged by whether it is the
- * one; its error over its spread hardly separates a mode that places a jump
- * from one that blurs it, and on eight GPU tables the trial kept kNN on five,
- * where a forest matched 7 to 28 points more of these parameters. A count with
- * more values than this stays a regression.
- */
-#if !defined(LIBXS_PREDICT_TRIALMAXK)
-# define LIBXS_PREDICT_TRIALMAXK 64
-#endif
 /* Candidates: the modes, then the two a score applies to again with one. */
 #define LIBXS_PREDICT_NCAND (LIBXS_PREDICT_NDECOMPOSE + 2)
 #if (LIBXS_PREDICT_NCAND > LIBXS_PREDICT_NTRIAL)

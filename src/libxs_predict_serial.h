@@ -96,6 +96,126 @@ LIBXS_API_INLINE int internal_libxs_predict_crc(const void* buffer,
 
 
 /**
+ * One cluster of an hKNN file, a flat cluster (nout outputs) and a per-output one
+ * (the outputs of its group) alike, so a loaded per-output cluster carries what
+ * the shared assembly built: centroid, radius, the fit of every column, the
+ * points, the encoded outputs, weights, input hashes and member indices. With
+ * dst NULL nothing is written and the size is returned, which keeps the size
+ * query exact. A column of an empty cluster is written as zeros, and a cluster
+ * without a fit (a version-1 per-output one) as order UINT8_MAX with no terms.
+ * A compact record (a per-output cluster) holds the fit and its members alone,
+ * two bytes each below 65536 entries: everything else an entry carries is in
+ * the flat cluster holding it, and the reader takes it from there.
+ */
+#define LIBXS_PREDICT_PUT(PTR, SZ) do { \
+  if (NULL != dst) memcpy(dst + result, (PTR), (SZ)); \
+  result += (SZ); \
+} while (0)
+LIBXS_API_INLINE size_t internal_libxs_predict_hknn_cluster_write(unsigned char* dst,
+  const libxs_predict_t* model, const internal_libxs_predict_cluster_t* cl,
+  int nout, int has_ih, int compact)
+{
+  const int mc = model->ncoord, ne = cl->nentries;
+  const int fit = (NULL != cl->coeffs && NULL != cl->order) ? 1 : 0;
+  const uint32_t n32 = (uint32_t)ne;
+  const uint8_t mo = (uint8_t)(0 != fit ? cl->maxorder : UINT8_MAX);
+  const uint8_t ke = (uint8_t)cl->k_eff;
+  const double zero = 0;
+  size_t result = 0;
+  int j, k;
+  if (NULL != cl->centroid) LIBXS_PREDICT_PUT(cl->centroid, (size_t)mc * sizeof(double));
+  else for (k = 0; k < mc; ++k) LIBXS_PREDICT_PUT(&zero, sizeof(double));
+  LIBXS_PREDICT_PUT(&cl->dmax, sizeof(double));
+  LIBXS_PREDICT_PUT(&n32, sizeof(n32));
+  LIBXS_PREDICT_PUT(&mo, 1);
+  LIBXS_PREDICT_PUT(&ke, 1);
+  for (j = 0; j < nout; ++j) {
+    const uint8_t order = (uint8_t)(0 != fit ? cl->order[j] : 0);
+    const uint8_t interp = (uint8_t)((NULL != cl->interpolated) ? cl->interpolated[j] : 0);
+    const uint8_t mode = (uint8_t)((NULL != cl->mode) ? cl->mode[j] : 0);
+    const uint32_t nd = (uint32_t)((NULL != cl->ndistinct) ? cl->ndistinct[j] : 0);
+    const double err = (NULL != cl->errors) ? cl->errors[j] : 0;
+    const double rms = (NULL != cl->out_rms) ? cl->out_rms[j] : 0;
+    LIBXS_PREDICT_PUT(&order, 1);
+    LIBXS_PREDICT_PUT(&interp, 1);
+    LIBXS_PREDICT_PUT(&mode, 1);
+    LIBXS_PREDICT_PUT(&nd, sizeof(nd));
+    LIBXS_PREDICT_PUT(&err, sizeof(double));
+    LIBXS_PREDICT_PUT(&rms, sizeof(double));
+    if (0 != fit) {
+      LIBXS_PREDICT_PUT(cl->coeffs + (size_t)j * (cl->maxorder + 1),
+        ((size_t)order + 1) * sizeof(double));
+    }
+  }
+  if (0 < ne && 0 != compact) {
+    for (k = 0; k < ne; ++k) {
+      const int idx = (NULL != cl->sorted_idx) ? cl->sorted_idx[k] : -1;
+      if (65536 > model->nentries) {
+        const uint16_t i16 = (uint16_t)idx;
+        LIBXS_PREDICT_PUT(&i16, sizeof(i16));
+      }
+      else {
+        const uint32_t i32 = (uint32_t)idx;
+        LIBXS_PREDICT_PUT(&i32, sizeof(i32));
+      }
+    }
+  }
+  else if (0 < ne) {
+    LIBXS_PREDICT_PUT(cl->kd_pts, (size_t)ne * (size_t)mc * sizeof(double));
+    for (j = 0; j < nout; ++j) { /* per column, where the cardinality is */
+      result += internal_libxs_predict_denc_write((NULL != dst) ? (dst + result) : NULL,
+        cl->raw_outputs + j, (size_t)ne, (size_t)nout);
+    }
+    if (0 != model->has_eweight) {
+      for (k = 0; k < ne; ++k) {
+        const double w = (NULL != cl->eweight) ? cl->eweight[k] : 1.0;
+        LIBXS_PREDICT_PUT(&w, sizeof(double));
+      }
+    }
+    if (0 != has_ih) LIBXS_PREDICT_PUT(cl->ihash, (size_t)ne * sizeof(uint64_t));
+    for (k = 0; k < ne; ++k) {
+      const uint32_t idx = (uint32_t)((NULL != cl->sorted_idx) ? cl->sorted_idx[k] : -1);
+      LIBXS_PREDICT_PUT(&idx, sizeof(idx));
+    }
+  }
+  return result;
+}
+#undef LIBXS_PREDICT_PUT
+
+
+/**
+ * A per-output tree (see internal_libxs_predict_hknn_tree_t): its node count, then
+ * per node the input it splits on (UINT16_MAX for a leaf), the threshold of a
+ * split, and the right child of a split or the cluster of a leaf. With dst NULL
+ * nothing is written and the size is returned.
+ */
+LIBXS_API_INLINE size_t internal_libxs_predict_hknn_tree_write(unsigned char* dst,
+  const internal_libxs_predict_hknn_tree_t* tree)
+{
+  const uint32_t nn = (uint32_t)((NULL != tree) ? tree->nnodes : 0);
+  size_t result = 0;
+  uint32_t k;
+  if (NULL != dst) memcpy(dst, &nn, sizeof(nn));
+  result += sizeof(nn);
+  for (k = 0; k < nn; ++k) {
+    const uint16_t f = (uint16_t)((0 <= tree->feature[k]) ? tree->feature[k] : UINT16_MAX);
+    const uint32_t next = (uint32_t)tree->next[k];
+    if (NULL != dst) memcpy(dst + result, &f, sizeof(f));
+    result += sizeof(f);
+    if (UINT16_MAX != f) {
+      if (NULL != dst) memcpy(dst + result, tree->threshold + k, sizeof(double));
+      result += sizeof(double);
+    }
+    if (NULL != dst) memcpy(dst + result, &next, sizeof(next));
+    result += sizeof(next);
+  }
+  return result;
+}
+
+
+
+
+/**
  * One tree's nodes as columns: the feature and label of every node and the jump
  * of every split, then the values and the leaves' confidences, each in the form
  * internal_libxs_predict_denc_write finds smallest. Values repeat within a tree:
@@ -325,8 +445,7 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
   const libxs_predict_t* model, void* buffer, size_t* size)
 {
   int result = EXIT_SUCCESS;
-  const int m = model->ninputs, mc = model->ncoord, n = model->noutputs;
-  const int p = model->nentries;
+  const int m = model->ninputs, n = model->noutputs;
   const int has_ih = internal_libxs_predict_has_ihash(model);
   size_t required = 0;
   int c, j;
@@ -344,18 +463,10 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     required += (size_t)m * (sizeof(uint8_t) + LIBXS_PREDICT_SCORESIZE * sizeof(double));
   }
   if (NULL != model->weights) required += (size_t)m * sizeof(double);
+  /* exact, as the record encodes the outputs by content */
   for (c = 0; c < model->nclusters; ++c) {
-    const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
-    required += (size_t)mc * sizeof(double);
-    required += sizeof(double) + sizeof(uint16_t) + sizeof(uint8_t);
-    required += (size_t)n;
-    required += (size_t)n * sizeof(uint16_t);
-    required += (size_t)cl->nentries * (size_t)mc * sizeof(double);
-    required += (size_t)cl->nentries * (size_t)n * sizeof(double);
-    required += (size_t)n; /* one tag per encoded column, never more */
-    required += (size_t)n * sizeof(double);
-    required += (size_t)cl->nentries * sizeof(uint32_t);
-    if (0 != has_ih) required += (size_t)cl->nentries * sizeof(uint64_t);
+    required += internal_libxs_predict_hknn_cluster_write(NULL, model,
+      &model->clusters[c], n, has_ih, 0);
   }
   required += 1;
   /* the entry-weight and input-hash flags, introduced with version 2 */
@@ -366,26 +477,18 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
   if (NULL != model->hknn_po_assignments && NULL != model->hknn_po_clusters) {
     const int ng = (model->hknn_ngroups > 0) ? model->hknn_ngroups : n;
     required += sizeof(uint16_t) + (size_t)n * sizeof(uint16_t);
-    required += (size_t)p * (size_t)ng * sizeof(uint16_t);
     for (j = 0; j < ng; ++j) {
       const int po_nc = model->hknn_po_nclusters[j];
       const int gsz = internal_libxs_predict_gsize(model->hknn_po_groups, n, j);
       required += sizeof(uint16_t);
       if (NULL != model->hknn_po_clusters[j]) {
         for (c = 0; c < po_nc; ++c) {
-          const internal_libxs_predict_cluster_t* pcl =
-            &model->hknn_po_clusters[j][c];
-          required += sizeof(uint16_t) + sizeof(uint8_t) + sizeof(double);
-          required += (size_t)gsz * (sizeof(uint8_t) + sizeof(uint16_t));
-          required += (size_t)mc * sizeof(double);
-          if (pcl->nentries > 0) {
-            required += (size_t)pcl->nentries * (size_t)mc * sizeof(double);
-            required += (size_t)pcl->nentries * (size_t)gsz * sizeof(double);
-            required += (size_t)gsz; /* one tag per encoded column */
-            if (0 != has_ih) required += (size_t)pcl->nentries * sizeof(uint64_t);
-          }
+          required += internal_libxs_predict_hknn_cluster_write(NULL, model,
+            &model->hknn_po_clusters[j][c], gsz, has_ih, 1);
         }
       }
+      required += internal_libxs_predict_hknn_tree_write(NULL,
+        (NULL != model->hknn_po_trees) ? (model->hknn_po_trees + j) : NULL);
     }
   }
   /* converged escape weights, as in the flat path (see libxs_predict_save) */
@@ -459,33 +562,8 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
       WRITE_BLK(model->weights, (size_t)m * sizeof(double));
     }
     for (c = 0; c < model->nclusters; ++c) {
-      const internal_libxs_predict_cluster_t* cl = &model->clusters[c];
-      int k;
-      WRITE_BLK(cl->centroid, (size_t)mc * sizeof(double));
-      WRITE_F64(cl->dmax);
-      WRITE_U16(cl->nentries);
-      WRITE_U8(cl->k_eff);
-      for (j = 0; j < n; ++j) WRITE_U8(cl->mode[j]);
-      for (j = 0; j < n; ++j) WRITE_U16(cl->ndistinct[j]);
-      WRITE_BLK(cl->kd_pts,
-        (size_t)cl->nentries * (size_t)mc * sizeof(double));
-      /* per column, where the cardinality is; an entry mixes every output */
-      { int qj;
-        for (qj = 0; qj < n; ++qj) {
-          dst += internal_libxs_predict_denc_write(dst, cl->raw_outputs + qj,
-            (size_t)cl->nentries, (size_t)n);
-        }
-      }
-      if (0 != model->has_eweight) {
-        WRITE_BLK(cl->eweight, (size_t)cl->nentries * sizeof(double));
-      }
-      if (0 != has_ih && 0 < cl->nentries) {
-        WRITE_BLK(cl->ihash, (size_t)cl->nentries * sizeof(uint64_t));
-      }
-      WRITE_BLK(cl->out_rms, (size_t)n * sizeof(double));
-      /* 32 bits since version 2: a 16-bit index wrapped past 65535 entries,
-       * and a wrapped index still passes the bound the reader checks */
-      for (k = 0; k < cl->nentries; ++k) WRITE_U32(cl->sorted_idx[k]);
+      dst += internal_libxs_predict_hknn_cluster_write(dst, model,
+        &model->clusters[c], n, has_ih, 0);
     }
     if (NULL != model->hknn_po_assignments
       && NULL != model->hknn_po_clusters)
@@ -502,49 +580,26 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
       for (j = 0; j < n; ++j) {
         WRITE_U16((NULL != model->hknn_po_groups) ? model->hknn_po_groups[j] : j);
       }
-      for (j = 0; j < ng; ++j) {
-        int i;
-        for (i = 0; i < p; ++i) {
-          WRITE_U16(model->hknn_po_assignments[j][i]);
-        }
-      }
+      /**
+       * No assignments since version 2: the members each per-output cluster
+       * lists are its assignment, and an entry's points, outputs, weight and
+       * hash are those of the flat cluster holding it. Storing them again per
+       * output made a file of n outputs carry its corpus n + 1 times.
+       */
       WRITE_U8(1);
       for (j = 0; j < ng; ++j) {
-        const int po_nc = model->hknn_po_nclusters[j];
+        const int po_nc = (NULL != model->hknn_po_clusters[j])
+          ? model->hknn_po_nclusters[j] : 0;
         const int gsz = internal_libxs_predict_gsize(model->hknn_po_groups, n, j);
         int ci;
         WRITE_U16(po_nc);
-        if (NULL != model->hknn_po_clusters[j]) {
-          for (ci = 0; ci < po_nc; ++ci) {
-            const internal_libxs_predict_cluster_t* pcl =
-              &model->hknn_po_clusters[j][ci];
-            int gi;
-            WRITE_U16(pcl->nentries);
-            WRITE_U8(pcl->k_eff);
-            for (gi = 0; gi < gsz; ++gi) {
-              WRITE_U8(NULL != pcl->mode ? pcl->mode[gi] : 0);
-            }
-            for (gi = 0; gi < gsz; ++gi) {
-              WRITE_U16(NULL != pcl->ndistinct ? pcl->ndistinct[gi] : 0);
-            }
-            WRITE_F64(pcl->dmax);
-            WRITE_BLK(pcl->centroid, (size_t)mc * sizeof(double));
-            if (pcl->nentries > 0) {
-              WRITE_BLK(pcl->kd_pts,
-                (size_t)pcl->nentries * (size_t)mc * sizeof(double));
-              { int qj;
-                for (qj = 0; qj < gsz; ++qj) {
-                  dst += internal_libxs_predict_denc_write(dst,
-                    pcl->raw_outputs + qj, (size_t)pcl->nentries,
-                    (size_t)gsz);
-                }
-              }
-              if (0 != has_ih) {
-                WRITE_BLK(pcl->ihash, (size_t)pcl->nentries * sizeof(uint64_t));
-              }
-            }
-          }
+        for (ci = 0; ci < po_nc; ++ci) {
+          dst += internal_libxs_predict_hknn_cluster_write(dst, model,
+            &model->hknn_po_clusters[j][ci], gsz, has_ih, 1);
         }
+        /* since version 2, the tree a query descends to its cluster by */
+        dst += internal_libxs_predict_hknn_tree_write(dst,
+          (NULL != model->hknn_po_trees) ? (model->hknn_po_trees + j) : NULL);
       }
     }
     else {
@@ -1040,6 +1095,212 @@ LIBXS_API_INLINE void internal_libxs_predict_read_escape(
 }
 
 
+/* ne input hashes into an array of their own (see internal_libxs_predict_has_ihash) */
+LIBXS_API_INLINE int internal_libxs_predict_read_ihash(const unsigned char** src,
+  const unsigned char* end, int ne, uint64_t** ihash)
+{
+  int result = internal_libxs_predict_avail(*src, end, (size_t)ne, sizeof(uint64_t));
+  if (EXIT_SUCCESS == result) {
+    *ihash = (uint64_t*)malloc((size_t)ne * sizeof(uint64_t));
+    result = (NULL != *ihash) ? internal_libxs_predict_read(src, end, *ihash,
+      (size_t)ne * sizeof(uint64_t)) : EXIT_FAILURE;
+  }
+  return result;
+}
+
+
+/**
+ * The tree of group g as internal_libxs_predict_hknn_tree_write stored it. Every
+ * jump must lead forward, so a descent ends whatever the file holds, a split
+ * must name an input the model has, and a leaf a cluster the group has.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_hknn_tree_read(const unsigned char** src,
+  const unsigned char* end, libxs_predict_t* model, int g, int po_nc)
+{
+  internal_libxs_predict_hknn_tree_t* const tree = model->hknn_po_trees + g;
+  uint32_t nn = 0, k;
+  int result = internal_libxs_predict_read(src, end, &nn, 4);
+  if (EXIT_SUCCESS == result && 0 < nn) {
+    result = (INT_MAX > nn) ? internal_libxs_predict_avail(*src, end, (size_t)nn,
+      sizeof(uint16_t) + sizeof(uint32_t)) : EXIT_FAILURE;
+    if (EXIT_SUCCESS == result) {
+      tree->feature = (int*)malloc((size_t)nn * sizeof(int));
+      tree->threshold = (double*)malloc((size_t)nn * sizeof(double));
+      tree->next = (int*)malloc((size_t)nn * sizeof(int));
+      if (NULL == tree->feature || NULL == tree->threshold || NULL == tree->next) {
+        result = EXIT_FAILURE;
+      }
+      else tree->nnodes = (int)nn;
+    }
+    for (k = 0; k < nn && EXIT_SUCCESS == result; ++k) {
+      uint16_t f = 0;
+      uint32_t next = 0;
+      double thr = 0;
+      result = internal_libxs_predict_read(src, end, &f, 2);
+      if (EXIT_SUCCESS == result && UINT16_MAX != f) {
+        result = internal_libxs_predict_read(src, end, &thr, 8);
+      }
+      if (EXIT_SUCCESS == result) result = internal_libxs_predict_read(src, end, &next, 4);
+      if (EXIT_SUCCESS == result) {
+        if (UINT16_MAX != f) {
+          if ((int)f >= model->ninputs || k + 1 >= nn || next <= k + 1 || next >= nn) {
+            result = EXIT_FAILURE;
+          }
+        }
+        else if ((uint32_t)po_nc <= next) result = EXIT_FAILURE;
+      }
+      if (EXIT_SUCCESS == result) {
+        tree->feature[k] = (UINT16_MAX != f) ? (int)f : -1;
+        tree->threshold[k] = thr;
+        tree->next[k] = (int)next;
+      }
+    }
+  }
+  return result;
+}
+
+
+/**
+ * A cluster written by internal_libxs_predict_hknn_cluster_write, into cl (zeroed)
+ * for nout outputs. Bounds as everywhere: an order within the stored maximum, a
+ * count no file can claim past its own size, and the derived spread restored.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_hknn_cluster_read(const unsigned char** src,
+  const unsigned char* end, libxs_predict_t* model, internal_libxs_predict_cluster_t* cl,
+  int nout, int has_ew, int has_ih, int compact)
+{
+  const int mc = model->ncoord;
+  uint32_t n32 = 0;
+  uint8_t mo = 0, ke = 0;
+  int result = EXIT_SUCCESS, j, k, ne = 0;
+  cl->centroid = (double*)malloc((size_t)mc * sizeof(double));
+  cl->order = (int*)malloc((size_t)nout * sizeof(int));
+  cl->interpolated = (int*)malloc((size_t)nout * sizeof(int));
+  cl->mode = (int*)malloc((size_t)nout * sizeof(int));
+  cl->ndistinct = (int*)malloc((size_t)nout * sizeof(int));
+  cl->errors = (double*)malloc((size_t)nout * sizeof(double));
+  cl->out_rms = (double*)malloc((size_t)nout * sizeof(double));
+  if (NULL == cl->centroid || NULL == cl->order || NULL == cl->interpolated
+    || NULL == cl->mode || NULL == cl->ndistinct || NULL == cl->errors
+    || NULL == cl->out_rms)
+  {
+    result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS == result) {
+    result = internal_libxs_predict_read(src, end, cl->centroid, (size_t)mc * sizeof(double));
+  }
+  if (EXIT_SUCCESS == result) result = internal_libxs_predict_read(src, end, &cl->dmax, 8);
+  if (EXIT_SUCCESS == result) result = internal_libxs_predict_read(src, end, &n32, 4);
+  if (EXIT_SUCCESS == result) result = internal_libxs_predict_read(src, end, &mo, 1);
+  if (EXIT_SUCCESS == result) result = internal_libxs_predict_read(src, end, &ke, 1);
+  if (EXIT_SUCCESS == result && (INT_MAX < n32 || LIBXS_PREDICT_KNN < ke
+    || (LIBXS_FPRINT_MAXORDER < mo && UINT8_MAX != mo)))
+  {
+    result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS == result) {
+    ne = cl->nentries = (int)n32;
+    cl->k_eff = (int)ke;
+    /* no fit leaves coeffs NULL, which is how eval tells it */
+    if (UINT8_MAX != mo) {
+      cl->maxorder = (int)mo;
+      cl->coeffs = (double*)calloc((size_t)nout * (size_t)(cl->maxorder + 1), sizeof(double));
+      if (NULL == cl->coeffs) result = EXIT_FAILURE;
+    }
+  }
+  for (j = 0; j < nout && EXIT_SUCCESS == result; ++j) {
+    uint8_t order = 0, interp = 0, mode = 0;
+    uint32_t nd = 0;
+    result = internal_libxs_predict_read(src, end, &order, 1);
+    if (EXIT_SUCCESS == result) result = internal_libxs_predict_read(src, end, &interp, 1);
+    if (EXIT_SUCCESS == result) result = internal_libxs_predict_read(src, end, &mode, 1);
+    if (EXIT_SUCCESS == result) result = internal_libxs_predict_read(src, end, &nd, 4);
+    if (EXIT_SUCCESS == result) {
+      result = internal_libxs_predict_read(src, end, cl->errors + j, sizeof(double));
+    }
+    if (EXIT_SUCCESS == result) {
+      result = internal_libxs_predict_read(src, end, cl->out_rms + j, sizeof(double));
+    }
+    /* coeffs is sized by maxorder: an order beyond it would overflow it */
+    if (EXIT_SUCCESS == result && (cl->maxorder < (int)order || INT_MAX < nd)) {
+      result = EXIT_FAILURE;
+    }
+    if (EXIT_SUCCESS == result) {
+      cl->order[j] = (int)order;
+      cl->interpolated[j] = (int)interp;
+      cl->mode[j] = (int)mode;
+      cl->ndistinct[j] = (int)nd;
+      if (NULL != cl->coeffs) {
+        result = internal_libxs_predict_read(src, end,
+          cl->coeffs + (size_t)j * (cl->maxorder + 1), ((size_t)order + 1) * sizeof(double));
+      }
+    }
+  }
+  /* members alone, the rest is derived (see internal_libxs_predict_hknn_po_derive) */
+  if (EXIT_SUCCESS == result && 0 < ne && 0 != compact) {
+    const size_t width = (65536 > model->nentries) ? sizeof(uint16_t) : sizeof(uint32_t);
+    result = internal_libxs_predict_avail(*src, end, (size_t)ne, width);
+    if (EXIT_SUCCESS == result) {
+      cl->sorted_idx = (int*)malloc((size_t)ne * sizeof(int));
+      if (NULL == cl->sorted_idx) result = EXIT_FAILURE;
+    }
+    for (k = 0; k < ne && EXIT_SUCCESS == result; ++k) {
+      uint32_t idx = 0;
+      if (sizeof(uint16_t) == width) {
+        uint16_t i16 = 0;
+        result = internal_libxs_predict_read(src, end, &i16, 2);
+        idx = i16;
+      }
+      else result = internal_libxs_predict_read(src, end, &idx, 4);
+      cl->sorted_idx[k] = (INT_MAX >= idx) ? (int)idx : -1;
+    }
+  }
+  else if (EXIT_SUCCESS == result && 0 < ne) {
+    result = internal_libxs_predict_avail(*src, end, (size_t)ne * (size_t)mc, sizeof(double));
+    if (EXIT_SUCCESS == result) {
+      cl->kd_pts = (double*)malloc((size_t)ne * (size_t)mc * sizeof(double));
+      cl->raw_outputs = (double*)malloc((size_t)ne * (size_t)nout * sizeof(double));
+      cl->sorted_idx = (int*)malloc((size_t)ne * sizeof(int));
+      if (NULL == cl->kd_pts || NULL == cl->raw_outputs || NULL == cl->sorted_idx) {
+        result = EXIT_FAILURE;
+      }
+    }
+    if (EXIT_SUCCESS == result) {
+      result = internal_libxs_predict_read(src, end, cl->kd_pts,
+        (size_t)ne * (size_t)mc * sizeof(double));
+    }
+    for (j = 0; j < nout && EXIT_SUCCESS == result; ++j) {
+      result = internal_libxs_predict_denc_read(src, end, cl->raw_outputs + j,
+        (size_t)ne, (size_t)nout);
+    }
+    if (EXIT_SUCCESS == result && 0 != has_ew) {
+      result = internal_libxs_predict_avail(*src, end, (size_t)ne, sizeof(double));
+      if (EXIT_SUCCESS == result) {
+        cl->eweight = (double*)malloc((size_t)ne * sizeof(double));
+        result = (NULL != cl->eweight) ? internal_libxs_predict_read(src, end,
+          cl->eweight, (size_t)ne * sizeof(double)) : EXIT_FAILURE;
+        if (EXIT_SUCCESS == result) model->has_eweight = 1;
+      }
+    }
+    if (EXIT_SUCCESS == result && 0 != has_ih) {
+      result = internal_libxs_predict_read_ihash(src, end, ne, &cl->ihash);
+    }
+    if (EXIT_SUCCESS == result) {
+      result = internal_libxs_predict_avail(*src, end, (size_t)ne, sizeof(uint32_t));
+    }
+    for (k = 0; k < ne && EXIT_SUCCESS == result; ++k) {
+      uint32_t idx = 0;
+      result = internal_libxs_predict_read(src, end, &idx, 4);
+      cl->sorted_idx[k] = (INT_MAX >= idx) ? (int)idx : -1;
+    }
+  }
+  if (EXIT_SUCCESS == result && 0 < ne && 0 == compact) {
+    result = internal_libxs_predict_load_var(cl, nout);
+  }
+  return result;
+}
+
+
 /**
  * A tree written by internal_libxs_predict_rf_tree_write, nn nodes as the count
  * before it said. A split must name an input the model has and jump forward
@@ -1102,16 +1363,70 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_tree_read(const unsigned char** s
 }
 
 
-/* ne input hashes into an array of their own (see internal_libxs_predict_has_ihash) */
-LIBXS_API_INLINE int internal_libxs_predict_read_ihash(const unsigned char** src,
-  const unsigned char* end, int ne, uint64_t** ihash)
+/**
+ * The per-output clusters of group g, completed from the flat clusters: each
+ * member's points, outputs, weight and input hash are copied from where its
+ * entry sits in the flat partition (flat_c, flat_k), which is what the build
+ * stored for it, so the model answers as it did before it was saved. Their
+ * members are the group's assignment, and every entry must be one exactly once.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_hknn_po_derive(libxs_predict_t* model,
+  int g, const int flat_c[], const int flat_k[], int has_ih)
 {
-  int result = internal_libxs_predict_avail(*src, end, (size_t)ne, sizeof(uint64_t));
-  if (EXIT_SUCCESS == result) {
-    *ihash = (uint64_t*)malloc((size_t)ne * sizeof(uint64_t));
-    result = (NULL != *ihash) ? internal_libxs_predict_read(src, end, *ihash,
-      (size_t)ne * sizeof(uint64_t)) : EXIT_FAILURE;
+  const int p = model->nentries, n = model->noutputs, mc = model->ncoord;
+  const int po_nc = model->hknn_po_nclusters[g];
+  const int gsz = internal_libxs_predict_gsize(model->hknn_po_groups, n, g);
+  internal_libxs_predict_cluster_t* const cls = model->hknn_po_clusters[g];
+  int result = EXIT_SUCCESS, outs_pool = 0, ci, i, k, li = 0;
+  int* const outs = (int*)LIBXS_PREDICT_MALLOC((size_t)n * sizeof(int), outs_pool);
+  int* const assign = (int*)malloc((size_t)LIBXS_MAX(p, 1) * sizeof(int));
+  model->hknn_po_assignments[g] = assign;
+  if (NULL == outs || NULL == assign || 0 >= gsz) result = EXIT_FAILURE;
+  for (i = 0; i < n && EXIT_SUCCESS == result; ++i) {
+    if (model->hknn_po_groups[i] == g) outs[li++] = i;
   }
+  for (i = 0; i < p && EXIT_SUCCESS == result; ++i) assign[i] = -1;
+  for (ci = 0; ci < po_nc && EXIT_SUCCESS == result; ++ci) {
+    internal_libxs_predict_cluster_t* const cl = cls + ci;
+    const int ne = cl->nentries;
+    if (0 >= ne) continue;
+    cl->kd_pts = (double*)malloc((size_t)ne * (size_t)mc * sizeof(double));
+    cl->raw_outputs = (double*)malloc((size_t)ne * (size_t)gsz * sizeof(double));
+    if (0 != model->has_eweight) cl->eweight = (double*)malloc((size_t)ne * sizeof(double));
+    if (0 != has_ih) cl->ihash = (uint64_t*)malloc((size_t)ne * sizeof(uint64_t));
+    if (NULL == cl->kd_pts || NULL == cl->raw_outputs || NULL == cl->sorted_idx
+      || (0 != model->has_eweight && NULL == cl->eweight)
+      || (0 != has_ih && NULL == cl->ihash))
+    {
+      result = EXIT_FAILURE;
+    }
+    for (k = 0; k < ne && EXIT_SUCCESS == result; ++k) {
+      const int e = cl->sorted_idx[k];
+      if (0 > e || p <= e || 0 <= assign[e]) result = EXIT_FAILURE;
+      else {
+        const internal_libxs_predict_cluster_t* const fc = model->clusters + flat_c[e];
+        const int fk = flat_k[e];
+        assign[e] = ci;
+        memcpy(cl->kd_pts + (size_t)k * mc, fc->kd_pts + (size_t)fk * mc,
+          (size_t)mc * sizeof(double));
+        for (li = 0; li < gsz; ++li) {
+          cl->raw_outputs[(size_t)k * gsz + li] = fc->raw_outputs[(size_t)fk * n + outs[li]];
+        }
+        if (NULL != cl->eweight) {
+          cl->eweight[k] = (NULL != fc->eweight) ? fc->eweight[fk] : 1.0;
+        }
+        if (NULL != cl->ihash) {
+          if (NULL != fc->ihash) cl->ihash[k] = fc->ihash[fk];
+          else result = EXIT_FAILURE;
+        }
+      }
+    }
+    if (EXIT_SUCCESS == result) result = internal_libxs_predict_load_var(cl, gsz);
+  }
+  for (i = 0; i < p && EXIT_SUCCESS == result; ++i) {
+    if (0 > assign[i]) result = EXIT_FAILURE;
+  }
+  LIBXS_PREDICT_FREE(outs, outs_pool);
   return result;
 }
 
@@ -1274,116 +1589,104 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
   }
   for (c = 0; c < (int)nclust && EXIT_SUCCESS == ok; ++c) {
     internal_libxs_predict_cluster_t* cl = &model->clusters[c];
-    uint16_t ne = 0;
-    uint8_t ke = 0;
-    int k;
-    cl->centroid = (double*)malloc((size_t)model->ncoord * sizeof(double));
-    cl->mode = (int*)malloc((size_t)nout * sizeof(int));
-    cl->ndistinct = (int*)malloc((size_t)nout * sizeof(int));
-    if (NULL == cl->centroid || NULL == cl->mode || NULL == cl->ndistinct) {
-      ok = EXIT_FAILURE;
+    /* since version 2 a flat cluster is the record a per-output one is */
+    if (1 < version) {
+      ok = internal_libxs_predict_hknn_cluster_read(&src, end, model, cl,
+        (int)nout, has_ew, has_ih, 0);
     }
-    if (EXIT_SUCCESS == ok) {
-      ok = internal_libxs_predict_read(&src, end,
-        cl->centroid, (size_t)model->ncoord * sizeof(double));
-    }
-    if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &cl->dmax, 8);
-    if (EXIT_SUCCESS == ok) {
-      ok = internal_libxs_predict_read(&src, end, &ne, 2);
-      cl->nentries = (int)ne;
-    }
-    if (EXIT_SUCCESS == ok) {
-      ok = internal_libxs_predict_read(&src, end, &ke, 1);
-      cl->k_eff = (int)ke;
-      if (EXIT_SUCCESS == ok && cl->k_eff > LIBXS_PREDICT_KNN) ok = EXIT_FAILURE;
-    }
-    for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
-      uint8_t v = 0;
-      ok = internal_libxs_predict_read(&src, end, &v, 1);
-      cl->mode[j] = (int)v;
-    }
-    for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
-      uint16_t v = 0;
-      ok = internal_libxs_predict_read(&src, end, &v, 2);
-      cl->ndistinct[j] = (int)v;
-    }
-    if (EXIT_SUCCESS == ok) {
-      ok = internal_libxs_predict_avail(src, end,
-        (size_t)ne * (size_t)model->ncoord, sizeof(double));
-    }
-    if (EXIT_SUCCESS == ok) {
-      cl->kd_pts = (double*)malloc(
-        (size_t)ne * (size_t)model->ncoord * sizeof(double));
-      if (NULL == cl->kd_pts) ok = EXIT_FAILURE;
-      else {
+    else {
+      uint16_t ne = 0;
+      uint8_t ke = 0;
+      int k;
+      cl->centroid = (double*)malloc((size_t)model->ncoord * sizeof(double));
+      cl->mode = (int*)malloc((size_t)nout * sizeof(int));
+      cl->ndistinct = (int*)malloc((size_t)nout * sizeof(int));
+      if (NULL == cl->centroid || NULL == cl->mode || NULL == cl->ndistinct) {
+        ok = EXIT_FAILURE;
+      }
+      if (EXIT_SUCCESS == ok) {
         ok = internal_libxs_predict_read(&src, end,
-          cl->kd_pts, (size_t)ne * (size_t)model->ncoord * sizeof(double));
+          cl->centroid, (size_t)model->ncoord * sizeof(double));
       }
-    }
-    /* no size check ahead of the read: the encoded form is smaller than the
-     * verbatim one by an amount only the tags reveal, and denc_read bounds every
-     * value it takes */
-    if (EXIT_SUCCESS == ok) {
-      cl->raw_outputs = (double*)malloc(
-        (size_t)ne * (size_t)nout * sizeof(double));
-      if (NULL == cl->raw_outputs) ok = EXIT_FAILURE;
-      else {
-        ok = internal_libxs_predict_read_outputs(&src, end, cl->raw_outputs,
-          (size_t)ne, (size_t)nout, version);
+      if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &cl->dmax, 8);
+      if (EXIT_SUCCESS == ok) {
+        ok = internal_libxs_predict_read(&src, end, &ne, 2);
+        cl->nentries = (int)ne;
       }
-    }
-    if (EXIT_SUCCESS == ok && 0 != has_ew) {
-      ok = internal_libxs_predict_avail(src, end, (size_t)ne, sizeof(double));
-    }
-    if (EXIT_SUCCESS == ok && 0 != has_ew) {
-      cl->eweight = (double*)malloc((size_t)ne * sizeof(double));
-      if (NULL == cl->eweight) ok = EXIT_FAILURE;
-      else {
-        ok = internal_libxs_predict_read(&src, end, cl->eweight,
-          (size_t)ne * sizeof(double));
-        if (EXIT_SUCCESS == ok) model->has_eweight = 1;
+      if (EXIT_SUCCESS == ok) {
+        ok = internal_libxs_predict_read(&src, end, &ke, 1);
+        cl->k_eff = (int)ke;
+        if (EXIT_SUCCESS == ok && cl->k_eff > LIBXS_PREDICT_KNN) ok = EXIT_FAILURE;
       }
-    }
-    if (EXIT_SUCCESS == ok && 0 != has_ih && 0 < ne) {
-      ok = internal_libxs_predict_read_ihash(&src, end, ne, &cl->ihash);
-    }
-    /**
-     * out_rms arrived with version 2. A version-1 file carries no fit residual,
-     * and every consumer reads it as "no calibration" when it is zero and falls
-     * back to out_var, which is derived below - what version 1 itself did.
-     */
-    if (EXIT_SUCCESS == ok) {
-      if (1 < version) {
-        cl->out_rms = (double*)malloc((size_t)nout * sizeof(double));
-        if (NULL == cl->out_rms) ok = EXIT_FAILURE;
+      for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
+        uint8_t v = 0;
+        ok = internal_libxs_predict_read(&src, end, &v, 1);
+        cl->mode[j] = (int)v;
+      }
+      for (j = 0; j < (int)nout && EXIT_SUCCESS == ok; ++j) {
+        uint16_t v = 0;
+        ok = internal_libxs_predict_read(&src, end, &v, 2);
+        cl->ndistinct[j] = (int)v;
+      }
+      if (EXIT_SUCCESS == ok) {
+        ok = internal_libxs_predict_avail(src, end,
+          (size_t)ne * (size_t)model->ncoord, sizeof(double));
+      }
+      if (EXIT_SUCCESS == ok) {
+        cl->kd_pts = (double*)malloc(
+          (size_t)ne * (size_t)model->ncoord * sizeof(double));
+        if (NULL == cl->kd_pts) ok = EXIT_FAILURE;
         else {
           ok = internal_libxs_predict_read(&src, end,
-            cl->out_rms, (size_t)nout * sizeof(double));
+            cl->kd_pts, (size_t)ne * (size_t)model->ncoord * sizeof(double));
         }
       }
-      else {
+      /* no size check ahead of the read: the encoded form is smaller than the
+       * verbatim one by an amount only the tags reveal, and denc_read bounds every
+       * value it takes */
+      if (EXIT_SUCCESS == ok) {
+        cl->raw_outputs = (double*)malloc(
+          (size_t)ne * (size_t)nout * sizeof(double));
+        if (NULL == cl->raw_outputs) ok = EXIT_FAILURE;
+        else {
+          ok = internal_libxs_predict_read_outputs(&src, end, cl->raw_outputs,
+            (size_t)ne, (size_t)nout, version);
+        }
+      }
+      if (EXIT_SUCCESS == ok && 0 != has_ew) {
+        ok = internal_libxs_predict_avail(src, end, (size_t)ne, sizeof(double));
+      }
+      if (EXIT_SUCCESS == ok && 0 != has_ew) {
+        cl->eweight = (double*)malloc((size_t)ne * sizeof(double));
+        if (NULL == cl->eweight) ok = EXIT_FAILURE;
+        else {
+          ok = internal_libxs_predict_read(&src, end, cl->eweight,
+            (size_t)ne * sizeof(double));
+          if (EXIT_SUCCESS == ok) model->has_eweight = 1;
+        }
+      }
+      if (EXIT_SUCCESS == ok && 0 != has_ih && 0 < ne) {
+        ok = internal_libxs_predict_read_ihash(&src, end, ne, &cl->ihash);
+      }
+      /**
+       * A version-1 file carries no fit residual, and every consumer reads a zero
+       * out_rms as "no calibration" and falls back to out_var, derived below.
+       */
+      if (EXIT_SUCCESS == ok) {
         cl->out_rms = (double*)calloc((size_t)nout, sizeof(double));
         if (NULL == cl->out_rms) ok = EXIT_FAILURE;
       }
-    }
-    if (EXIT_SUCCESS == ok) {
-      ok = internal_libxs_predict_load_var(cl, nout);
-    }
-    if (EXIT_SUCCESS == ok) {
-      ok = internal_libxs_predict_avail(src, end, (size_t)ne,
-        (1 < version) ? sizeof(uint32_t) : sizeof(uint16_t));
-    }
-    if (EXIT_SUCCESS == ok) {
-      cl->sorted_idx = (int*)malloc((size_t)ne * sizeof(int));
-      if (NULL == cl->sorted_idx) ok = EXIT_FAILURE;
-      else {
-        for (k = 0; k < (int)ne && EXIT_SUCCESS == ok; ++k) {
-          if (1 < version) {
-            uint32_t v = 0;
-            ok = internal_libxs_predict_read(&src, end, &v, 4);
-            cl->sorted_idx[k] = (INT_MAX >= v) ? (int)v : -1;
-          }
-          else {
+      if (EXIT_SUCCESS == ok) {
+        ok = internal_libxs_predict_load_var(cl, nout);
+      }
+      if (EXIT_SUCCESS == ok) {
+        ok = internal_libxs_predict_avail(src, end, (size_t)ne, sizeof(uint16_t));
+      }
+      if (EXIT_SUCCESS == ok) {
+        cl->sorted_idx = (int*)malloc((size_t)ne * sizeof(int));
+        if (NULL == cl->sorted_idx) ok = EXIT_FAILURE;
+        else {
+          for (k = 0; k < (int)ne && EXIT_SUCCESS == ok; ++k) {
             uint16_t v = 0;
             ok = internal_libxs_predict_read(&src, end, &v, 2);
             cl->sorted_idx[k] = (int)v;
@@ -1410,7 +1713,8 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     model->nentries = total;
   }
   if (EXIT_SUCCESS == ok && src < end && (int)nout > 1) {
-    int p = 0, i, ng = (int)nout;
+    int p = 0, i, ng = (int)nout, flat_pool = 0, flatk_pool = 0;
+    int *flat_c = NULL, *flat_k = NULL;
     uint8_t has_po_clusters = 0;
     uint16_t ngroups = 0;
     for (c = 0; c < (int)nclust; ++c) p += model->clusters[c].nentries;
@@ -1444,7 +1748,11 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     }
     model->hknn_po_assignments = (int**)calloc((size_t)nout, sizeof(int*));
     model->hknn_po_nclusters = (int*)calloc((size_t)nout, sizeof(int));
-    if (EXIT_SUCCESS == ok && NULL != model->hknn_po_assignments) {
+    if (NULL == model->hknn_po_assignments || NULL == model->hknn_po_nclusters) {
+      ok = EXIT_FAILURE;
+    }
+    /* since version 2 the members of the per-output clusters are the assignment */
+    if (EXIT_SUCCESS == ok && 1 == version) {
       for (j = 0; j < ng && EXIT_SUCCESS == ok; ++j) {
         ok = internal_libxs_predict_avail(src, end, (size_t)p, sizeof(uint16_t));
         if (EXIT_SUCCESS == ok) {
@@ -1464,10 +1772,33 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
     if (EXIT_SUCCESS == ok) {
       ok = internal_libxs_predict_read(&src, end, &has_po_clusters, 1);
     }
+    if (EXIT_SUCCESS == ok && 0 != has_po_clusters && 1 < version) {
+      /* where each entry sits in the flat partition, which the derivation reads */
+      flat_c = (int*)LIBXS_PREDICT_MALLOC((size_t)LIBXS_MAX(p, 1) * sizeof(int), flat_pool);
+      flat_k = (int*)LIBXS_PREDICT_MALLOC((size_t)LIBXS_MAX(p, 1) * sizeof(int), flatk_pool);
+      if (NULL == flat_c || NULL == flat_k) ok = EXIT_FAILURE;
+      for (i = 0; i < p && EXIT_SUCCESS == ok; ++i) flat_c[i] = -1;
+      for (c = 0; c < (int)nclust && EXIT_SUCCESS == ok; ++c) {
+        const internal_libxs_predict_cluster_t* const fc = model->clusters + c;
+        int k;
+        for (k = 0; k < fc->nentries && EXIT_SUCCESS == ok; ++k) {
+          const int e = (NULL != fc->sorted_idx) ? fc->sorted_idx[k] : -1;
+          if (0 > e || p <= e || 0 <= flat_c[e]) ok = EXIT_FAILURE;
+          else {
+            flat_c[e] = c;
+            flat_k[e] = k;
+          }
+        }
+      }
+    }
     if (EXIT_SUCCESS == ok && 0 != has_po_clusters) {
       model->hknn_po_clusters = (internal_libxs_predict_cluster_t**)calloc(
         (size_t)nout, sizeof(internal_libxs_predict_cluster_t*));
-      if (NULL == model->hknn_po_clusters) ok = EXIT_FAILURE;
+      model->hknn_po_trees = (internal_libxs_predict_hknn_tree_t*)calloc(
+        (size_t)nout, sizeof(internal_libxs_predict_hknn_tree_t));
+      if (NULL == model->hknn_po_clusters || NULL == model->hknn_po_trees) {
+        ok = EXIT_FAILURE;
+      }
       /* the writer emits one block per GROUP, not per output */
       for (j = 0; j < ng && EXIT_SUCCESS == ok; ++j) {
         const int gsz = internal_libxs_predict_gsize(
@@ -1483,70 +1814,75 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
           model->hknn_po_clusters[j] = cls;
           model->hknn_po_nclusters[j] = (int)po_nc;
           for (ci = 0; ci < (int)po_nc && EXIT_SUCCESS == ok; ++ci) {
-            uint16_t ne = 0;
-            uint8_t ke = 0;
-            int gi;
-            ok = internal_libxs_predict_read(&src, end, &ne, 2);
-            if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &ke, 1);
-            if (EXIT_SUCCESS == ok && ke > LIBXS_PREDICT_KNN) ok = EXIT_FAILURE;
-            if (EXIT_SUCCESS == ok) {
-              cls[ci].nentries = (int)ne;
-              cls[ci].k_eff = (int)ke;
-              cls[ci].mode = (int*)calloc((size_t)gsz, sizeof(int));
-              cls[ci].ndistinct = (int*)calloc((size_t)gsz, sizeof(int));
-              cls[ci].centroid = (double*)malloc((size_t)model->ncoord * sizeof(double));
-              if (NULL == cls[ci].mode || NULL == cls[ci].ndistinct || NULL == cls[ci].centroid) {
-                ok = EXIT_FAILURE;
-              }
+            if (1 < version) {
+              ok = internal_libxs_predict_hknn_cluster_read(&src, end, model,
+                cls + ci, gsz, has_ew, has_ih, 1);
             }
-            for (gi = 0; gi < gsz && EXIT_SUCCESS == ok; ++gi) {
-              uint8_t v = 0;
-              ok = internal_libxs_predict_read(&src, end, &v, 1);
-              if (EXIT_SUCCESS == ok) cls[ci].mode[gi] = (int)v;
-            }
-            for (gi = 0; gi < gsz && EXIT_SUCCESS == ok; ++gi) {
-              uint16_t v = 0;
-              ok = internal_libxs_predict_read(&src, end, &v, 2);
-              if (EXIT_SUCCESS == ok) cls[ci].ndistinct[gi] = (int)v;
-            }
-            if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &cls[ci].dmax, 8);
-            if (EXIT_SUCCESS == ok) {
-              ok = internal_libxs_predict_read(&src, end,
-                cls[ci].centroid, (size_t)model->ncoord * sizeof(double));
-            }
-            if (EXIT_SUCCESS == ok && ne > 0) {
-              /**
-               * The outputs are only raw in version 1. Since version 2 they are
-               * dictionary-encoded and can be far smaller, so demanding their raw
-               * size refused a valid file whose last cluster ends close to the
-               * end; the coordinates alone bound the allocation, and reading the
-               * outputs checks its own bounds.
-               */
-              ok = internal_libxs_predict_avail(src, end, (size_t)ne
-                * ((size_t)model->ncoord + (1 < version ? 0 : (size_t)gsz)),
-                sizeof(double));
+            else {
+              uint16_t ne = 0;
+              uint8_t ke = 0;
+              int gi;
+              ok = internal_libxs_predict_read(&src, end, &ne, 2);
+              if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &ke, 1);
+              if (EXIT_SUCCESS == ok && ke > LIBXS_PREDICT_KNN) ok = EXIT_FAILURE;
               if (EXIT_SUCCESS == ok) {
-                cls[ci].kd_pts = (double*)malloc(
-                  (size_t)ne * (size_t)model->ncoord * sizeof(double));
-                cls[ci].raw_outputs = (double*)malloc(
-                  (size_t)ne * (size_t)gsz * sizeof(double));
-                if (NULL == cls[ci].kd_pts || NULL == cls[ci].raw_outputs) {
+                cls[ci].nentries = (int)ne;
+                cls[ci].k_eff = (int)ke;
+                cls[ci].mode = (int*)calloc((size_t)gsz, sizeof(int));
+                cls[ci].ndistinct = (int*)calloc((size_t)gsz, sizeof(int));
+                cls[ci].centroid = (double*)malloc((size_t)model->ncoord * sizeof(double));
+                if (NULL == cls[ci].mode || NULL == cls[ci].ndistinct || NULL == cls[ci].centroid) {
                   ok = EXIT_FAILURE;
                 }
               }
+              for (gi = 0; gi < gsz && EXIT_SUCCESS == ok; ++gi) {
+                uint8_t v = 0;
+                ok = internal_libxs_predict_read(&src, end, &v, 1);
+                if (EXIT_SUCCESS == ok) cls[ci].mode[gi] = (int)v;
+              }
+              for (gi = 0; gi < gsz && EXIT_SUCCESS == ok; ++gi) {
+                uint16_t v = 0;
+                ok = internal_libxs_predict_read(&src, end, &v, 2);
+                if (EXIT_SUCCESS == ok) cls[ci].ndistinct[gi] = (int)v;
+              }
+              if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &cls[ci].dmax, 8);
               if (EXIT_SUCCESS == ok) {
                 ok = internal_libxs_predict_read(&src, end,
-                  cls[ci].kd_pts, (size_t)ne * (size_t)model->ncoord * sizeof(double));
+                  cls[ci].centroid, (size_t)model->ncoord * sizeof(double));
               }
-              if (EXIT_SUCCESS == ok) {
-                ok = internal_libxs_predict_read_outputs(&src, end,
-                  cls[ci].raw_outputs, (size_t)ne, (size_t)gsz, version);
-              }
-              if (EXIT_SUCCESS == ok && 0 != has_ih) {
-                ok = internal_libxs_predict_read_ihash(&src, end, ne, &cls[ci].ihash);
+              if (EXIT_SUCCESS == ok && ne > 0) {
+                /* version 1 stores the outputs raw, so their size is known */
+                ok = internal_libxs_predict_avail(src, end, (size_t)ne
+                  * ((size_t)model->ncoord + (size_t)gsz), sizeof(double));
+                if (EXIT_SUCCESS == ok) {
+                  cls[ci].kd_pts = (double*)malloc(
+                    (size_t)ne * (size_t)model->ncoord * sizeof(double));
+                  cls[ci].raw_outputs = (double*)malloc(
+                    (size_t)ne * (size_t)gsz * sizeof(double));
+                  if (NULL == cls[ci].kd_pts || NULL == cls[ci].raw_outputs) {
+                    ok = EXIT_FAILURE;
+                  }
+                }
+                if (EXIT_SUCCESS == ok) {
+                  ok = internal_libxs_predict_read(&src, end,
+                    cls[ci].kd_pts, (size_t)ne * (size_t)model->ncoord * sizeof(double));
+                }
+                if (EXIT_SUCCESS == ok) {
+                  ok = internal_libxs_predict_read_outputs(&src, end,
+                    cls[ci].raw_outputs, (size_t)ne, (size_t)gsz, version);
+                }
+                if (EXIT_SUCCESS == ok && 0 != has_ih) {
+                  ok = internal_libxs_predict_read_ihash(&src, end, ne, &cls[ci].ihash);
+                }
               }
             }
           }
+        }
+        if (EXIT_SUCCESS == ok && 1 < version && 0 < po_nc) {
+          ok = internal_libxs_predict_hknn_po_derive(model, j, flat_c, flat_k, has_ih);
+        }
+        if (EXIT_SUCCESS == ok && 1 < version) {
+          ok = internal_libxs_predict_hknn_tree_read(&src, end, model, j, (int)po_nc);
         }
       }
     }
@@ -1560,8 +1896,28 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
         for (i = 0; i < p && EXIT_SUCCESS == ok; ++i) {
           if (model->hknn_po_assignments[j][i] >= po_nc) ok = EXIT_FAILURE;
         }
+        for (i = 0; i < po_nc && EXIT_SUCCESS == ok; ++i) {
+          internal_libxs_predict_cluster_t* const pcl = model->hknn_po_clusters[j] + i;
+          int k, ki = 0;
+          /* version 1 stores no members: they are the assigned entries, ascending */
+          if (NULL == pcl->sorted_idx && 0 < pcl->nentries) {
+            pcl->sorted_idx = (int*)malloc((size_t)pcl->nentries * sizeof(int));
+            if (NULL == pcl->sorted_idx) ok = EXIT_FAILURE;
+            for (k = 0; k < p && EXIT_SUCCESS == ok; ++k) {
+              if (model->hknn_po_assignments[j][k] != i) continue;
+              if (ki < pcl->nentries) pcl->sorted_idx[ki++] = k;
+              else ok = EXIT_FAILURE;
+            }
+            if (EXIT_SUCCESS == ok && ki != pcl->nentries) ok = EXIT_FAILURE;
+          }
+          for (k = 0; k < pcl->nentries && EXIT_SUCCESS == ok; ++k) {
+            if (0 > pcl->sorted_idx[k] || pcl->sorted_idx[k] >= p) ok = EXIT_FAILURE;
+          }
+        }
       }
     }
+    LIBXS_PREDICT_FREE(flat_k, flatk_pool);
+    LIBXS_PREDICT_FREE(flat_c, flat_pool);
   }
   if (EXIT_SUCCESS == ok) {
     /**

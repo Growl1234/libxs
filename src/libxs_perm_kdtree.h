@@ -209,8 +209,20 @@ LIBXS_API int libxs_kdtree_partition(
     const int min_leaf = (NULL != config) ? config->min_leaf : 0;
     libxs_kdtree_split_t split_fn = (NULL != config) ? config->split : NULL;
     void* split_ctx = (NULL != config) ? config->ctx : NULL;
-    int stack_lo[64], stack_hi[64], stack_depth[64], sp = 0;
-    stack_lo[0] = 0; stack_hi[0] = n; stack_depth[0] = 0; sp = 1;
+    /**
+     * Pending nodes, at most one per leaf still to come. A fixed depth dropped
+     * the children of an unbalanced split chain silently, leaving their points
+     * in leaf zero: a split that peels min_leaf points at a time is n/min_leaf
+     * deep.
+     */
+    int stack_pool = 0, sp = 0;
+    int* const stack_lo = (int*)internal_libxs_scratch_malloc(
+      (size_t)3 * (n + 1) * sizeof(int), &stack_pool);
+    int* const stack_hi = (NULL != stack_lo) ? (stack_lo + n + 1) : NULL;
+    int* const stack_depth = (NULL != stack_lo) ? (stack_hi + n + 1) : NULL;
+    if (NULL != stack_lo) {
+      stack_lo[0] = 0; stack_hi[0] = n; stack_depth[0] = 0; sp = 1;
+    }
     while (sp > 0) {
       const int lo = stack_lo[--sp];
       const int hi = stack_hi[sp];
@@ -253,16 +265,13 @@ LIBXS_API int libxs_kdtree_partition(
             else break;
           }
         }
-        if (sp < 64) {
-          stack_lo[sp] = mid; stack_hi[sp] = hi;
-          stack_depth[sp] = depth + 1; ++sp;
-        }
-        if (sp < 64) {
-          stack_lo[sp] = lo; stack_hi[sp] = mid;
-          stack_depth[sp] = depth + 1; ++sp;
-        }
+        stack_lo[sp] = mid; stack_hi[sp] = hi;
+        stack_depth[sp] = depth + 1; ++sp;
+        stack_lo[sp] = lo; stack_hi[sp] = mid;
+        stack_depth[sp] = depth + 1; ++sp;
       }
     }
+    internal_libxs_scratch_free(stack_lo, stack_pool);
   }
   return result;
 }

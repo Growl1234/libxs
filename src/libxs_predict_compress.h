@@ -139,7 +139,7 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
             const int maxord = LIBXS_MIN(dst - 1,
               order > 0 ? order : cl->maxorder);
             cl->maxorder = (maxord < 1) ? 1 : maxord;
-            internal_libxs_predict_cluster_refit(cl, n, 0);
+            internal_libxs_predict_cluster_refit(cl, n, 0, model->discrete);
           }
         }
         { internal_libxs_predict_entry_t* old_entries = model->entries;
