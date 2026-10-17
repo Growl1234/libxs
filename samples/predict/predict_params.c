@@ -36,7 +36,13 @@ enum { NINPUTS = 3, NPARAM = 16, NOUTPUTS = 17, PERF_OUTPUT = NPARAM };
 static const char input_names[] = "M,N,K";
 static const char output_names[] =
   "BS,BM,BN,BK,WS,WG,LU,NZ,AL,TB,TC,AP,AA,AB,AC,XF,GFLOPS";
-static const int confidence_outputs[] = { 5, 6, 8, 12, 13 };
+/**
+ * The parameters reported gated: every one the table gives more than one value,
+ * since a deployment takes each parameter by its own confidence and none of them
+ * is special. Selected once the table is loaded (see confidence_select).
+ */
+static int confidence_outputs[NPARAM];
+static int nconfidence;
 
 
 static void evaluate(libxs_predict_t* model,
@@ -44,8 +50,9 @@ static void evaluate(libxs_predict_t* model,
   int use_xgb, double quantile_level);
 static int write_confidence_maps(const char* prefix, const void* buffer,
   size_t size, const libxs_predict_t* reference, int ntotal);
-static double deployment_confidence(const libxs_predict_info_t* info);
+static double deployment_share(const libxs_predict_info_t* info, double gate);
 static int gate_list(double gates[], int capacity);
+static void confidence_select(const libxs_predict_t* source, int ntotal);
 static const char* mode_name(int decompose);
 
 
@@ -169,6 +176,7 @@ int main(int argc, char* argv[])
       if (0 < ntotal) {
         libxs_predict_t* model = libxs_predict_create(NINPUTS, NOUTPUTS);
         fprintf(stdout, "Loaded %d entries from %s\n", ntotal, filename);
+        confidence_select(source, ntotal);
         if (NULL != model) {
           libxs_timer_tick_t tick;
           int i, build_ok = EXIT_FAILURE;
@@ -308,11 +316,29 @@ static int gate_list(double gates[], int capacity)
       token = libxs_strtoken(env, ",", result, &len);
     }
   }
+  /* the threshold a deployment applies by default (OPENCL_LIBSMM_SMM_PREDICT_CONF) */
   if (0 == result) {
-    gates[0] = 0.9;
+    gates[0] = 0.5;
     result = 1;
   }
   return result;
+}
+
+
+static void confidence_select(const libxs_predict_t* source, int ntotal)
+{
+  int j, i;
+  nconfidence = 0;
+  for (j = 0; j < NPARAM; ++j) {
+    double first = 0, outputs[NOUTPUTS];
+    int varies = 0;
+    for (i = 0; i < ntotal && 0 == varies; ++i) {
+      libxs_predict_get(source, i, NULL, outputs);
+      if (0 == i) first = outputs[j];
+      else if (outputs[j] != first) varies = 1;
+    }
+    if (0 != varies) confidence_outputs[nconfidence++] = j;
+  }
 }
 
 
@@ -356,7 +382,7 @@ static void evaluate(libxs_predict_t* model,
 #if defined(__XGBOOST)
   /* read only by the comparison below, which is what carries our coverage over
    * to it; without XGBoost nothing reads it and filling it is dead work */
-  double novel_cov[5];
+  double novel_cov[NPARAM];
 #endif
   double* all_inputs = (double*)malloc((size_t)ntotal * NINPUTS * sizeof(double));
   double* all_predicted = (double*)malloc((size_t)ntotal * NOUTPUTS * sizeof(double));
@@ -418,10 +444,9 @@ static void evaluate(libxs_predict_t* model,
      * at the coverage this model actually reached, not at the same gate value
      */
 #if defined(__XGBOOST)
-    for (j = 0; j < 5; ++j) novel_cov[j] = -1.0;
+    for (j = 0; j < NPARAM; ++j) novel_cov[j] = -1.0;
 #endif
-    { const int nconf = (int)(sizeof(confidence_outputs)
-        / sizeof(confidence_outputs[0]));
+    { const int nconf = nconfidence;
       /* the list is taken in full: a capacity below it drops the high gates
        * silently, and the sweep then stops where the evidence starts */
       double gates[16];
@@ -429,15 +454,15 @@ static void evaluate(libxs_predict_t* model,
       const double threshold = gates[0];  /* captured before the sweep order */
       double* swconf = (double*)malloc((size_t)ntotal * nconf * sizeof(double));
       char* swok = (char*)malloc((size_t)ntotal * nconf);
-      int gated_correct[5] = {0}, gated_wrong[5] = {0}, deferred[5] = {0};
-      int split_acted[5][2], split_correct[5][2], split_n[2];
-      int calib[5], ncalib = 0, ci;
+      int gated_correct[NPARAM] = {0}, gated_wrong[NPARAM] = {0}, deferred[NPARAM] = {0};
+      int split_acted[NPARAM][2], split_correct[NPARAM][2], split_n[2];
+      int calib[NPARAM], ncalib = 0, ci;
       const char* score;
       /* A shape counts once in the tables above whatever it is worth. These
        * weigh it by the throughput its tuned parameters reached, which is the
        * number a deployment feels: a miss on the widest shape and a miss on the
        * narrowest are the same miss only when nothing is at stake. */
-      double wtotal = 0, wacted[5], wcorrect[5], wexact = 0;
+      double wtotal = 0, wacted[NPARAM], wcorrect[NPARAM], wexact = 0;
       int nexact = 0, nweighed = 0;
       /**
        * Empirical coverage of the prediction interval, split the way the gated
@@ -873,12 +898,11 @@ static void evaluate(libxs_predict_t* model,
          * of the vote fraction or of a held-out set that is genuinely harder,
          * and one column cannot tell those apart.
          */
-        { const int xnconf = (int)(sizeof(confidence_outputs)
-            / sizeof(confidence_outputs[0]));
+        { const int xnconf = nconfidence;
           double xgates[8];
           const double threshold = (0 < gate_list(xgates,
             (int)(sizeof(xgates) / sizeof(*xgates)))) ? xgates[0] : 0.9;
-          int xacted[5][2], xcorrect[5][2], ci;
+          int xacted[NPARAM][2], xcorrect[NPARAM][2], ci;
           memset(xacted, 0, sizeof(xacted));
           memset(xcorrect, 0, sizeof(xcorrect));
           for (i = 0; i < ntotal; ++i) {
@@ -982,7 +1006,8 @@ static int write_confidence_maps(const char* prefix, const void* buffer,
 {
   libxs_predict_t* model = libxs_predict_load(buffer, size);
   libxs_timer_tick_t tick;
-  double inputs[NINPUTS];
+  double inputs[NINPUTS], gates[16];
+  const double gate = (0 < gate_list(gates, 16)) ? gates[0] : 0.5;
   float *cube = NULL, *min_k = NULL, *mean_k = NULL;
   size_t ext3[3], ext2[2], nelements, mi, ni, ki, nm, nn, nk;
   int mmin, nmin, kmin, mmax, nmax, kmax, i;
@@ -1026,7 +1051,7 @@ static int write_confidence_maps(const char* prefix, const void* buffer,
             inputs[1] = (double)(nmin + (int)ni);
             inputs[2] = (double)(kmin + (int)ki);
             libxs_predict_eval(NULL, model, inputs, NULL, &info, 1);
-            confidence = deployment_confidence(&info);
+            confidence = deployment_share(&info, gate);
             cube[index3] = (float)confidence;
             if (confidence < min_value) min_value = (float)confidence;
             sum_value += (float)confidence;
@@ -1092,20 +1117,21 @@ static int write_confidence_maps(const char* prefix, const void* buffer,
 }
 
 
-static double deployment_confidence(const libxs_predict_info_t* info)
+/**
+ * Share of the varying parameters a deployment takes from the prediction at this
+ * gate, the rest falling back to their defaults. The lowest confidence over them
+ * would say where a whole configuration is predicted, which almost nowhere is.
+ */
+static double deployment_share(const libxs_predict_info_t* info, double gate)
 {
   double result = 0.0;
-  int i;
-  if (NULL != info && NULL != info->confidence) {
-    result = 1.0;
-    for (i = 0; i < (int)(sizeof(confidence_outputs) /
-      sizeof(confidence_outputs[0])); ++i)
-    {
+  int i, ntaken = 0;
+  if (NULL != info && NULL != info->confidence && 0 < nconfidence) {
+    for (i = 0; i < nconfidence; ++i) {
       const int output = confidence_outputs[i];
-      if (output < info->noutputs && info->confidence[output] < result) {
-        result = info->confidence[output];
-      }
+      if (output < info->noutputs && info->confidence[output] >= gate) ++ntaken;
     }
+    result = (double)ntaken / nconfidence;
   }
   return result;
 }
