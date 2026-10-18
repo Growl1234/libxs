@@ -213,8 +213,6 @@ LIBXS_API_INLINE size_t internal_libxs_predict_hknn_tree_write(unsigned char* ds
 }
 
 
-
-
 /**
  * One tree's nodes as columns: the feature and label of every node and the jump
  * of every split, then the values and the leaves' confidences, each in the form
