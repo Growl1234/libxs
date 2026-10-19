@@ -31,6 +31,7 @@ libxs_diff_n
 libxs_dist2
 libxs_dot2
 libxs_dot2_err
+libxs_dot2_gemm
 libxs_dvalue
 libxs_finalize
 libxs_format_value

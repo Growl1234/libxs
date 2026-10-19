@@ -449,6 +449,22 @@ LIBXS_API double libxs_dot2(const double* x, const double* y, int n);
 LIBXS_API double libxs_dot2_err(const double* x, const double* y, int n, double* err);
 
 /**
+ * Reference GEMM, C = alpha * op(A) * op(B) + beta * C (column-major, BLAS
+ * semantics, trans one of 'N', 'T', 'C'), every element a compensated dot
+ * product (libxs_dot2) over all of its terms, including beta * C. The result
+ * is as if computed in twice the double precision and then rounded once, so it
+ * can grade a GEMM implemented in working precision - which a BLAS reference
+ * cannot, its own rounding error being of the size being measured. With alpha
+ * other than one, alpha * AB and beta * C are combined by a second compensated
+ * step, i.e., one more rounding. F64, F32, C64 and C32; single precision is
+ * computed in double and rounded at the end. Serial and O(mnk): a caller grading
+ * a large product passes a few rows (m=1 per row) rather than all of them.
+ */
+LIBXS_API int libxs_dot2_gemm(libxs_data_t datatype, char transa, char transb,
+  int m, int n, int k, const void* alpha, const void* a, int lda,
+  const void* b, int ldb, const void* beta, void* c, int ldc);
+
+/**
  * Golden Section Search for the minimum of a unimodal function f on [x0, x1].
  * The function f is evaluated via a callback; context is forwarded opaquely.
  * Returns f(x*) where x* is the minimizer; *xmin optionally receives x*

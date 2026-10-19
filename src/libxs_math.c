@@ -38,6 +38,9 @@
 
 #define LIBXS_MATH_MALLOC(SIZE, POOL) internal_libxs_scratch_malloc(SIZE, &(POOL))
 #define LIBXS_MATH_FREE(PTR, POOL) internal_libxs_scratch_free(PTR, POOL)
+/* element IDX of a double or float array, widened to double */
+#define LIBXS_MATH_LOAD(DBL, PTR, IDX) \
+  (0 != (DBL) ? ((const double*)(PTR))[IDX] : (double)((const float*)(PTR))[IDX])
 
 /* divide by the reference-denominator, or return the fallback if it is zero */
 #define LIBXS_MATDIFF_DIV_DEN(A) (0 < (A) ? (A) : 1)   /* Clang: WA for div-by-zero */
@@ -532,6 +535,116 @@ LIBXS_API double libxs_dot2_err(const double* x, const double* y, int n, double*
     else *err = HUGE_VAL;
   }
   return res;
+}
+
+
+LIBXS_API int libxs_dot2_gemm(libxs_data_t datatype, char transa, char transb,
+  int m, int n, int k, const void* alpha, const void* a, int lda,
+  const void* b, int ldb, const void* beta, void* c, int ldc)
+{
+  const int cplx = LIBXS_ENUM_IS_COMPLEX(datatype);
+  const int dbl = (LIBXS_DATATYPE_F64 == datatype || LIBXS_DATATYPE_C64 == datatype);
+  const int ta = ('N' != transa && 'n' != transa), tb = ('N' != transb && 'n' != transb);
+  /* conjugation flips the sign of the imaginary part */
+  const double sa = (('C' == transa || 'c' == transa) ? -1.0 : 1.0);
+  const double sb = (('C' == transb || 'c' == transb) ? -1.0 : 1.0);
+  /* terms per element: the products, then beta * C (two for complex) */
+  const int nk = (0 != cplx ? 2 : 1) * k, nt = nk + 2;
+  double al[2] = { 0, 0 }, be[2] = { 0, 0 }, u[4], v[4];
+  double *x = NULL, *y = NULL, *z = NULL;
+  int result = EXIT_SUCCESS, pool = 0, unit = 0, readc = 0, i, j, p;
+  if ((0 == cplx && LIBXS_DATATYPE_F64 != datatype && LIBXS_DATATYPE_F32 != datatype)
+    || 0 > m || 0 > n || 0 > k || NULL == alpha || NULL == beta
+    || lda < LIBXS_MAX(0 == ta ? m : k, 1) || ldb < LIBXS_MAX(0 == tb ? k : n, 1)
+    || ldc < LIBXS_MAX(m, 1) || (0 < m && 0 < n && NULL == c)
+    || (0 < m && 0 < n && 0 < k && (NULL == a || NULL == b)))
+  {
+    result = EXIT_FAILURE;
+  }
+  if (EXIT_SUCCESS == result && 0 < m && 0 < n) {
+    x = (double*)LIBXS_MATH_MALLOC(3 * sizeof(double) * nt, pool);
+    if (NULL == x) result = EXIT_FAILURE;
+  }
+  if (NULL != x) {
+    y = x + nt;
+    z = y + nt;
+    al[0] = LIBXS_MATH_LOAD(dbl, alpha, 0);
+    be[0] = LIBXS_MATH_LOAD(dbl, beta, 0);
+    if (0 != cplx) {
+      al[1] = LIBXS_MATH_LOAD(dbl, alpha, 1);
+      be[1] = LIBXS_MATH_LOAD(dbl, beta, 1);
+    }
+    /* alpha of one folds beta * C into the same compensated sum, i.e. one rounding */
+    unit = (1.0 == al[0] && 0.0 == al[1]);
+    /* beta of zero does not read C, which may hold anything (BLAS semantics) */
+    readc = (0.0 != be[0] || 0.0 != be[1]);
+    for (i = 0; i < m; ++i) {
+      for (p = 0; p < k; ++p) {
+        const size_t ia = (0 != ta ? ((size_t)i * lda + p) : ((size_t)p * lda + i));
+        if (0 == cplx) x[p] = LIBXS_MATH_LOAD(dbl, a, ia);
+        else {
+          x[p] = LIBXS_MATH_LOAD(dbl, a, 2 * ia);
+          x[k + p] = sa * LIBXS_MATH_LOAD(dbl, a, 2 * ia + 1);
+        }
+      }
+      x[nk] = be[0];
+      x[nk + 1] = be[1];
+      for (j = 0; j < n; ++j) {
+        const size_t ic = (size_t)j * ldc + i;
+        double cr = 0, ci = 0, rr, ri = 0;
+        for (p = 0; p < k; ++p) {
+          const size_t ib = (0 != tb ? ((size_t)p * ldb + j) : ((size_t)j * ldb + p));
+          if (0 == cplx) y[p] = LIBXS_MATH_LOAD(dbl, b, ib);
+          else {
+            const double br = LIBXS_MATH_LOAD(dbl, b, 2 * ib);
+            const double bi = sb * LIBXS_MATH_LOAD(dbl, b, 2 * ib + 1);
+            y[p] = br; y[k + p] = -bi; /* real part: ar * br - ai * bi */
+            z[p] = bi; z[k + p] = br; /* imaginary part: ar * bi + ai * br */
+          }
+        }
+        if (0 != readc) {
+          cr = LIBXS_MATH_LOAD(dbl, c, 0 == cplx ? ic : (2 * ic));
+          if (0 != cplx) ci = LIBXS_MATH_LOAD(dbl, c, 2 * ic + 1);
+        }
+        if (0 == cplx) {
+          if (0 != unit) {
+            y[nk] = cr;
+            rr = libxs_dot2(x, y, nk + 1);
+          }
+          else {
+            u[0] = al[0]; u[1] = be[0];
+            v[0] = libxs_dot2(x, y, nk); v[1] = cr;
+            rr = libxs_dot2(u, v, 2);
+          }
+        }
+        else if (0 != unit) {
+          y[nk] = cr; y[nk + 1] = -ci;
+          z[nk] = ci; z[nk + 1] = cr;
+          rr = libxs_dot2(x, y, nt);
+          ri = libxs_dot2(x, z, nt);
+        }
+        else {
+          const double sr = libxs_dot2(x, y, nk), si = libxs_dot2(x, z, nk);
+          u[0] = al[0]; u[1] = -al[1]; u[2] = be[0]; u[3] = -be[1];
+          v[0] = sr; v[1] = si; v[2] = cr; v[3] = ci;
+          rr = libxs_dot2(u, v, 4);
+          u[1] = al[1]; u[3] = be[1];
+          v[0] = si; v[1] = sr; v[2] = ci; v[3] = cr;
+          ri = libxs_dot2(u, v, 4);
+        }
+        if (0 != dbl) {
+          if (0 == cplx) ((double*)c)[ic] = rr;
+          else { ((double*)c)[2 * ic] = rr; ((double*)c)[2 * ic + 1] = ri; }
+        }
+        else {
+          if (0 == cplx) ((float*)c)[ic] = (float)rr;
+          else { ((float*)c)[2 * ic] = (float)rr; ((float*)c)[2 * ic + 1] = (float)ri; }
+        }
+      }
+    }
+    LIBXS_MATH_FREE(x, pool);
+  }
+  return result;
 }
 
 

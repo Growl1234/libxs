@@ -809,5 +809,72 @@ int main(int argc, char* argv[])
     }
   }
 
+  { /* libxs_dot2_gemm: cases a working-precision sum gets wrong, and the BLAS layouts */
+    const double big = libxs_pow2(60), one = 1.0, zero = 0.0, three = 3.0;
+    double ad[3], bd[3], cd[4];
+    float af[3], bf[3], cf[1];
+    const float onef = 1.f, zerof = 0.f;
+    const double cone[2] = { 1.0, 0.0 }, czero[2] = { 0.0, 0.0 };
+    /* cancellation: 2^60 + 1 - 2^60 is 0 summed left to right, and 1 exactly */
+    ad[0] = big; ad[1] = 1.0; ad[2] = -big;
+    bd[0] = bd[1] = bd[2] = 1.0;
+    cd[0] = 42.0; /* beta of zero must not read it */
+    if (EXIT_SUCCESS != libxs_dot2_gemm(LIBXS_DATATYPE_F64, 'N', 'N', 1, 1, 3,
+          &one, ad, 1, bd, 3, &zero, cd, 1) || 1.0 != cd[0])
+    {
+      FPRINTF(stderr, "ERROR line #%i: dot2_gemm cancellation %g\n", __LINE__, cd[0]);
+      exit(EXIT_FAILURE);
+    }
+    /* beta * C belongs to the same sum: 2^60 + 1 + (-2^60) is 1, not 0 */
+    ad[0] = big; ad[1] = 1.0; bd[0] = bd[1] = 1.0; cd[0] = -big;
+    if (EXIT_SUCCESS != libxs_dot2_gemm(LIBXS_DATATYPE_F64, 'N', 'N', 1, 1, 2,
+          &one, ad, 1, bd, 2, &one, cd, 1) || 1.0 != cd[0])
+    {
+      FPRINTF(stderr, "ERROR line #%i: dot2_gemm beta folding %g\n", __LINE__, cd[0]);
+      exit(EXIT_FAILURE);
+    }
+    /* transposed A (k-by-m stored), alpha of three: C = 3 * A^T * B + C */
+    ad[0] = 1.0; ad[1] = 2.0; ad[2] = 4.0; /* A^T is 1x3 */
+    bd[0] = 1.0; bd[1] = 10.0; bd[2] = 100.0;
+    cd[0] = 1.0;
+    if (EXIT_SUCCESS != libxs_dot2_gemm(LIBXS_DATATYPE_F64, 'T', 'N', 1, 1, 3,
+          &three, ad, 3, bd, 3, &one, cd, 1) || (3.0 * 421.0 + 1.0) != cd[0])
+    {
+      FPRINTF(stderr, "ERROR line #%i: dot2_gemm transposed %g\n", __LINE__, cd[0]);
+      exit(EXIT_FAILURE);
+    }
+    /* complex: (1+2i)(3+4i) = -5+10i, and conj(1+2i)(3+4i) = 11-2i */
+    ad[0] = 1.0; ad[1] = 2.0; bd[0] = 3.0; bd[1] = 4.0;
+    if (EXIT_SUCCESS != libxs_dot2_gemm(LIBXS_DATATYPE_C64, 'N', 'N', 1, 1, 1,
+          cone, ad, 1, bd, 1, czero, cd, 1) || -5.0 != cd[0] || 10.0 != cd[1])
+    {
+      FPRINTF(stderr, "ERROR line #%i: dot2_gemm complex\n", __LINE__);
+      exit(EXIT_FAILURE);
+    }
+    cd[0] = cd[1] = 0.0;
+    if (EXIT_SUCCESS != libxs_dot2_gemm(LIBXS_DATATYPE_C64, 'C', 'N', 1, 1, 1,
+          cone, ad, 1, bd, 1, cone, cd, 1) || 11.0 != cd[0] || -2.0 != cd[1])
+    {
+      FPRINTF(stderr, "ERROR line #%i: dot2_gemm conjugated\n", __LINE__);
+      exit(EXIT_FAILURE);
+    }
+    /* single precision is computed in double: 2^30 + 1 - 2^30 is 1 */
+    af[0] = (float)libxs_pow2(30); af[1] = 1.f; af[2] = -af[0];
+    bf[0] = bf[1] = bf[2] = 1.f;
+    if (EXIT_SUCCESS != libxs_dot2_gemm(LIBXS_DATATYPE_F32, 'N', 'N', 1, 1, 3,
+          &onef, af, 1, bf, 3, &zerof, cf, 1) || 1.f != cf[0])
+    {
+      FPRINTF(stderr, "ERROR line #%i: dot2_gemm single precision %g\n", __LINE__, cf[0]);
+      exit(EXIT_FAILURE);
+    }
+    /* an unsupported datatype is reported, not computed */
+    if (EXIT_SUCCESS == libxs_dot2_gemm(LIBXS_DATATYPE_I32, 'N', 'N', 1, 1, 1,
+          &one, ad, 1, bd, 1, &zero, cd, 1))
+    {
+      FPRINTF(stderr, "ERROR line #%i: dot2_gemm accepted I32\n", __LINE__);
+      exit(EXIT_FAILURE);
+    }
+  }
+
   return EXIT_SUCCESS;
 }
