@@ -459,6 +459,8 @@ LIBXS_API double libxs_dot2_err(const double* x, const double* y, int n, double*
  * step, i.e., one more rounding. F64, F32, C64 and C32; single precision is
  * computed in double and rounded at the end. Serial and O(mnk): a caller grading
  * a large product passes a few rows (m=1 per row) rather than all of them.
+ * Fails (EXIT_FAILURE) in a build whose compensation was optimized away rather
+ * than returning an uncompensated result (see LIBXS_PRAGMA_FASTMATH_OFF).
  */
 LIBXS_API int libxs_dot2_gemm(libxs_data_t datatype, char transa, char transb,
   int m, int n, int k, const void* alpha, const void* a, int lda,
@@ -524,6 +526,8 @@ LIBXS_API unsigned int libxs_barrett_pow18(unsigned int p);
  */
 LIBXS_API unsigned int libxs_barrett_pow36(unsigned int p);
 
+/* error-free transformations: exact only as written, so no reassociation (see libxs_macros.h) */
+LIBXS_PRAGMA_FASTMATH_OFF
 /**
  * Error-free transformation of a sum (Knuth's TwoSum). Returns x = fl(a+b)
  * and, via err, the exact rounding error such that a + b == x + *err for
@@ -567,6 +571,9 @@ LIBXS_API_INLINE double libxs_two_product(double a, double b, double* err) {
 #endif
   return x;
 }
+
+LIBXS_PRAGMA_FASTMATH_ON
+
 
 /** Round a single-precision value to BF16 (round-to-nearest-even). */
 LIBXS_API_INLINE libxs_bf16_t libxs_round_bf16_f32(float x) {

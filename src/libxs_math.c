@@ -431,6 +431,8 @@ LIBXS_API unsigned int libxs_isqrt2_u32(unsigned int x)
 }
 
 
+/* the compensated sums below are exact only as written (see libxs_macros.h) */
+LIBXS_PRAGMA_FASTMATH_OFF
 LIBXS_API double libxs_kahan_sum(double value, double* accumulator, double* compensation)
 {
   double r, e;
@@ -538,10 +540,29 @@ LIBXS_API double libxs_dot2_err(const double* x, const double* y, int n, double*
 }
 
 
+/**
+ * Whether libxs_dot2 compensates in this build: 2^60 + 1 - 2^60 is 1, and a sum the
+ * compiler reassociated returns 0. The operand is volatile so the probe runs on the
+ * compiled code rather than being folded at compile time.
+ */
+LIBXS_API_INTERN int internal_libxs_dot2_exact(void);
+LIBXS_API_INTERN int internal_libxs_dot2_exact(void)
+{
+  volatile double big = 1152921504606846976.0;
+  double x[3], y[3];
+  x[0] = big; x[1] = 1.0; x[2] = -big;
+  y[0] = y[1] = y[2] = 1.0;
+  return (1.0 == libxs_dot2(x, y, 3));
+}
+
+
 LIBXS_API int libxs_dot2_gemm(libxs_data_t datatype, char transa, char transb,
   int m, int n, int k, const void* alpha, const void* a, int lda,
   const void* b, int ldb, const void* beta, void* c, int ldc)
 {
+  /* 0 unknown, 1 exact, -1 not: a reference that does not compensate grades a GEMM
+   * against something no better than itself, so it is refused rather than returned */
+  static int exact = 0;
   const int cplx = LIBXS_ENUM_IS_COMPLEX(datatype);
   const int dbl = (LIBXS_DATATYPE_F64 == datatype || LIBXS_DATATYPE_C64 == datatype);
   const int ta = ('N' != transa && 'n' != transa), tb = ('N' != transb && 'n' != transb);
@@ -553,7 +574,9 @@ LIBXS_API int libxs_dot2_gemm(libxs_data_t datatype, char transa, char transb,
   double al[2] = { 0, 0 }, be[2] = { 0, 0 }, u[4], v[4];
   double *x = NULL, *y = NULL, *z = NULL;
   int result = EXIT_SUCCESS, pool = 0, unit = 0, readc = 0, i, j, p;
-  if ((0 == cplx && LIBXS_DATATYPE_F64 != datatype && LIBXS_DATATYPE_F32 != datatype)
+  if (0 == exact) exact = (0 != internal_libxs_dot2_exact() ? 1 : -1);
+  if (0 > exact
+    || (0 == cplx && LIBXS_DATATYPE_F64 != datatype && LIBXS_DATATYPE_F32 != datatype)
     || 0 > m || 0 > n || 0 > k || NULL == alpha || NULL == beta
     || lda < LIBXS_MAX(0 == ta ? m : k, 1) || ldb < LIBXS_MAX(0 == tb ? k : n, 1)
     || ldc < LIBXS_MAX(m, 1) || (0 < m && 0 < n && NULL == c)
@@ -646,6 +669,9 @@ LIBXS_API int libxs_dot2_gemm(libxs_data_t datatype, char transa, char transb,
   }
   return result;
 }
+
+
+LIBXS_PRAGMA_FASTMATH_ON
 
 
 LIBXS_API double libxs_pow2(int n)

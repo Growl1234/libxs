@@ -419,7 +419,7 @@ int main(int argc, char* argv[])
       }
     }
     if (0 != nfail) {
-      fprintf(stderr, "ERROR: XREF reference failed on %i row(s)\n", nfail);
+      fprintf(stderr, "ERROR: XREF reference failed on %i row(s): arguments, or no compensation in this build\n", nfail);
       result = EXIT_FAILURE;
     }
   }

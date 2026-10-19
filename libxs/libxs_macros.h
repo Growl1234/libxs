@@ -231,6 +231,26 @@
 #endif
 
 /**
+ * Value-safe floating-point semantics for the definitions between FASTMATH_OFF and
+ * FASTMATH_ON, which restores whatever was in effect before. An error-free
+ * transformation (libxs_two_sum, Dekker's split) is exact only if the compiler keeps
+ * its operations as written: Intel's icx defaults to a fast model that may reassociate,
+ * and then folds the error term to zero, so a compensated sum silently becomes a plain
+ * one. The setting is recorded per operation, so it holds where such a function is
+ * inlined into a caller compiled with fast math. GCC is value-safe unless -ffast-math.
+ */
+#if defined(LIBXS_INTEL_COMPILER) || defined(__clang__) || defined(_MSC_VER)
+# define LIBXS_PRAGMA_FASTMATH_OFF LIBXS_PRAGMA(float_control(precise, on, push))
+# define LIBXS_PRAGMA_FASTMATH_ON  LIBXS_PRAGMA(float_control(pop))
+#elif defined(__GNUC__) && defined(__FAST_MATH__)
+# define LIBXS_PRAGMA_FASTMATH_OFF LIBXS_PRAGMA(GCC push_options) LIBXS_PRAGMA(GCC optimize("no-fast-math"))
+# define LIBXS_PRAGMA_FASTMATH_ON  LIBXS_PRAGMA(GCC pop_options)
+#else
+# define LIBXS_PRAGMA_FASTMATH_OFF
+# define LIBXS_PRAGMA_FASTMATH_ON
+#endif
+
+/**
  * Mark a symbol as a weak reference (#pragma weak).
  * Supported by GCC, Clang, and classic Unix compilers.
  * On unsupported compilers the macro expands to nothing.

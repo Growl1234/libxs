@@ -809,6 +809,17 @@ int main(int argc, char* argv[])
     }
   }
 
+  { /* the error-free transformation itself, on operands the compiler cannot see */
+    volatile double big = 1152921504606846976.0; /* 2^60 */
+    double e1, e2, s1, s2;
+    s1 = libxs_two_sum(big, 1.0, &e1);
+    s2 = libxs_two_sum(s1, -big, &e2);
+    if (1.0 != s2 + e1 + e2) {
+      FPRINTF(stderr, "ERROR line #%i: two_sum lost its error term (reassociated)\n", __LINE__);
+      exit(EXIT_FAILURE);
+    }
+  }
+
   { /* libxs_dot2_gemm: cases a working-precision sum gets wrong, and the BLAS layouts */
     const double big = libxs_pow2(60), one = 1.0, zero = 0.0, three = 3.0;
     double ad[3], bd[3], cd[4];
