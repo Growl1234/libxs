@@ -51,6 +51,7 @@ static void evaluate(libxs_predict_t* model,
 static int write_confidence_maps(const char* prefix, const void* buffer,
   size_t size, const libxs_predict_t* reference, int ntotal);
 static double deployment_share(const libxs_predict_info_t* info, double gate);
+static double median_confidence(const libxs_predict_info_t* info);
 static int gate_list(double gates[], int capacity);
 static void confidence_select(const libxs_predict_t* source, int ntotal);
 static const char* mode_name(int decompose);
@@ -1001,6 +1002,53 @@ static void evaluate(libxs_predict_t* model,
 }
 
 
+/**
+ * One view of the cube, as written for both measures: the cube itself, its
+ * lowest and mean value over K as MHD, and the two projections as PNG on the
+ * [0, 1] scale both measures share.
+ */
+static int write_projections(const char* prefix, const char* what,
+  const float cube[], const float min_k[], const float mean_k[],
+  const size_t ext3[], const size_t ext2[])
+{
+  char filename[1024];
+  libxs_mhd_info_t info3 = { 3, 1, LIBXS_DATATYPE_F32, 0 };
+  libxs_mhd_info_t info2 = { 2, 1, LIBXS_DATATYPE_F32, 0 };
+  libxs_mhd_write_info_t write_info;
+  int result;
+  memset(&write_info, 0, sizeof(write_info));
+  write_info.range[1] = 1.0;
+  LIBXS_SNPRINTF(filename, sizeof(filename), "%s%s_cube.mhd", prefix, what);
+  result = libxs_mhd_write(filename, NULL, ext3, ext3, &info3, cube, NULL);
+  if (EXIT_SUCCESS == result) {
+    fprintf(stdout, "Saved confidence cube to %s\n", filename);
+    LIBXS_SNPRINTF(filename, sizeof(filename), "%s%s_minK.mhd", prefix, what);
+    result = libxs_mhd_write(filename, NULL, ext2, ext2, &info2, min_k, NULL);
+  }
+  if (EXIT_SUCCESS == result) {
+    LIBXS_SNPRINTF(filename, sizeof(filename), "%s%s_meanK.mhd", prefix, what);
+    info2.header_size = 0;
+    result = libxs_mhd_write(filename, NULL, ext2, ext2, &info2, mean_k, NULL);
+  }
+  if (EXIT_SUCCESS == result) {
+    LIBXS_SNPRINTF(filename, sizeof(filename), "%s%s_minK.png", prefix, what);
+    result = libxs_png_write(filename, ext2, NULL, 1, LIBXS_DATATYPE_F32,
+      min_k, &write_info);
+  }
+  if (EXIT_SUCCESS == result) {
+    LIBXS_SNPRINTF(filename, sizeof(filename), "%s%s_meanK.png", prefix, what);
+    result = libxs_png_write(filename, ext2, NULL, 1, LIBXS_DATATYPE_F32,
+      mean_k, &write_info);
+  }
+  return result;
+}
+
+
+/**
+ * Two measures over the min-max cube of the table's shapes: the share of the
+ * varying parameters a deployment takes at the gate (prefix_*), and the median
+ * of their confidences (prefix_conf_*), the second reading the first rests on.
+ */
 static int write_confidence_maps(const char* prefix, const void* buffer,
   size_t size, const libxs_predict_t* reference, int ntotal)
 {
@@ -1009,6 +1057,7 @@ static int write_confidence_maps(const char* prefix, const void* buffer,
   double inputs[NINPUTS], gates[16];
   const double gate = (0 < gate_list(gates, 16)) ? gates[0] : 0.5;
   float *cube = NULL, *min_k = NULL, *mean_k = NULL;
+  float *ccube = NULL, *cmin_k = NULL, *cmean_k = NULL;
   size_t ext3[3], ext2[2], nelements, mi, ni, ki, nm, nn, nk;
   int mmin, nmin, kmin, mmax, nmax, kmax, i;
   int result = EXIT_FAILURE;
@@ -1037,78 +1086,60 @@ static int write_confidence_maps(const char* prefix, const void* buffer,
     cube = (float*)malloc(nelements * sizeof(float));
     min_k = (float*)malloc(nm * nn * sizeof(float));
     mean_k = (float*)malloc(nm * nn * sizeof(float));
-    if (NULL != cube && NULL != min_k && NULL != mean_k) {
+    ccube = (float*)malloc(nelements * sizeof(float));
+    cmin_k = (float*)malloc(nm * nn * sizeof(float));
+    cmean_k = (float*)malloc(nm * nn * sizeof(float));
+    if (NULL != cube && NULL != min_k && NULL != mean_k
+      && NULL != ccube && NULL != cmin_k && NULL != cmean_k)
+    {
       tick = libxs_timer_tick();
       for (ni = 0; ni < nn; ++ni) {
         for (mi = 0; mi < nm; ++mi) {
           const size_t index2 = ni * nm + mi;
-          float min_value = 1.0f, sum_value = 0.0f;
+          float min_value = 1.0f, sum_value = 0.0f, cmin = 1.0f, csum = 0.0f;
           for (ki = 0; ki < nk; ++ki) {
             libxs_predict_info_t info;
-            double confidence;
+            double share, median;
             const size_t index3 = (ki * nn + ni) * nm + mi;
             inputs[0] = (double)(mmin + (int)mi);
             inputs[1] = (double)(nmin + (int)ni);
             inputs[2] = (double)(kmin + (int)ki);
             libxs_predict_eval(NULL, model, inputs, NULL, &info, 1);
-            confidence = deployment_share(&info, gate);
-            cube[index3] = (float)confidence;
-            if (confidence < min_value) min_value = (float)confidence;
-            sum_value += (float)confidence;
+            share = deployment_share(&info, gate);
+            median = median_confidence(&info);
+            cube[index3] = (float)share;
+            ccube[index3] = (float)median;
+            if (share < min_value) min_value = (float)share;
+            if (median < cmin) cmin = (float)median;
+            sum_value += (float)share;
+            csum += (float)median;
           }
           min_k[index2] = min_value;
           mean_k[index2] = sum_value / (float)nk;
+          cmin_k[index2] = cmin;
+          cmean_k[index2] = csum / (float)nk;
         }
       }
-      { char filename[1024];
-        libxs_mhd_info_t info3 = { 3, 1, LIBXS_DATATYPE_F32, 0 };
-        libxs_mhd_info_t info2 = { 2, 1, LIBXS_DATATYPE_F32, 0 };
-        ext3[0] = nm;
-        ext3[1] = nn;
-        ext3[2] = nk;
-        ext2[0] = nm;
-        ext2[1] = nn;
-        LIBXS_SNPRINTF(filename, sizeof(filename), "%s_cube.mhd", prefix);
-        result = libxs_mhd_write(filename, NULL, ext3, ext3, &info3, cube, NULL);
-        if (EXIT_SUCCESS == result) {
-          fprintf(stdout, "Saved confidence cube to %s\n", filename);
-          LIBXS_SNPRINTF(filename, sizeof(filename), "%s_minK.mhd", prefix);
-          result = libxs_mhd_write(filename, NULL, ext2, ext2, &info2,
-            min_k, NULL);
-        }
-        if (EXIT_SUCCESS == result) {
-          fprintf(stdout, "Saved confidence minK projection to %s\n", filename);
-          LIBXS_SNPRINTF(filename, sizeof(filename), "%s_meanK.mhd", prefix);
-          info2.header_size = 0;
-          result = libxs_mhd_write(filename, NULL, ext2, ext2, &info2,
-            mean_k, NULL);
-        }
-        if (EXIT_SUCCESS == result) {
-          fprintf(stdout, "Saved confidence meanK projection to %s\n", filename);
-        }
-        /* a look at both slices on one scale: confidence is in [0, 1] */
-        if (EXIT_SUCCESS == result) {
-          libxs_mhd_write_info_t write_info;
-          memset(&write_info, 0, sizeof(write_info));
-          write_info.range[1] = 1.0;
-          LIBXS_SNPRINTF(filename, sizeof(filename), "%s_minK.png", prefix);
-          result = libxs_png_write(filename, ext2, NULL, 1, LIBXS_DATATYPE_F32,
-            min_k, &write_info);
-          if (EXIT_SUCCESS == result) {
-            LIBXS_SNPRINTF(filename, sizeof(filename), "%s_meanK.png", prefix);
-            result = libxs_png_write(filename, ext2, NULL, 1, LIBXS_DATATYPE_F32,
-              mean_k, &write_info);
-          }
-        }
-        if (EXIT_SUCCESS == result) {
-          fprintf(stdout, "Confidence maps: M=%d..%d N=%d..%d K=%d..%d"
-            " (%lu queries, %.2f s)\n", mmin, mmax, nmin, nmax, kmin, kmax,
-            (unsigned long)nelements,
-            libxs_timer_duration(tick, libxs_timer_tick()));
-        }
+      ext3[0] = nm;
+      ext3[1] = nn;
+      ext3[2] = nk;
+      ext2[0] = nm;
+      ext2[1] = nn;
+      result = write_projections(prefix, "", cube, min_k, mean_k, ext3, ext2);
+      if (EXIT_SUCCESS == result) {
+        result = write_projections(prefix, "_conf", ccube, cmin_k, cmean_k, ext3, ext2);
+      }
+      if (EXIT_SUCCESS == result) {
+        fprintf(stdout, "Confidence maps: M=%d..%d N=%d..%d K=%d..%d"
+          " (%lu queries, %.2f s)\n", mmin, mmax, nmin, nmax, kmin, kmax,
+          (unsigned long)nelements,
+          libxs_timer_duration(tick, libxs_timer_tick()));
       }
     }
   }
+  free(cmean_k);
+  free(cmin_k);
+  free(ccube);
   free(mean_k);
   free(min_k);
   free(cube);
@@ -1132,6 +1163,33 @@ static double deployment_share(const libxs_predict_info_t* info, double gate)
       if (output < info->noutputs && info->confidence[output] >= gate) ++ntaken;
     }
     result = (double)ntaken / nconfidence;
+  }
+  return result;
+}
+
+
+/* The median confidence over the varying parameters, the middle two averaged. */
+static double median_confidence(const libxs_predict_info_t* info)
+{
+  double values[NPARAM], result = 0.0;
+  int i, n = 0;
+  if (NULL != info && NULL != info->confidence) {
+    for (i = 0; i < nconfidence; ++i) {
+      const int output = confidence_outputs[i];
+      if (output < info->noutputs) {
+        const double v = info->confidence[output];
+        int k = n++;
+        while (0 < k && values[k - 1] > v) {
+          values[k] = values[k - 1];
+          --k;
+        }
+        values[k] = v;
+      }
+    }
+    if (0 < n) {
+      result = (0 != (n & 1)) ? values[n / 2]
+        : (0.5 * (values[n / 2 - 1] + values[n / 2]));
+    }
   }
   return result;
 }
