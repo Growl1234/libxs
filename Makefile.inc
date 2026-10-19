@@ -1590,7 +1590,7 @@ else # GCC assumed
                  -Wno-unused-parameter -Wwrite-strings \
                  -Wmissing-field-initializers \
                  -Wcast-qual
-    FPEDANTIC += -pedantic -Wextra -Wunused-variable \
+    FPEDANTIC += -Wall -pedantic -Wextra -Wunused-variable \
                  -Wimplicit-interface -Wimplicit-procedure \
                  -Wconversion -Wintrinsics-std \
                  -Wcharacter-truncation
@@ -1654,7 +1654,7 @@ else # GCC assumed
       #CXXFLAGS += -Wno-missing-field-initializers
       CFLAGS += $(CSTD) $(CPEDANTIC)
       FCFLAGS += $(FFORM_FLAG)
-      FMFLAGS += $(FSTD) -pedantic -Wunused-variable $(FWARNEXTRA)
+      FMFLAGS += $(FSTD) -Wall -pedantic -Wunused-variable $(FWARNEXTRA)
     else ifneq (0,$(PEDANTIC)) # 2<=PEDANTIC
       ifneq (2,$(PEDANTIC)) # 2<=PEDANTIC
       ifneq (0,$(CLANG))
