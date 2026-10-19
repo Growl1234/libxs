@@ -27,6 +27,7 @@ LIBXS_PRAGMA_WEAK(zgemm_reference)
 
 
 static double gemm_duration(double* times, int nrepeat, double total);
+static GEMM_INT_TYPE gemm_xrow(int s, int xrows, GEMM_INT_TYPE m);
 static void* gemm_host_malloc(size_t nbytes, int hostmem);
 static void gemm_host_free(void* ptr, int hostmem);
 
@@ -85,6 +86,17 @@ int main(int argc, char* argv[])
    * on purpose, so the criterion it would be held to is not the one it claims. */
   const int grade = (NULL != env_grade && 0 != *env_grade) ? atoi(env_grade) : 0;
   double grade_max = -1.0;
+  /**
+   * XREF=r grades against a compensated reference (libxs_dot2_gemm) on r rows spread over C,
+   * all rows if r is negative or at least m. A BLAS reference rounds as much as the
+   * result it grades, so it cannot tell an exact product from a DGEMM, and an error read off
+   * it is partly its own. Costs O(rnk) per call replayed, serial per row.
+   */
+  const char* const env_xref = getenv("XREF");
+  const int xref = (NULL != env_xref && 0 != *env_xref) ? atoi(env_xref) : 0;
+  double xgrade_max = -1.0;
+  GEMM_REAL_TYPE* x_ref = NULL;
+  int xrows = 0;
   const int nrep = (NULL == nrepeat_env ? 3 : atoi(nrepeat_env));
   const int nrepeat = (0 < nrep ? nrep : 1);
   GEMM_INT_TYPE m = (1 < argc ? atoi(argv[1]) : 257);
@@ -214,6 +226,22 @@ int main(int argc, char* argv[])
       }
       else memset(c, 0, sizeof(GEMM_REAL_TYPE) * nc * ldc * n);
       memcpy(c_ref, c, sizeof(GEMM_REAL_TYPE) * nc * ldc * n);
+      if (0 != xref) { /* the rows of C before any call, which is where the replay starts */
+        xrows = (int)((0 < xref && xref < m) ? xref : m);
+        x_ref = (GEMM_REAL_TYPE*)malloc(sizeof(GEMM_REAL_TYPE) * nc * xrows * n);
+        if (NULL != x_ref) {
+          GEMM_INT_TYPE xj;
+          int xs;
+          size_t xc;
+          for (xj = 0; xj < n; ++xj) {
+            for (xs = 0; xs < xrows; ++xs) {
+              const size_t src = nc * ((size_t)xj * ldc + gemm_xrow(xs, xrows, m));
+              for (xc = 0; xc < nc; ++xc) x_ref[nc * ((size_t)xj * xrows + xs) + xc] = c[src + xc];
+            }
+          }
+        }
+        else result = EXIT_FAILURE;
+      }
       /* |C| has to be captured here: the reference GEMM overwrites c_ref and c. */
       if (0 != grade && 0 == complex_input) {
         c_bnd = (GEMM_REAL_TYPE*)gemm_host_malloc(sizeof(GEMM_REAL_TYPE) * ldc * n, hostmem);
@@ -362,6 +390,40 @@ int main(int argc, char* argv[])
     free(times);
   }
 
+  /**
+   * The reference replays the calls made above: with beta non-zero, C accumulates over the
+   * warmup and every timed call, each rounded by the GEMM that made it, so the result being
+   * graded is that sequence and not one product. A and B are intact only up to here.
+   */
+  if (EXIT_SUCCESS == result && NULL != x_ref) {
+    const GEMM_REAL_TYPE* const ga = (0 != complex_input) ? complex_alpha : &alpha;
+    const GEMM_REAL_TYPE* const gb = (0 != complex_input) ? complex_beta : &beta;
+    const libxs_data_t dt = (0 != complex_input) ? (GEMM_IS_DOUBLE ? LIBXS_DATATYPE_C64 : LIBXS_DATATYPE_C32)
+                                                 : LIBXS_DATATYPE(GEMM_REAL_TYPE);
+    const int ncalls = (0 != gb[0] || (0 != complex_input && 0 != gb[1])) ? (nrepeat + 1) : 1;
+    const int transposed = ('N' != transa && 'n' != transa);
+    int xs, nfail = 0;
+#if defined(_OPENMP)
+#   pragma omp parallel for reduction(+:nfail) schedule(dynamic)
+#endif
+    for (xs = 0; xs < xrows; ++xs) {
+      const GEMM_INT_TYPE row = gemm_xrow(xs, xrows, m);
+      const GEMM_REAL_TYPE* const arow = a + nc * (0 == transposed ? (size_t)row : ((size_t)row * lda));
+      int r;
+      for (r = 0; r < ncalls; ++r) {
+        if (EXIT_SUCCESS != libxs_dot2_gemm(dt, transa, transb, 1, (int)n, (int)k, ga, arow, (int)lda,
+          b, (int)ldb, gb, x_ref + nc * xs, xrows))
+        {
+          ++nfail;
+        }
+      }
+    }
+    if (0 != nfail) {
+      fprintf(stderr, "ERROR: XREF reference failed on %i row(s)\n", nfail);
+      result = EXIT_FAILURE;
+    }
+  }
+
   if (EXIT_SUCCESS == result) { /* Reference BLAS GEMM + diff */
     const GEMM_REAL_TYPE* const ga = (0 != complex_input) ? complex_alpha : &alpha;
     const GEMM_REAL_TYPE* const gb = (0 != complex_input) ? complex_beta : &beta;
@@ -429,6 +491,65 @@ int main(int argc, char* argv[])
     }
   }
 
+  /**
+   * Against the compensated reference: the Ozaki result, and the BLAS result where one ran, so
+   * the two errors are measured on one scale rather than one against the other. The grade
+   * reuses the bound the BLAS grade formed, gathered on the same rows.
+   */
+  if (EXIT_SUCCESS == result && NULL != x_ref) {
+    const libxs_data_t dt = (0 != complex_input) ? (GEMM_IS_DOUBLE ? LIBXS_DATATYPE_C64 : LIBXS_DATATYPE_C32)
+                                                 : LIBXS_DATATYPE(GEMM_REAL_TYPE);
+    const int has_blas = (0 < diff.r);
+    const size_t nx = nc * (size_t)xrows * n;
+    GEMM_REAL_TYPE* const x_tst = (GEMM_REAL_TYPE*)malloc(sizeof(GEMM_REAL_TYPE) * nx * (NULL != c_bnd ? 3 : 2));
+    if (NULL != x_tst) {
+      GEMM_REAL_TYPE* const x_blas = x_tst + nx;
+      GEMM_REAL_TYPE* const x_bnd = (NULL != c_bnd ? (x_blas + nx) : NULL);
+      libxs_matdiff_t dx, db;
+      GEMM_INT_TYPE xj;
+      int xs, xresult;
+      size_t xc;
+      libxs_matdiff_clear(&dx);
+      libxs_matdiff_clear(&db);
+      for (xj = 0; xj < n; ++xj) {
+        for (xs = 0; xs < xrows; ++xs) {
+          const size_t src = (size_t)xj * ldc + gemm_xrow(xs, xrows, m), dst = (size_t)xj * xrows + xs;
+          for (xc = 0; xc < nc; ++xc) {
+            x_tst[nc * dst + xc] = c[nc * src + xc];
+            x_blas[nc * dst + xc] = c_ref[nc * src + xc];
+          }
+          if (NULL != x_bnd) x_bnd[dst] = c_bnd[src];
+        }
+      }
+      if (NULL != x_bnd) {
+        xresult = libxs_matdiff_grade(&dx, dt, xrows, (int)n, x_ref, x_tst, x_bnd, &xrows, &xrows, &xrows);
+        if (EXIT_SUCCESS == xresult && 0 != has_blas) {
+          xresult = libxs_matdiff_grade(&db, dt, xrows, (int)n, x_ref, x_blas, x_bnd, &xrows, &xrows, &xrows);
+        }
+      }
+      else {
+        xresult = libxs_matdiff(&dx, dt, xrows, (int)n, x_ref, x_tst, &xrows, &xrows);
+        if (EXIT_SUCCESS == xresult && 0 != has_blas) {
+          xresult = libxs_matdiff(&db, dt, xrows, (int)n, x_ref, x_blas, &xrows, &xrows);
+        }
+      }
+      /* Keys carry a prefix: a bare linf_rel= would be read as the BLAS-relative error. */
+      if (EXIT_SUCCESS == xresult) {
+        printf("XREF: rows=%i ozaki_linf_rel=%.17g ozaki_l2_rel=%.17g", xrows, dx.linf_rel, dx.l2_rel);
+        if (NULL != x_bnd) printf(" ozaki_grade=%g", dx.grade);
+        if (0 != has_blas) {
+          printf(" blas_linf_rel=%.17g blas_l2_rel=%.17g", db.linf_rel, db.l2_rel);
+          if (NULL != x_bnd) printf(" blas_grade=%g", db.grade);
+        }
+        printf("\n");
+        if (NULL != x_bnd) xgrade_max = dx.grade;
+      }
+      else result = xresult;
+      free(x_tst);
+    }
+    else result = EXIT_FAILURE;
+  }
+
   if (EXIT_SUCCESS == result && 0 != check) { /* Accuracy validation */
     /**
      * The outer diff is end-to-end and costs nothing: the reference it needs is
@@ -475,9 +596,17 @@ int main(int argc, char* argv[])
     fprintf(stderr, "GRADE: a=%g f(n)=%g (%s)\n", grade_max, fn,
       0 != graded ? "pass" : (0 < grade ? "FAIL" : "advisory"));
     if (0 == graded && 0 < grade) result = EXIT_FAILURE;
+    /* the same criterion on the compensated reference, which is the one an exactness claim needs */
+    if (0 <= xgrade_max) {
+      const int xgraded = (xgrade_max <= fn);
+      fprintf(stderr, "GRADE XREF: a=%g f(n)=%g (%s)\n", xgrade_max, fn,
+        0 != xgraded ? "pass" : (0 < grade ? "FAIL" : "advisory"));
+      if (0 == xgraded && 0 < grade) result = EXIT_FAILURE;
+    }
   }
 
   libxs_finalize();
+  free(x_ref);
   gemm_host_free(c_bnd, hostmem);
   gemm_host_free(c_ref, hostmem);
   gemm_host_free(c, hostmem);
@@ -550,6 +679,13 @@ static void gemm_host_free(void* ptr, int hostmem)
   LIBXS_UNUSED(hostmem);
   free(ptr);
 #endif
+}
+
+
+/* Row of C that the s-th of xrows samples grades: evenly spread, first row included. */
+static GEMM_INT_TYPE gemm_xrow(int s, int xrows, GEMM_INT_TYPE m)
+{
+  return (GEMM_INT_TYPE)(((size_t)s * (size_t)m) / (size_t)(0 < xrows ? xrows : 1));
 }
 
 

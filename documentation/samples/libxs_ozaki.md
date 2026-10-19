@@ -132,6 +132,7 @@ and not here.
 |--------------|-----------|--------------------------------------------------------------------|
 | CHECK        | 0         | Validate vs BLAS: 0=off, negative=auto-threshold, positive=custom  |
 | GRADE        | 0         | Componentwise accuracy grade vs BLAS (see below)                   |
+| XREF         | 0         | Compensated reference on n rows, negative=all rows (see below)     |
 | NREPEAT      | 3         | Number of GEMM calls (first call is warmup when >1)                |
 | EVIL         | 0         | Adversarial exponent-span test (see below)                         |
 | TAME         | 0         | Keep n mantissa bits and clear the rest (see below)                |
@@ -188,7 +189,7 @@ incomparable in a way nothing downstream can see.
 
 `GRADE=1` applies the componentwise criterion of the graded BLAS
 accuracy tests: `|C - C_ref| <= f(K) * u * (|alpha||A||B| +
-|beta||C|)` with `f(K) = K` and `u` the unit roundoff.  K is the
+|beta||C|)` with `f(K) = K + 1024` and `u` the unit roundoff.  K is the
 number of terms summed, so a short-K GEMM is held to a tighter bound
 than a square one of the same size.  It reports
 `GRADE: a=<max ratio> f(n)=<K>` and fails the run when the ratio
@@ -203,6 +204,26 @@ which is orders looser than these schemes deliver and therefore
 admits results that are lossy but not broken.  `rsq` substitutes
 for neither: it saturates at 1 unless the output degenerates.
 GRADE costs one extra reference GEMM and one m-by-n buffer.
+
+### Compensated Reference (XREF)
+
+The BLAS reference rounds in the same precision as the result it is
+compared with, so an error measured against it is partly its own and
+cannot show whether a result is the exact product rounded once.
+`XREF=n` adds a reference computed by `libxs_dot2_gemm`, as if in
+twice the double precision, on n rows spread over C (`XREF=-1` takes
+all rows).  It reports
+
+  XREF: rows=n ozaki_linf_rel=.. ozaki_l2_rel=.. ozaki_grade=..
+        blas_linf_rel=.. blas_l2_rel=.. blas_grade=..
+
+so the Ozaki and the BLAS result are measured on one scale.  The
+grades appear with `GRADE` set, and `GRADE=1` then also fails the
+run on the compensated grade (`GRADE XREF:`).  With beta non-zero,
+C accumulates over the warmup and the timed calls, and the reference
+replays that sequence.  The cost is O(nNK) per replayed call on the
+host, which is why a few rows rather than all of them are the
+intended use at large sizes.
 
 ### Decay Diagnostic and K-Permutation (OZAKI_DECAY)
 
