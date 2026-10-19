@@ -53,6 +53,8 @@
         PUBLIC :: libxs_matdiff_combine
         PUBLIC :: libxs_fprint, libxs_fprint_partial
         PUBLIC :: libxs_fprint_join, libxs_fprint_diff
+        PUBLIC :: libxs_fprint_bernstein
+        PUBLIC :: libxs_fprint_bernstein_diff
         PUBLIC :: libxs_registry_create
         PUBLIC :: libxs_registry_destroy
         PUBLIC :: libxs_registry_lock

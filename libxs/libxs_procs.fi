@@ -336,7 +336,6 @@
           END IF
         END FUNCTION
 
-        !> Streaming fingerprint for REAL(C_DOUBLE).
         !> Bernstein derivative norms for REAL(C_DOUBLE): norms(0:order).
         FUNCTION libxs_fprint_bernstein_f64(norms, data, order)         &
      &  RESULT(rc)
@@ -401,6 +400,7 @@
      &      INT(SIZE(b), C_INT), oo, pw)
         END FUNCTION
 
+        !> Streaming fingerprint for REAL(C_DOUBLE).
         FUNCTION libxs_fprint_partial_f64(info, data, order)            &
      &  RESULT(rc)
           TYPE(libxs_fprint_t), INTENT(INOUT) :: info
