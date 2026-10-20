@@ -96,7 +96,7 @@ static int check_variable(libxs_data_t type)
           for (i = 0; i < 2 * NMAX; ++i) packed[i] = SENTINEL;
           memset(back, 0xFF, sizeof(back));
           nwords = libxs_vpack(packed, values, type, n, maxbits, groups[ig]);
-          nread = libxs_vunpack(back, packed, type, n);
+          nread = libxs_vunpack(back, packed, nwords, type, n);
           if (0 == nwords || nwords > bound || nread != nwords) {
             fprintf(stderr, "variable: %i words (bound %i, read %i) for type %i, maxbits %i, group %i, n %i\n",
               (int)nwords, (int)bound, (int)nread, (int)type, maxbits, groups[ig], (int)n);
@@ -120,13 +120,17 @@ static int check_variable(libxs_data_t type)
 }
 
 
-/** All-zero values cost only the header, and invalid arguments are rejected. */
+/** All-zero values cost only the header; invalid arguments and empty streams are rejected. */
 static int check_edges(void)
 {
-  uint64_t values[64] = { 0 }, packed[64];
+  uint64_t values[64] = { 0 }, packed[64], back[1] = { SENTINEL };
   int result = EXIT_SUCCESS;
   if (1 != libxs_vpack(packed, values, LIBXS_DATATYPE_I64, 32, 40, 16)) {
     fprintf(stderr, "edges: zeros are not header-only\n");
+    result = EXIT_FAILURE;
+  }
+  else if (0 != libxs_vunpack(back, packed, 0, LIBXS_DATATYPE_I64, 1) || SENTINEL != back[0]) {
+    fprintf(stderr, "edges: empty stream not rejected\n");
     result = EXIT_FAILURE;
   }
   else if (EXIT_SUCCESS == libxs_pack(packed, values, LIBXS_DATATYPE_F64, 64, 8)

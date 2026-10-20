@@ -1583,10 +1583,11 @@
           END FUNCTION
 
           ! internal (use libxs_vunpack)
-          FUNCTION internal_vunpack(values, packed, datatype, n)        &
-     &    BIND(C, NAME="libxs_vunpack")
+          FUNCTION internal_vunpack(values, packed, npacked, datatype,  &
+     &    n) BIND(C, NAME="libxs_vunpack")
             IMPORT :: C_PTR, C_INT, C_SIZE_T
             TYPE(C_PTR), INTENT(IN), VALUE :: values, packed
+            INTEGER(C_SIZE_T), INTENT(IN), VALUE :: npacked
             INTEGER(C_INT), INTENT(IN), VALUE :: datatype
             INTEGER(C_SIZE_T), INTENT(IN), VALUE :: n
             INTEGER(C_SIZE_T) :: internal_vunpack
@@ -1681,8 +1682,9 @@
           MODULE PROCEDURE libxs_vpack_i64
         END INTERFACE
 
-        !> Unpacks SIZE(values) integers written by libxs_vpack.
-        !> Returns the number of words consumed.
+        !> Unpacks SIZE(values) integers written by libxs_vpack from
+        !> SIZE(packed) words. Returns the number of words consumed
+        !> (zero if packed is empty, leaving values untouched).
         INTERFACE libxs_vunpack
           MODULE PROCEDURE libxs_vunpack_i64
         END INTERFACE

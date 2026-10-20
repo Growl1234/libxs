@@ -48,10 +48,12 @@ LIBXS_API size_t libxs_vpack(void* packed, const void* values,
 /** Number of 64-bit words libxs_vpack writes at most. */
 LIBXS_API size_t libxs_vpack_bound(size_t n, int maxbits, int group);
 /**
- * Unpacks n integers written by libxs_vpack. Returns the number of 64-bit
- * words consumed, or zero for invalid arguments or n of zero.
+ * Unpacks n integers written by libxs_vpack from npacked 64-bit words, which
+ * have to hold the stream (checked in debug code only). Returns the number of
+ * 64-bit words consumed, or zero for invalid arguments, n of zero, or npacked
+ * of zero (values are left untouched).
  */
-LIBXS_API size_t libxs_vunpack(void* values, const void* packed,
+LIBXS_API size_t libxs_vunpack(void* values, const void* packed, size_t npacked,
   libxs_data_t type, size_t n);
 
 /* header-only: include implementation */

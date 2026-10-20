@@ -644,12 +644,12 @@ LIBXS_API size_t libxs_vpack(void* packed, const void* values,
 }
 
 
-LIBXS_API size_t libxs_vunpack(void* values, const void* packed,
+LIBXS_API size_t libxs_vunpack(void* values, const void* packed, size_t npacked,
   libxs_data_t type, size_t n)
 {
   const int typesize = internal_libxs_pack_typesize(type);
   size_t result = 0;
-  if (0 < typesize && 0 < n && NULL != packed && NULL != values) {
+  if (0 < typesize && 0 < n && 0 < npacked && NULL != packed && NULL != values) {
     const unsigned char *const head = (const unsigned char*)packed;
     const int g = head[0], is_signed = internal_libxs_pack_signed(type);
     if (0 < g) {
@@ -659,6 +659,17 @@ LIBXS_API size_t libxs_vunpack(void* values, const void* packed,
       const union { uint32_t u; unsigned char c[4]; } probe = { 1 };
       uint64_t buf[255 + 7];
       size_t i, k, bit = 0;
+#if !defined(NDEBUG)
+      { /* the stream fits: the widths are read only once the header fits */
+        size_t nbits = 0, j;
+        LIBXS_ASSERT(nhead <= npacked);
+        for (j = 0; j < ngroups && nhead <= npacked; ++j) {
+          const size_t m = LIBXS_MIN((size_t)g, n - j * g);
+          nbits += (size_t)head[1 + j] * (0 == (g & 7) ? ((m + 7) & ~(size_t)7) : m);
+        }
+        LIBXS_ASSERT(nhead + (nbits + 63) / 64 <= npacked);
+      }
+#endif
       if (0 == (g & 7) && 8 == typesize && 0 != probe.c[0]) { /* byte-aligned into 64-bit */
         bit = internal_libxs_vunpack64((uint64_t*)values, head + 1, data, n, g, is_signed);
       }

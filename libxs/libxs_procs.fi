@@ -1628,6 +1628,8 @@
           INTEGER(C_LONG_LONG), INTENT(IN), CONTIGUOUS,                 &
      &      TARGET :: packed(:)
           INTEGER(C_SIZE_T) :: nwords
+          ! C_LOC needs SIZE(packed) > 0; npacked = 0 makes C return 0
           nwords = internal_vunpack(C_LOC(values), C_LOC(packed),       &
-     &      LIBXS_DATATYPE_I64, SIZE(values, KIND=C_SIZE_T))
+     &      SIZE(packed, KIND=C_SIZE_T), LIBXS_DATATYPE_I64,            &
+     &      SIZE(values, KIND=C_SIZE_T))
         END FUNCTION

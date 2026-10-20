@@ -269,7 +269,7 @@ static double vpack_bits(const stream_t* s, int group, double* seconds, double* 
         const libxs_timer_tick_t t0 = libxs_timer_tick();
         const size_t nwords = libxs_vpack(packed, s[nbits].q, LIBXS_DATATYPE_I64, s[nbits].n, nbits, group);
         const libxs_timer_tick_t t1 = libxs_timer_tick();
-        const size_t nread = libxs_vunpack(back, packed, LIBXS_DATATYPE_I64, s[nbits].n);
+        const size_t nread = libxs_vunpack(back, packed, nwords, LIBXS_DATATYPE_I64, s[nbits].n);
         *useconds += libxs_timer_duration(t1, libxs_timer_tick());
         *seconds += libxs_timer_duration(t0, t1);
         if (nread != nwords || 0 != memcmp(back, s[nbits].q, s[nbits].n * sizeof(int64_t))) *ok = 0;
@@ -411,7 +411,7 @@ static int run_synthetic(size_t n, int nbits, int range, int zeros, int nrepeat)
       }
       for (r = 0; r < nrepeat; ++r) {
         const libxs_timer_tick_t t0 = libxs_timer_tick();
-        if (nwords != libxs_vunpack(back, packed, LIBXS_DATATYPE_I64, n)) result = EXIT_FAILURE;
+        if (nwords != libxs_vunpack(back, packed, nwords, LIBXS_DATATYPE_I64, n)) result = EXIT_FAILURE;
         dunpack += libxs_timer_duration(t0, libxs_timer_tick());
       }
       if (0 != memcmp(back, q, n * sizeof(int64_t))) result = EXIT_FAILURE;
