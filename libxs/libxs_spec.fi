@@ -255,64 +255,69 @@
 
         !> Matrix difference norms (LAPACK conventions).
         TYPE, BIND(C) :: libxs_matdiff_t
-          REAL(C_DOUBLE) :: norm1_abs, norm1_rel !! One-norm
-          REAL(C_DOUBLE) :: normi_abs, normi_rel !! Infinity-norm
-          REAL(C_DOUBLE) :: normf_rel            !! Froebenius-norm
-          REAL(C_DOUBLE) :: linf_abs, linf_rel, l2_abs, l2_rel, rsq
-          REAL(C_DOUBLE) :: l1_ref, min_ref, max_ref, avg_ref, var_ref
-          REAL(C_DOUBLE) :: l1_tst, min_tst, max_tst, avg_tst, var_tst
-          REAL(C_DOUBLE) :: diag_min_ref, diag_max_ref
-          REAL(C_DOUBLE) :: diag_min_tst, diag_max_tst
-          REAL(C_DOUBLE) :: v_ref, v_tst
-          REAL(C_DOUBLE) :: grade  !! Zero unless _grade drove it
-          REAL(C_DOUBLE) :: w
-          INTEGER(C_INT) :: m, n, i, r
+          !> Norms: one-norm (1), infinity-norm (i), Froebenius-norm (f)
+          REAL(C_DOUBLE) :: norm1_abs = 0, norm1_rel = 0
+          REAL(C_DOUBLE) :: normi_abs = 0, normi_rel = 0
+          REAL(C_DOUBLE) :: normf_rel = 0
+          REAL(C_DOUBLE) :: linf_abs = 0, linf_rel = 0
+          REAL(C_DOUBLE) :: l2_abs = 0, l2_rel = 0, rsq = 0
+          REAL(C_DOUBLE) :: l1_ref = 0, min_ref = 0, max_ref = 0
+          REAL(C_DOUBLE) :: avg_ref = 0, var_ref = 0
+          REAL(C_DOUBLE) :: l1_tst = 0, min_tst = 0, max_tst = 0
+          REAL(C_DOUBLE) :: avg_tst = 0, var_tst = 0
+          REAL(C_DOUBLE) :: diag_min_ref = 0, diag_max_ref = 0
+          REAL(C_DOUBLE) :: diag_min_tst = 0, diag_max_tst = 0
+          REAL(C_DOUBLE) :: v_ref = 0, v_tst = 0
+          REAL(C_DOUBLE) :: grade = 0  !! Zero unless _grade drove it
+          REAL(C_DOUBLE) :: w = 0
+          INTEGER(C_INT) :: m = 0, n = 0, i = 0, r = 0
         END TYPE
 
         !> Information about an allocated pointer.
         TYPE, BIND(C) :: libxs_malloc_info_t
-          INTEGER(C_SIZE_T) :: size
+          INTEGER(C_SIZE_T) :: size = 0
         END TYPE
 
         !> Per-bucket allocation statistics.
         TYPE, BIND(C) :: libxs_malloc_pool_hist_t
-          INTEGER(C_SIZE_T) :: count, nreuses, ngrows
-          INTEGER(C_SIZE_T) :: nevicts_age, nevicts_limit
+          INTEGER(C_SIZE_T) :: count = 0, nreuses = 0, ngrows = 0
+          INTEGER(C_SIZE_T) :: nevicts_age = 0, nevicts_limit = 0
         END TYPE
 
         !> Buckets are <1M, 1-4M, 4-16M, 16-64M, 64-256M, >=256M.
         TYPE, BIND(C) :: libxs_malloc_pool_info_t
-          INTEGER(C_SIZE_T) :: used, size, peak
-          INTEGER(C_SIZE_T) :: nactive, nmallocs
+          INTEGER(C_SIZE_T) :: used = 0, size = 0, peak = 0
+          INTEGER(C_SIZE_T) :: nactive = 0, nmallocs = 0
           TYPE(libxs_malloc_pool_hist_t) :: hist(6)
         END TYPE
 
         !> Registry capacity and usage.
         TYPE, BIND(C) :: libxs_registry_info_t
-          INTEGER(C_SIZE_T) :: capacity, size, nbytes
+          INTEGER(C_SIZE_T) :: capacity = 0, size = 0, nbytes = 0
         END TYPE
 
         !> MHD image descriptor (libxs_mhd.h).
         TYPE, BIND(C) :: libxs_mhd_info_t
-          INTEGER(C_SIZE_T) :: ndims, ncomponents
-          INTEGER(C_INT) :: type
-          INTEGER(C_SIZE_T) :: header_size
+          INTEGER(C_SIZE_T) :: ndims = 0, ncomponents = 0
+          INTEGER(C_INT) :: type = LIBXS_DATATYPE_UNKNOWN
+          INTEGER(C_SIZE_T) :: header_size = 0
         END TYPE
 
         !> Optional parameters of libxs_mhd_write (libxs_mhd.h).
         TYPE, BIND(C) :: libxs_mhd_write_info_t
-          TYPE(C_PTR) :: handler_info
-          TYPE(C_FUNPTR) :: handler
-          TYPE(C_PTR) :: handler_context
-          TYPE(C_PTR) :: extension_header, extension
-          INTEGER(C_SIZE_T) :: extension_size
-          REAL(C_DOUBLE) :: range(2)
+          TYPE(C_PTR) :: handler_info = C_NULL_PTR
+          TYPE(C_FUNPTR) :: handler = C_NULL_FUNPTR
+          TYPE(C_PTR) :: handler_context = C_NULL_PTR
+          TYPE(C_PTR) :: extension_header = C_NULL_PTR
+          TYPE(C_PTR) :: extension = C_NULL_PTR
+          INTEGER(C_SIZE_T) :: extension_size = 0
+          REAL(C_DOUBLE) :: range(2) = 0
         END TYPE
 
         !> CPU identification.
         TYPE, BIND(C) :: libxs_cpuid_t
-          CHARACTER(C_CHAR) :: model(256)
-          INTEGER(C_INT) :: constant_tsc
+          CHARACTER(C_CHAR) :: model(256) = C_NULL_CHAR
+          INTEGER(C_INT) :: constant_tsc = 0
         END TYPE
 
         !> Maximum derivative order for fingerprints.
@@ -332,24 +337,24 @@
 
         !> Polynomial fingerprint norms per derivative order.
         TYPE, BIND(C) :: libxs_fprint_t
-          REAL(C_DOUBLE) :: l2(LIBXS_FPRINT_MAXORDER + 1)
-          REAL(C_DOUBLE) :: l1(LIBXS_FPRINT_MAXORDER + 1)
-          REAL(C_DOUBLE) :: linf(LIBXS_FPRINT_MAXORDER + 1)
-          REAL(C_DOUBLE) :: mean(LIBXS_FPRINT_MAXORDER + 1)
-          REAL(C_DOUBLE) :: acc_sq(LIBXS_FPRINT_MAXORDER + 1)
-          REAL(C_DOUBLE) :: acc_abs(LIBXS_FPRINT_MAXORDER + 1)
-          REAL(C_DOUBLE) :: acc_sum(LIBXS_FPRINT_MAXORDER + 1)
-          REAL(C_DOUBLE) :: tail(LIBXS_FPRINT_MAXORDER + 1)
-          REAL(C_DOUBLE) :: bernstein(LIBXS_FPRINT_MAXORDER + 1)
-          INTEGER(C_INT) :: order, n
-          INTEGER(C_INT) :: nk(LIBXS_FPRINT_MAXORDER + 1)
-          INTEGER(C_INT) :: nbernstein
-          INTEGER(C_INT) :: datatype
+          REAL(C_DOUBLE) :: l2(LIBXS_FPRINT_MAXORDER + 1) = 0
+          REAL(C_DOUBLE) :: l1(LIBXS_FPRINT_MAXORDER + 1) = 0
+          REAL(C_DOUBLE) :: linf(LIBXS_FPRINT_MAXORDER + 1) = 0
+          REAL(C_DOUBLE) :: mean(LIBXS_FPRINT_MAXORDER + 1) = 0
+          REAL(C_DOUBLE) :: acc_sq(LIBXS_FPRINT_MAXORDER + 1) = 0
+          REAL(C_DOUBLE) :: acc_abs(LIBXS_FPRINT_MAXORDER + 1) = 0
+          REAL(C_DOUBLE) :: acc_sum(LIBXS_FPRINT_MAXORDER + 1) = 0
+          REAL(C_DOUBLE) :: tail(LIBXS_FPRINT_MAXORDER + 1) = 0
+          REAL(C_DOUBLE) :: bernstein(LIBXS_FPRINT_MAXORDER + 1) = 0
+          INTEGER(C_INT) :: order = 0, n = 0
+          INTEGER(C_INT) :: nk(LIBXS_FPRINT_MAXORDER + 1) = 0
+          INTEGER(C_INT) :: nbernstein = 0
+          INTEGER(C_INT) :: datatype = LIBXS_DATATYPE_UNKNOWN
         END TYPE
 
         !> Timer source properties.
         TYPE, BIND(C) :: libxs_timer_info_t
-          INTEGER(C_INT) :: tsc
+          INTEGER(C_INT) :: tsc = 0
         END TYPE
 
         !> GEMM backend function pointers (JIT, BLAS).
@@ -365,7 +370,7 @@
         END TYPE
 
         TYPE, BIND(C) :: libxs_gemm_shape_t
-          INTEGER(C_INT) :: datatype   = 0
+          INTEGER(C_INT) :: datatype = LIBXS_DATATYPE_UNKNOWN
           CHARACTER(C_CHAR) :: transa  = C_NULL_CHAR
           CHARACTER(C_CHAR) :: transb  = C_NULL_CHAR
           INTEGER(C_INT) :: m = 0, n = 0, k = 0

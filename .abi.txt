@@ -38,6 +38,10 @@ libxs_format_value
 libxs_fprint
 libxs_fprint_bernstein
 libxs_fprint_bernstein_diff
+libxs_fprint_bernstein_diff_f32
+libxs_fprint_bernstein_diff_f64
+libxs_fprint_bernstein_f32
+libxs_fprint_bernstein_f64
 libxs_fprint_decay
 libxs_fprint_diff
 libxs_fprint_f32
