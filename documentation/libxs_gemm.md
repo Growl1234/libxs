@@ -213,14 +213,9 @@ down, hence such tiles reach BLAS by default while a standalone small
 matrix still reaches the generators. `LIBXS_GEMM_BACKEND=1` or `=2`
 requests the respective generator regardless.
 
-Automatic takes the MKL JIT only when `kernel_shape` covers the
-whole operation. MKL's JIT kernels assume the operands are resident
-and neither pack nor prefetch, which suits a standalone small matrix
-but not a tile whose leading dimensions span a larger matrix: such a
-tile is served better by BLAS. Tiled callers (SYRK, SYR2K) therefore
-reach BLAS under automatic selection, and `LIBXS_GEMM_BACKEND=1`
-requests the MKL JIT for them as well. LIBXSMM is not restricted this
-way, its kernels being intended for exactly that access pattern.
+Among the generators, automatic selection tries the MKL JIT first and
+LIBXSMM second, which in addition requires `alpha` of one and `beta` of
+zero or one. A shape that neither generator serves reaches BLAS.
 
 Backend callback signatures (MKL-compatible):
 
@@ -534,8 +529,9 @@ therefore degrades to later JIT, never to a wrong kernel.
     LIBXS_GEMM_BACKEND=N    Select runtime backend chain start:
                             0 auto (default), 1 MKL JIT,
                             2 LIBXSMM, 3 BLAS, 4 built-in fallback.
-                            Auto takes the MKL JIT only for an
-                            untiled kernel shape; 1 takes it always.
+                            Auto takes a generator only for resident
+                            operands, the MKL JIT before LIBXSMM;
+                            1 and 2 take the respective one always.
     LIBXS_GEMM_JIT_MAX=N    Arithmetic-intensity threshold for JIT
                             dispatch. JIT/LIBXSMM kernels are only
                             generated when the kernel shape's AI
@@ -559,7 +555,8 @@ therefore degrades to later JIT, never to a wrong kernel.
                             Set to 0 or 1 to compile immediately
                             on first miss (default: 8, clamped to 254).
     LIBXS_GEMM_PRINT=N      Print dispatch info every N-th call
-                            to stderr (requires compile-time gate).
+                            to stderr (compile-time gate, enabled
+                            by default).
                             Set to 0 for a summary at teardown instead
                             (registry, histogram, and warm-up slots).
                             Every line carries the origin of the
@@ -568,7 +565,8 @@ therefore degrades to later JIT, never to a wrong kernel.
                             hence the local rank where it is known and
                             the process id otherwise.
     LIBXS_SYRK_PRINT=N      Print DSYRK/DSYR2K BLAS fallback calls
-                            to stderr (requires compile-time gate).
+                            to stderr (compile-time gate, enabled
+                            by default).
     LIBXS_SYRK_BLAS=0|1     Resolve the BLAS DSYRK/DSYR2K entry points
                             and prefer them for any shape wider than
                             one tile. The tiled path (and with it the
