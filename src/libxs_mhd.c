@@ -357,7 +357,7 @@ LIBXS_API int libxs_mhd_read_header(const char header_filename[], size_t filenam
       }
     }
     if (EXIT_SUCCESS == result &&
-       (0 == *filename || LIBXS_DATATYPE_UNKNOWN == info->type))
+       (0 == *filename || 0 == LIBXS_TYPESIZE(info->type)))
     {
       result = EXIT_FAILURE;
     }
@@ -659,8 +659,8 @@ LIBXS_API int libxs_mhd_read(const char filename[], const size_t offset[], const
   const libxs_data_t datatype = (NULL == handler_info ? type_stored : handler_info->type);
   FILE *const file = ((NULL != filename && 0 != *filename && NULL != data &&
       NULL != size && 0 != ndims && 0 != ncomponents &&
-      LIBXS_DATATYPE_UNKNOWN != type_stored &&
-      LIBXS_DATATYPE_UNKNOWN != datatype)
+      0 != LIBXS_TYPESIZE(type_stored) && /* UNKNOWN or zero-initialized */
+      0 != LIBXS_TYPESIZE(datatype))
     ? fopen(filename, "rb")
     : NULL);
   if (NULL != file) {
