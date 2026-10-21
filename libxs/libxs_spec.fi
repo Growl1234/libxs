@@ -40,6 +40,7 @@
         PUBLIC :: libxs_timer_tick, libxs_timer_duration
         PUBLIC :: libxs_timer_info
         PUBLIC :: libxs_get_verbosity, libxs_set_verbosity
+        PUBLIC :: libxs_version
         PUBLIC :: libxs_malloc, libxs_free
         PUBLIC :: libxs_malloc_pool, libxs_malloc_xpool
         PUBLIC :: libxs_malloc_arg, libxs_free_pool
@@ -1121,6 +1122,14 @@
             IMPORT :: C_INT
             INTEGER(C_INT), INTENT(IN), VALUE :: level
           END SUBROUTINE
+
+          ! internal (use libxs_version instead)
+          FUNCTION libxs_version_c(major, minor, update, patch)         &
+     &    BIND(C, NAME="libxs_version")
+            IMPORT :: C_PTR, C_INT
+            INTEGER(C_INT), INTENT(OUT) :: major, minor, update, patch
+            TYPE(C_PTR) :: libxs_version_c
+          END FUNCTION
 
           !> Query timer source properties.
           FUNCTION libxs_timer_info(info) BIND(C)

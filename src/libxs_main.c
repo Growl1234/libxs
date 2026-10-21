@@ -700,6 +700,22 @@ LIBXS_API void libxs_set_verbosity(int level)
 }
 
 
+LIBXS_API const char* libxs_version(int* major, int* minor, int* update, int* patch)
+{
+#if defined(LIBXS_VERSION)
+  const char *const result = LIBXS_VERSION;
+#else
+  const char *const result = LIBXS_STRINGIFY(LIBXS_VERSION_MAJOR) "."
+    LIBXS_STRINGIFY(LIBXS_VERSION_MINOR) "." LIBXS_STRINGIFY(LIBXS_VERSION_UPDATE);
+#endif
+  if (NULL != major) *major = LIBXS_VERSION_MAJOR;
+  if (NULL != minor) *minor = LIBXS_VERSION_MINOR;
+  if (NULL != update) *update = LIBXS_VERSION_UPDATE;
+  if (NULL != patch) *patch = LIBXS_VERSION_PATCH;
+  return result;
+}
+
+
 LIBXS_API const char* libxs_typename(libxs_data_t datatype)
 {
   const char* result;

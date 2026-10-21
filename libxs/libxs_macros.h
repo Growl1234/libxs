@@ -16,13 +16,24 @@
 # define LIBXS_SOURCE
 #endif
 
+/* the version header is generated, hence it may be absent (source tree) */
 #if defined(LIBXS_BUILD)
 # include "libxs_version.h"
+#elif defined(__has_include)
+# if __has_include("libxs_version.h")
+#   include "libxs_version.h"
+# endif
 #endif
 #if !defined(LIBXS_VERSION_MAJOR)
-# define LIBXS_VERSION_MAJOR  0
-# define LIBXS_VERSION_MINOR  0
-# define LIBXS_VERSION_UPDATE 0
+# if defined(LIBXS_SOURCE) /* header-only compiles all of LIBXS: no version gate applies */
+#   define LIBXS_VERSION_MAJOR  9999
+#   define LIBXS_VERSION_MINOR  99
+#   define LIBXS_VERSION_UPDATE 99
+# else
+#   define LIBXS_VERSION_MAJOR  0
+#   define LIBXS_VERSION_MINOR  0
+#   define LIBXS_VERSION_UPDATE 0
+# endif
 # define LIBXS_VERSION_PATCH  0
 #endif
 #if !defined(LIBXS_BUILD_DATE)
@@ -136,7 +147,7 @@
 #endif
 /**
  * Macro to check minimum version requirements in code, for example:
- * #if LIBXS_VERSION_GE(1, 17, 0, 0)
+ * #if LIBXS_VERSION_GE(1, 17, 0)
  * // code requiring version 1.17 or later
  * #else
  * // fallback code

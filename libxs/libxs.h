@@ -60,6 +60,14 @@ LIBXS_API int libxs_get_verbosity(void);
  */
 LIBXS_API void libxs_set_verbosity(int level);
 
+/**
+ * Version of the library as built, which may differ from the LIBXS_VERSION_*
+ * macros an application was compiled with (e.g., a newer shared library).
+ * Returns the version string, and stores the components into the arguments
+ * that are not NULL.
+ */
+LIBXS_API const char* libxs_version(int* major, int* minor, int* update, int* patch);
+
 /** Return the name of the type (libxs_data_t). */
 LIBXS_API const char* libxs_typename(libxs_data_t datatype);
 

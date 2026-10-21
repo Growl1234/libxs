@@ -390,6 +390,7 @@ libxs_unshuffle
 libxs_unshuffle2
 libxs_utf8_decode
 libxs_utf8_size
+libxs_version
 libxs_vpack
 libxs_vpack_bound
 libxs_vpack_i64
