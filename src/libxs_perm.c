@@ -27,16 +27,16 @@
   internal_libxs_scratch_free(PTR, POOL)
 
 #define LIBXS_MEM_SHUFFLE_COPRIME(N) libxs_coprime2(N)
-#define LIBXS_MEM_SHUFFLE(INOUT, ELEMSIZE, COUNT, SHUFFLE, OFFSET, NREPEAT) do { \
+#define LIBXS_MEM_SHUFFLE(RESULT, INOUT, ELEMSIZE, COUNT, SHUFFLE, OFFSET, NREPEAT) do { \
   unsigned char *const LIBXS_RESTRICT shfl_data_ = (unsigned char*)(INOUT); \
   const size_t shfl_count_ = (COUNT), shfl_stride_ = (SHUFFLE); \
   const size_t shfl_off_ = (OFFSET) % shfl_count_; \
   const size_t shfl_nrep_ = (NREPEAT); \
   const size_t shfl_nbitmask_ = (shfl_count_ + 7) / 8; \
   int shfl_pool_v_ = 0, shfl_pool_t_ = 0; \
-  unsigned char *const shfl_visited_ = (unsigned char*) \
-    LIBXS_MEM_SHUFFLE_MALLOC(shfl_nbitmask_, shfl_pool_v_); \
-  if (NULL != shfl_visited_ && 0 != shfl_nrep_) { \
+  unsigned char *const shfl_visited_ = (0 != shfl_nrep_ ? (unsigned char*) \
+    LIBXS_MEM_SHUFFLE_MALLOC(shfl_nbitmask_, shfl_pool_v_) : NULL); \
+  if (NULL != shfl_visited_) { \
     void *const shfl_tmp_ = LIBXS_MEM_SHUFFLE_MALLOC(ELEMSIZE, shfl_pool_t_); \
     memset(shfl_visited_, 0, shfl_nbitmask_); \
     if (NULL != shfl_tmp_) { \
@@ -71,9 +71,11 @@
         } while (shfl_src_ != shfl_i_); \
       } \
       LIBXS_MEM_SHUFFLE_FREE(shfl_tmp_, shfl_pool_t_); \
+      (RESULT) = EXIT_SUCCESS; \
     } \
     LIBXS_MEM_SHUFFLE_FREE(shfl_visited_, shfl_pool_v_); \
   } \
+  else if (0 == shfl_nrep_) (RESULT) = EXIT_SUCCESS; \
 } while(0)
 
 LIBXS_EXTERN_C typedef uint64_t (*internal_libxs_sfc_encode_t)(
@@ -732,14 +734,14 @@ LIBXS_API int libxs_shuffle(void* inout, size_t elemsize, size_t count,
   else if (NULL != inout) {
     const size_t s = internal_libxs_shuffle_coprime(count, shuffle);
     const size_t n = (NULL == nrepeat ? 1 : *nrepeat);
+    result = EXIT_FAILURE; /* scratch allocation may fail */
     switch (elemsize) {
-      case 8:   LIBXS_MEM_SHUFFLE(inout, 8, count, s, offset, n); break;
-      case 4:   LIBXS_MEM_SHUFFLE(inout, 4, count, s, offset, n); break;
-      case 2:   LIBXS_MEM_SHUFFLE(inout, 2, count, s, offset, n); break;
-      case 1:   LIBXS_MEM_SHUFFLE(inout, 1, count, s, offset, n); break;
-      default:  LIBXS_MEM_SHUFFLE(inout, elemsize, count, s, offset, n);
+      case 8:   LIBXS_MEM_SHUFFLE(result, inout, 8, count, s, offset, n); break;
+      case 4:   LIBXS_MEM_SHUFFLE(result, inout, 4, count, s, offset, n); break;
+      case 2:   LIBXS_MEM_SHUFFLE(result, inout, 2, count, s, offset, n); break;
+      case 1:   LIBXS_MEM_SHUFFLE(result, inout, 1, count, s, offset, n); break;
+      default:  LIBXS_MEM_SHUFFLE(result, inout, elemsize, count, s, offset, n);
     }
-    result = EXIT_SUCCESS;
   }
   else result = EXIT_FAILURE;
   return result;
