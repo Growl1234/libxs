@@ -19,6 +19,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from mkdocs.exceptions import PluginError
+
 log = logging.getLogger("mkdocs.hooks")
 
 FORD_PROJECT = "libxs_fortran.md"
@@ -29,18 +31,24 @@ _built = False
 
 
 def _build_ford(docs_dir, site_dir):
-    """Build FORD Fortran documentation into the site output."""
+    """Build FORD Fortran documentation into the site output.
+
+    A failure aborts the build, or the site would be published without the
+    Fortran reference while the build still reports success. Only a local
+    build without FORD installed skips it.
+    """
     project_path = os.path.join(docs_dir, FORD_PROJECT)
 
     try:
         import ford
-    except ImportError:
+    except ImportError as exc:
+        if "True" == os.environ.get("READTHEDOCS"):
+            raise PluginError("FORD is not installed") from exc
         log.warning("FORD not installed, skipping Fortran docs")
         return
 
     if not os.path.isfile(project_path):
-        log.warning("FORD project file not found: %s", project_path)
-        return
+        raise PluginError(f"FORD project file not found: {project_path}")
 
     log.info("Building FORD documentation from %s", FORD_PROJECT)
     try:
@@ -52,14 +60,15 @@ def _build_ford(docs_dir, site_dir):
         proj_data, proj_docs = ford.parse_arguments(
             {}, proj_docs, proj_data, docs_dir
         )
-        if proj_data and proj_docs:
-            proj_data.output_dir = Path(site_dir) / FORD_OUTPUT
-            ford.main(proj_data, proj_docs)
-            log.info("FORD documentation built successfully")
-        else:
-            log.warning("FORD returned empty settings or docs")
-    except Exception:
-        log.exception("FORD build failed")
+        if not (proj_data and proj_docs):
+            raise PluginError("FORD returned empty settings or docs")
+        proj_data.output_dir = Path(site_dir) / FORD_OUTPUT
+        ford.main(proj_data, proj_docs)
+        log.info("FORD documentation built successfully")
+    except PluginError:
+        raise
+    except Exception as exc:
+        raise PluginError(f"FORD build failed: {exc!r}") from exc
 
 
 def _build_slides(docs_dir, site_dir):

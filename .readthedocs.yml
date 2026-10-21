@@ -10,14 +10,15 @@ build:
     python: "3"
   jobs:
     post_install:
-      - pip install --no-deps "FORD>=7.0.6"
+      - pip install --no-deps "FORD>=7.0.6" pcpp
 
 # Build documentation based on MkDocs
 mkdocs:
   configuration: mkdocs.yml
 
 # Dependencies (FORD installed via post_install with --no-deps
-# to avoid markdown version conflict with mkslides)
+# to avoid markdown version conflict with mkslides; pcpp is the
+# preprocessor FORD runs on libxs_jit.F, hence it is installed too)
 python:
   install:
   - requirements: .theme/requirements.txt
