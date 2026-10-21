@@ -99,20 +99,25 @@ Keep threads bound as above; unbound threads are slower.
 | OZAKI_MAXK        | 32768     | Max K per preprocessing pass (0=full K in one pass)              |
 | OZAKI_THRESHOLD   | 12        | Intensity threshold (debug build: 0). Bypass when flops/(bytes\*thr)<1. 0=always |
 
-`OZAKI_MAXK` also applies to the GPU path (see the
-[LIBXSTREAM Ozaki README](https://github.com/hfp/libxstream/blob/main/samples/ozaki/README.md)).
+`OZAKI_N`, `OZAKI_FLAGS`, `OZAKI_TRIM` and `OZAKI_MAXK` are passed to the
+GPU path, where they differ as follows (see the
+[LIBXSTREAM Ozaki README](https://github.com/hfp/libxstream/blob/main/samples/ozaki/README.md)):
+under `OZAKI=3`, `OZAKI_N` sets the moduli only and a positive
+`OZAKI_TRIM` applies to Scheme 1 only; auto `OZAKI_FLAGS` is 3 at every
+size (0 with `OZAKI=2`); and `OZAKI_MAXK` has no unbounded setting (0
+selects the default) and also sizes the Scheme-2 moduli.
 
 ### GPU Path (requires LIBXSTREAM)
 
-| Variable    | Default   | Description                                |
-|-------------|-----------|--------------------------------------------|
-| OZAKI_OCL   | 0         | Enable OpenCL/GPU path (0=off, 1=on)       |
-| OZAKI_TM    | (auto)    | GPU output tile height (multiple of 8)     |
-| OZAKI_TN    | (auto)    | GPU output tile width (multiple of 16)     |
+| Variable    | Default   | Description                                                       |
+|-------------|-----------|-------------------------------------------------------------------|
+| OZAKI_OCL   | 0         | Enable OpenCL/GPU path (0=off, 1=on)                              |
+| OZAKI_TM    | (auto)    | GPU output tile height, only together with OZAKI_TN (not wgmma)   |
+| OZAKI_TN    | (auto)    | GPU output tile width, only together with OZAKI_TM (not wgmma)    |
 
-GPU-specific kernel tuning variables (OZAKI_RTM, OZAKI_RTN, OZAKI_WG,
-OZAKI_SG, OZAKI_KU, OZAKI_RC, OZAKI_PB, OZAKI_HIER, OZAKI_GROUPS,
-OZAKI_PREFETCH, OZAKI_SCALAR_ACC, OZAKI_CACHE, OZAKI_ARENA) are
+GPU-specific kernel tuning variables (OZAKI_RTM, OZAKI_RTN, OZAKI_KU,
+OZAKI_RC, OZAKI_PB, OZAKI_HIER, OZAKI_GROUPS, OZAKI_PREFETCH,
+OZAKI_SCALAR_ACC, OZAKI_CACHE, OZAKI_ARENA, and more) are
 documented in the
 [LIBXSTREAM Ozaki README](https://github.com/hfp/libxstream/blob/main/samples/ozaki/README.md).
 LIBXSTREAM reads them itself, except OZAKI_GROUPS, which this driver
@@ -130,6 +135,10 @@ reads and passes to the GPU context; all of them take effect only with
 | OZAKI_IDX       | 0         | Additional OZAKI_EPS metric: 1=linf_abs, 2=linf_rel, 3=l2_rel (0=epsilon only) |
 | OZAKI_RSQ       | 0         | Dump A/B when RSQ drops below threshold (updated after dump)      |
 | OZAKI_EXIT      | 1         | Exit on accuracy violation after dump. 0=continue                 |
+
+With `OZAKI_OCL=1`, `OZAKI_VERBOSE` is also the verbosity of the GPU
+path: any non-zero value prints notes and warnings about its settings,
+and 3 or more (or a negative value) prints everything.
 
 ### Benchmark
 
