@@ -12,10 +12,10 @@
 
 #include "libxs_reg.h"
 
-/** Forward index map: original position I -> shuffled position. */
+/** Shuffle: position I of the shuffled sequence reads this original position. */
 #define LIBXS_SHUFFLE_INDEX(I, N, C, B) \
   ((size_t)(N) - 1 - ((size_t)(C) * (size_t)(I) + (size_t)(B)) % (size_t)(N))
-/** Inverse index map: shuffled position J -> original position. */
+/** Unshuffle: position J of the restored sequence reads this shuffled position. */
 #define LIBXS_UNSHUFFLE_INDEX(J, N, CINV, B) \
   ((size_t)(CINV) * (((size_t)(N) - 1 - (size_t)(B) % (size_t)(N) \
     + (size_t)(N) - (size_t)(J)) % (size_t)(N)) % (size_t)(N))
