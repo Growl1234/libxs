@@ -8,6 +8,8 @@
 #include "converse.h"
 
 #define MAX_SENTENCES 4096
+/* compose-mode corpus, not converse.x's state (CORPUS_FILE) */
+#define SUMMARIZE_FILE "summarize.dat"
 
 
 typedef struct sentence_t {
@@ -812,7 +814,7 @@ static void corpus_fixup(void* value, const void* key,
 static libxs_registry_t* corpus_load(void)
 {
   libxs_registry_t* corpus = NULL;
-  FILE* f = fopen(CORPUS_FILE, "rb");
+  FILE* f = fopen(SUMMARIZE_FILE, "rb");
   if (NULL != f) {
     long len;
     fseek(f, 0, SEEK_END);
@@ -839,7 +841,7 @@ static int corpus_save(const libxs_registry_t* corpus)
     void* buf = malloc(size);
     if (NULL != buf) {
       if (EXIT_SUCCESS == libxs_registry_save(corpus, buf, &size)) {
-        FILE* f = fopen(CORPUS_FILE, "wb");
+        FILE* f = fopen(SUMMARIZE_FILE, "wb");
         if (NULL != f) {
           if (fwrite(buf, 1, size, f) == size) result = EXIT_SUCCESS;
           fclose(f);
