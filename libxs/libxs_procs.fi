@@ -1124,15 +1124,17 @@
      &      internal_gemm_backend_kind(C_LOC(be), C_NULL_PTR)
         END FUNCTION
 
-        !> Release a GEMM config: clear all kernel pointers.
+        !> Release a GEMM config as in C: only the config owning the JIT
+        !> handle (OWNJIT) clears its JIT kernel, a copy is left as is.
         SUBROUTINE libxs_gemm_release(config)
           TYPE(libxs_gemm_config_t), INTENT(INOUT) :: config
-          config%dgemm_jit  = C_NULL_FUNPTR
-          config%sgemm_jit  = C_NULL_FUNPTR
-          config%jitter     = C_NULL_PTR
-          config%xgemm      = C_NULL_FUNPTR
-          config%dgemm_blas = C_NULL_FUNPTR
-          config%sgemm_blas = C_NULL_FUNPTR
+          IF (0 .NE. IAND(config%flags, LIBXS_GEMM_FLAG_OWNJIT)) THEN
+            config%dgemm_jit = C_NULL_FUNPTR
+            config%sgemm_jit = C_NULL_FUNPTR
+            config%jitter    = C_NULL_PTR
+            config%flags = IAND(config%flags,                           &
+     &        NOT(LIBXS_GEMM_FLAG_OWNJIT))
+          END IF
         END SUBROUTINE
 
         !> Dispatch a GEMM config for SYR2K.
