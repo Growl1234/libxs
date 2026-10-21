@@ -78,6 +78,9 @@ LIBXS_EXTERN_C typedef struct internal_libxs_sigentry_type {
   int signum; void (*signal)(int);
 } internal_libxs_sigentry_type;
 LIBXS_APIVAR_DEFINE(internal_libxs_sigentry_type internal_libxs_sigentries[2]);
+/* thread reporting a signal (libxs_tid plus one), and whether the report is complete */
+LIBXS_APIVAR_DEFINE(int internal_libxs_signal_owner);
+LIBXS_APIVAR_DEFINE(int internal_libxs_signal_done);
 
 #if defined(LIBXS_BUILD_STATE) && defined(LIBXS_INCBIN)
 LIBXS_INCBIN(internal_libxs_build_state_data, LIBXS_BUILD_STATE, 1);
@@ -320,17 +323,30 @@ LIBXS_API_INTERN void internal_libxs_finalize(void)
 LIBXS_API_INTERN void internal_libxs_signal(int /*signum*/);
 LIBXS_API_INTERN void internal_libxs_signal(int signum)
 {
+  const int tid = (int)libxs_tid() + 1;
   int n = (int)(sizeof(internal_libxs_sigentries) / sizeof(*internal_libxs_sigentries)), i = 0;
   for (; i < n; ++i) {
     if (signum == internal_libxs_sigentries[i].signum) {
-      if (0 == libxs_tid()) {
+      int expected = 0;
+      /* the first thread reports, whichever it is: returning re-raises a fault forever */
+      if (LIBXS_ATOMIC_CMPSWP(&internal_libxs_signal_owner, expected, tid,
+        LIBXS_ATOMIC_SEQ_CST))
+      {
         libxs_verbosity = LIBXS_MAX(LIBXS_VERBOSITY_HIGH + 1, libxs_verbosity);
         internal_libxs_finalize();
-        signal(signum,
-          (NULL == internal_libxs_sigentries[i].signal || SIG_ERR == internal_libxs_sigentries[i].signal)
-            ? SIG_DFL : internal_libxs_sigentries[i].signal); /* restore */
-        raise(signum);
+        LIBXS_ATOMIC_STORE(&internal_libxs_signal_done, 1, LIBXS_ATOMIC_SEQ_CST);
       }
+      else if (tid != (int)LIBXS_ATOMIC_LOAD(&internal_libxs_signal_owner,
+        LIBXS_ATOMIC_SEQ_CST))
+      {
+        while (0 == LIBXS_ATOMIC_LOAD(&internal_libxs_signal_done, LIBXS_ATOMIC_SEQ_CST)) {
+          LIBXS_SYNC_YIELD;
+        }
+      }
+      signal(signum,
+        (NULL == internal_libxs_sigentries[i].signal || SIG_ERR == internal_libxs_sigentries[i].signal)
+          ? SIG_DFL : internal_libxs_sigentries[i].signal); /* restore */
+      raise(signum);
     }
   }
 }
