@@ -26,7 +26,7 @@ def read_text_catalog(path):
     return pts[:, 0], pts[:, 1], pts[:, 2]
 
 
-def run_corrfunc(x, y, z, rmin, rmax, nbins, boxsize, periodic):
+def run_corrfunc(x, y, z, rmin, rmax, nbins):
     from Corrfunc.theory.DD import DD
 
     edges = np.logspace(np.log10(rmin), np.log10(rmax), nbins + 1)
@@ -38,14 +38,13 @@ def run_corrfunc(x, y, z, rmin, rmax, nbins, boxsize, periodic):
         x,
         y,
         z,
-        periodic=periodic,
-        boxsize=boxsize,
+        periodic=False,
         verbose=False,
     )
     return results["npairs"], edges
 
 
-def run_paircnt_dd(catalog, rmin, rmax, nbins, boxsize, exe="./paircnt_dd"):
+def run_paircnt_dd(catalog, rmin, rmax, nbins, exe="./paircnt_dd.x"):
     cmd = [
         exe,
         catalog,
@@ -56,8 +55,6 @@ def run_paircnt_dd(catalog, rmin, rmax, nbins, boxsize, exe="./paircnt_dd"):
         "--nbins",
         str(nbins),
     ]
-    if boxsize > 0:
-        cmd += ["--boxsize", str(boxsize)]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         print(f"paircnt_dd failed:\n{proc.stderr}", file=sys.stderr)
@@ -80,21 +77,18 @@ def main():
     parser.add_argument("--rmin", type=float, default=0.1)
     parser.add_argument("--rmax", type=float, default=25.0)
     parser.add_argument("--nbins", type=int, default=20)
-    parser.add_argument("--boxsize", type=float, default=0.0)
-    parser.add_argument("--exe", default="./paircnt_dd")
+    parser.add_argument("--exe", default="./paircnt_dd.x")
     args = parser.parse_args()
-
-    periodic = args.boxsize > 0
 
     x, y, z = read_text_catalog(args.catalog)
     print(f"catalog: {len(x)} points", file=sys.stderr)
 
     corrfunc_counts, edges = run_corrfunc(
-        x, y, z, args.rmin, args.rmax, args.nbins, args.boxsize, periodic
+        x, y, z, args.rmin, args.rmax, args.nbins
     )
 
     our_counts = run_paircnt_dd(
-        args.catalog, args.rmin, args.rmax, args.nbins, args.boxsize, args.exe
+        args.catalog, args.rmin, args.rmax, args.nbins, args.exe
     )
 
     print(
@@ -126,6 +120,7 @@ def main():
         print("\nPASS: all bins match exactly", file=sys.stderr)
     else:
         print(f"\n{mismatches}/{args.nbins} bins differ", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

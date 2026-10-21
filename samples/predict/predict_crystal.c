@@ -76,9 +76,10 @@ int main(int argc, char* argv[])
   if (NULL == filename || 0 != bad || 0 == predict_split_ok(split)) {
     fprintf(stdout,
       "Usage: %s <crystal_csv> [train_fraction] [order] [nclusters]"
-      " [compress[Q]] [fisher|hknn|setdiff|rf|pca|none] [rank|score]"
+      " [compress[Q]] [consist[C]] [fisher|hknn|setdiff|rf|pca|none] [rank|score]"
       " [gaps[F]] [xgb]\n"
       "  Crystal system prediction from composition features.\n"
+      "  consist: round-trip consistency penalty (C: 0..1, default 0.9)\n"
       "  xgb: also train XGBoost on the same split and compare.\n"
       "  Input: CSV with numeric features + crystal_system label (last col).\n"
       "  Crystal systems: 1=triclinic, 2=monoclinic, 3=orthorhombic,\n"

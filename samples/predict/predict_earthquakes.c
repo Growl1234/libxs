@@ -63,9 +63,10 @@ int main(int argc, char* argv[])
   }
   if (NULL == filename || 0 != bad || 0 == predict_split_ok(split)) {
     fprintf(stdout,
-      "Usage: %s <usgs_csv> [train_fraction] [compress[Q]]"
+      "Usage: %s <usgs_csv> [train_fraction] [compress[Q]] [consist[C]]"
       " [hknn|rf|none] [xgb]\n"
       "  Earthquake magnitude prediction from location and depth.\n"
+      "  consist: round-trip consistency penalty (C: 0..1, default 0.9)\n"
       "  xgb: also train XGBoost on the same split and compare.\n"
       "  Default train_fraction: 0.8\n", argv[0]);
   }

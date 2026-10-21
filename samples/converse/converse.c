@@ -49,7 +49,6 @@
 /** Expectations that hold with rule learning ON; the answers differ. */
 #define EVAL_LEARN_FILE "converse.learn.eval"
 
-#define NGRAM_FILE "converse.ngram"
 /** Derived from the corpus and the rules: rebuilt whenever the stamp differs. */
 #define FACTS_FILE "converse.facts"
 #define PARENT_FILE "converse.par"
@@ -1421,7 +1420,7 @@ static size_t answer_relation_rules_learn(const libxs_registry_t* corpus,
                  * function word. That flag is language-specific, and a test built
                  * on it went silently inert on a corpus whose language it does
                  * not cover; the learned set has its own evidence test, so the
-                 * flag was never load-bearing. Measured on English, the flag test
+                 * flag never decided anything. Measured on English, the flag test
                  * then excluded NOTHING the learned one did not already exclude,
                  * so it is gone rather than merely widened.
                  */
@@ -6634,7 +6633,7 @@ static void converse_usage_all(const char* program)
   fprintf(stderr,
     "Usage: %s [-e] [-n N] [-P PROFILE] [-b PREFIX] corpus1.txt [corpus2.txt ...]\n"
     "  Interactive conversational agent.\n"
-    "  -e: run converse.eval evaluation and exit.\n"
+    "  -e: run <prefix>.eval evaluation and exit.\n"
     "  -E: run next-token prediction evaluation and exit.\n"
     "  -L: learn from the corpus, save state, and exit.\n"
     "  -c: read prompts and print next-token continuations.\n"
@@ -6722,6 +6721,9 @@ static void converse_usage_all(const char* program)
     "  CONVERSE_RECOMB=N        recombination probe over N sentences.\n"
     "  CONVERSE_RECOMB_REFERENT=1 test whether a pivot denotes one thing.\n"
     "  CONVERSE_RECOMB_COMPOSE=1 -c may synthesize when replay fails.\n"
+    "  CONVERSE_HIER_RESCORE=1  rescore recombinations with the hierarchy.\n"
+    "  CONVERSE_RULES_LEARN=N   propose up to N class members as rules.\n"
+    "  CONVERSE_FACTS_LIST=1    print the learned facts, not only counts.\n"
     "  CONVERSE_PREDICT=1       train the answer ranker (off by default:\n"
     "                           40%% of wall, no measured BPC or QA change).\n",
     program, RESPONSE_BUDGET, NGRAM_ORDER_MAX, NGRAM_ORDER_MAX,

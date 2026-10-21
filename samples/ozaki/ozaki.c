@@ -99,8 +99,8 @@ LIBXS_INLINE void gemm_oz_ocl_diff(const char* transa, const char* transb, const
   /**
    * Compute result on OpenCL device. Device-side timings are collected by
    * LIBXSTREAM per kernel (LIBXSTREAM_PROFILE), not derived here, and the host
-   * path has no separate timing of its own: measured on a Xeon 8480L over
-   * enough repetitions, the intercepted call and the kernel it spends its time
+   * path has no separate timing of its own: measured over enough
+   * repetitions, the intercepted call and the kernel it spends its time
    * in agree within 5%, so wall-clock is the whole story there.
    */
   ozaki_ocl_gemm(ozaki_ocl_handle, *transa, *transb, *m, *n, *k, (double)*alpha, a, *lda, b, *ldb, (double)*beta, c, *ldc);

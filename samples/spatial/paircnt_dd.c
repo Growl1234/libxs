@@ -22,7 +22,6 @@
 typedef struct paircnt_catalog_t {
   double* pts;
   int n;
-  double boxsize;
 } paircnt_catalog_t;
 
 typedef struct paircnt_bins_t {
@@ -117,7 +116,15 @@ int main(int argc, char* argv[])
   if (NULL == catalog_path) {
     fprintf(stderr,
       "usage: paircnt_dd <catalog> [--rmin R] [--rmax R] "
-      "[--nbins N] [--boxsize L]\n");
+      "[--nbins N] [--leaf N]\n");
+    result = EXIT_FAILURE;
+  }
+  else if (0 < boxsize) {
+    fprintf(stderr, "error: --boxsize (periodic box) is not supported\n");
+    result = EXIT_FAILURE;
+  }
+  else if (0 >= leaf || PAIRCNT_LEAF_MAX < leaf) { /* leaf kernels buffer one leaf */
+    fprintf(stderr, "error: --leaf must be within 1..%i\n", PAIRCNT_LEAF_MAX);
     result = EXIT_FAILURE;
   }
   else {
@@ -126,7 +133,6 @@ int main(int argc, char* argv[])
   if (EXIT_SUCCESS == result) {
     result = read_catalog(catalog_path, &cat);
     if (EXIT_SUCCESS == result) {
-      cat.boxsize = boxsize;
       fprintf(stderr, "catalog: %d points from %s\n", cat.n, catalog_path);
     }
   }
@@ -327,7 +333,6 @@ static int read_catalog(const char* path, paircnt_catalog_t* cat)
   assert(NULL != path && NULL != cat);
   cat->pts = NULL;
   cat->n = 0;
-  cat->boxsize = 0.0;
   ext = strrchr(path, '.');
   if (NULL != ext && 0 == strcmp(ext, ".ff")) {
     result = read_catalog_ff(path, cat);
