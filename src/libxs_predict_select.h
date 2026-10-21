@@ -274,7 +274,6 @@ LIBXS_API_INLINE double internal_libxs_predict_decompose_probe(
     probe->smooth = model->smooth;
     probe->floor = model->floor;
     probe->refine = model->refine;
-    probe->tangent = model->tangent;
     probe->missing_mode = model->missing_mode;
     probe->rf_ntrees = model->rf_ntrees;
     probe->rf_depth = model->rf_depth;
@@ -559,7 +558,6 @@ internal_libxs_predict_neighbors_prep(libxs_predict_t* model, int ntasks)
       probe->smooth = model->smooth;
       probe->floor = model->floor;
       probe->refine = model->refine;
-      probe->tangent = model->tangent;
       probe->missing_mode = model->missing_mode;
       probe->rf_ntrees = model->rf_ntrees;
       probe->rf_depth = model->rf_depth;

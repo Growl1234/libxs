@@ -212,8 +212,8 @@ LIBXS_API_INTERN int internal_libxs_cpuid_x86(libxs_cpuid_t* info)
               else {
                 feature_cpu = LIBXS_X86_AVX2;
                 /**
-                 * AVX10/256 without AVX-512: leaf 7, subleaf 1, EDX bit 19.
-                 * Sierra Forest E-cores: full feature set at 256-bit only.
+                 * AVX10/256 without AVX-512: leaf 7, subleaf 1, EDX bit 19, then
+                 * leaf 0x24 tells the vector widths (full feature set at 256-bit only).
                  */
                 { unsigned int eax2, ebx2, ecx3, edx2;
                   LIBXS_CPUID_X86(7, 1/*ecx*/, eax2, ebx2, ecx3, edx2);

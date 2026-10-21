@@ -28,7 +28,7 @@
 #define LIBXS_X86_SSE42             1004
 #define LIBXS_X86_AVX               1005
 #define LIBXS_X86_AVX2              1006
-#define LIBXS_X86_AVX10_256         1030 /* AVX10.1/256: all features, 256-bit max (Sierra Forest) */
+#define LIBXS_X86_AVX10_256         1030 /* AVX10.1/256: all features, 256-bit max */
 #define LIBXS_X86_AVX512            1100 /* AVX-512: f+cd+dq+bw+vl+vnni (Cascade Lake) */
 #define LIBXS_X86_AVX512_AMX        1105 /* + AMX-TILE+INT8+BF16: TDPBUSD (Sapphire/Granite Rapids) */
 #define LIBXS_X86_AVX512_INT8       1110 /* + AVX10.2: 512-bit VPDPBUUD/BSSD */

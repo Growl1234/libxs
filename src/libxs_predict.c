@@ -212,14 +212,11 @@ typedef struct internal_libxs_predict_cluster_t {
   uint64_t* ihash;
   int* sorted_idx;
   double* sorted_dist;
-  double* tangent;
-  double* kd_tan;
   double dmax;
   double fprint_sig;
   int nentries;
   int maxorder;
   int k_eff;
-  int tdim;
 } internal_libxs_predict_cluster_t;
 
 /**
@@ -509,7 +506,6 @@ LIBXS_EXTERN_C struct libxs_predict_t {
   int* bank_w;
   int diff_mode, diff_order;
   int refine;
-  int tangent;
   /** Absent inputs accepted (set_missing), and whether any is actually present.
    *  The second is derived - from the entries at build, from the stored points
    *  at load - so it holds for a loaded model that never saw the setter. */
@@ -712,8 +708,6 @@ LIBXS_API_INLINE void internal_libxs_predict_free_clusters(libxs_predict_t* mode
       free(cl->ihash);
       free(cl->sorted_idx);
       free(cl->sorted_dist);
-      free(cl->tangent);
-      free(cl->kd_tan);
     }
     free(model->clusters);
     model->clusters = NULL;
@@ -1843,8 +1837,8 @@ LIBXS_API_INLINE const uint64_t* internal_libxs_predict_ehash(const libxs_predic
  * coincides with a stored point. Every scoring rule in this file reads this
  * same object - the kNN vote reduces it to a winner, a probability reads it at
  * an arbitrary value - so the scan lives here once rather than being repeated
- * per rule, where the tangent projection, per-output group filter and recency
- * weighting would have to be kept in step by hand.
+ * per rule, where the per-output group filter and recency weighting would have
+ * to be kept in step by hand.
  */
 LIBXS_API_INLINE void internal_libxs_predict_evidence(
   const internal_libxs_predict_cluster_t* cl,
@@ -1861,25 +1855,8 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
   /* the output's own count unless the caller asks for a deeper scan */
   const int k = (0 < depth) ? LIBXS_MIN(depth, LIBXS_PREDICT_KNN)
     : internal_libxs_predict_depth(cl, output_j);
-  double qtan[512];
-  const double* qpts = inputs;
-  const double* dpts = kd_pts;
-  int dm = m;
   int nfound = 0, exact = 0, settled = 0, i, max_idx = 0, ntie = 0;
   double tie_d = -1;
-  if (NULL != cl->tangent && NULL != cl->kd_tan
-    && cl->tdim > 0 && cl->tdim <= 512)
-  {
-    int tj, tk;
-    for (tj = 0; tj < cl->tdim; ++tj) {
-      double acc = 0;
-      for (tk = 0; tk < m; ++tk) acc += cl->tangent[tj * m + tk] * inputs[tk];
-      qtan[tj] = acc;
-    }
-    qpts = qtan;
-    dpts = cl->kd_tan;
-    dm = cl->tdim;
-  }
   /* recency weighting needs sorted_idx, which a loaded flat model lacks */
   if (NULL == cl->sorted_idx) extrapolate = 0;
   if (0 != extrapolate) {
@@ -1891,23 +1868,22 @@ LIBXS_API_INLINE void internal_libxs_predict_evidence(
     double d2;
     if (i == skip_local) continue;
     if (NULL != skip_set && 0 != skip_set[i]) continue;
-    d2 = internal_libxs_predict_dist2(qpts, dpts + (size_t)i * dm, dm,
+    d2 = internal_libxs_predict_dist2(inputs, kd_pts + (size_t)i * m, m,
       missing);
-    if (NULL != view && view->w < view->full && qpts == inputs) {
+    if (NULL != view && view->w < view->full) {
       /**
        * A view reads only the most recent view_w lags of each series. Rather
        * than pack a second copy of the points, the older lags are removed from
        * the distance they already contributed: subtracting a coordinate's term
        * is what a zero weight would have done, and it leaves the corpus, the
-       * partition and the neighbor index shared. Skipped when the tangent
-       * projection is active, because there the coordinates are no longer lags.
+       * partition and the neighbor index shared.
        */
-      const double* row = dpts + (size_t)i * dm;
+      const double* row = kd_pts + (size_t)i * m;
       int si, li;
       for (si = 0; si < view->s; ++si) {
         for (li = 0; li < view->full - view->w; ++li) {
           const int c = si * view->full + li;
-          const double d = qpts[c] - row[c];
+          const double d = inputs[c] - row[c];
           d2 -= d * d;
         }
       }
@@ -2382,8 +2358,6 @@ LIBXS_API void libxs_predict_destroy(libxs_predict_t* model)
             free(cl->out_rms);
             free(cl->out_mean);
             free(cl->out_var);
-            free(cl->tangent);
-            free(cl->kd_tan);
           }
           free(model->hknn_po_clusters[gi]);
         }
@@ -2807,74 +2781,6 @@ LIBXS_API_INLINE void internal_libxs_predict_symeig(
     }
   }
   internal_libxs_predict_jacobi(cov, m, evec, eval);
-}
-
-
-LIBXS_API_INLINE void internal_libxs_predict_cluster_tangent(
-  internal_libxs_predict_cluster_t* cl, int m, int weight_mode)
-{
-  const int nc = cl->nentries;
-  const int margin = 2;
-  int pool_mean = 0, pool_cov = 0, pool_evec = 0, pool_eval = 0;
-  double* mean = (double*)LIBXS_PREDICT_MALLOC((size_t)m * sizeof(double), pool_mean);
-  double* cov = (double*)LIBXS_PREDICT_MALLOC((size_t)m * (size_t)m * sizeof(double), pool_cov);
-  double* evec = (double*)LIBXS_PREDICT_MALLOC((size_t)m * (size_t)m * sizeof(double), pool_evec);
-  double* eval = (double*)LIBXS_PREDICT_MALLOC((size_t)m * sizeof(double), pool_eval);
-  cl->tangent = NULL;
-  cl->kd_tan = NULL;
-  cl->tdim = 0;
-  if (NULL != mean && NULL != cov && NULL != evec && NULL != eval
-    && nc >= 4 && NULL != cl->kd_pts)
-  {
-    double total = 0, cum = 0;
-    int t = m, j, k;
-    internal_libxs_predict_symeig(NULL, cl->kd_pts, nc, m, mean, cov, evec, eval);
-    for (j = 0; j < m; ++j) total += (eval[j] > 0 ? eval[j] : 0);
-    if (total > 0) {
-      t = m;
-      for (j = 0; j < m; ++j) {
-        cum += (eval[j] > 0 ? eval[j] : 0);
-        if (cum >= 0.99 * total && t == m) t = j + 1;
-      }
-    }
-    if (t < 1) t = 1;
-    if (nc >= t + margin && t <= m) {
-      double* tan = (double*)malloc((size_t)t * (size_t)m * sizeof(double));
-      double* kdt = (double*)malloc((size_t)nc * (size_t)t * sizeof(double));
-      if (NULL != tan && NULL != kdt) {
-        const double eps = 1e-12;
-        int i;
-        for (j = 0; j < t; ++j) {
-          const double lam = (eval[j] > 0 ? eval[j] : 0);
-          double scale;
-          if (2 == weight_mode) scale = 1.0 / sqrt(lam + eps);      /* whiten */
-          else if (3 == weight_mode) scale = sqrt(lam);             /* emphasize */
-          else scale = 1.0;                                         /* project */
-          for (k = 0; k < m; ++k) tan[j * m + k] = evec[k * m + j] * scale;
-        }
-        for (i = 0; i < nc; ++i) {
-          const double* src = cl->kd_pts + (size_t)i * m;
-          double* dst = kdt + (size_t)i * t;
-          for (j = 0; j < t; ++j) {
-            double acc = 0;
-            for (k = 0; k < m; ++k) acc += tan[j * m + k] * src[k];
-            dst[j] = acc;
-          }
-        }
-        cl->tangent = tan;
-        cl->kd_tan = kdt;
-        cl->tdim = t;
-      }
-      else {
-        free(tan);
-        free(kdt);
-      }
-    }
-  }
-  LIBXS_PREDICT_FREE(eval, pool_eval);
-  LIBXS_PREDICT_FREE(evec, pool_evec);
-  LIBXS_PREDICT_FREE(cov, pool_cov);
-  LIBXS_PREDICT_FREE(mean, pool_mean);
 }
 
 
@@ -3368,7 +3274,7 @@ LIBXS_API_INLINE void internal_libxs_predict_split(int count, int tid,
 /**
  * Assembles one cluster from its members, which sorted_idx lists and centroid
  * summarizes: the members in Hilbert order with their normalized points, weights,
- * radius, tangents and input hashes, and per output column the values, their mean
+ * radius and input hashes, and per output column the values, their mean
  * and variance, and the fit internal_libxs_predict_cluster_refit chooses. outs maps
  * a column to the output it holds, NULL for all nout outputs in order: a flat
  * cluster holds every output, an hKNN per-output cluster those of its group. One
@@ -3442,9 +3348,6 @@ LIBXS_API_INLINE int internal_libxs_predict_cluster_assemble(
           if (cl->sorted_dist[k] > cl->dmax) cl->dmax = cl->sorted_dist[k];
         }
         if (cl->dmax <= 0.0) cl->dmax = 1.0;
-        if (0 != model->tangent) {
-          internal_libxs_predict_cluster_tangent(cl, mc, model->tangent);
-        }
         result = internal_libxs_predict_cluster_ihash(model, cl);
       }
     }
@@ -4371,9 +4274,7 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
     result = EXIT_FAILURE;
   }
   if (EXIT_SUCCESS == result && NULL != model) {
-    const char* tenv = getenv("LIBXS_PREDICT_TANGENT");
     const char* renv = getenv("LIBXS_PREDICT_REFINE");
-    if (NULL != tenv) model->tangent = atoi(tenv);
     if (NULL != renv) model->refine = atoi(renv);
   }
   /* the builder's alone: it rewrites the corpus and resolves what follows.

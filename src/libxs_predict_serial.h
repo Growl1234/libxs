@@ -2567,15 +2567,6 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
       ok = internal_libxs_predict_load_entries(model);
     }
     if (EXIT_SUCCESS == ok) {
-      const char* tenv = getenv("LIBXS_PREDICT_TANGENT");
-      if (NULL != tenv) model->tangent = atoi(tenv);
-      if (0 != model->tangent && NULL != model->clusters) {
-        int c;
-        for (c = 0; c < model->nclusters; ++c) {
-          internal_libxs_predict_cluster_tangent(
-            &model->clusters[c], model->ncoord, model->tangent);
-        }
-      }
       model->built = 1;
       ++model->nbuild;
       internal_libxs_predict_missing_all(model);
