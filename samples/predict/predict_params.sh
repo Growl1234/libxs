@@ -5,7 +5,14 @@
 ###############################################################################
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-LIBXSTREAM_ROOT="${HOME}/libxstream"
+# LIBXSTREAM_ROOT if given, else a sibling checkout, else HOME
+if [ ! "${LIBXSTREAM_ROOT}" ]; then
+  if [ -d "${HERE}/../../../libxstream/samples/smm/params" ]; then
+    LIBXSTREAM_ROOT="${HERE}/../../../libxstream"
+  else
+    LIBXSTREAM_ROOT="${HOME}/libxstream"
+  fi
+fi
 PARAMS_DIR="${LIBXSTREAM_ROOT}/samples/smm/params"
 
 if [ ! -x "${HERE}/predict_params.x" ]; then
@@ -17,12 +24,13 @@ fi
 # leaving it to the trial, which would choose a forest many times their size.
 # hKNN over kNN: it matches 4.8 points more of the tuned parameters on shapes
 # it was not built from, at twice the size of a kNN model.
-ARGS="${@:-hknn}"
+ARGS="${*:-hknn}"
 
 for csv in "${PARAMS_DIR}"/tune_multiply_*.csv; do
   if [ -f "${csv}" ]; then
     base="$(basename "${csv}" .csv)"
     echo "=== ${base} ==="
+    # shellcheck disable=SC2086
     "${HERE}/predict_params.x" ${ARGS} "${csv}" "${PARAMS_DIR}/${base}.bin"
     echo
   fi
