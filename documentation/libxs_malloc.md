@@ -101,7 +101,7 @@ Access the default host memory pool (created at `libxs_init`). Printed automatic
 void* libxs_malloc(libxs_malloc_pool_t* pool, size_t size, int alignment);
 ```
 
-Allocate `size` bytes from the given `pool`. `LIBXS_MALLOC_AUTO` uses automatic alignment with inline metadata. `LIBXS_MALLOC_NATIVE` preserves the allocator's native pointer (out-of-band metadata via registry). Values greater than 1 are interpreted as explicit alignment in Bytes (inline metadata). A NULL `pool` selects the default pool. Returns NULL on failure or if `size` is zero.
+Allocate `size` bytes from the given `pool`. `LIBXS_MALLOC_AUTO` (0) uses automatic alignment with inline metadata. `LIBXS_MALLOC_NATIVE` (1) preserves the allocator's native pointer (out-of-band metadata via registry). Values greater than 1 are interpreted as explicit alignment in Bytes (inline metadata). A NULL `pool` selects the default pool. Returns NULL on failure or if `size` is zero.
 
 ```C
 void libxs_free(void* pointer);
@@ -119,18 +119,21 @@ Query the size of an allocation made with `libxs_malloc`. The pool is derived in
 
 `LIBXS_MALLOC_LIMIT` bounds the pool in MB. Beyond it, an allocation first evicts
 a cached chunk, which returns its memory to the system. A negative value removes
-the bound. Unset, the bound follows the pool's own high-water mark with headroom,
-so it settles at what a workload concurrently holds instead of at a constant. A
-bound below that cannot reduce what is held — it only keeps eviction firing on
-memory that is not surplus — and what reclaims idle memory is the age-based
-eviction rather than the bound. Run with `LIBXS_VERBOSE=3` to see the pool report,
-which states the high-water and the bound it implies.
+the bound. Unset, the bound follows the pool's high-water mark plus headroom. A
+bound below the high-water mark does not reduce what is held; it only causes more
+eviction. `LIBXS_VERBOSE=3` prints the pool report, including the high-water mark
+and the bound.
 
-`LIBXS_MALLOC_SHARE` limits the derived bound to a percentage of the memory the
-process may use (default 50), which covers a host with many cores and little
-memory, and a container whose limit is below what the cores suggest. The share is
-of the node: with several MPI ranks on it (`libxs_nranks`), each rank receives its
-part of the share. It does not apply when `LIBXS_MALLOC_LIMIT` pins the bound.
+`LIBXS_MALLOC_SHARE` caps the derived bound at a percentage of the memory the
+process may use (default 50). With several MPI ranks on a node (`libxs_nranks`),
+each rank receives its part of the share. It does not apply when
+`LIBXS_MALLOC_LIMIT` is set.
+
+`LIBXS_MALLOC_NATIVE` selects where `libxs_malloc` keeps its metadata. Unset,
+`LIBXS_MALLOC_NATIVE` allocations keep the native pointer (out-of-band metadata)
+and `LIBXS_MALLOC_AUTO` uses inline metadata. A non-zero value makes
+`LIBXS_MALLOC_AUTO` keep the native pointer as well; zero makes both use inline
+metadata.
 
 ## Fixed-Size Pool
 

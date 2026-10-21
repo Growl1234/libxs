@@ -11,6 +11,7 @@ Key-value store backed by a hash table with per-thread caching. Operations are t
 | `LIBXS_REGKEY_MAXSIZE`    | 64      | Maximum key size in bytes                                                              |
 | `LIBXS_REGISTRY_NBUCKETS` | 64      | Initial hash-table buckets (power of two); registries grow dynamically                 |
 | `LIBXS_REGCACHE_NENTRIES` | 16      | Thread-local cache entries per thread (power of two; 0 disables caching)               |
+| `LIBXS_DESCRIPTOR_MAXSIZE` | `LIBXS_REGKEY_MAXSIZE` | Backward-compatible alias                                          |
 
 ## Types
 
@@ -53,7 +54,16 @@ void* libxs_registry_next(const libxs_registry_t* registry,
   const void** key, size_t* cursor);
 ```
 
-Enumerate entries. Initialize `*cursor` to 0 before the first `begin` call. Each call returns the value pointer and writes the key pointer to `*key`, or returns NULL when iteration is complete. The key pointer is suitably aligned to be cast to the caller's key type.
+Enumerate entries. Initialize `*cursor` to 0 before the first `begin` call. Each call returns the value pointer and writes the key pointer to `*key`, or returns NULL when iteration is complete. The key pointer is suitably aligned to be cast to the caller's key type. Only the first `key_size` bytes of `*key` are defined.
+
+```C
+void* libxs_registry_begin_length(const libxs_registry_t* registry,
+  const void** key, size_t* key_size, size_t* cursor);
+void* libxs_registry_next_length(const libxs_registry_t* registry,
+  const void** key, size_t* key_size, size_t* cursor);
+```
+
+Same as `begin`/`next`, and also write the entry's key size to `*key_size` (may be NULL). Use these for a registry that holds keys of different sizes.
 
 ## Access
 
@@ -88,21 +98,13 @@ void* libxs_registry_set_hashed(libxs_registry_t* registry,
   libxs_lock_t* lock /* = NULL */);
 ```
 
-Hash a key once and reuse the value across several operations. The seed
-is per-registry (assigned in creation order, hence reproducible across
-runs and independent of the allocator), so a hash is only valid for the
-registry that produced it. The same value can also index caller-side
-tables keyed by the same shape. `libxs_registry_get`/`_set` are
+Hash a key once and reuse the value across several operations. A hash is
+only valid for the registry that produced it. `libxs_registry_get`/`_set` are
 wrappers that hash internally.
 
-`libxs_registry_get_hashed` additionally consults the thread-local
-lookup cache *before* taking the lock, so a repeated query of the same
-key costs no lock at all. That fast path is restricted to values too
-large for the registry's inline storage, whose heap buffer does not move
-when the table is rehashed, and it assumes the entry is neither removed
-nor resized while another thread queries it, which holds for a registry
-that only grows. `libxs_registry_get` is unchanged and still takes the lock
-whenever one is given.
+`libxs_registry_get_hashed` may answer a repeated query from the thread-local
+cache without taking the lock. This requires that the entry is neither removed
+nor resized while another thread queries it, e.g., a registry that only grows.
 
 ```C
 int libxs_registry_get_copy(const libxs_registry_t* registry,
@@ -165,6 +167,12 @@ libxs_registry_t* libxs_registry_load(const void* buffer, size_t size,
 Load a registry from a binary buffer (previously produced by `libxs_registry_save`). Keys are materialized immediately. When `fixup` is NULL, values remain in the buffer and are accessed on demand via `libxs_registry_get`; the buffer must remain valid for the lifetime of the returned registry. When `fixup` is non-NULL, each value is heap-allocated immediately and the callback is invoked once per entry, allowing the caller to restore pointers or handles by key identity. Returns a new registry or `NULL` on failure.
 
 ## Status
+
+```C
+size_t libxs_registry_size(const libxs_registry_t* registry);
+```
+
+Number of entries (cheaper than `libxs_registry_info`).
 
 ```C
 int libxs_registry_info(const libxs_registry_t* registry,

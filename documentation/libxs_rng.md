@@ -17,6 +17,10 @@ Fill a column-major matrix (NROWS x NCOLS, leading dimension LD)
 with deterministic values. The `_OMP` variant parallelizes with
 OpenMP; `_SEQ` is serial.
 
+`LIBXS_MATRNG_VERSION` (currently 2) changes whenever the generated values
+change; record it alongside results so that data from different generators
+is not mixed.
+
 ESPAN (exponent span) selects the initialization mode:
 
 - `ESPAN == 0`: shuffle mode. A co-prime permutation of the linear index
@@ -59,8 +63,8 @@ with a deterministic default (seed = 1).
 unsigned int libxs_rng_u32(unsigned int n);
 ```
 
-Return a pseudo-random value in \[0, n) with uniform distribution
-(Lemire's nearly-divisionless method). Thread-safe.
+Return a pseudo-random value in \[0, n) with uniform distribution, or zero
+for n <= 1. Thread-safe.
 
 ```C
 double libxs_rng_f64(void);

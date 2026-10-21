@@ -11,6 +11,9 @@ make PEDANTIC=2
 make -C samples/tokenizer PEDANTIC=2
 ```
 
+Building the library first is optional: without it, the sample compiles
+header-only.
+
 ## Usage
 
 ```bash

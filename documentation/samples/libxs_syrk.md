@@ -19,7 +19,8 @@ is left untouched.
 Requires a Fortran compiler (gfortran, ifort, or ifx) and LIBXS
 built first from the repository root (the sample is not built
 header-only). The Makefile picks up the compiler from the top-level
-Makefile.inc. BLAS is linked by default (BLAS=1). JIT-compiled kernels
+Makefile.inc. BLAS is linked dynamically and sequential by default
+(`BLAS=1`, `BLAS_STATIC=0`). JIT-compiled kernels
 need `make MKL=1` (sequential) or `make MKL=2` (threaded) for MKL's
 JIT, or `make LIBXSMM=1` with a built sibling `libxsmm` directory.
 
@@ -42,14 +43,12 @@ Arguments (all optional, positional):
 When the Fortran module is compiled with OpenMP (the sample's default),
 `libxs_syrk` and `libxs_syr2k` run over an OpenMP team, unless called
 from within a parallel region. The team size comes from
-`libxs_syrk_ntasks`, which returns 1 where the unsplit call is faster:
-small shapes, a threaded BLAS (which then parallelizes DSYRK itself),
-or too few threads against a sequential BLAS. The sample prints this
-count as `libxs_syrk=`.
+`libxs_syrk_ntasks`, which returns 1 (no split) for small shapes, with
+a threaded BLAS, or with too few threads against a sequential BLAS. The
+sample prints this count as `libxs_syrk=`.
 
 The performance section compares `DSYRK` with `LIBXS` (`libxs_syrk`).
-`DSYRK` is only threaded with a threaded BLAS, hence build with
-`make MKL=2` to compare parallel DSYRK with the parallel `libxs_syrk`:
+`DSYRK` is threaded only with a threaded BLAS, e.g., `make MKL=2`:
 
     make MKL=2
     OMP_NUM_THREADS=16 OMP_PROC_BIND=close ./syrk.x 2048 2048 5
@@ -73,17 +72,16 @@ would: one task per thread, or `tasks` per thread over a dynamic DO.
       max error (omp tasks):  0.00000E+00
 
     --- SYRK performance ---
-      DSYRK:     0.002 s (100 calls)
-                     28.4 GFLOPS/s
-      LIBXS:     0.002 s (100 calls)
-                     28.1 GFLOPS/s
-      OMP:       0.002 s (100 calls)
-                     28.0 GFLOPS/s
-      TASK:      0.002 s (100 calls)
-                     27.9 GFLOPS/s
+      DSYRK:     <time> s (100 calls)
+                     <rate> GFLOPS/s
+      LIBXS:     <time> s (100 calls)
+                     <rate> GFLOPS/s
+      OMP:       <time> s (100 calls)
+                     <rate> GFLOPS/s
+      TASK:      <time> s (100 calls)
+                     <rate> GFLOPS/s
 
-Here `libxs_syrk=1`, i.e., the update is not split (see above), hence
-all lines match; a split pays off at larger N.
+Here `libxs_syrk=1`, i.e., the update is not split (see above).
 
 ## Notes
 
@@ -92,15 +90,12 @@ all lines match; a split pays off at larger N.
   remains valid until libxs_finalize or the registry is destroyed.
   There is no need to release it manually.
 
-- Internally, a split SYRK/SYR2K partitions C into column panels
-  (`LIBXS_GEMM_PANEL`). The off-diagonal part of a panel is a GEMM;
-  its diagonal block is a BLAS SYRK (`LIBXS_SYRK_BLAS`, default on),
-  or else GEMM tiles (default 192x32x48, see `LIBXS_GEMM_BM`,
-  `LIBXS_GEMM_BN`, `LIBXS_GEMM_BK`). An unsplit update wider than one
-  tile is a single BLAS SYRK when available.
+- Splitting is controlled by `LIBXS_GEMM_PANEL` (smallest column
+  panel), `LIBXS_SYRK_BLAS` (BLAS SYRK for diagonal blocks, default
+  on), and the tile sizes `LIBXS_GEMM_BM`, `LIBXS_GEMM_BN`,
+  `LIBXS_GEMM_BK` (default 192x32x48); see
+  `documentation/libxs_gemm.md`.
 
-- Scratch memory for the temporary block products is a thread-local
-  buffer that grows on demand, hence tasks need no synchronization:
-  each task holds its own scratch and writes its own blocks of C. It
-  is drawn from the LIBXS memory pool, so it appears in the pool
-  statistics rather than in an untracked allocation.
+- Tasks need no synchronization. Scratch memory is thread-local and
+  drawn from the LIBXS memory pool, so it appears in the pool
+  statistics.

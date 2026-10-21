@@ -56,11 +56,10 @@ touching the weights. `update` advances the weights against a mixture the caller
 supplies. `observe` is `pool` followed by `update` with that pool, and returns
 the pooled value taken *before* the update.
 
-Prefer `observe`: the pooled value must be committed before the weights move, or
-a reported code length is better than the truth with no symptom to notice. Use
-`update` only when the caller's mixture is genuinely not `pool`'s — because it
-mixes in experts this bank does not carry, or because it was floored before a
-logarithm was taken.
+Prefer `observe`: a pooled value taken after `update` silently understates the
+code length. Use `update` only when the caller's mixture differs from `pool`'s,
+for instance because it mixes in experts this bank does not carry or was floored
+before taking a logarithm.
 
 ## Abstention and Disabled Slots
 
@@ -70,14 +69,11 @@ An update renormalizes the experts that spoke to sum to one, while a silent
 expert keeps its absolute weight: its weight relative to the others changes
 while it is quiet, and the weights as a whole need not sum to one.
 
-A weight of zero means the slot is disabled permanently: a bank sized for the
-widest configuration holds unused slots at zero and share mass does not
-resurrect them. A bank whose slots are a fixed ladder that should always stay
-revivable is not a client of this module.
+A weight of zero disables the slot permanently (share mass does not revive it),
+which suits the unused slots of a bank sized for the widest configuration.
 
-`relmin` guards the other direction. Without it an expert that once gave the
-outcome no mass at all is multiplied by zero and can never recover, because the
-share term only reaches slots that still hold mass.
+With `relmin` of zero, an expert that once gave the outcome no probability drops
+to zero weight for good; a positive `relmin` lets it recover.
 
 ## Example
 

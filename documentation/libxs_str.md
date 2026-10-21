@@ -18,6 +18,19 @@ Case-insensitive substring search. `stristrn` limits the match
 length to `maxlen` characters of `b`. Returns a pointer to the
 first match in `a`, or NULL.
 
+```C
+int libxs_striequal(const char a[], size_t asize,
+  const char b[], size_t bsize);
+const char* libxs_strimem(const char a[], size_t asize,
+  const char b[], size_t bsize);
+```
+
+Same comparisons on byte spans that need no terminator (e.g., a
+slice of a larger buffer). `striequal` returns non-zero if both
+spans are equal ignoring case (NULL equals nothing). `strimem`
+returns a pointer to the first occurrence of `b` within the
+`asize` bytes of `a`, or NULL (an empty `b` finds nothing).
+
 ## Edit Distance
 
 ```C
@@ -28,8 +41,8 @@ Case-insensitive character-level edit distance between two
 strings. Returns the minimum number of single-character
 insertions, deletions, substitutions, or transpositions of
 adjacent characters to transform `a` into `b` (ignoring case),
-i.e., the restricted Damerau-Levenshtein distance. Returns -1
-for NULL input.
+i.e., the restricted Damerau-Levenshtein distance. Returns -1 for
+NULL input.
 
 ## Word Matching
 
@@ -73,7 +86,8 @@ Parameters:
 - `count` — optional output, receives the word count of the
   larger string
 
-Returns the number of unmatched words from the smaller string.
+At most 64 words per string are considered. Returns the number
+of unmatched words from the smaller string.
 A return value of 0 means every word in the shorter string found
 a match in the longer one. Returns -1 for NULL or empty input.
 
@@ -121,7 +135,9 @@ by a heuristic for minimum-cost bipartite matching, where the cost of a pair is
 the character-level edit distance of `libxs_stridist`
 (case-insensitive, an adjacent transposition counting as one edit).
 Unmatched words (when the strings have different word counts)
-contribute their full length.
+contribute their full length. At most 64 words per string are
+considered, and as with `libxs_strimatch` a word starting with `[`
+ends the words of its string.
 
 The matching strategy is selected by `kind`:
 
@@ -159,9 +175,6 @@ unsigned long libxs_utf8_decode(const unsigned char text[],
   size_t size, int* width);
 ```
 
-Two entry points because the right answer for malformed input
-depends on the question being asked.
-
 `libxs_utf8_size` is **lenient**: it reports the width the lead
 byte at `text[pos]` claims, clamped to the bytes that remain, and
 never less than 1 so a scan always advances. It does not inspect
@@ -186,10 +199,6 @@ one byte:
 | `C3 78`      | 2           | U+00C3, width 1   |
 | `C3` (alone) | 1 (clamped) | U+00C3, width 1   |
 
-The strict rule exists because a caller that tests a property of
-the value — is this a vowel, is this punctuation — must not be
-handed a code point assembled from bytes that do not belong to it.
-
 ## Value Formatting
 
 ```C
@@ -207,20 +216,3 @@ libxs_format_value(buf, sizeof(buf), nbytes, "KMGT", "B", 10);
 produces a human-readable byte count such as "128 KB". Returns
 the value in the selected unit so the caller can decide whether
 to print the buffer.
-
-## Relationship Between Functions
-
-The string utilities form a hierarchy of comparison granularity:
-
-| Function       | Granularity | Returns             | Use case                |
-|----------------|-------------|---------------------|-------------------------|
-| `stridist`     | characters  | edit distance       | spelling similarity     |
-| `strimatch`    | words       | matched word count  | overlap detection       |
-| `stridiff`     | words       | unmatched count     | redundancy measurement  |
-| `strisimilar`  | words       | total edit cost     | structural similarity   |
-
-`stridiff` is the word-level analog of the element-level
-`libxs_setdiff` (from `libxs_math.h`). Where `setdiff` counts
-unmatched elements in numeric arrays within a tolerance,
-`stridiff` counts unmatched words within an edit-distance
-tolerance. Both are order-independent.

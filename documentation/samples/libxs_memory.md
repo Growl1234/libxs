@@ -14,7 +14,7 @@ make
 
 Produces `memcmp.x` and `itrans.x` (C). The Fortran variants `memcmpf.x`
 and `matcpyf.x` are built only when a Fortran compiler is found (GNU
-Fortran 4.6 or later) and the library was built beforehand: without a built
+Fortran needs 4.6 or later) and the library was built beforehand: without a built
 library the sample is compiled header-only and the Fortran variants are
 skipped.
 
@@ -116,12 +116,13 @@ and zeroing. When the matrix is square and ldi==ldo, also benchmarks
 
 Three comparison implementations are benchmarked:
 
-- `libxs_diff` — SIMD-dispatched short-buffer comparison
-  (SSE/AVX2/AVX-512). Limited to elsize < 256 bytes, per-element.
+- `libxs_diff` — SIMD-dispatched short-buffer comparison. Limited to
+  elsize < 256 bytes, per-element.
 - `libxs_memcmp` — SIMD-dispatched memcmp replacement. Single call
   for contiguous buffers, or per-element for strided access.
 - stdlib `memcmp` — C library implementation under the same pattern.
 
 Each kernel gets freshly initialized data before its timed section.
 An untimed warm-up pass runs before the first measured iteration.
-The summary reports min / median / max MB/s across iterations. Reported MB/s counts both buffers (2 * nbytes / time).
+The summary reports min / median / max MB/s across iterations. Reported
+MB/s counts both buffers (2 * nbytes / time).

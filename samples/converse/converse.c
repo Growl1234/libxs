@@ -4554,8 +4554,7 @@ int ngram_dedup_scale(void)
  * 2 MB corpus, leaves BPC identical to three decimals, and leaves QA at 9/9 and
  * 14/14 - its only consumer (answer_predict_score) degrades to the unmodified
  * base score when the model is absent. A stage that costs 40% and moves nothing
- * measurable should be opt-in. CONVERSE_NO_PREDICT is still honoured so existing
- * scripts keep working.
+ * measurable should be opt-in (CONVERSE_PREDICT=1).
  */
 static int converse_predict_on(void)
 {
@@ -6724,8 +6723,7 @@ static void converse_usage_all(const char* program)
     "  CONVERSE_HIER_RESCORE=1  rescore recombinations with the hierarchy.\n"
     "  CONVERSE_RULES_LEARN=N   propose up to N class members as rules.\n"
     "  CONVERSE_FACTS_LIST=1    print the learned facts, not only counts.\n"
-    "  CONVERSE_PREDICT=1       train the answer ranker (off by default:\n"
-    "                           40%% of wall, no measured BPC or QA change).\n",
+    "  CONVERSE_PREDICT=1       train the answer ranker (off by default).\n",
     program, RESPONSE_BUDGET, NGRAM_ORDER_MAX, NGRAM_ORDER_MAX,
     GEN_CAND_MAX, TOKEN_CTX_MAX);
   answer_predict_profile_list(stderr);
@@ -7099,7 +7097,7 @@ int converse_setup(int argc, char* argv[], int role, converse_run_t* run)
        * stage that stops a big corpus being usable at all: pushing every entry x
        * query-type superlinearly outgrows ingest, so 88k Fortran sentences never
        * reach the model that the recombination and byte-model tracks actually need.
-       * CONVERSE_NO_PREDICT=1 trades a ranking refinement for reaching those tracks.
+       * Leaving CONVERSE_PREDICT unset trades a ranking refinement for those tracks.
        */
       if (0 != converse_predict_on()) {
         libxs_predict_t* trained = converse_predict_train(run->corpus,

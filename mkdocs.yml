@@ -48,6 +48,7 @@ nav:
 - Presentations: libxs_present.md
 - Fortran: libxs_fortran.md
 - Domains:
+  - Core: libxs_core.md
   - Registry: libxs_reg.md
   - Predict: libxs_predict.md
   - Malloc: libxs_malloc.md

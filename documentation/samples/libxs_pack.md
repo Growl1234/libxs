@@ -35,8 +35,8 @@ and summed over all files. Integer data is packed as it is. Floating-point
 data is quantized to multiples of `eps` (values not above `eps` become zero),
 and each block gets the width its largest value needs. A file whose MHD
 extension holds a REAL(8) eps, an INT32 number of blocks, and an INT32 shape(3)
-per block provides eps and the blocks itself; CP2K writes such files
-(`CP2K_COMPRESS_DUMP=prefix`, from its tensor compression).
+per block provides eps and the blocks itself, so a dump of the data to analyze
+can carry its own blocking.
 
 The output compares the fixed width with a width per group of 4 to 32 values,
 with deltas between neighbors, and for floating-point data with a quantization
@@ -45,4 +45,3 @@ With MHD files, a second table splits each group size into the payload and
 the cost of storing the widths: one byte per width, 7 bits per width, a base
 per 8 groups with 3- or 2-bit offsets (`base+3`, `base+2`), and the entropy
 of the widths as a bound. Each row gives bits per value and the ratio.
-Synthetic data shows speed; decisions about the format rest on real data.

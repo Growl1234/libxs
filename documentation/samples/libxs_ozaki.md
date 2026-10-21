@@ -14,14 +14,16 @@ make -j $(nproc)
 
 The sample builds header-only when LIBXS is not built yet. When a
 sibling `libxstream` directory is detected, the optional OpenCL/GPU path
-is compiled in (see OZAKI_OCL below); `make OCL=0` leaves it out.
+is compiled in (see OZAKI_OCL below); `make OCL=0` or `make LIBXSTREAM=0`
+leaves it out (default: `OCL=2`). BLAS is linked multi-threaded
+(`BLAS=2`) by default, or sequential (`BLAS=1`) with `make OMP=0`.
 
 `make LIBXSMM=1` puts LIBXSMM's int8 kernels ahead of the built-in
 VNNI/AMX kernels; `OZAKI_XSMM=0` returns to the built-in kernels at
 runtime. It needs a built sibling `libxsmm` directory. `make DNNL=1`
 (with `DNNLROOT` set) runs Scheme-1 int8 GEMMs through oneDNN, and
 `make TESTROOT=<path>` compiles in external test code (see
-[TESTROOT.md](TESTROOT.md)).
+`TESTROOT.md` in this directory).
 
 ## Link-Time Interception
 
@@ -69,29 +71,23 @@ and `cgemm-*.x` drivers call ZGEMM and CGEMM.
 | OZAKI           | 3         | 0=bypass (BLAS), 1=mantissa slicing, 2=CRT, 3=adaptive            |
 | OZAKI_COMPLEX   | (auto)    | Complex dispatch: 0=BLAS, 1=CPU, 2=GPU+fallback, 3=BLAS, with real GEMMs issued inside it kept on BLAS. Auto: 0 if OZAKI=0, else 2 |
 | OZAKI_N         | (auto)    | Slices (Sch.1: fp64=8, fp32=4) or moduli (Sch.2: fp64=16, fp32=9) |
-| OZAKI_AMX       | (auto)    | CPU: 0=VNNI, 1=AMX. Auto: AMX for Sch.1, for Sch.2 from N~640     |
+| OZAKI_AMX       | (auto)    | CPU: 0=VNNI, 1=AMX. Auto: AMX for Sch.1, for Sch.2 above a size threshold |
 | OZAKI_XSMM      | 1         | With `make LIBXSMM=1`: 0=built-in int8 kernels, 1=LIBXSMM         |
 
-OZAKI=3 (adaptive) starts with Scheme 1 on the first GPU call to
-learn the effective cutoff from preprocessing occupancy. Subsequent
-calls compare the Scheme-1 pair count (at the cached cutoff) against
-the Scheme-2 modulus count and pick the cheaper path. On the CPU,
-adaptive means Scheme 1 where AMX is available (unless OZAKI_AMX=0),
-and Scheme 2 otherwise.
-
-Unset means adaptive. The GPU default is LIBXSTREAM's, so that it stays
-the same whichever driver asks for it. Setting OZAKI applies to both.
+OZAKI=3 (the default) selects the scheme automatically. On the CPU, it
+is Scheme 1 where AMX is available (unless OZAKI_AMX=0), and Scheme 2
+otherwise. On the GPU, LIBXSTREAM selects the scheme per call. An
+explicit OZAKI applies to both.
 
 ### Threading (CPU)
 
-| Variable        | Scheme 1 (OZAKI=1)  | Scheme 2 (OZAKI=2) |
+| Variable        | Scheme 1 (OZAKI=1) | Scheme 2 (OZAKI=2) |
 |-----------------|---------------------|--------------------|
 | OMP_PROC_BIND   | true                | true               |
 | OMP_PLACES      | cores               | cores              |
 | OMP_NUM_THREADS | number of cores     | unset              |
 
-Unbound threads run about half as fast. Scheme 2 takes all hardware
-threads, whereas Scheme 1 prefers one thread per core.
+Keep threads bound as above; unbound threads are slower.
 
 ### Accuracy
 
@@ -99,14 +95,12 @@ threads, whereas Scheme 1 prefers one thread per core.
 |-------------------|-----------|------------------------------------------------------------------|
 | OZAKI_FLAGS       | (auto)    | Sch.1: 3=triangular and symmetrized, 0=full S^2 square (other values are ignored). Auto: 3 below OZAKI_SYM_XOVER, else 0 |
 | OZAKI_SYM_XOVER   | 2048      | Largest of M, N, K from which auto OZAKI_FLAGS selects 0         |
-| OZAKI_TRIM        | 0         | Levels to trim (0=default). ~7 bits/level (Sch.1), ~4 bits (Sch.2); negative buys precision back |
+| OZAKI_TRIM        | 0         | Levels to trim (0=default); positive values lose accuracy, negative values add precision |
 | OZAKI_MAXK        | 32768     | Max K per preprocessing pass (0=full K in one pass)              |
 | OZAKI_THRESHOLD   | 12        | Intensity threshold (debug build: 0). Bypass when flops/(bytes\*thr)<1. 0=always |
 
-`OZAKI_MAXK` also travels to the GPU context, where it decides the
-derived K-grouping; the
-[LIBXSTREAM Ozaki README](https://github.com/hfp/libxstream/blob/main/samples/ozaki/README.md)
-states that rule, so that one K bound is not described twice.
+`OZAKI_MAXK` also applies to the GPU path (see the
+[LIBXSTREAM Ozaki README](https://github.com/hfp/libxstream/blob/main/samples/ozaki/README.md)).
 
 ### GPU Path (requires LIBXSTREAM)
 
@@ -151,96 +145,66 @@ reads and passes to the GPU context; all of them take effect only with
 | OZAKI_DECAY  | 0         | Decay diagnostic + K-permutation (0-4, see below)                  |
 | GEMM_HOSTMEM | 0         | Operands from LIBXSTREAM (page-locked) instead of `malloc`         |
 
-`GEMM_HOSTMEM` selects how the operands are allocated, which is what an
-application would do differently rather than a property of the scheme:
-the default is plain `malloc`, declared to LIBXSTREAM so that transfers
-can still take the faster route, whereas a non-zero value allocates
-page-locked memory through LIBXSTREAM. On a PCIe part the difference is
-worth several times the transfer time, so a comparison against another
-library has to state which of the two it used. The default keeps a
-CPU-only run off the GPU entirely: no device is opened unless the GPU
-path is enabled (`OZAKI_OCL=1`), while `GEMM_HOSTMEM` needs a device to
-allocate from and therefore brings one up.
+By default, operands are allocated with `malloc`, and no device is
+opened unless the GPU path is enabled (`OZAKI_OCL=1`). A non-zero
+`GEMM_HOSTMEM` allocates page-locked memory through LIBXSTREAM, which
+opens a device.
 
 ### Adversarial Input (EVIL)
 
 The EVIL variable initializes A and B with controlled exponent
-structure for stress-testing accuracy and adaptive slice reduction.
+structure for stress-testing accuracy.
 The magnitude sets the exponent span in bits; the sign selects
 the distribution:
 
-  EVIL=N  (N>0)   Per-column.  Column j of A is scaled by
-                  2^(-N + round(2\*N\*j/(ncols-1))), column j of B
-                  by the inverse, so the span is 2N binades
-                  centred on zero.  Product A\*B is
-                  well-conditioned.  Uniform exponents within
-                  each column.
+- `EVIL=N` (N>0): per-column. Column j of A is scaled by
+  2^(−N + round(2N·j/(ncols−1))), column j of B by the inverse, so the
+  span is 2N binades centred on zero. The product A·B is
+  well-conditioned, and exponents are uniform within each column.
+- `EVIL=-N` (N>0): per-element. Each element gets a pseudorandom
+  exponent in [0,N] via coprime shuffle, with opposite sign for B.
+  Every row of A spans the full exponent range.
+- `EVIL=0`: default shuffle mode (no exponent structure).
 
-  EVIL=-N (N>0)   Per-element.  Each element gets a pseudorandom
-                  exponent in [0,N] via coprime shuffle, with
-                  opposite sign for B.  Every row of A spans the
-                  full exponent range — worst case for row-wise
-                  alignment and adaptive cutoff.
+The per-column mode (EVIL>0) is a diagonal scaling with D and D^-1,
+where EVIL is the exponent-range parameter.
 
-  EVIL=0          Default shuffle mode (no exponent structure).
-
-The per-column mode (EVIL>0) matches the NVIDIA emulation grading
-test (diagonal scaling with D and D^-1), where EVIL is that test's
-exponent-range parameter b.  The per-element mode (EVIL<0) is
-adversarial for the adaptive slice-pair reduction: it forces all
-slices to be populated in every row.
-
-TAME is the sibling knob on the significand axis: `TAME=n` keeps n
-mantissa bits and clears the rest, so `TAME=24` is data promoted
-from single precision.  The two axes are independent, and the
-generator carries a version (`LIBXS_MATRNG_VERSION`, reported per
-run as `DATA: matrng=...`) because a change to it makes results
-incomparable in a way nothing downstream can see.
+`TAME=n` keeps n mantissa bits and clears the rest, e.g., `TAME=24` is
+data promoted from single precision. TAME and EVIL can be combined.
+Each run reports the generator version (`LIBXS_MATRNG_VERSION`) as
+`DATA: matrng=...`.
 
 ### Accuracy Grade (GRADE)
 
 `GRADE=1` applies the componentwise criterion of the graded BLAS
 accuracy tests: `|C - C_ref| <= f(K) * u * (|alpha||A||B| +
-|beta||C|)` with `f(K) = K + 1024` and `u` the unit roundoff.  K is the
-number of terms summed, so a short-K GEMM is held to a tighter bound
-than a square one of the same size.  It reports
-`GRADE: a=<max ratio> f(n)=<K>` and fails the run when the ratio
-exceeds it.  `GRADE=-1` reports without failing, which is what a
-deliberately trimmed run needs: it gives up precision on purpose, so
-this is not the criterion it claims.
-
-Prefer it over `CHECK` when the question is whether a result is
-as accurate as the scheme claims.  `CHECK` compares one scalar
-against a fixed threshold (1e-10 for double, 1e-3 for single),
-which is orders looser than these schemes deliver and therefore
-admits results that are lossy but not broken.  `rsq` substitutes
-for neither: it saturates at 1 unless the output degenerates.
-GRADE costs one extra reference GEMM and one m-by-n buffer.
+|beta||C|)` with `f(K) = K + 1024`, `u` the unit roundoff, and K the
+number of terms summed. It reports `GRADE: a=<max ratio> f(n)=<K>`
+and fails the run when the ratio exceeds it. `GRADE=-1` reports
+without failing (e.g., for runs with `OZAKI_TRIM`). By contrast,
+`CHECK` compares one scalar against a fixed threshold (1e-10 for
+double, 1e-3 for single). GRADE costs one extra reference GEMM and
+one m-by-n buffer.
 
 ### Compensated Reference (XREF)
 
-The BLAS reference rounds in the same precision as the result it is
-compared with, so an error measured against it is partly its own and
-cannot show whether a result is the exact product rounded once.
 `XREF=n` adds a reference computed by `libxs_dot2_gemm`, as if in
 twice the double precision, on n rows spread over C (`XREF=-1` takes
-all rows).  It reports
+all rows). It reports
 
   XREF: rows=n ozaki_linf_rel=.. ozaki_l2_rel=.. ozaki_grade=..
         blas_linf_rel=.. blas_l2_rel=.. blas_grade=..
 
-so the Ozaki and the BLAS result are measured on one scale.  The
-grades appear with `GRADE` set, and `GRADE=1` then also fails the
-run on the compensated grade (`GRADE XREF:`).  With beta non-zero,
-C accumulates over the warmup and the timed calls, and the reference
-replays that sequence.  The cost is O(nNK) per replayed call on the
-host, which is why a few rows rather than all of them are the
-intended use at large sizes.
+for the Ozaki and the BLAS result. The grades appear with `GRADE`
+set, and `GRADE=1` then also fails the run on the compensated grade
+(`GRADE XREF:`). With beta non-zero, the reference replays the warmup
+and the timed calls. The cost is O(nNK) per replayed call on the
+host, hence a few rows suit large sizes.
 
 ### Decay Diagnostic and K-Permutation (OZAKI_DECAY)
 
 Controls K-dimension row reordering for smoothness and the
-forward-difference decay diagnostic.  Values map to libxs_sort_t:
+forward-difference decay diagnostic. Values map to libxs_sort_t:
 
 | Value | Behavior                                                     |
 |-------|--------------------------------------------------------------|
@@ -251,23 +215,16 @@ forward-difference decay diagnostic.  Values map to libxs_sort_t:
 | 4     | Greedy nearest-neighbor chain on B rows (O(K^2\*N)).         |
 
 Values 2-4 compute a K-permutation from B (via libxs_sort_smooth)
-before Ozaki-1 slicing.  Both A and B are sliced using the
-permuted K-order.  Since C = A\*B = (A\*P^T)\*(P\*B) for any
-permutation matrix P, the result is mathematically identical —
-only the int8 digit structure along K changes.
+before Ozaki-1 slicing; both A and B are sliced in the permuted
+K-order, and the product is unchanged.
 
 When nonzero, reports the forward-difference decay of int8 slice
 buffers along K, M, and N axes (first K-group only, single-
-threaded).  Uses libxs_fprint per-axis mode internally.  Output
-goes to stderr:
+threaded). Output goes to stderr:
 
   OZ1[MxNxK] Delta-K: d1=... d2=... ...
   OZ1[MxNxK] Delta-M: d1=... d2=... ...
   OZ1[MxNxK] Delta-N: d1=... d2=... ...
-
-Decaying values indicate exploitable smoothness; growing values
-(~2x per order) indicate unstructured data where data-independent
-schemes (Ozaki-1, Ozaki-2) are well-matched.
 
 ## Profiling
 
@@ -275,26 +232,23 @@ Set `LIBXSTREAM_PROFILE=1` for per-kernel device timings, reported at
 program exit:
 
 ```text
-PROF ACC/OpenCL: ID=171071 gemm_crt_fused=2.987 ms 5751.0 GFLOPS/s
+PROF ACC/OpenCL: ID=<id> <kernel>=<time> ms <rate> GFLOPS/s
 ```
 
-There is no separate host-side profile: on the CPU the intercepted call
-and the kernel it spends its time in agree to within a few percent, so
-the `OZAKI GEMM` line already reports the kernel. It is a mean over the
-whole timed loop, so use `NREPEAT` to average several calls — host
-timings vary between runs, the more so on a many-core part.
+There is no separate host-side profile: on the CPU, the `OZAKI GEMM`
+line reports the mean over the timed loop (see `NREPEAT`).
 
 ## Example
 
 ```bash
 ./dgemm-wrap.x 256                                      # adaptive scheme (default)
 OZAKI=1 ./dgemm-wrap.x 256                              # mantissa slicing
-OZAKI_TRIM=2 OZAKI=1 ./dgemm-wrap.x 256                 # drop 2 diagonals below the default
+OZAKI_TRIM=2 OZAKI=1 ./dgemm-wrap.x 256                 # trim 2 levels (less accurate)
 OZAKI_OCL=1 OZAKI=2 OZAKI_GROUPS=4 ./dgemm-wrap.x 4096  # GPU CRT with K-grouping
 OZAKI=3 ./dgemm-wrap.x 4096                             # adaptive scheme selection
 EVIL=512 ./dgemm-wrap.x 1024                            # accuracy grading (wide exponent span)
-EVIL=1 ./dgemm-wrap.x 1024                              # narrow span (cutoff drops pairs)
-EVIL=-52 ./dgemm-wrap.x 1024                            # per-element span (worst for cutoff)
+EVIL=1 ./dgemm-wrap.x 1024                              # narrow exponent span
+EVIL=-52 ./dgemm-wrap.x 1024                            # per-element exponent span
 OZAKI_DECAY=1 OZAKI=1 ./dgemm-wrap.x 256                # decay diagnostic (no reorder)
 OZAKI_DECAY=2 OZAKI=1 ./dgemm-wrap.x 256                # sort by norm + decay diagnostic
 OZAKI_DECAY=4 OZAKI=1 ./dgemm-wrap.x 256                # greedy NN + decay diagnostic

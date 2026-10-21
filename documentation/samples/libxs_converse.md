@@ -12,16 +12,15 @@ is experimental and adds no stable public API.
 
 ## Build
 
-Build the library first, then the sample:
-
 ```bash
-cd ../..
-make PEDANTIC=2
 cd samples/converse
 make PEDANTIC=2
 ```
 
-Or, from the `libxs` root, `make PEDANTIC=2 samples/converse`.
+This builds `converse.x`, `converse-qa.x`, `converse-lm.x`, `converse-norm.x` and
+`summarize.x`. Without a built library the sample compiles header-only; with one
+(`make PEDANTIC=2` in the `libxs` root first), it links it. From the `libxs` root,
+`make PEDANTIC=2 samples/converse/` does the same.
 
 ## Which binary
 
@@ -34,9 +33,9 @@ Or, from the `libxs` root, `make PEDANTIC=2 samples/converse`.
 
 `converse.x` accepts every command below. The split binaries link only what they
 serve, and a mode a binary does not serve is rejected up front, naming the one that
-does. One exception worth knowing: the byte model lives in the LM half, so under
-`converse-qa.x` the recombination probe prints `no seam judge` and leaves its bpc
-columns at zero. Use `converse.x` if you want those columns.
+does. The recombination probe fills its bpc columns only under `converse.x` with
+`CONVERSE_HIER_RESCORE=1`; otherwise it prints `no seam judge` and leaves them at
+zero.
 
 Run any binary without arguments to print its options and the main environment
 variables.
@@ -215,7 +214,7 @@ together with the words it chose between:
 ./converse-norm.x -b texts/grimm
 ```
 
-```
+```text
 > rabbet
 rabbet -> rabbit  (distance 1)
     rabbit (261)
@@ -234,11 +233,9 @@ corrupted word is recovered, which is how to pick the two:
 ./converse-norm.x -e -r 1 -m 2 -b texts/grimm
 ```
 
-**The two knobs trade recall for safety, and the wrong direction is expensive:** a
-wrong correction silently replaces the word that was typed. On a book-sized corpus
-`-r 2` recovers more but is wrong about a quarter of the time, while `-m 2` cuts
-that to a few percent and abstains far more often. Run `-e` on your own corpus
-before trusting a setting.
+A wrong correction silently replaces the word that was typed: a larger `-r`
+recovers more but corrects wrongly more often, and a larger `-m` abstains more
+often. Run `-e` on your own corpus before trusting a setting.
 
 `-t` reads surface forms from a file, one per line, and writes the accepted
 corrections to `<prefix>.norms`:
@@ -266,10 +263,17 @@ printf 'First sentence. Second one.' | ./summarize.x -
 - default: summarize one file by repeatedly fusing adjacent sentences. A single
   argument that is not a readable file, or several arguments, are summarized as
   literal text (joined by spaces); no argument or `-` reads stdin.
+- `-n N`: target sentence count; without it, fusion continues while a pair can be
+  fused and each fusion is printed.
 - `-g`: compose mode — ingest all files, take the first as the target, and emit a
-  short assembled text (`-n` is the phrase budget).
-- `-r`: reflow text first, joining cosmetic line breaks (useful for Gutenberg files).
-- `-h`: print the usage.
+  short assembled text (`-n` is the phrase budget, default 12). The ingested
+  corpus is kept in `summarize.dat` in the working directory, and the next run
+  loads and extends it.
+- `-r`: reflow the input first, joining cosmetic line breaks (useful for Gutenberg
+  files); in compose mode only the target is reflowed.
+- `-h` (or `--help`) as the first argument: print the usage.
+
+Progress and diagnostics go to stderr, the result to stdout.
 
 ## Recombining text from the corpus
 
@@ -280,10 +284,13 @@ each half verbatim and cutting only at clause boundaries:
 CONVERSE_RECOMB=50 CONVERSE_HIER_RESCORE=1 ./converse.x -E -x -b texts/grimm
 ```
 
-`CONVERSE_RECOMB=N` attempts N joins and reports how many were made, with coherence
-and seam statistics. `CONVERSE_RECOMB_COMPOSE=1` additionally lets the interactive
-`-c` mode answer with a spliced sentence; it is off by default because every other
-mode emits text that occurs verbatim in the corpus and this one does not.
+`CONVERSE_RECOMB=N` attempts N joins (50 when N is not positive) and reports how
+many were made, with coherence and seam statistics. `CONVERSE_HIER_RESCORE=1`
+trains the hierarchical byte model (`-K hier`) and uses it to score each seam (the
+bpc columns) and to reorder candidate answers; it takes effect only in the binaries
+that link that model (`converse.x`, `converse-lm.x`). `CONVERSE_RECOMB_COMPOSE=1`
+additionally lets the interactive `-c` mode answer with a spliced sentence. It is off by default, since it emits text
+that does not occur verbatim in the corpus.
 
 ## Next-token prediction
 
@@ -371,16 +378,11 @@ which is a way to bootstrap a rule file for new text. What it proposes is specul
 so it is reported separately and, if a `<prefix>.learn.eval` fixture exists, that
 fixture is used for `-e` while learning is on.
 
-With `CONVERSE_FACTS_LIST=1` the sample also prints the FACTS themselves, plus a
-`graph reach:` line (edges, entities, pairs joined by one middle, largest degree) —
-useful for judging whether a corpus is big enough to ask connection questions of. Prose
-of a few MB gives tens of edges; the tales give none, because a story names few entities
-that act on each other.
-
 After ingestion the sample reports what it learned (`relation facts: N learned`,
 `identity facts`, `location facts`, `type facts`). Set `CONVERSE_FACTS_LIST=1` to
-print the facts themselves — reading them is the only way to tell whether they are
-true.
+print the facts themselves, plus a `graph reach:` line (edges, entities, pairs joined
+by one middle, largest degree). Few edges means connection questions will mostly go
+unanswered on that corpus.
 
 Optional `<prefix>.bridges` adds evidence-backed answer frames, five fields per line:
 
@@ -391,6 +393,24 @@ name|query-groups|evidence-groups|score|reply
 Whitespace separates required groups and `/` separates alternatives; `_` stands for a
 literal space in evidence terms. The reply is literal text or a small frame such as
 `{after:lighthouse had}`.
+
+## Environment variables
+
+The variables used above, all unset by default:
+
+| variable | effect |
+| :--- | :--- |
+| `CONVERSE_PREDICT=1` | train the answer reranker and save it as `<prefix>.prd` (skipped otherwise) |
+| `CONVERSE_GRAN=UNIT` | token unit for next-token models (`word` by default) |
+| `CONVERSE_NGRAM_ORDER=N` | n-gram context order 1–6 (default 2; `-x` selects 6) |
+| `CONVERSE_RECOMB=N` | run the recombination probe over N joins |
+| `CONVERSE_RECOMB_COMPOSE=1` | let `-c` answer with a spliced sentence |
+| `CONVERSE_HIER_RESCORE=1` | score seams and reorder answers with the hierarchical model |
+| `CONVERSE_RULES_LEARN=N` | propose up to N `person\|` class members as rules |
+| `CONVERSE_FACTS_LIST=1` | print the learned facts and the `graph reach:` line |
+
+Running a binary without arguments lists these and the further tuning variables
+of the next-token models.
 
 ## Files the sample writes
 

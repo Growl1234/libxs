@@ -58,15 +58,10 @@ key and decodes it as a 2D coordinate:
 3D coordinate -> 3D curve rank -> inverse 2D curve coordinate
 ```
 
-This preserves the deterministic curve order while giving downstream code
-a 2D tensor layout that can be consumed by optimized 2D convolution kernels.
-
-The samples distinguish the curve order from the 2D frame. The default
-`compact` frame streams voxels in curve-rank order into a dense near-square
-sheet, avoiding unused cells when an exact factor pair is available. The
-`canonical` frame decodes the finite 3D curve rank through the corresponding
-2D curve, preserving the canonical destination curve coordinate at the cost of
-possible empty cells.
+The source is a regular `D,H,W` index grid. The default `compact` frame fills
+a dense near-square sheet in curve-rank order; the `canonical` frame places
+each voxel at the 2D curve coordinate of its rank, which can leave cells
+empty.
 
 ### Usage
 
@@ -95,7 +90,7 @@ be a single `D,H,W` volume, a batched `N,D,H,W` dataset, a channelled
 3DGAN Caffe sample layout `N,C,D,H,W`:
 
 ```bash
-python3 stratify_dense3d.py --hdf5 /tmp/3Dgan-risk-audit/caffe/train.h5 \
+python3 stratify_dense3d.py --hdf5 /path/to/train.h5 \
   --hdf5-dataset ECAL --hdf5-event 0 --hdf5-channel 0 \
   --curve hilbert --frame compact --out sheet.pgm --out-hdf5 sheet.h5
 ```
@@ -104,7 +99,7 @@ The Makefile exposes the same path without making the default target depend on
 external data:
 
 ```bash
-make hdf5 HDF5_FILE=/tmp/3Dgan-risk-audit/caffe/train.h5 FRAME=compact
+make hdf5 HDF5_FILE=/path/to/train.h5 FRAME=compact
 ```
 
 For flattened HDF5 files, pass the dataset name, layout, and target 3D shape:
@@ -126,7 +121,7 @@ dataset. Useful starting points are:
 | [Dataset 1][cc1]    | ATLAS photons/pions, flat showers.   |
 | [Dataset 2][cc2]    | Electrons, reshape to `45 16 9`.     |
 | [Dataset 3][cc3]    | Hi-gran electrons, `45 50 18`.       |
-| [Legacy sets][ccl]  | Submitted outputs for repro figures. |
+| [Legacy sets][ccl]  | Submitted outputs.                   |
 
 [cc]:  https://calochallenge.github.io/homepage/
 [cc1]: https://doi.org/10.5281/zenodo.8099322
@@ -139,8 +134,8 @@ Arguments:
 | Option           | Description                                 |
 |------------------|---------------------------------------------|
 | `--shape D H W`  | Volume shape (default `8 16 16`).           |
-| `--curve`        | `hilbert` or `morton`.                      |
-| `--frame`        | `compact` or `canonical`.                   |
+| `--curve`        | `hilbert` (default) or `morton`.            |
+| `--frame`        | `compact` (default) or `canonical`.         |
 | `--libxs`        | Path to libxs shared library.               |
 | `--hdf5`         | Read volume from an HDF5 file.              |
 | `--hdf5-dataset` | HDF5 dataset name (default `ECAL`).         |
@@ -174,11 +169,9 @@ The Makefile targets take these variables:
 ### MedMNIST3D
 
 The `stratify_medmnist3d.py` sample reads one standardized MedMNIST3D volume
-from an `.npz` file and applies the same 3D-to-2D stratification primitive. It
-is a dataset adapter rather than a training script, which keeps the dependency
-surface small: only `numpy` is required to parse the MedMNIST file. The sample
-does not require PyTorch or the `medmnist` Python package unless you use those
-tools separately to download the data.
+from an `.npz` file and applies the same 3D-to-2D stratification primitive.
+Only `numpy` is required; PyTorch or the `medmnist` package are needed only if
+you use them to download the data.
 
 The official MedMNIST distribution is available from the project page and
 Zenodo: [MedMNIST](https://medmnist.com/) and
@@ -244,7 +237,7 @@ distortion for the same synthetic and HDF5 inputs:
 
 ```bash
 make metrics
-python3 stratify_dense3d_metrics.py --hdf5 /tmp/3Dgan-risk-audit/caffe/train.h5 \
+python3 stratify_dense3d_metrics.py --hdf5 /path/to/train.h5 \
   --hdf5-dataset ECAL --curve hilbert
 python3 stratify_dense3d_metrics.py --hdf5 dataset_2_1.hdf5 --hdf5-dataset showers \
   --hdf5-layout flat --hdf5-reshape 45 16 9 --curve morton
@@ -268,34 +261,14 @@ with `--medmnist3d-npz FILE`, or with `--medmnist3d` and `--medmnist3d-root`,
 `--medmnist3d-flag`, `--medmnist3d-size`; `--medmnist3d-split` and
 `--medmnist3d-index` pick the sample. `--csv FILE` writes the metrics as CSV.
 
-### Geometry
-
-The current sample treats the source as a regular `D,H,W` index grid. This is
-enough for dense 3DGAN-style arrays and for CaloChallenge datasets after their
-flattened `showers` arrays are reshaped with the documented dimensions.
-
-Supporting other detector geometries should be data-driven rather than encoded
-as a list of known experiments. A general geometry adapter needs one of the
-following descriptions:
-
-| Geometry input             | Role                              |
-|----------------------------|-----------------------------------|
-| Integer logical coords     | Direct Hilbert/Morton input.      |
-| Floating physical coords   | Quantized before stratification.  |
-| Adjacency edges (optional) | Neighbor-distortion metrics.      |
-| Voxel weights (optional)   | Physics metrics for unequal bins. |
-
 ---
 
 ## Pair Counting (paircnt\_\*)
 
-Spatial pair counting inspired by Corrfunc: given a point catalog, bin all
-pairs by separation distance to compute correlation functions. The approach
-uses libxs kd-tree partition for cell decomposition and cell-pair pruning
-(minimum-separation skip), with vectorized inner loops for the actual distance
-computation and bin assignment.
+Counts the pairs of a point catalog per separation bin (DD), using the libxs
+kd-tree and skipping cell pairs that cannot fall into any bin.
 
-### Usage
+### Pair Counting Usage
 
 ```bash
 python3 paircnt_gendata.py --npoints 10000 --boxsize 420.0 --out catalog.dat
@@ -322,14 +295,3 @@ and `--out` (`.ff` selects the fastfood format). `paircnt_validate.py` runs
 `paircnt_dd.x` (`--exe`, default `./paircnt_dd.x`) and Corrfunc's
 non-periodic `DD` with the same `--rmin`, `--rmax`, and `--nbins` on a text
 catalog, compares the counts bin by bin, and exits non-zero on a mismatch.
-
-Design goals:
-
-- Leverage `libxs_kdtree_build` / `libxs_kdtree_partition` for spatial
-  decomposition rather than a separate grid structure.
-- Cell-pair pruning: skip cell pairs whose minimum separation exceeds the
-  largest bin edge.
-- Vectorized pair-counting kernel for the inner loop (SIMD where available).
-- Periodic and non-periodic boundary conditions.
-- Output: binned pair counts DD(r), optionally normalized to xi(r) via
-  Landy-Szalay with a random catalog.

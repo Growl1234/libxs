@@ -4,7 +4,8 @@ This sample fits piecewise-constant targets with networks of truncated-power
 units ⟨w·x − b⟩ᵐ, and measures how sharp the learned edges are. The 1-D targets
 are a step (`step`), a square wave (`square`), and the step with Gaussian noise
 of σ = 0.1 on the training samples (`noisy`). The 2-D targets are a checkerboard
-(`checker`), the same checkerboard turned by 30° (`turned`), and a disc (`disc`).
+(`checker`), the same checkerboard turned by 30° (`turned`, see `BRACKET_ANGLE`),
+and a disc (`disc`).
 Training uses Adam with full batches; the two-dimensional models use LIBXS GEMM.
 By default the training data are pixels, i.e., averages over cells, as an image
 sensor records them.
@@ -47,8 +48,9 @@ make
 ./bracket.x
 ```
 
+The binary takes no arguments; the environment variables below configure it.
 The two-dimensional networks dominate the runtime. The sample links BLAS by
-default; `make BLAS=0` falls back to the built-in GEMM, which is about 20× slower.
+default; `make BLAS=0` falls back to the built-in GEMM, which is slower.
 XGBoost is found as in the predict sample (`XGBOOST_ROOT`), and `make XGB=0`
 builds without it. With XGBoost enabled (the default), the build overrides
 `PEDANTIC` to 0.

@@ -26,10 +26,8 @@ The fields linf_abs, linf_rel, and v_ref/v_tst always refer to the
 same element. For complex types, statistics use modulus; differences
 use complex absolute error.
 
-The `w` field accumulates element count (m*n) across reductions.
-`libxs_matdiff_reduce` uses weighted online mean (West/Welford) for
-avg_ref/avg_tst: collapses to plain Welford when all matrices are
-the same size; gives the exact element-weighted grand mean otherwise.
+The `w` field accumulates the element count (m·n) across reductions, so
+avg_ref/avg_tst of a reduction are the element-weighted means.
 
 ```C
 int libxs_matdiff(libxs_matdiff_t* info,
@@ -92,6 +90,27 @@ double libxs_matdiff_posdef(const libxs_matdiff_t* info);  /* inline */
 Returns the smallest test-side diagonal element (positive = necessary
 condition for positive definiteness met). Zero if no diagonal data.
 
+Environment variables read by `libxs_matdiff`:
+
+- `LIBXS_DUMP`: unset, empty, or `0` disables it (default). Otherwise the
+  reference and test matrices are written as MHD files
+  `<prefix>-<address>-ref.mhd` and `<prefix>-<address>-tst.mhd`. The prefix
+  is the value itself unless it starts with a digit or `-`, in which case it
+  is `libxs_dump`. A value starting with `-` writes only matrices that differ,
+  and `-2` (or higher) additionally prints a passed/failed line per
+  comparison. A number whose magnitude exceeds 1 (e.g., `2`) writes the data
+  reshaped into a near-square two-dimensional array. Files are written only
+  in builds with MHD support (the default configuration).
+- `LIBXS_MATDIFF_SHUFFLE`: a nonzero integer (or an empty value) visits the
+  elements in a co-prime shuffled order rather than column-major order;
+  unset or `0` keeps the default order.
+
+From Fortran (`USE libxs`), `libxs_matdiff(info, datatype, m[, n, ref, tst,
+ldref, ldtst, bound, ldbnd, rc])` takes `TYPE(C_PTR)` matrices and optional
+leading dimensions; passing `bound` selects `libxs_matdiff_grade`, and `rc`
+receives the status. `libxs_matdiff_reduce`, `libxs_matdiff_clear`,
+`libxs_matdiff_epsilon`, and `libxs_matdiff_combine` are bound directly.
+
 ## Multiset Distance
 
 Order-independent distance between two vectors treated as multisets.
@@ -99,11 +118,8 @@ Counts elements that cannot be matched 1-to-1 within the given
 tolerance. The result satisfies metric properties: symmetry,
 non-negativity, and identity of indiscernibles.
 
-For real and integer types, both arrays are sorted and matched via
-a two-pointer merge. For complex types (C64, C32), a 2D k-d tree
-is built on one array and nearest-neighbor queries with consumption
-(used-flags) provide 1-to-1 matching by Euclidean distance. The
-tolerance threshold is inclusive (less-than-or-equal).
+Complex values (C64, C32) are matched by the modulus of their difference.
+The tolerance is inclusive (less-than-or-equal).
 
 ```C
 int libxs_setdiff(libxs_data_t datatype,
@@ -121,12 +137,9 @@ int libxs_setdiff_min(libxs_data_t datatype,
   const void* b, int nb, double* tol);
 ```
 
-Minimizes the multiset distance over all tolerances. The distance is a
-non-increasing step function of the tolerance and reaches its minimum at the
-largest distance between a value of a and a value of b; bisection
-(libxs_bisect_min) then locates the left edge of that lowest step. Returns
-the minimum unmatched count. The pointer tol (may be NULL) receives the
-smallest tolerance that achieves this minimum. Supported types: F64, F32,
+Minimizes the multiset distance over all tolerances and returns the minimum
+unmatched count. The pointer tol (may be NULL) receives the smallest
+tolerance that achieves this minimum. Supported types: F64, F32,
 C64, C32 only (integer types are not meaningful here; returns max(na, nb)
 with tol set to zero).
 
@@ -140,18 +153,16 @@ innermost dimension is fingerprinted first, each child fingerprint is
 collapsed to a Sobolev self-norm scalar, and those scalars form the 1-D input
 for the next outer dimension.
 
-Because the fingerprint is normalized to the unit interval, datasets of
-different lengths (or shapes) produce directly comparable fingerprints.
-The derivative-order decomposition captures structural features at
-multiple scales: order 0 measures value magnitude, order 1 measures
-slope/trend, order 2 measures curvature, and so on.
+Because of this normalization, datasets of different lengths (or shapes)
+produce directly comparable fingerprints. Order 0 reflects value magnitude,
+order 1 slope, order 2 curvature, and so on.
 
 Uses: compare datasets across resolutions or shapes (`libxs_fprint_diff`),
 judge smoothness and compressibility (`libxs_fprint_decay`), discover the
-element type of opaque data (see below), fingerprint streams or merge partial
-results (`libxs_fprint_partial`, `libxs_fprint_join`), rate roughness
-against a smooth reference (`libxs_fprint_bernstein`), and measure an exact
-distance between two sample sets (`libxs_fprint_bernstein_diff`).
+element type of opaque data (`LIBXS_DATATYPE_UNKNOWN`), fingerprint streams
+or merge partial results (`libxs_fprint_partial`, `libxs_fprint_join`), rate
+roughness against a smooth reference (`libxs_fprint_bernstein`), and measure
+an exact distance between two sample sets (`libxs_fprint_bernstein_diff`).
 
 ```C
 #define LIBXS_FPRINT_MAXORDER 8
@@ -191,15 +202,12 @@ order k = 0..order:
 | `nbernstein` | Orders held in bernstein (0: none)           |
 
 All norms are normalized to the unit interval (h = 1/(n-1)).
-The signed mean preserves the dominant direction of the k-th
-derivative and breaks pseudometric collisions that pure norms
-cannot distinguish (negation, reflection).
 
 The `order` field records how many derivative orders were used;
 `n` is the extent of the fingerprinted dimension. The `datatype`
 field records the element type — either the type passed by the
 caller, or the type discovered by probing when the caller passes
-LIBXS_DATATYPE_UNKNOWN (see "Type Discovery" below).
+LIBXS_DATATYPE_UNKNOWN (see Type Discovery below).
 
 To recover raw (unnormalized) finite-difference magnitudes, use
 libxs_fprint_raw (see Generalized Binomial and Distance section).
@@ -212,34 +220,9 @@ Geometric-mean per-order decay ratio:
 
     r = (l2[K] / l2[0])^(1/K) / (n - 1)
 
-The 1/(n-1) factor removes the unit-interval scaling so that
-decay ratios are comparable across different element counts
-(without it, fewer elements always appears to have lower decay).
-
-Interpretation of the return value:
-
-    r << 1      Structured data: forward differences shrink with
-                derivative order. Data is smooth and compressible
-                under Newton truncation.
-
-    1 < r ≤ 2   Noise / random data: forward differences of
-                uncorrelated samples grow by up to 2x per order
-                (r ≈ 1.4 at order 1, 1.8 at order 8). Since a
-                difference at most doubles a norm, r cannot exceed 2.
-
-    1e30        Returned when no valid ratio can be computed (e.g.,
-                order == 0 or l2[0] == 0 or n < 2).
-
-The decay ratio is the key discriminator for type discovery
-(see below) and for the Newton-truncation compressibility
-diagnostic.
-
-The L2 norms and signed means serve comparison via the Sobolev
-distance (libxs_fprint_diff). The Linf norms serve as a decay
-diagnostic: decaying linf[k] indicates structurally smooth data
-(compressible under Newton truncation), while growing linf[k]
-indicates unstructured data (no exploitable smoothness). The L1
-norms provide a noise-robust middle ground between L2 and Linf.
+A ratio well below 1 indicates smooth (compressible) data, and a ratio
+between 1 and 2 indicates noise; 1e30 is returned when no ratio can be
+computed (order == 0, l2[0] == 0, or n < 2).
 
 ```C
 typedef enum libxs_fprint_flags_t {
@@ -290,17 +273,8 @@ For 1-D data without LIBXS_FPRINT_PERAXIS, axis is ignored.
 Supported types: F64, F32, and all integer libxs_data_t types
 (I64, I32, U32, I16, U16, I8, U8 — promoted to double internally).
 
-When datatype is LIBXS_DATATYPE_UNKNOWN, the function performs
-automatic type discovery (Level 0 of the hierarchical analysis
-described below). In this mode, shape[0] is the byte count of
-the opaque buffer. The function probes all concrete types whose
-element width divides the byte count, fingerprints each, and
-selects the interpretation with the smallest decay ratio
-(libxs_fprint_decay). The discovered type is written to
-info->datatype. There is no threshold on r: if no candidate yields a
-finite decay ratio, the function returns EXIT_FAILURE. Ties are broken by
-preferring the smallest element width. Float candidates whose maximum
-absolute value is below 1e-37 (subnormals) are rejected.
+With datatype LIBXS_DATATYPE_UNKNOWN, the element type is discovered
+(see Type Discovery below).
 
 ```C
 int libxs_fprint_partial(libxs_fprint_t* info,
@@ -344,19 +318,10 @@ d = sqrt( sum_k weights[k] * [(a->l2[k] - b->l2[k])^2 + (a->mean[k] - b->mean[k]
 ```
 
 The number of orders compared is min(a->order, b->order) + 1.
-If weights is NULL, default weights w(k) = 1/k! are used, which
-naturally dampens higher-order (noisier) derivatives. Where both
+If weights is NULL, default weights w(k) = 1/k! are used. Where both
 fingerprints hold Bernstein norms, w(k) \* (a->bernstein[k] -
 b->bernstein[k])^2 is added for those orders; streamed and joined
 fingerprints hold none.
-
-The inclusion of the signed mean difference breaks collisions from
-negation (identical L2 norms but opposite means) and reflection
-(identical L2 but opposite first-derivative means). The distance
-is a metric in fingerprint space: symmetric, non-negative, zero if
-and only if the fingerprints are identical. The same function
-serves both as a distance measure and as a fingerprint comparator
-since the fingerprint is the decomposed form of the Sobolev norm.
 
 ```C
 #define LIBXS_FPRINT_BANDED 1024
@@ -372,9 +337,9 @@ data, norms[k] ≤ l2[k] of `libxs_fprint` on the same samples, so the ratio
 norms[k] / l2[k] rates roughness independently of the amplitude: near 1 for
 smooth data, small for edges and noise.
 
-The cost is O(n²) per order up to LIBXS_FPRINT_BANDED samples and O(n^1.5)
-above, where weights below 10⁻¹⁷ of their largest are skipped. Both are well
-above the cost of `libxs_fprint`, hence the separate call. The Fortran generic
+The call costs far more than `libxs_fprint` for large n. Above
+LIBXS_FPRINT_BANDED samples, weights below 10⁻¹⁷ of their largest are
+skipped. The Fortran generic
 `libxs_fprint_bernstein(norms, data[, order])` takes REAL(C_DOUBLE) or
 REAL(C_FLOAT) data and fills norms(0:order).
 
@@ -389,135 +354,67 @@ sets of any lengths: dist = sqrt(Σₖ w(k) ‖(B_a − B_b)⁽ᵏ⁾‖²) for
 k = 0..order, with w(k) = 1/k! if weights is NULL. Unlike
 `libxs_fprint_diff`, which compares summaries, it is a metric on the data
 themselves (zero only for equal samples), and it needs both sample sets.
-The shorter set is degree-elevated exactly to the longer one's degree, so
-similar data do not suffer cancellation; this adds O(n (n − m)) to the cost
-of `libxs_fprint_bernstein`. The Fortran generic
+The Fortran generic
 `libxs_fprint_bernstein_diff(dist, a, b[, order][, weights])` takes
 REAL(C_DOUBLE) or REAL(C_FLOAT) samples.
 
+From Fortran (`USE libxs`), the generic `libxs_fprint(info, data[, order,
+axis, smooth, flags])` takes a one-dimensional REAL(C_DOUBLE), REAL(C_FLOAT),
+INTEGER(C_INT), or INTEGER(C_INT8_T) array, and `libxs_fprint(info, datatype,
+data, ndims, shape[, stride, order, axis, smooth, flags])` a `TYPE(C_PTR)`
+with an explicit shape; order defaults to LIBXS_FPRINT_MAXORDER and the other
+options to zero. `libxs_fprint_partial(info, data[, order])` takes the same
+four array types, `libxs_fprint_diff(a, b[, weights])` returns the distance,
+and `libxs_fprint_join(output, a, b)` is bound directly.
+
 ## Type Discovery for Opaque Data
 
-When data arrives as a raw byte stream with no type metadata, the
-LIBXS toolkit can be composed into a hierarchical analysis that
-discovers the element type and structure. Each level uses a
-different tool, exploiting the fact that each tool is sensitive
-to a different axis of structure while being invariant to others.
-
-    Tool              Invariant to         Sensitive to
-    ---------------------------------------------------------------
-    fprint (decay)    element count        consecutive-element
-                      and scaling          correlation (local)
-    setdiff           element order        value identity (global)
-    matdiff           (positional)         magnitude, spread,
-                                           extrema
-    sort_smooth       row order            row-to-row proximity
-    shuffle           —                   provides controlled
-                                           reordering
-
-The hierarchical procedure:
-
-    Level 0 — Decay Screening (libxs_fprint + libxs_fprint_decay)
-
-      Interpret the byte stream under every candidate type whose
-      element width divides the stream length. Compute the decay
-      ratio r for each. Discard r >= 1 (noise). Short-list the
-      best few candidates (within a factor 2 of the minimum r).
-
-      This level is built into libxs_fprint when the caller passes
-      LIBXS_DATATYPE_UNKNOWN. The discovered type is reported in
-      the datatype field of the returned libxs_fprint_t.
-
-    Level 1 — Self-Consistency via Setdiff (libxs_setdiff_min)
-
-      Split the stream into two halves (A, B) under each surviving
-      candidate type. Compute d* = libxs_setdiff_min(A, B). The
-      ratio d* / max(|A|, |B|) is a "novelty fraction": how many
-      values in one half have no counterpart in the other. A correct
-      type produces low novelty (values repeat or cluster); a wrong
-      type scatters values across the range (high novelty).
-
-      Synergy: fprint measures local correlation (adjacent elements);
-      setdiff measures global value identity (ignoring order). A
-      candidate that passes both has independent evidence on two
-      orthogonal axes.
-
-    Level 2 — Smoothness-Sort Separability (libxs_sort_smooth)
-
-      Reshape the stream as a matrix under each surviving candidate.
-      Compute a GREEDY row permutation that minimizes row-to-row
-      Euclidean distance. Fingerprint the permuted matrix along the
-      row axis and measure the improvement:
-
-          delta = r_before - r_after
-
-      The candidate with the largest delta has the most exploitable
-      row structure.
-
-      Synergy: the GREEDY sort is O(m^2 n) — too expensive for the
-      initial sweep but affordable for 2-3 survivors. Its sensitivity
-      (row-to-row proximity) is orthogonal to 1-D decay and to
-      order-independent setdiff.
-
-    Level 3 — Shuffle Stability (libxs_shuffle + libxs_fprint_decay)
-
-      Shuffle the interpreted elements via libxs_shuffle (coprime
-      permutation). Fingerprint the shuffled data. If the decay
-      ratio increases substantially, the original element order
-      carries genuine structure. If it stays the same, the apparent
-      decay was accidental.
-
-      Synergy: this is the only test that probes whether the ORDER
-      of elements matters. Decay (Level 0) measures local correlation
-      but cannot distinguish true order from coincidence. Setdiff
-      (Level 1) is explicitly order-invariant. The shuffle test
-      closes this gap.
-
-    Level 4 — Statistical Plausibility (libxs_matdiff)
-
-      Compute single-matrix statistics (ref=NULL) for each surviving
-      candidate: mean, variance, min, max, diagonal range. Reject
-      float interpretations with NaN, infinity, or subnormals.
-      Flag integer interpretations whose value range spans less than
-      1% of the type range. Compare two candidates via
-      libxs_matdiff_combine (mean-shift and variance bound).
-
-    Stride Sweep — Record Layout Discovery
-
-      After discovering the atomic element width w, sweep candidate
-      strides s that are multiples of w. Reshape the stream as an
-      (L/s) x (s/w) matrix. Repeat Levels 0-2 on the outer
-      dimension (across "records"). The stride with the smallest
-      decay and largest sort-improvement likely corresponds to the
-      record boundary.
-
-Why the composition is stronger than any single tool:
-
-  - Decay alone is fooled by reinterpretation artifacts (e.g.,
-    integer data producing subnormal floats that look smooth).
-  - Setdiff alone cannot detect structure — it only counts
-    matches, and with large enough tolerance any data matches.
-  - Sort-smooth alone is too expensive for a brute-force sweep
-    and cannot discriminate types without a baseline decay.
-  - Shuffle stability alone cannot distinguish true order from
-    accidental order in short sequences.
-  - Statistics alone reject only pathological cases (NaN,
-    subnormals) and cannot resolve two plausible interpretations.
-
-Each level eliminates a different class of false positives. A
-candidate that survives all five has demonstrated structure along
-five orthogonal axes: local smoothness, global value consistency,
-row separability, order sensitivity, and statistical plausibility.
-A false positive would require a simultaneous coincidence on all
-five, which is combinatorially unlikely.
-
-Limitations: the analysis tests fixed-width candidates and cannot
-discover variable-length encodings, compression, or encryption.
-For data that is genuinely random at every granularity, all
-candidates are rejected at Level 0 and the framework reports
-"no structure found." The stride sweep discovers fixed-size
-records but not nested or recursive structures.
+To identify the element type of an untyped buffer, call `libxs_fprint` with
+`LIBXS_DATATYPE_UNKNOWN`, ndims=1, and shape[0] set to the byte count. Every
+type whose width divides the byte count is fingerprinted, and the one with
+the smallest decay ratio is written to info->datatype; ties go to the
+smaller width, and float interpretations whose largest magnitude is below
+1e-37 are skipped. EXIT_FAILURE is returned if no candidate yields a finite
+ratio. The choice is a best guess: if `libxs_fprint_decay` of the result is
+above 1, the buffer showed no structure under any type.
 
 ## Golden Section Search
+
+```C
+typedef enum libxs_gss_flags_t {
+  LIBXS_GSS_DEFAULT        = 0,
+  LIBXS_GSS_EVAL_ENDPOINTS = 1
+} libxs_gss_flags_t;
+
+typedef enum libxs_gss_status_t {
+  LIBXS_GSS_STATUS_DEFAULT      = 0,
+  LIBXS_GSS_STATUS_ENDPOINT_MIN = 1,
+  LIBXS_GSS_STATUS_FLAT_MIN     = 2,
+  LIBXS_GSS_STATUS_LEFT_REFINED = 4,
+  LIBXS_GSS_STATUS_MAXITER      = 8,
+  LIBXS_GSS_STATUS_NO_BRACKET   = 16
+} libxs_gss_status_t;
+
+typedef struct libxs_gss_info_t {
+  double unimodality;
+  double xmin, fmin;
+  double x0, x1;
+  int evaluations;
+  int iterations;
+  int status;
+} libxs_gss_info_t;
+```
+
+| Status                          | Meaning                                         |
+|---------------------------------|-------------------------------------------------|
+| `LIBXS_GSS_STATUS_ENDPOINT_MIN` | The minimum lies at x0 or x1                    |
+| `LIBXS_GSS_STATUS_FLAT_MIN`     | Another sample is within ftol of the minimum    |
+| `LIBXS_GSS_STATUS_LEFT_REFINED` | libxs_bisect_min refined the left edge          |
+| `LIBXS_GSS_STATUS_MAXITER`      | maxiter iterations were exhausted               |
+| `LIBXS_GSS_STATUS_NO_BRACKET`   | libxs_bisect_min: neither endpoint reaches fmin |
+
+Both searches require x0 <= x1 and maxiter > 0. Function values that differ
+by at most ftol count as equal; with ftol <= 0, only identical values do.
 
 ```C
 double libxs_gss_min(
@@ -531,23 +428,16 @@ double libxs_gss_min(
 Minimizes a unimodal function fn on the interval [x0, x1]. The
 callback receives x and an opaque context pointer. Returns f(x\*)
 where x\* is the minimizer; xmin (may be NULL) receives x\*.
+The search stops when the bracket collapses to machine precision or
+after maxiter iterations. `LIBXS_GSS_EVAL_ENDPOINTS` also evaluates fn at
+x0 and x1. For
+step-like objectives such as tolerance thresholds, use
+libxs_bisect_min instead.
 
-The bracket shrinks by factor phi = (sqrt(5)-1)/2 per iteration,
-reusing one evaluation from the previous step. Convergence is
-reached when the bracket collapses to machine precision or maxiter
-iterations are exhausted. Flags can enable endpoint evaluation.
-For step-like objectives such as tolerance thresholds, where plain
-GSS may discard the side containing the first point of the minimum
-plateau, use libxs_bisect_min directly.
-
-The optional info pointer (may be NULL) receives diagnostics:
-status flags, iteration and evaluation counts, the final x/f pair,
-the final bracket, and a unimodality score in [0, 1]. The score
-indicates how consistent the sampled points are with a single valley:
-1.0 means all samples are monotonically decreasing before the
-minimum and increasing after; lower values indicate irregularity or
-multimodality. Endpoint results are reported through status flags
-rather than through the unimodality score.
+The optional info pointer (may be NULL) receives status flags,
+iteration and evaluation counts, the final x/f pair, the final
+bracket, and a unimodality score in [0, 1] (1.0: samples consistent
+with a single valley; lower: irregular or multimodal).
 
 ```C
 double libxs_bisect_min(
@@ -558,10 +448,10 @@ double libxs_bisect_min(
 ```
 
 Bisects the interval [x0, x1] to find the left edge of a known
-minimum level fmin. The right endpoint is expected to reach fmin;
-otherwise info->status includes LIBXS_GSS_STATUS_NO_BRACKET. The
-function is useful as a standalone primitive for monotone threshold
-or plateau-edge searches.
+minimum level fmin, for monotone threshold or plateau-edge searches. The
+right endpoint is expected to reach fmin; otherwise info->status includes
+LIBXS_GSS_STATUS_NO_BRACKET. Returns fn at the found point, and xmin (may
+be NULL) receives that point.
 
 ## Generalized Binomial and Distance
 
@@ -606,8 +496,8 @@ int libxs_primes_u32(unsigned int num,
 
 Prime factors of `num` in ascending order, repeated by multiplicity
 (12 yields [2, 2, 3]). Returns the factor count, which may exceed
-`num_factors_max` (only that many are written). Returns zero if `num`
-is a prime other than two.
+`num_factors_max` (only that many are written; zero queries the count
+without writing). Returns zero if `num` is a prime other than two.
 
 ```C
 size_t libxs_coprime(size_t n, size_t minco);
@@ -649,6 +539,48 @@ double libxs_kahan_sum(double value, double* accumulator,
 
 Kahan compensated summation.
 
+## Compensated Arithmetic
+
+```C
+double libxs_neumaier_sum(double value, double* accumulator, double* compensation);
+double libxs_sum2(const double* x, int n);
+double libxs_sum2_err(const double* x, int n, double* err);
+double libxs_dot2(const double* x, const double* y, int n);
+double libxs_dot2_err(const double* x, const double* y, int n, double* err);
+```
+
+| Function             | Result                                                                |
+|----------------------|-----------------------------------------------------------------------|
+| `libxs_neumaier_sum` | Like `libxs_kahan_sum`, robust for summands of any magnitude order    |
+| `libxs_sum2`         | Sum of x[n] as if computed in twice the working precision             |
+| `libxs_sum2_err`     | As `libxs_sum2`; err (may be NULL) bounds the error: the exact sum is in [res − err, res + err] |
+| `libxs_dot2`         | Dot product of x[n] and y[n] as if computed in twice the working precision |
+| `libxs_dot2_err`     | As `libxs_dot2`, with an error bound as for `libxs_sum2_err`          |
+
+```C
+int libxs_dot2_gemm(libxs_data_t datatype, char transa, char transb,
+  int m, int n, int k, const void* alpha, const void* a, int lda,
+  const void* b, int ldb, const void* beta, void* c, int ldc);
+```
+
+Reference GEMM, C = alpha · op(A) · op(B) + beta · C (column-major, BLAS
+semantics, trans one of `'N'`, `'T'`, `'C'`), with every element computed
+by `libxs_dot2`. Use it to grade a GEMM computed in working precision.
+Supports F64, F32, C64, and C32. It is serial: to grade a large product,
+pass a few rows (m=1 per row). Returns EXIT_FAILURE in a build whose
+compensation was optimized away (see `LIBXS_PRAGMA_FASTMATH_OFF`).
+
+```C
+double libxs_two_sum(double a, double b, double* err);      /* inline */
+double libxs_fast_two_sum(double a, double b, double* err); /* inline */
+double libxs_two_product(double a, double b, double* err);  /* inline */
+```
+
+Error-free transformations: each returns the rounded result x and writes the
+rounding error to err, so that a + b == x + *err (or a · b == x + *err).
+`libxs_fast_two_sum` is exact only if |a| >= |b|. `libxs_two_product` is
+exact unless the product underflows.
+
 ```C
 unsigned int libxs_isqrt_u64(unsigned long long x);
 unsigned int libxs_isqrt_u32(unsigned int x);
@@ -672,7 +604,7 @@ unsigned int libxs_mod_inverse_u32(unsigned int a, unsigned int m);
 size_t libxs_mod_inverse(size_t a, size_t m);
 ```
 
-Modular inverse via extended Euclidean algorithm: a^{-1} mod m.
+Modular inverse a⁻¹ mod m.
 Requires gcd(a, m) = 1 and 0 < a, 1 < m. The size_t variant
 supports counts up to 2^63 - 1.
 
@@ -696,19 +628,44 @@ Fast modular reduction via Barrett. The 32-bit variant is valid for any
 `x`; the 64-bit variant uses a radix-2^18 split and is valid for x < 2^54
 and p < 8192.
 
-## BF16 Conversion
+## BF16 and FP16 Conversion
 
 ```C
 typedef uint16_t libxs_bf16_t;
-libxs_bf16_t libxs_round_bf16_f32(float x); /* inline */
-float libxs_bf16_to_f32(libxs_bf16_t v);    /* inline */
-libxs_bf16_t libxs_round_bf16(double x);   /* inline */
-double libxs_bf16_to_f64(libxs_bf16_t v);  /* inline */
+typedef uint16_t libxs_f16_t;
+libxs_bf16_t libxs_round_bf16_f32(float x);    /* inline */
+float libxs_bf16_to_f32(libxs_bf16_t v);       /* inline */
+libxs_bf16_t libxs_round_bf16(double x);       /* inline */
+double libxs_bf16_to_f64(libxs_bf16_t v);      /* inline */
+libxs_bf16_t libxs_u8_to_bf16(unsigned int v); /* inline */
+libxs_f16_t libxs_round_f16_f32(float x);      /* inline */
+float libxs_f16_to_f32(libxs_f16_t v);         /* inline */
+libxs_f16_t libxs_round_f16(double x);         /* inline */
+double libxs_f16_to_f64(libxs_f16_t v);        /* inline */
 ```
 
-Round to BF16 (round-to-nearest-even) and expand to float or double. Uses
-native `__bf16` when available (`LIBXS_BF16`), otherwise portable bit
-manipulation.
+`libxs_bf16_t` and `libxs_f16_t` hold the raw encodings of BF16 and IEEE
+FP16. The `round` functions round to nearest even, and the `to` functions
+expand exactly to float or double. `libxs_u8_to_bf16` converts an 8-bit
+unsigned integer exactly. Native `__bf16` (`LIBXS_BF16`) and `_Float16`
+(`LIBXS_F16`) are used when the compiler provides them, otherwise portable
+bit manipulation.
+
+```C
+void libxs_bf16_to_f32_block(float* dst,
+  const libxs_bf16_t* src, size_t n);          /* inline */
+void libxs_round_bf16_f32_block(libxs_bf16_t* dst,
+  const float* src, size_t n);                 /* inline */
+void libxs_f16_to_f32_block(float* dst,
+  const libxs_f16_t* src, size_t n);           /* inline */
+void libxs_round_f16_f32_block(libxs_f16_t* dst,
+  const float* src, size_t n);                 /* inline */
+void libxs_u8_to_bf16_block(libxs_bf16_t* dst,
+  const unsigned char* src, size_t n);         /* inline */
+```
+
+Convert n contiguous elements like the scalar functions above, e.g., into
+scratch ahead of a compute loop.
 
 ```C
 void libxs_dekker_bf16(double val, int ndigits,
@@ -722,9 +679,8 @@ iterative subtraction. `dst[0]` holds the dominant digit (the BF16
 rounding of the input); `dst[1]` holds the residual after subtracting
 the first digit's contribution, rounded to BF16; and so on. The sum
 `libxs_bf16_to_f64(dst[0]) + ... + libxs_bf16_to_f64(dst[ndigits-1])`
-reconstructs the original to about `8 * ndigits` significant bits
-(each BF16 digit carries 8, the implicit bit included), so seven digits
-cover the 53-bit significand of double. BF16 has the exponent range of
+reconstructs the original to about `8 * ndigits` significant bits, so
+seven digits cover a double. BF16 has the exponent range of
 float: a value beyond it overflows, and digits below it are lost. The
 `_f32` variant keeps the residual arithmetic in single precision for
 float storage/conversion paths.

@@ -14,18 +14,16 @@ unsigned int libxs_hash(const void* data, size_t size,
 ```
 
 Produce a 32-bit hash from a byte buffer of the given size. A NULL
-buffer is accepted only with a size of zero (returns seed). Uses CRC32-C
-when SSE4.2 is available, otherwise a software table-based CRC32.
+buffer is accepted only with a size of zero (returns seed).
 
 ```C
 uint64_t libxs_hash64(const void* data, size_t size, uint64_t seed);
 ```
 
 Produce a 64-bit hash from a byte buffer of the given size. NULL
-buffer or zero size is accepted (returns seed). It is not a CRC:
-each 8-byte word is mixed non-linearly (splitmix64 finalizer), so
-two inputs collide by chance and not by a difference a CRC cancels.
-The value does not depend on the byte order of the host.
+buffer or zero size is accepted (returns seed). Unlike `libxs_hash`,
+it is not a CRC, so inputs collide only by chance. The value does not
+depend on the byte order of the host.
 
 ## Fixed-Width Hashing
 
@@ -35,10 +33,8 @@ unsigned int libxs_hash16(unsigned int data);
 unsigned int libxs_hash32(uint64_t data);
 ```
 
-Hash an 8-, 16-, or 32-bit value. The input is split into a
-data part and an implicit seed derived from the remaining bits.
-The result is masked to the corresponding width (8, 16, or 32
-bits).
+Hash an 8-, 16-, or 32-bit value. The result has the same width
+(8, 16, or 32 bits).
 
 ## String Hashing
 
@@ -56,6 +52,11 @@ From Fortran (`USE libxs`), the generic `libxs_hash64` takes a
 contiguous array of `CHARACTER(C_CHAR)`, `INTEGER(C_INT8_T)`,
 `INTEGER(C_INT)`, or `INTEGER(C_LONG_LONG)` and an optional seed,
 and returns `INTEGER(C_INT64_T)`, as `libxs_hash` does for 32 bits.
+`libxs_hash_string(string)` takes a NUL-terminated `CHARACTER(C_CHAR)`
+array and returns `INTEGER(C_INT64_T)`. `libxs_hash_iso3309(data, size,
+seed)` and `libxs_adler32(data, size, seed)` take a `TYPE(C_PTR)`, an
+`INTEGER(C_SIZE_T)` size, and an `INTEGER(C_INT)` seed (all by value), and
+return `INTEGER(C_INT)`.
 
 ## CRC32 (ISO 3309)
 
@@ -65,8 +66,7 @@ unsigned int libxs_hash_iso3309(const void* data,
 ```
 
 CRC-32 using the ISO 3309 polynomial (used by PNG, gzip, and
-similar formats). Software-only, no hardware acceleration.
-Pre-condition and post-XOR with 0xFFFFFFFF are the caller's
+similar formats). Pre-condition and post-XOR with 0xFFFFFFFF are the caller's
 responsibility. A NULL buffer is accepted only with a size of zero.
 
 ## Adler-32

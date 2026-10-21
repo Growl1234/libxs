@@ -52,6 +52,17 @@ Operate on L-values directly (address-of is taken internally).
 VALUE_ASSIGN can cast away const qualifiers. VALUE_SWAP statically
 asserts equal size.
 
+## Memory Information
+
+```C
+int libxs_mem_info(size_t* mem_free, size_t* mem_total);
+```
+
+Host memory in bytes: `mem_total` is what the process may use (a cgroup limit
+applies where present), `mem_free` what is unused. Either pointer may be NULL.
+Device memory is not considered. Returns `EXIT_SUCCESS` if a size was
+determined; otherwise the outputs are left untouched.
+
 ## Offset and Alignment
 
 ```C
@@ -147,16 +158,21 @@ void libxs_itrans_batch(void* inout, unsigned int typesize,
 Batch of in-place matrix transpositions (per-thread form).
 
 ```C
+typedef enum libxs_mem_op_t {
+  LIBXS_MEM_OP_MATCOPY = 0, /* libxs_matcopy_task with a source */
+  LIBXS_MEM_OP_MATZERO = 1, /* libxs_matcopy_task without source (zeroing) */
+  LIBXS_MEM_OP_OTRANS = 2,  /* libxs_otrans_task */
+  LIBXS_MEM_OP_ITRANS = 3   /* libxs_itrans_task (square with ldi == ldo) */
+} libxs_mem_op_t;
+
 int libxs_mem_ntasks(libxs_mem_op_t op, int m, int n,
   unsigned int typesize, int nthreads);
 ```
 
-Number of tasks worth splitting a `_task` call into, given `nthreads`
-available: 1 below a minimum size of the operation, otherwise one task
-per so many bytes. The operation (`LIBXS_MEM_OP_MATCOPY`, `_MATZERO`,
-`_OTRANS`, `_ITRANS`) matters: zeroing needs the most data to pay for a
-team. In Fortran, compiled with OpenMP, `libxs_matcopy`, `libxs_otrans`,
-and `libxs_itrans` use it to run over an OpenMP team unless called from
-within a parallel region; a non-square `libxs_itrans` then runs two
-teams (copy into scratch, transpose back). These Fortran routines are no
-longer `PURE`, whereas their `_task` forms remain `PURE`.
+Number of tasks worth splitting a `_task` call for `op` into, given
+`nthreads` available: 1 below a minimum size of the operation, otherwise
+one task per so many bytes, never more than `nthreads`. An `itrans` of
+another shape runs on task 0 only. In Fortran, compiled with OpenMP,
+`libxs_matcopy`, `libxs_otrans`, and `libxs_itrans` use it to run over an
+OpenMP team unless called from within a parallel region. These Fortran
+routines are not `PURE`; their `_task` forms are.

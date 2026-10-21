@@ -51,30 +51,15 @@ OpenMP is enabled by default (OMP=1) for multi-threaded tests.
 ./sync_lock.x 4 5 100 1000
 ```
 
-```text
-LIBXS: default lock-kind "atomic" (Other)
-LIBXS: pauses before yielding 4096 (lock), 1024 (barrier)
+Each measured line names the lock kind it belongs to. The run first prints
+the pause budgets it was built with (lock and barrier), which a contended
+figure depends on; compare runs only when they match.
 
-Latency and throughput of "atomic" (default) for nthreads=4 wratio=5% ...
-        atomic ro-latency: 11 ns (call/s 91 MHz, 33 cycles)
-        atomic rw-latency: 11 ns (call/s 90 MHz, 33 cycles)
-        atomic throughput: 0 us (call/s 9128 kHz, 328 cycles)
-```
-
-Each measured line names the lock kind it belongs to, and the run reports the
-pause budgets it was built with, because a contended figure depends on those
-more than on anything else on the command line.
-
-To reach the regime a hot internal lock lives in — a critical section of a few
-instructions, taken by every thread — ask for a short one and nothing but
-writes:
+For a short, write-only critical section, as taken by a hot internal lock:
 
 ```bash
-./sync_lock.x 384 100 1 1 100000 5000
+./sync_lock.x 16 100 1 1 100000 5000
 ```
-
-The defaults instead describe a long critical section, where the lock is held
-long enough that waiting for it is not the cost.
 
 ## Measurement Details
 
@@ -104,22 +89,8 @@ The output gives the cost per rendezvous in nanoseconds and cycles, once
 for `wait:` (plain rendezvous) and once for `bcast:` (rendezvous with a
 broadcast value).
 
-The team is asked how large it actually is rather than told: a barrier
-initialized for more tasks than the runtime grants waits for one that
-never arrives.
-
-Both are checked and the binary fails if either is wrong, because a
-rendezvous that releases a task early is fast and worthless: every task
-stamps a slot of its own and reads all of them after the rendezvous,
-and the broadcast publishes a value that changes each round.
-
-The stamp check runs in a pass of its own, outside the timing. Reading
-every stamp is work proportional to the team, so at a wide one it costs
-more than the rendezvous it checks, and timing the two together would
-report the check as if it were the barrier.
-
-Expect a flat barrier to cost more once the team reaches the number of
-cores: every waiting task spins, so a team that over-subscribes the
-machine spends its time taking cycles away from the task it is waiting
-for. That is a property of the primitive, not of the measurement, and
-it is the reason to keep a rendezvous out of a tight loop.
+The team size is taken from the runtime, which may grant fewer threads than
+requested. The stamp each task writes per rendezvous is checked in an
+untimed pass and every broadcast value is checked; the binary fails,
+reporting stale stamps or wrong broadcasts, if one is wrong. Expect the
+barrier to cost more once the team exceeds the number of cores.

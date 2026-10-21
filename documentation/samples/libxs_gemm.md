@@ -14,7 +14,8 @@ make
 
 The C programs build header-only when LIBXS is not built yet; only
 `gemm_indexf.x` (Fortran) needs LIBXS built first from the repository
-root. `make MKL=1` (sequential) or `make MKL=2` (threaded) links MKL and
+root. BLAS is linked dynamically and sequential by default (`BLAS=1`,
+`BLAS_STATIC=0`). `make MKL=1` (sequential) or `make MKL=2` (threaded) links MKL and
 enables MKL's JIT kernels; `make LIBXSMM=1` enables LIBXSMM kernels and
 needs a built sibling `libxsmm` directory.
 
@@ -107,14 +108,11 @@ leading-dimension padding in C-matrices has not been overwritten.
 
 ## Runtime Controls
 
-`LIBXS_GEMM_PANEL=N` sets the smallest column panel a tiled SYRK/SYR2K
-splits into; zero (the default) takes `LIBXS_GEMM_BN`. A panel owns its
-columns, so it is the unit of parallel work and its operand is packed
-once; the actual width grows to `n/(2*ntasks)` where fewer tasks allow
-it, since a wider panel leaves a better GEMM behind. Raising the floor
-trades tasks for a better GEMM. `LIBXS_GEMM_BM`, `LIBXS_GEMM_BN` and
-`LIBXS_GEMM_BK` size the tiles that a panel's diagonal block still uses
-when no BLAS SYRK is available.
+`LIBXS_GEMM_PANEL=N` sets the smallest column panel a split SYRK/SYR2K
+uses; zero (the default) takes `LIBXS_GEMM_BN`. A larger value yields
+fewer and wider panels, i.e., fewer tasks. `LIBXS_GEMM_BM`,
+`LIBXS_GEMM_BN` and `LIBXS_GEMM_BK` size the tiles of a panel's diagonal
+block when no BLAS SYRK is available.
 
 Set `LIBXS_GEMM_PRINT=0` to print a compact GEMM registry summary at
 termination. The first line reports registry size, capacity, memory,

@@ -63,41 +63,18 @@ Controls input processing and prediction strategy:
   Forward: sum = (A+B)/2, diff = (A-B)/2.
   Inverse: A = sum+diff, B = sum-diff.
   Only effective when nseries == 2.
-- PCA: principal component rotation of the input space.
-  At build time, computes eigenvectors of the input covariance
-  matrix (Jacobi iteration), stores the rotation matrix, and
-  transforms all entries into PC space. Weights are auto-set
-  to zero out PCs below the 95% cumulative variance threshold
-  (dimensionality reduction). Applied via libxs_gemm.
-- SETDIFF: automatic feature selection using libxs_setdiff.
-  At build time, scores each input dimension by class
-  separability (per-class-pair setdiff with 5% tolerance,
-  range-normalized). Zeroes weights for features below the
-  median score. Supervised (uses output labels).
-- FISHER: automatic feature selection using Fisher's
-  discriminant ratio (between-class / within-class variance).
-  At build time, computes per-feature Fisher score, applies
-  sqrt weighting above median, zeroes below. Supervised.
-  Generally best for kNN classification.
-- RF: Random Forest. At build time, trains an ensemble of
-  64 decision trees per output by default (bootstrap
-  sampling, sqrt(ninputs) random features per split; see
+- PCA: principal component rotation of the input space with
+  dimensionality reduction.
+- SETDIFF: supervised feature selection by class separability
+  (libxs_setdiff).
+- FISHER: supervised feature weighting by Fisher's
+  discriminant ratio.
+- RF: Random Forest per output, 64 trees by default (see
   `libxs_predict_set_forest`). An integral output spanning
-  at most 128 levels is classified (Gini impurity, vote
-  across trees), any other output is regressed. Per-output
-  confidence is the average Laplace-smoothed support of the
-  leaves voting for the chosen class. Excels on
-  high-dimensional classification (37+ features). Persisted
-  in save/load.
-- HKNN: hierarchical kNN. At build time, partitions data
-  using a Fisher-guided kd-tree (output-aware dimension
-  selection, adaptive balance penalty) followed by Lloyd
-  refinement. Uses Gini impurity when a single categorical
-  output is detected. A soft cap based on the Fisher/Gini
-  score suppresses marginal splits near target cluster count.
-  Inference uses standard kNN within each partition. Best for
-  structured parameter prediction where output-aware spatial
-  partitioning outperforms geometric k-means.
+  at most 128 levels is classified, any other output is
+  regressed. Persisted in save/load.
+- HKNN: hierarchical kNN. An output-aware partition replaces
+  the clustering step; inference is kNN within each partition.
 
 PCA/SPREAD decomposition is applied at build time to stored
 entries and at eval time to user queries. Inverse prediction
@@ -237,15 +214,58 @@ the k nearest neighbors.
   intervals and dense regions stay close to the raw
   neighbor spread.
 
-The interval captures "plausible range given the neighbors"
-while confidence captures "should I trust this at all."
-Narrow interval + high confidence = strong prediction.
+```C
+void libxs_predict_set_central(libxs_predict_t* model, int mode);
+void libxs_predict_set_neighbors(libxs_predict_t* model, int k);
+void libxs_predict_set_coordinate(libxs_predict_t* model,
+  int coordinate);
+void libxs_predict_set_floor(libxs_predict_t* model, double floor);
+void libxs_predict_set_missing(libxs_predict_t* model, int enable);
+void libxs_predict_set_forest(libxs_predict_t* model,
+  int ntrees, int max_depth);
+```
+
+| Setter        | Values                                                                 |
+| ------------- | ---------------------------------------------------------------------- |
+| `set_central` | Vote of a many-valued output: 1 median, 2 mean, 0 (default) chosen per output at build; negative also prints the choice. |
+| `set_neighbors` | Neighbors the vote reads: k>0 pins it, 0 (default) derives it, k<0 selects it per output at build by trial. Persisted. |
+| `set_coordinate` | Coordinate an input contributes to the distance (`libxs_predict_coord_t`, default `LIBXS_PREDICT_AUTO_COORD`). |
+| `set_floor`   | Floor (0..1) the confidence rescalings pull toward; 0 (default) disables them. Persisted. |
+| `set_missing` | Non-zero: `load_csv` admits rows with an empty or unparsable input field as absent (NaN) instead of skipping them (default 0). Call before push. |
+| `set_forest`  | `LIBXS_PREDICT_RF` trees per output (ntrees>0, default 64) and depth (max_depth>0 fixed, 0 (default) derived from the entry count, <0 selected per output at build). Call before build; not persisted. |
+
+```C
+typedef enum libxs_predict_coord_t {
+  LIBXS_PREDICT_AUTO_COORD = 0,
+  LIBXS_PREDICT_RANK       = 1,
+  LIBXS_PREDICT_SCORE      = 2
+} libxs_predict_coord_t;
+```
+
+- AUTO_COORD (0): RANK or SCORE chosen at build by trial, from 8 inputs on;
+  with fewer inputs, RANK.
+- RANK: an input is placed by its rank among the stored entries.
+- SCORE: an input is placed by what its value says about the output. Needs one
+  discrete output and no series, and applies to RAW and HKNN only. A loaded
+  model built this way reports no corpus.
+
+Absent inputs (NaN, pushed directly or admitted by `set_missing`) are omitted
+from the distance. Interpolation abstains for a query with an absent input, and
+build fails under PCA, SPREAD, RF or HKNN when an absence is present.
 
 ## Timeseries Configuration
 
 ```C
+#define LIBXS_PREDICT_AUTO_WINDOW 0
+
 void libxs_predict_set_series(libxs_predict_t* model,
   int nseries, int window);
+void libxs_predict_set_series_deriv(libxs_predict_t* model,
+  int nderiv);
+void libxs_predict_set_series_aux(libxs_predict_t* model,
+  int naux);
+void libxs_predict_set_series_bank(libxs_predict_t* model,
+  int nbank);
 void libxs_predict_set_target(libxs_predict_t* model,
   int target);
 void libxs_predict_set_decompose(libxs_predict_t* model,
@@ -262,7 +282,21 @@ noutputs is the forecast horizon. With window =
 `LIBXS_PREDICT_AUTO_WINDOW` (0), the window is selected at build,
 and a negative window selects it by trial; in both cases ninputs
 is an upper bound and `libxs_predict_query_t::window` reports the
-window in force.
+window in force. A negative window builds candidate windows and
+keeps the one with the least held-back error over the horizon; its
+magnitude, when at least 4, is one more candidate. This costs
+several builds (see `LIBXS_PREDICT_WINDOW_FOLDS`).
+
+- set_series_deriv: append nderiv terminal first-differences of
+  the target window as inputs (default 0). Call before push.
+- set_series_aux: naux exogenous per-timestep features (e.g.
+  day-of-year), pushed after the series values and neither windowed
+  nor transformed (default 0). Call before push.
+- set_series_bank: average the forecast over nbank views of the
+  window, each halving the lags of the one before (default 1 =
+  off). Call before build; `libxs_predict_query_t::nbank` reports
+  the views built. `libxs_predict_inverse` abstains on a loaded
+  model with views.
 
 When set_series has been called, push(lock, model, values, NULL)
 accumulates one timestep (nseries + naux values per call: the
@@ -281,6 +315,7 @@ set_diff enables auto-differencing for non-stationary series:
 - Default is disabled (-1).
 
 Single-series example (sunspots):
+
 ```C
 model = libxs_predict_create(WINDOW, HORIZON);
 libxs_predict_set_series(model, 1, WINDOW);
@@ -290,6 +325,7 @@ libxs_predict_build(model, 0, 2, 0);
 ```
 
 Multi-series example (anti-correlated pair):
+
 ```C
 model = libxs_predict_create(WINDOW * 2, HORIZON);
 libxs_predict_set_series(model, 2, WINDOW);
@@ -303,6 +339,7 @@ libxs_predict_build(model, 0, 2, 0);
 ```
 
 Non-stationary example (trending stock prices):
+
 ```C
 model = libxs_predict_create(WINDOW * 2, HORIZON);
 libxs_predict_set_mode(model, LIBXS_PREDICT_TEMPORAL);
@@ -333,6 +370,17 @@ auxiliary values (nseries * window + naux values).
 Returns EXIT_SUCCESS or EXIT_FAILURE.
 
 ```C
+int libxs_predict_push_weighted(libxs_lock_t* lock,
+  libxs_predict_t* model, const double inputs[], const double outputs[],
+  double weight);
+```
+
+Push one entry whose kNN vote counts weight times (weight > 0;
+1 is exactly push). Only the vote reads the weight, not the
+polynomial fit, the partition or the probability API. In series
+mode only weight 1 is accepted. Weights are persisted.
+
+```C
 int libxs_predict_build(libxs_predict_t* model,
   int nclusters, int order, double quality);
 ```
@@ -352,44 +400,20 @@ The quality parameter (0..1) controls model compression:
   in save/load.
 
 Quality does not affect confidence. With
-`libxs_predict_set_floor` > 0, confidence is scaled by coverage
-at eval time:
-`conf = floor + coverage * (raw_conf - floor)`
-where coverage is the product of two factors:
-
-- inter-cluster: min(cluster_entries / expected_entries, 1).
-  Penalizes underpopulated clusters.
-- intra-cluster: 1/(1 + query_dist/cluster_dmax).
-  Penalizes queries far from the cluster center.
-
-Predictions in sparse regions approach the floor but never go
-below it. The floor is persisted in save/load.
+`libxs_predict_set_floor` > 0, confidence is discounted for
+underpopulated clusters and for queries far from the cluster
+center, approaching the floor but never going below it. The
+floor is persisted in save/load.
 
 ```C
 int libxs_predict_build_task(libxs_predict_t* model,
   int nclusters, int order, double quality, int tid, int ntasks);
 ```
 
-Per-thread collective form. All threads call with the same parameters and all of
-them must be inside the call at once: the build is a sequence of stages separated
-by a rendezvous, some the builder's alone and some divided across the tasks, so a
-task that does not enter stops the build.
-
-The rendezvous belongs to the model (`libxs_barrier_t`) and takes no argument. It
-used to take a lock, which a collective call cannot honour: whichever task held it
-would hold it while waiting for tasks that need it to enter. A lock would buy
-nothing either, a model not being evaluable part-built — a build is a phase the
-caller keeps to itself rather than an operation that interleaves.
-
-A barrier of the caller's was the obvious replacement and is not needed: it would
-have to be initialized before the team enters, since a task arriving early cannot
-wait on a barrier another task is still initializing, but the model's own needs no
-initializing — the task count is the only field a zeroed barrier lacks, and every
-task writes the same count before its own first wait. The caller would be passing
-what the model already has, which is how the lock came to be dead.
-
-Two models may therefore be built by two teams at once, each on its own
-rendezvous. The same model may not: a build is not concurrent with itself.
+Per-thread collective form. All tasks call with the same parameters, and every
+task must enter: a task that does not enter stops the build. The model owns the
+barrier, so no lock or barrier is passed. Two models may be built by two teams at
+once; the same model may not be built concurrently.
 
 ## Evaluation
 
@@ -407,6 +431,22 @@ confidence calls for more evidence), and nblend<0 pins the
 answer to the nearest cluster.
 The info pointer (optional) receives per-output confidence,
 variance, error bounds, and mode flags.
+
+```C
+int libxs_predict_shape(const libxs_predict_t* model,
+  int* ninputs, int* noutputs);
+void libxs_predict_eval_flat(const libxs_predict_t* model,
+  const double inputs[], double outputs[], double confidence[],
+  double variance[], double lower[], double upper[]);
+```
+
+shape reports the model's ninputs and noutputs (either pointer
+may be NULL; EXIT_FAILURE for a NULL model). eval_flat is eval
+with the per-output fields copied into caller arrays of noutputs
+each, every one optional (NULL skips it): the form for a
+foreign-function caller (ctypes, Fortran) that should not mirror
+`libxs_predict_info_t`. Without a quantile level, lower and upper
+receive the prediction.
 
 ```C
 void libxs_predict_inverse(libxs_lock_t* lock,
@@ -446,12 +486,9 @@ query fills a statistics struct (see `libxs_predict_query_t`
 below).
 get retrieves the i-th pushed entry (0-based).
 
-`nscan` reports the entries in the largest cluster, which is what
-a neighbor query walks in the worst case: local evidence is
-gathered by scanning a cluster, so scoring cost grows with `nscan`
-rather than with `nentries`. Read it to know what a query costs
-before paying for it — a model whose partition is skewed, or built
-with a single cluster, puts most or all entries on that path.
+`nscan` is the number of candidates a query scans in the worst
+case (the largest cluster); a model built with a single cluster
+scans every entry per query.
 
 ## Probability
 
@@ -474,32 +511,55 @@ int libxs_predict_prob_support(const libxs_predict_t* model,
   int output, double values[], int capacity);
 ```
 
-Where eval reports what the model would pick, these score a value
-the caller supplies — including one the model would never pick.
-`prob` is a point query for P(y|x); `prob_observe` reports the
-distribution over one discrete output and optionally observes the
-outcome, in that order, so weights cannot be advanced before the
-reported value is committed.
+These score a value the caller supplies, including one the model
+would never pick. `prob` is a point query for P(y|x);
+`prob_observe` reports the distribution over one discrete output
+and then optionally observes the outcome.
 
-The escape weight mixing local evidence with the fallback prior is
-learned per output from realized log loss, and that learning is
-stream state rather than model state, so it lives in a context:
-
-- `context != NULL` — adaptive; the weights adapt over the stream
-  and the model is not modified.
+- `context != NULL` — adaptive; the context's weights adapt over
+  the stream and the model is not modified.
 - `context == NULL` — frozen; the model's stored weights are used
   and never written, so results do not depend on call order.
 
-`prob_commit` copies a context's converged weights into the model.
-It is required before frozen scoring means anything: without it the
-model still holds its uniform prior, and freezing at that prior
-scores far worse than adapting.
+`prob_commit` copies a context's weights into the model. Call it
+before frozen scoring; without it, frozen scoring uses a uniform
+prior and scores poorly.
 
 `prob_support` returns the attested support of a discrete output
 (distinct values, sorted ascending), writing up to `capacity`
-entries and nothing at all when the support is larger. The support
-is fixed after build, so this reads it directly instead of through
-a scoring call.
+entries and nothing at all when the support is larger.
+
+## Calibration
+
+```C
+int libxs_predict_recalibrate_prob(libxs_predict_t* model,
+  const double* inputs, const double* outputs, int nentries);
+int libxs_predict_recalibrate_interval(libxs_predict_t* model,
+  const double* inputs, const double* outputs, int nentries);
+int libxs_predict_interval(const libxs_predict_t* model, int output,
+  double lower, double upper, double* lower_out, double* upper_out);
+int libxs_predict_probability(const libxs_predict_t* model,
+  int output, double confidence, double* probability);
+```
+
+A confidence ranks queries; it is not a probability. A forest
+carries a calibration curve fitted at build.
+
+- probability: translates a confidence from eval into the
+  probability that the reported RF class is correct. Returns
+  EXIT_SUCCESS when a curve was applied, EXIT_FAILURE when the
+  confidence passed through unchanged (still a ranking).
+- recalibrate_prob: replaces a forest's curve with one fitted on
+  rows the model was not built from (inputs: nentries * ninputs,
+  outputs: nentries * noutputs, laid out as push takes them), e.g.
+  after the deployment distribution changed. Fails for a model
+  without a forest.
+- recalibrate_interval: fits a correction of the prediction
+  interval on such held-out rows. Requires a model built with
+  `set_quantile` > 0; applies to any model kind.
+- interval: applies that correction to an interval from eval.
+  lower_out/upper_out always receive a value; EXIT_SUCCESS when
+  corrected, EXIT_FAILURE when passed through unchanged.
 
 ## Persistence
 
@@ -516,11 +576,9 @@ and call again. Load: returns a ready-to-eval model or NULL.
 Load accepts every released format version (currently 1 and 2)
 and defaults fields an older file does not carry. A v1.0.0 flat
 model stores no global entry order, so it abstains from
-`libxs_predict_inverse` and from recency weighting, as it did
-under v1.0.0; saving it again writes version 2 without that
-order rather than inventing one. Version 2 adds a CRC32
-trailer, so a truncated or corrupted file is rejected instead
-of silently loading a partial model.
+`libxs_predict_inverse` and from recency weighting, also after
+saving it again. Version 2 adds a CRC32 trailer, so a truncated
+or corrupted file is rejected.
 
 ## CSV Import
 
@@ -538,6 +596,35 @@ indices, as many as the model's ninputs and noutputs; NULL
 selects sequential columns. header (optional) receives the
 header line, delim_out (optional) the delimiter in use. Returns
 number of entries pushed, or -1 on error.
+
+```C
+int libxs_predict_load_csv_opts(libxs_predict_t* model,
+  const char filename[], const libxs_predict_csv_t* opts);
+
+typedef struct libxs_predict_csv_t {
+  const char* delims;
+  const char* inputs;
+  const char* outputs;
+  char* header;
+  int header_size;
+  char* delim_out;
+  int nrows;
+  int stride;
+  int offset;
+} libxs_predict_csv_t;
+```
+
+load_csv with the arguments in a struct, for loading a subset of
+a large file. A zero-initialized struct (or opts=NULL) loads like
+load_csv with every argument NULL or zero.
+
+- nrows: stop after that many entries were pushed (0: whole file).
+- stride: push every stride-th admissible row (0 or 1: every row).
+- offset: admissible rows to skip before the first one taken.
+
+With stride and offset, one file splits into disjoint parts that
+each span the whole file. Unparsable and comment rows are not
+admissible and do not shift the selection.
 
 ## Structures
 
@@ -569,6 +656,49 @@ the distance-weighted quantiles from k neighbors scaled by
 1/confidence. variance holds per-output neighbor disagreement.
 cluster gives the assigned cluster index (-1 if blended).
 distance gives normalized distance to nearest centroid.
+Confidence is a ranking; see Calibration for a probability.
+
+```C
+typedef enum libxs_predict_pkind_t {
+  LIBXS_PREDICT_PNONE = 0,
+  LIBXS_PREDICT_PMASS = 1,
+  LIBXS_PREDICT_PDENSITY = 2
+} libxs_predict_pkind_t;
+
+typedef struct libxs_predict_prob_info_t {
+  const double* prob;
+  const double* logprob;
+  const double* zscore;
+  const int* kind;
+  const int* attested;
+  const int* support;
+  const double* novel;
+  double total_logprob;
+  int noutputs;
+  int cluster;
+  double entropy;
+} libxs_predict_prob_info_t;
+```
+
+Populated by `libxs_predict_prob` and `libxs_predict_prob_observe`,
+per output where not noted otherwise:
+
+- prob: P(y|x), a mass or a density according to kind
+  (PMASS: discrete output, PDENSITY: continuous output, PNONE: no
+  result, e.g. a blended or RF output).
+- logprob: base-2 log of prob; read it rather than prob, which
+  underflows to zero for an improbable candidate.
+- zscore: (y - yhat)/h in density mode, 0 in mass mode.
+- attested: non-zero if the candidate is in the local
+  neighborhood. support: distinct values in the local support;
+  novel: mass reserved for values outside it (mass mode).
+- total_logprob: sum of logprob over outputs, assuming the outputs
+  are conditionally independent (not a calibrated joint
+  likelihood).
+- cluster: cluster serving the query (-1 if blended).
+- entropy: entropy in bits of the scoring weights, 0 once
+  committed and log2(nexperts) at the uniform prior; tells whether
+  the weights are still settling.
 
 ```C
 typedef struct libxs_predict_query_t {
@@ -597,3 +727,15 @@ Populated by query. compression = raw/model size ratio.
 ninputs/noutputs = the model's shape, which a caller evaluating
 into its own buffer sizes it from. order = polynomial order used.
 diff_order = differencing order (0 if disabled).
+
+## Environment Variables
+
+All are read at build and default to the behavior without them.
+
+| Variable                        | Effect                                                              |
+| ------------------------------- | ------------------------------------------------------------------- |
+| `LIBXS_PREDICT_WINDOW_FOLDS`    | Held-back splits scored per candidate window when `set_series` is given a negative window (default 3, at least 1). |
+| `LIBXS_PREDICT_DECOMPOSE_FOLDS` | Folds scored per candidate when the decomposition or the coordinate is chosen by trial (default 3 for a series, 1 otherwise; 0 or less keeps the default). |
+| `LIBXS_PREDICT_REFINE`          | Overrides `libxs_predict_set_refine` (same values). |
+| `LIBXS_PREDICT_RF_FRONTIER`     | N > 0 builds each forest tree in up to N (at most 64) frontier parts; the trees are the same. Off by default. |
+| `LIBXS_PREDICT_RF_RATE`         | Shrinkage of the forest's boosted corrections (default 0.1, applied to regression outputs). Setting it also enables corrections for classification outputs; 0 or less disables them. |

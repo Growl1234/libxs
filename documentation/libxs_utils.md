@@ -30,6 +30,9 @@ Preprocessor symbols defined when the compiler can generate code for a given ISA
 | `LIBXS_INTRINSICS_AVX` | AVX |
 | `LIBXS_INTRINSICS_AVX2` | AVX2 + FMA |
 | `LIBXS_INTRINSICS_AVX512` | AVX-512 (F + CD + DQ + BW + VL + VNNI) |
+| `LIBXS_INTRINSICS_AMX` | AMX tiles (via target attribute) |
+
+`LIBXS_INTRINSICS_INCLUDE` is defined when the x86 intrinsics headers (`immintrin.h`) are included.
 
 `LIBXS_STATIC_TARGET_ARCH` records the highest ISA provided by the compiler flags. `LIBXS_MAX_STATIC_TARGET_ARCH` records the highest ISA reachable via target attributes. Target attributes (`LIBXS_ATTRIBUTE_TARGET_*`) are defined up to `LIBXS_X86_AVX10_512` depending on compiler version.
 
@@ -44,7 +47,7 @@ Portability wrappers for intrinsics whose signatures differ across compilers:
 | `LIBXS_INTRINSICS_MM512_STREAM_*` | Non-temporal 512-bit stores |
 | `LIBXS_INTRINSICS_MM256_STORE_EPI32` | 256-bit integer store |
 | `LIBXS_INTRINSICS_MM512_SET_EPI16` | Portable 512-bit set from 32 int16 values |
-| `LIBXS_INTRINSICS_MM512_UNDEFINED_*` | Undefined-value initializers (zero in debug) |
+| `LIBXS_INTRINSICS_MM512_UNDEFINED_*`, `LIBXS_INTRINSICS_MM256_UNDEFINED_SI256`, `LIBXS_INTRINSICS_MM_UNDEFINED_SI128/PD` | Undefined-value initializers (zero in debug) |
 | `LIBXS_INTRINSICS_MM512_EXTRACTI64X4_EPI64` | 256-bit extract from 512-bit |
 | `LIBXS_INTRINSICS_MM512_ABS_PS` | Absolute value of packed floats |
 | `LIBXS_INTRINSICS_MM512_MASK_I32GATHER_EPI32` | Masked gather |
@@ -61,6 +64,15 @@ LIBXS_INTRINSICS_BITSCANBWD64(N)   /* bit index of highest set bit, 64-bit */
 ```
 
 Use GCC `__builtin_ctz`/`__builtin_clz` when available, Windows `_BitScanForward`/`_BitScanReverse` intrinsics on MSVC, or portable software fallbacks (`*_SW` variants). All return 0 when `N` is 0.
+
+```C
+int LIBXS_INTRINSICS_BITSCANFWD32_SW(unsigned int n);
+int LIBXS_INTRINSICS_BITSCANFWD64_SW(unsigned long long n);
+LIBXS_INTRINSICS_BITSCANBWD32_SW(N)
+LIBXS_INTRINSICS_BITSCANBWD64_SW(N)
+```
+
+The software variants can be called directly. The backward scans are macros and therefore usable in constant expressions.
 
 ## Derived Macros
 

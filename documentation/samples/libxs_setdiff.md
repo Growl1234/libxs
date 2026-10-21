@@ -1,8 +1,7 @@
 # Setdiff
 
 Runs small deterministic experiments for `libxs_setdiff` and
-`libxs_setdiff_min`. The sample writes CSV files that are useful for
-paper figures and for quick local proxy runs.
+`libxs_setdiff_min` and writes the results as CSV files.
 
 ## Build
 

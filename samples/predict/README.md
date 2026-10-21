@@ -21,7 +21,7 @@ Twelve executables demonstrating fingerprint-guided prediction:
   training distribution: whether the inputs inform the output at all.
 - **predict_ett** — ETT (Electricity Transformer Temperature) hourly
   forecasting with univariate, multivariate, PCA, and local-attention
-  modes (ETTh1, standard benchmark for timeseries LLMs).
+  modes (ETTh1).
 - **predict_prob** — Probability harness: scores P(y|x) for a candidate
   over the distinct-value support of one output (`libxs_predict_prob`).
 - **predict_dist** — Validates `libxs_predict_prob`: normalization,
@@ -57,17 +57,13 @@ LIBXS-only run.
 Keywords may be written anywhere on the command line and numbers fill the
 positional slots in order, so `predict_crystal.x data.csv xgb` and
 `predict_crystal.x data.csv 0.8 2 0 xgb` are the same run. A token that is
-neither a number nor a known keyword is refused: it used to land in the next
-numeric slot as `atof("xgb") == 0`, which trained on two rows and reported an
-accuracy for them. `predict_params` is the exception in that such a token is
-taken as the next file name.
+neither a number nor a known keyword is refused. `predict_params` is the
+exception in that such a token is taken as the next file name.
 
 Per-output, XGBoost is posed the same task LIBXS chose for itself: a
 classification over the attested value set where LIBXS classifies, a regression
 where it interpolates. An output with a single attested value is reported as
-constant and not trained (five of the sixteen kernel parameters are constant in
-`tune_multiply_PVC.csv`, so an average over all outputs is dominated by columns
-both models get for free).
+constant and not trained.
 
 Hyperparameters are fixed so the numbers are reproducible, and overridable:
 
@@ -80,29 +76,21 @@ Hyperparameters are fixed so the numbers are reproducible, and overridable:
 | `XGB_REGOBJ`  | *(per sample)* | Regression objective                      |
 | `XGB_LATENCY` | 4096           | Rows the per-query timing uses (0 = skip) |
 
-Where a sample reports timings it reports XGBoost's phases apart — marshalling
-the corpus into XGBoost's layout, the boosting rounds, and the batched prediction
-— because only the rounds are the counterpart of a LIBXS build, and a single
-figure covering all three had been read as if it were. The per-query line is the
-same distinction for inference, and it is reported on both sides: one query at a
-time (`libxs_predict_eval`, and `XGB_LATENCY` rows through XGBoost's inplace
-prediction) and a whole matrix at once (`libxs_predict_eval_batch_task` across the
-threads, and XGBoost's batched call). Comparing one library's batch against the
-other's per-query loop measures the two interfaces, not the two models.
+Timings report XGBoost's phases apart (marshalling, boosting rounds, batched
+prediction); only the rounds compare to a LIBXS build. Per-query timings are
+reported both one query at a time (`libxs_predict_eval`, and `XGB_LATENCY` rows
+through XGBoost's inplace prediction) and batched (`libxs_predict_eval_batch_task`,
+and XGBoost's batched call); compare like with like.
 
-`XGB_REGOBJ` matters where the reported metric is mean absolute error:
-`predict_earthquakes` therefore proposes `reg:absoluteerror`, and forcing
-`reg:squarederror` there moves the magnitude error 0.237 to 0.254, which is
-enough to invert the comparison. `predict_params` and `predict_crystal` propose
+`predict_earthquakes` proposes `reg:absoluteerror` for `XGB_REGOBJ`, since it
+reports mean absolute error; `predict_params` and `predict_crystal` propose
 `reg:squarederror`.
 
 `predict_crystal`, `predict_higgs` and `predict_params` additionally read `GATE`:
 a comma-separated list of confidence thresholds (default `0.9`, and `0.5` for
 `predict_params`). The first entry drives the
 confidence-gated line; supplying more than one also prints a precision/coverage
-sweep for both models. Comparing two confidence signals at one threshold
-compares two different operating points, so a sweep is the only way to tell a
-better-calibrated signal from a differently-scaled one:
+sweep for both models, which is what compares two confidence signals:
 
     GATE=0.5,0.6,0.7,0.8,0.9,0.95,0.99 ./predict_crystal.x predict_crystal.csv 0.8 2 0 xgb
 
@@ -114,31 +102,16 @@ better-calibrated signal from a differently-scaled one:
 The parameter CSVs are not part of LIBXS: they ship with LIBXSTREAM in
 `samples/smm/params/`.
 
-The `mix` keyword matters for the parameter CSVs: they are sorted by problem
-size, so the default prefix split holds out the *largest* shapes and measures
-extrapolation, which changes which model looks better. Use `mix` for
-interpolation, omit it for extrapolation, and say which one a number came from.
+The parameter CSVs are sorted by problem size, so the default prefix split holds
+out the largest shapes and measures extrapolation. Use `mix` to measure
+interpolation instead.
 
-`quantile` reports interval coverage split into attested and novel entries, and
-only the novel column is a calibration. An attested entry's own value lies in
-its neighbourhood and carries the largest distance weight, so a central band of
-any width contains it: measured over both parts together, the same nominal 80%
-reads anywhere from 16% to 98% depending only on the split. An output that is
-constant in the corpus yields a zero-width interval covering everything, and a
-level tighter than one neighbour's share of the weight cannot move either edge —
-both are reported rather than left to be inferred from the numbers.
+`quantile` reports interval coverage split into attested and novel entries; only
+the novel column is a calibration.
 
-`GFLOPS` is loaded as an output like every other column, so the schema does not
-depend on which CSV publishes it. A zero means the column is withheld, not that
-the kernel achieved nothing: such a column is a constant the model reproduces
-exactly, so it predicts zero and is hidden from the report. Where it is
-published, every shape is additionally weighed by the throughput its tuned
-parameters reached — so a miss counts what it costs rather than once — and the
-predicted throughput says whether tuning a shape is worth the run.
-
-Exact-match on kernel parameters remains a proxy for kernel quality even then:
-`GFLOPS` says what a shape is worth, not what a differing parameter would have
-reached on it, which needs running the kernel.
+`GFLOPS` is loaded as an output like every other column. A zero column means it
+is withheld and is hidden from the report. Where it is published, the report
+additionally weighs every shape by the throughput of its tuned parameters.
 
 
 ## predict_params
@@ -171,8 +144,7 @@ Reports validation quality on a held-out subset.
 Without `rf`, `hknn` or `knn`, the build chooses the method by trial on entries it holds
 back, as the other samples do. Naming a mode fixes it: the saved model keeps only
 what that mode reads and cannot be evaluated by another one. A chosen mode leaves
-the model open to all of them. The difference shows on `rf`, which answers from its trees and therefore
-stores no partition.
+the model open to all of them.
 
 ### Example
 
@@ -191,9 +163,8 @@ Timeseries forecasting using sliding-window nearest-neighbor prediction.
     NOPHASE=1  Drop the solar-cycle phase input.
     NOBANK=1   Use a single window view instead of the bank.
     WINDOW=n   Fix the window (default: auto). WINDOW=-1 selects it by
-               trial instead, which costs about 7x the build time and picks
-               9 rather than 14 here (mean error over six months 18.71 ->
-               18.30). WINDOW=-w also offers w as a candidate.
+               trial instead, at a multiple of the build time. WINDOW=-w
+               also offers w as a candidate.
 
 ### Example
 
@@ -201,16 +172,12 @@ Timeseries forecasting using sliding-window nearest-neighbor prediction.
 
 The sample carries one auxiliary input alongside the window
 (libxs_predict_set_series_aux): the phase of the solar cycle, measured from
-the training slice so nothing is tuned by hand. Longer horizons gain the
-most (t+6 23.70 -> 21.77, t+3 20.72 -> 18.94); t+1 is unchanged. NOPHASE=1
-drops it.
+the training slice. NOPHASE=1 drops it.
 
 The forecast is averaged over two views of the window
 (libxs_predict_set_series_bank), the second reading half the lags of the
-first: t+1 improves 17.52 -> 16.79 and t+6 20.30, at no extra corpus. Pass a
-larger count for more views (a third reaches 20.14 at t+6); NOBANK=1 drops
-back to one. Views are unavailable under a decomposition, where the inputs
-are no longer lags.
+first. NOBANK=1 drops back to one. Views are unavailable under a
+decomposition.
 
 ### Data Source
 
@@ -231,10 +198,8 @@ Predict earthquake magnitude from geographic location and depth.
     none       Plain kNN (otherwise the mode is selected at build by trial).
     xgb        Also train XGBoost on the same split and compare.
 
-The kNN vote reports the median rather than the mean here.
-libxs_predict_set_central picks that per output at build time and needs no
-argument (0.265 -> 0.249 for kNN, 0.263 -> 0.241 for hknn); pass 1 or 2 to
-force median or mean.
+The kNN vote reports median or mean as libxs_predict_set_central picks per
+output at build time (passing 1 or 2 to it forces median or mean).
 
 ### Example
 
@@ -255,6 +220,10 @@ log-transform on outputs for heavy-tailed data.
 
     ./predict_discharge.x <discharge_tsv> [train_fraction] [compress[Q]] [consist[C]] [hknn|rf|none]
 
+    WINDOW=n   Fix the window (default: auto). A negative value selects it by
+               trial; WINDOW=-w also offers w as a candidate.
+    BANK=n     Average the forecast over n views of the window (default: 1).
+
 ### Example
 
     ./predict_discharge.x predict_discharge.tsv
@@ -274,6 +243,10 @@ pressure at Tahiti and Darwin using SPREAD decomposition.
 ### Usage
 
     ./predict_soi.x <tahiti_file> <darwin_file> [train_fraction] [compress[Q]] [consist[C]] [hknn|rf]
+
+    WINDOW=n   Fix the window (default: auto). A negative value selects it by
+               trial; WINDOW=-w also offers w as a candidate.
+    BANK=n     Average the forecast over n views of the window (default: 1).
 
 ### Example
 
@@ -362,16 +335,12 @@ broken setup reports, so pair the question with one whose answer is known.
     ./predict_bits.x predict_earthquakes.csv latitude,longitude,depth mag 0.8 68
     ./predict_bits.x predict_earthquakes.csv latitude,longitude,mag depth 0.8 9000
 
-Magnitude is not determined by location (3.265 bits against the training
-distribution's 3.248) and depth is (1.478 against 7.615).
-
 
 ## predict_ett
 
 ETT (Electricity Transformer Temperature) hourly forecasting.
 Supports univariate and multivariate modes with PCA decomposition
-and per-query local-correlation attention. Standard benchmark
-for comparison against transformer-based timeseries models.
+and per-query local-correlation attention.
 
 ### Usage
 
@@ -385,18 +354,18 @@ for comparison against transformer-based timeseries models.
                trial, which costs one full build per candidate per fold).
     compress   Drop redundant entries (Q: threshold, default 0.9); off unless asked.
     xgb        Also train XGBoost on the same windows and compare.
+    WINDOW=n   Fix the window (default: auto). A negative value selects it by
+               trial; WINDOW=-w also offers w as a candidate.
+    BANK=n     Average the forecast over n views of the window (default: 1).
 
-`xgb` reads the built sliding windows back out of the model, so it overrides
-`compress` (compression prunes entries before they can be read) and is refused
-alongside `attend`, a decomposition, or `BANK`, each of which zeroes the weight
-of lags the distance does not read. The effective window applies to both models,
-so `WINDOW=96` compares them at the conventional input length rather than at the
-auto-selected one — the two rank differently at the two lengths.
+`xgb` overrides `compress` and is refused alongside `attend`, a decomposition,
+or `BANK`. The effective window applies to both models; `WINDOW=96` compares
+them at the conventional input length rather than at the auto-selected one.
 
 ### Examples
 
     ./predict_ett.x predict_ett.csv              # univariate OT
-    ./predict_ett.x predict_ett.csv 2 pca        # 2ch with PCA (best MSE)
+    ./predict_ett.x predict_ett.csv 2 pca        # 2ch with PCA
     ./predict_ett.x predict_ett.csv 7 attend     # 7ch with local-attention
     ./predict_ett.x predict_ett.csv 7            # 7ch raw (baseline)
 

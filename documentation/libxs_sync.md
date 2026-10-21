@@ -12,6 +12,16 @@ LIBXS_TLS
 
 Storage-class qualifier for thread-local variables. Maps to `__thread`, `__declspec(thread)`, or `thread_local` depending on the compiler. Defined as empty when TLS is unavailable or disabled (`LIBXS_NO_TLS`).
 
+Key-based thread-local values map to POSIX thread keys or Windows TLS slots (defined unless `LIBXS_SYNC` is 0); return values are those of the platform:
+
+| Macro | Description |
+|:------|:------------|
+| `LIBXS_TLS_TYPE` | Key type (`pthread_key_t`, or `DWORD` on Windows) |
+| `LIBXS_TLS_CREATE(KEYPTR)` | Create a key (no destructor) |
+| `LIBXS_TLS_DESTROY(KEY)` | Delete a key |
+| `LIBXS_TLS_SETVALUE(KEY, PTR)` | Set the calling thread's value |
+| `LIBXS_TLS_GETVALUE(KEY)` | The calling thread's value (NULL if not set) |
+
 ## Atomic Operations
 
 The header provides a suite of macros for atomic loads, stores, compare-and-swap, and arithmetic. The implementation selects among GCC builtins (`__atomic_*`), legacy GCC sync builtins, Windows Interlocked intrinsics, or no-op fallbacks depending on the compiler and `LIBXS_SYNC` setting.
@@ -32,7 +42,26 @@ The header provides a suite of macros for atomic loads, stores, compare-and-swap
 | `LIBXS_ATOMIC_RELEASE(DST, KIND)` | Release (store zero) |
 | `LIBXS_ATOMIC_SYNC(KIND)` | Full memory fence |
 
+```C
+typedef enum libxs_atomic_kind_t {
+  LIBXS_ATOMIC_SEQ_CST, /* __ATOMIC_SEQ_CST if available */
+  LIBXS_ATOMIC_RELAXED  /* __ATOMIC_RELAXED if available */
+} libxs_atomic_kind_t;
+```
+
 The `KIND` parameter selects the memory order (`LIBXS_ATOMIC_SEQ_CST` or `LIBXS_ATOMIC_RELAXED`) with the GCC builtins (`__atomic_*`). The legacy sync builtins and the Windows Interlocked intrinsics ignore it, and `LIBXS_ATOMIC_SYNC` is always a full fence.
+
+The unqualified operations are 32-bit in some configurations. Select a width explicitly with `LIBXS_ATOMIC(FN, BITS)`, where `BITS` is 8, 16, 32, or 64, e.g., `LIBXS_ATOMIC(LIBXS_ATOMIC_ADD_FETCH, 64)(&counter, 1, LIBXS_ATOMIC_RELAXED)`. `LIBXS_ATOMIC_SIZE(FN)` selects the width of `size_t`.
+
+| Macro | Description |
+|:------|:------------|
+| `LIBXS_SYNC_PAUSE` | CPU pause hint for spin loops (no-op where unavailable) |
+| `LIBXS_SYNC_YIELD` | Yield the processor to another thread |
+| `LIBXS_NPAUSE_LOCK` | Pauses before a waiting lock yields (default 4096); suits `NPAUSE` of `LIBXS_ATOMIC_ACQUIRE` |
+| `LIBXS_NPAUSE_BARRIER` | Pauses before a waiting barrier task yields (default 1024) |
+| `LIBXS_SYNC_CYCLE(PTR, STATE, NPAUSE)` | Spin until the lowest bit of `*PTR` equals that of `STATE`; pauses double up to `NPAUSE`, then each round yields |
+| `LIBXS_SYNC_CYCLE_EQ(PTR, VALUE, NPAUSE)` | Like `LIBXS_SYNC_CYCLE`, but until `*PTR` equals `VALUE` |
+| `LIBXS_SYNC_CYCLE_ELSE(PTR, STATE, NPAUSE, ELSE)`, `LIBXS_SYNC_CYCLE_EQ_ELSE(...)` | As above; `ELSE` is a statement run after each yield |
 
 ## Lock Abstraction
 
@@ -54,7 +83,16 @@ Generic lock interface parameterized by `KIND`. `LIBXS_LOCK_TRYLOCK` succeeded i
 | `LIBXS_LOCK_RWLOCK` | Pthreads reader-writer lock / Windows SRW lock (Windows mutex if targeting pre-Vista) |
 | `LIBXS_LOCK_ATOMIC` | Lightweight atomic lock |
 
-The default lock kind used by the library is `LIBXS_LOCK` (resolves to one of the above based on build configuration).
+The lock kind used by the library is `LIBXS_LOCK`, which defaults to `LIBXS_LOCK_DEFAULT` (`LIBXS_LOCK_ATOMIC`). Define `LIBXS_LOCK` before including LIBXS to choose another kind.
+
+`ATTR` is a pointer to lock attributes, which are created per kind:
+
+```C
+LIBXS_LOCK_ATTR_TYPE(KIND) attr;
+LIBXS_LOCK_ATTR_INIT(KIND, &attr);
+LIBXS_LOCK_INIT(KIND, &lock, &attr);
+LIBXS_LOCK_ATTR_DESTROY(KIND, &attr);
+```
 
 ```C
 typedef LIBXS_LOCK_TYPE(LIBXS_LOCK) libxs_lock_t;
@@ -70,24 +108,44 @@ LIBXS_LOCK_RELREAD(KIND, LOCK)
 LIBXS_LOCK_TRYREAD(KIND, LOCK)
 ```
 
+`LIBXS_LOCK_TYPE_ISRW(KIND)` is 1 if the kind provides genuine shared (reader) locking; otherwise the read variants lock exclusively. `LIBXS_LOCK_TYPE_ISPOD(KIND)` is 1 if the lock type is plain data.
+
 ## Barrier
 
 ```C
-libxs_barrier_t barrier;
-libxs_barrier_init(&barrier, ntasks);
-libxs_barrier_wait(&barrier);
-value = libxs_barrier_bcast(&barrier, tid, root, value);
+typedef struct libxs_barrier_t libxs_barrier_t; /* POD defined in the header */
+
+void libxs_barrier_init(libxs_barrier_t* barrier, int ntasks);  /* inline */
+void libxs_barrier_wait(libxs_barrier_t* barrier);              /* inline */
+int libxs_barrier_bcast(libxs_barrier_t* barrier,
+  int tid, int root, int value);                                /* inline */
 ```
 
-Rendezvous over a fixed number of tasks. The caller owns the storage and nothing is allocated inside, so the barrier can live in whatever structure already describes the team; `libxs_barrier_init` is called once, before any task waits, rather than by every task. A task is only a number here, so the team need not be a thread team.
+Rendezvous over a fixed number of tasks. The caller owns the storage (nothing is allocated inside), and one task calls `libxs_barrier_init` once, before any task waits (`ntasks` below 1 counts as 1). A task is only a number, so the team need not be a thread team.
 
-It is flat, one counter for the whole team, which suits a team that meets between stages of work rather than inside a tight loop. Every waiting task spins, so a team that over-subscribes the machine takes cycles away from the task it is waiting for.
+Every waiting task spins, so the barrier suits a team that meets between stages of work, and a team that over-subscribes the machine slows down.
 
-`libxs_barrier_bcast` waits and returns the value the `root` task carried into the call, which is how one task hands a decision to the rest. Writing that decision into a word of one's own and reading it after a plain `libxs_barrier_wait` is not equivalent and is not safe: nothing stops the publisher from writing the word again, and a reader still between the release and its own load then reads the newer value. The broadcast alternates between two slots by the parity of the rendezvous, so a late reader still finds what was published to it.
-
-Note that a lock is not a barrier and cannot stand in for one. A task holding a lock while waiting for tasks that need that lock to arrive does not proceed, so the two serve opposite purposes: a lock admits one task and needs to know nothing about the team, a barrier requires the whole team.
+`libxs_barrier_bcast` waits and returns the `int` value the `root` task passed in (`tid` is the calling task's number). Use it to hand a value from one task to the rest of the team.
 
 ## Ring
+
+```C
+typedef enum libxs_ring_kind_t {
+  LIBXS_RING_PRIVATE = 0,
+  LIBXS_RING_SHARED = 1
+} libxs_ring_kind_t;
+typedef struct libxs_ring_t libxs_ring_t; /* header placed in caller memory */
+
+size_t libxs_ring_size(size_t capacity);
+libxs_ring_t* libxs_ring_init(void* memory, size_t size, libxs_ring_kind_t kind);
+void* libxs_ring_reserve(libxs_ring_t* ring, size_t nbytes, int timeout_ms);
+void libxs_ring_commit(libxs_ring_t* ring);
+const void* libxs_ring_peek(libxs_ring_t* ring, size_t* nbytes, int timeout_ms);
+void libxs_ring_release(libxs_ring_t* ring);
+void libxs_ring_close(libxs_ring_t* ring);
+```
+
+Usage:
 
 ```C
 const size_t size = libxs_ring_size(capacity);
@@ -102,6 +160,11 @@ libxs_ring_close(ring);
 Records of varying size passed from one producer to one consumer, in order. The caller owns the memory (aligned to a cache line), and the ring keeps no pointer in it, so two processes can map the same memory (`MAP_SHARED`) at different addresses; one side calls `libxs_ring_init` and the other uses the memory as is. `LIBXS_RING_PRIVATE` is for threads of one process, `LIBXS_RING_SHARED` for processes.
 
 A record is written in place: `libxs_ring_reserve` returns room for it, contiguous and aligned to eight bytes, and `libxs_ring_commit` publishes it. The consumer reads it in place as well, until `libxs_ring_release`. A record takes at most half the capacity.
+
+- `libxs_ring_size` returns the bytes of memory needed for `capacity` bytes of records (rounded up to a power of two); a record takes its size rounded up to eight bytes, plus eight.
+- `libxs_ring_init` returns NULL if the memory cannot hold a ring.
+- `libxs_ring_reserve` returns NULL if there was no room in time, the ring is closed, or the record exceeds half the capacity.
+- `libxs_ring_peek` writes the record size to `*nbytes` and returns NULL if no record arrived in time, or if the ring is closed and empty.
 
 A side that has to wait spins briefly and then sleeps (a futex on Linux) until the other side moves; `timeout_ms` of zero does not wait and a negative one waits indefinitely. `libxs_ring_close` ends the waiting on both sides, while the consumer still receives what was committed. A process that dies does not close its side, hence a timeout is how the other side notices.
 
@@ -137,7 +200,7 @@ ranks are placed in blocks of `libxs_nranks` per node.
 unsigned int libxs_rid(void);
 ```
 
-Return a rank ID of the calling process.
+Return the node-local MPI rank (`libxs_nrank`) if there are several ranks on the node (`libxs_nranks`), and the process ID otherwise.
 
 ```C
 unsigned int libxs_pid(void);

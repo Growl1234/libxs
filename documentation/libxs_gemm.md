@@ -72,9 +72,8 @@ typedef struct libxs_gemm_shape_t {
 
 GEMM shape: problem geometry, transpose flags, and scalar
 coefficients. Serves as registry key when caching dispatched
-configurations. The key is hashed byte-wise, hence dispatch builds a
-zero-initialized copy rather than hashing a caller-supplied struct
-(the two chars leave padding before `m`).
+configurations. Dispatch builds its own key from the members, hence a
+caller-supplied shape need not be zero-initialized.
 
 ```C
 typedef struct libxs_gemm_config_t {
@@ -113,6 +112,56 @@ when no duplicate C pointers exist across the batch.
 LIBXS_GEMM_FLAG_OWNJIT is set by dispatch and marks the single config
 owning `jitter`; aliasing configs (double-dispatch, and every caller
 copy) leave it clear so the handle is released exactly once.
+
+```C
+typedef enum libxs_gemm_kind_t {
+  LIBXS_GEMM_KIND_DEFAULT = 0,
+  LIBXS_GEMM_KIND_BLAS = 1,
+  LIBXS_GEMM_KIND_JIT = 2
+} libxs_gemm_kind_t;
+```
+
+Kind of kernel serving a GEMM: built-in code, external BLAS, or a
+generated kernel (MKL JIT or LIBXSMM); see
+[Backend Query](#backend-query).
+
+Function-pointer and helper types used by the config and the backend:
+
+```C
+typedef void (*libxs_gemm_dblas_t)(
+  const char* transa, const char* transb,
+  const int* m, const int* n, const int* k,
+  const double* alpha, const double* a, const int* lda,
+                       const double* b, const int* ldb,
+  const double* beta,        double* c, const int* ldc,
+  size_t transa_len, size_t transb_len);
+typedef void (*libxs_gemm_sblas_t)(
+  const char* transa, const char* transb,
+  const int* m, const int* n, const int* k,
+  const float* alpha, const float* a, const int* lda,
+                      const float* b, const int* ldb,
+  const float* beta,        float* c, const int* ldc,
+  size_t transa_len, size_t transb_len);
+typedef void (*libxs_gemm_djit_t)(void* jitter,
+  const double* a, const double* b, double* c);
+typedef void (*libxs_gemm_sjit_t)(void* jitter,
+  const float* a, const float* b, float* c);
+typedef struct libxs_gemm_param_t {
+  void* op[4]; const void* a[6]; const void* b[6]; void* c[6];
+} libxs_gemm_param_t;
+typedef void (*libxs_gemm_xfn_t)(const void*);
+typedef struct libxs_xgemm_shape_t {
+  int m, n, k, lda, ldb, ldc;
+  int a_in_type, b_in_type, out_type, comp_type;
+} libxs_xgemm_shape_t;
+typedef int (*libxs_blas_nthreads_t)(void);
+```
+
+- `libxs_gemm_dblas_t`/`libxs_gemm_sblas_t`: Fortran BLAS `dgemm_`/`sgemm_` including the hidden lengths of transa and transb.
+- `libxs_gemm_djit_t`/`libxs_gemm_sjit_t`: MKL JIT kernel (`mkl_jit_get_dgemm_ptr`/`mkl_jit_get_sgemm_ptr`); shape and scalars are part of the jitter.
+- `libxs_gemm_param_t`: argument of an XGEMM kernel (`libxs_gemm_xfn_t`), layout-compatible with `libxsmm_gemm_param`; only the primary pointers `a[0]`, `b[0]`, `c[0]` are used.
+- `libxs_xgemm_shape_t`: shape passed to `xgemm_dispatch`, layout-compatible with `libxsmm_gemm_shape` (`libxsmm_blasint=int`).
+- `libxs_blas_nthreads_t`: number of threads the BLAS uses by itself, e.g., `MKL_Get_Max_Threads` (1 means sequential).
 
 ## Dispatch
 
@@ -200,11 +249,10 @@ rc = libxs_syrk_dispatch(config, LIBXS_DATATYPE_F64, n, k, lda, ldc)
 ```
 
 All of the above are inlines (or Fortran wrappers) that detect the
-backend at the caller's compile time. Backends are never a runtime
-argument there, which is what keeps LIBXS decoupled from MKL,
-LIBXSMM, and BLAS. To supply backend pointers explicitly, use the
-`_rt` forms, which are the only dispatch symbols exported by the
-library itself:
+backend at the caller's compile time (see
+[Kernel Providers](#kernel-providers)). To supply backend pointers
+explicitly, use the `_rt` forms, which are the only dispatch symbols
+exported by the library itself:
 
 | Operation | Explicit backend (library symbol) | Caller copy |
 | :--- | :--- | :--- |
@@ -257,11 +305,8 @@ still fall through to lower-priority backends if the requested
 backend is not supplied or cannot dispatch the shape.
 
 Automatic selection takes a generated kernel only for resident
-operands, recognized by leading dimensions that match the kernel's
-own extent. A larger leading dimension (a window into a larger
-matrix) reaches BLAS. This is what a tiled caller (SYRK, SYR2K) hands
-down, hence such tiles reach BLAS by default while a standalone small
-matrix still reaches the generators. `LIBXS_GEMM_BACKEND=1` or `=2`
+operands, i.e., leading dimensions that match the kernel's own extent;
+a larger leading dimension reaches BLAS. `LIBXS_GEMM_BACKEND=1` or `=2`
 requests the respective generator regardless.
 
 Among the generators, automatic selection tries the MKL JIT first and
@@ -306,6 +351,19 @@ but fills in BLAS, and MKL JIT or LIBXSMM when compiled with
 `-D__MKL` or `-D__LIBXSMM`. The application compiles `libxs_jit.F`
 itself (see [Kernel Providers](#kernel-providers)).
 
+**Without `-D__LIBXS`**, `libxs_jit.F` compiles to a BLAS-only module
+LIBXS_JIT that needs no LIBXS library. It offers `libxs_init`,
+`libxs_finalize`, `libxs_gemm_dispatch` (config flavor),
+`libxs_gemm_call` (config and one-shot form), `libxs_syrk`, and
+`libxs_syr2k`. These call DGEMM, DSYRK, and DSYR2K (double precision
+only), and the SYRK/SYR2K forms take the shape directly:
+
+```fortran
+CALL libxs_syrk(datatype, n, k, lda, ldc, uplo, alpha, beta, a, c)
+CALL libxs_syr2k(datatype, n, k, lda, ldb, ldc,
+     &  uplo, alpha, beta, a, b, c)
+```
+
 ### Fortran (LIBXS, explicit backends)
 
 ```fortran
@@ -316,9 +374,19 @@ rc = libxs_gemm_dispatch(config, datatype, transa, transb,
      &  dgemm_blas=..., registry=...)
 ```
 
-All backend arguments are OPTIONAL C_FUNPTR (named arguments).
-Returns nonzero on success (dispatch produced a callable config).
-The config is populated from the registry-owned copy.
+All backend arguments are OPTIONAL C_FUNPTR (named arguments):
+`jit_create_dgemm`, `jit_get_dgemm`, `jit_create_sgemm`,
+`jit_get_sgemm`, `xgemm_dispatch`, `dgemm_blas`, `sgemm_blas`, and
+`blas_nthreads`; `registry` is an OPTIONAL C_PTR. Returns nonzero on
+success (dispatch produced a callable config). The config is populated
+from the registry-owned copy.
+
+```fortran
+rc = libxs_gemm_config_cpy(config, cached) ! TYPE(C_PTR) :: cached
+```
+
+Converts a pointer obtained from a pointer-flavor dispatch into a
+caller-owned config, like `libxs_gemm_config_cpy` in C.
 
 ## Backend Query
 
@@ -371,6 +439,16 @@ void libxs_gemm_call(
 
 Call the dispatched GEMM kernel (JIT > XGEMM > BLAS fallback).
 The caller must ensure config is non-NULL (dispatch succeeded).
+
+```fortran
+CALL libxs_gemm_call(config, a, b, c)
+CALL libxs_gemm_call(datatype, transa, transb, m, n, k,
+     &  lda, ldb, ldc, alpha, beta, a, b, c)
+```
+
+In Fortran, the second form dispatches and calls in one step
+(`libxs_gemm_call_direct`); it accepts the OPTIONAL backend arguments
+and `registry` of the dispatch. `a`, `b`, and `c` are `TYPE(C_PTR)`.
 
 ## Release
 
@@ -433,16 +511,30 @@ buffers. index_base: 0 (C) or 1 (Fortran). index_stride: byte
 stride between consecutive index entries (sizeof(int) for packed
 arrays, 0 for constant-stride mode).
 
+```C
+int libxs_gemm_ntasks(const libxs_gemm_config_t* config,
+  int batchsize, int nthreads);
+```
+
+Number of tasks worth splitting `libxs_gemm_batch_task` or
+`libxs_gemm_index_task` into, given nthreads (1 means unsplit); never
+exceeds batchsize. Unless config->flags carries
+`LIBXS_GEMM_FLAG_NOLOCK`, a split serializes updates of the same C.
+Fortran: `libxs_gemm_ntasks(config, batchsize, nthreads)`.
+
+**Fortran and OpenMP.** When the application compiles the Fortran
+module with OpenMP, `libxs_gemm_batch` and `libxs_gemm_index` run over
+an OpenMP team sized by `libxs_gemm_ntasks`, unless called from within
+a parallel region. The `_task` forms remain for explicit splitting.
+
 ## SYR2K / SYRK
 
 Symmetric rank-2k and rank-k updates built on top of GEMM dispatch.
 
 For small problems (n within LIBXS_GEMM_BM and LIBXS_GEMM_BN, and
-k <= LIBXS_GEMM_BK), the dispatched kernel handles the full GEMM in one call. For larger
-problems, the implementation tiles the output into blocks and
-accumulates along K. Full-size tiles use the dispatched JIT kernel;
-remainder tiles fall back to BLAS (if available) or the built-in
-default. Scratch memory is thread-local.
+k <= LIBXS_GEMM_BK), the dispatched kernel handles the full GEMM in one
+call. Larger problems are split into column panels (see
+LIBXS_GEMM_PANEL and LIBXS_SYRK_BLAS). Scratch memory is thread-local.
 
 ### Dispatch
 
@@ -540,6 +632,30 @@ The _task variants partition work across ntasks threads. Each
 thread operates on independent output blocks; no locking is
 required. Thread-local scratch buffers are used internally.
 
+```C
+int libxs_syrk_ntasks(const libxs_gemm_config_t* config, int nthreads);
+```
+
+Number of tasks worth splitting `libxs_syrk_task` or
+`libxs_syr2k_task` into, given nthreads (1 means unsplit). Fortran:
+`libxs_syrk_ntasks(config, nthreads)`.
+
+In Fortran, `libxs_syrk` and `libxs_syr2k` also have a direct form that
+dispatches and calls in one step:
+
+```fortran
+CALL libxs_syrk(config, uplo, alpha, beta, a, c)
+CALL libxs_syrk(datatype, n, k, lda, ldc, uplo, alpha, beta, a, c)
+CALL libxs_syr2k(config, uplo, alpha, beta, a, b, c)
+CALL libxs_syr2k(datatype, n, k, lda, ldb, ldc, uplo, alpha, beta,
+     &  a, b, c)
+```
+
+The direct form takes an OPTIONAL `registry` but no backend arguments.
+When the Fortran module is compiled with OpenMP, both forms run over an
+OpenMP team sized by `libxs_syrk_ntasks`, unless called from within a
+parallel region.
+
 ## Compile-Time Tuning
 
 The block sizes used for tiled SYRK/SYR2K can be overridden at
@@ -550,18 +666,19 @@ compile time via preprocessor defines:
     LIBXS_GEMM_BK        K-direction block (default: 48)
 
 Problems fitting within these limits use a single specialized
-kernel call (MKL JIT or LIBXSMM when available). The same values are
-the SYRK tile dispatched as the kernel shape, hence they decide which
-kernel the arithmetic-intensity gate (LIBXS_GEMM_JIT_MAX) sees.
+kernel call (MKL JIT or LIBXSMM when available). The same values form
+the kernel shape that LIBXS_GEMM_JIT_MAX is applied to.
+
+    LIBXS_GEMM_PANEL     Smallest SYRK/SYR2K column panel
+                         (default: 0, i.e., LIBXS_GEMM_BN)
+    LIBXS_SYRK_MINTASKS  Fewest threads that split a SYRK/SYR2K
+                         against a sequential BLAS SYRK (default: 4)
 
     LIBXS_GEMM_NWARMUP   JIT warm-up counters (default: 4096)
 
-Number of slots in the table holding the per-shape reuse counters
-(must be a power of two). Shapes share slots by hash; a collision is
-detected by an identity tag stored alongside the counter, and the
-losing shape simply restarts counting rather than inheriting foreign
-progress. Sizing this below the number of distinct shapes in flight
-therefore degrades to later JIT, never to a wrong kernel.
+Number of slots for the per-shape reuse counters (must be a power of
+two). Fewer slots than distinct shapes in flight can delay JIT, but
+never yield a wrong kernel.
 
 ## Environment Variables
 
@@ -569,15 +686,13 @@ therefore degrades to later JIT, never to a wrong kernel.
                             (default: 192).
     LIBXS_GEMM_BN=N         Column block size (default: 32).
     LIBXS_GEMM_BK=N         K-direction block size (default: 48).
-    LIBXS_GEMM_PANEL=N      Smallest column panel of a tiled SYRK or
+    LIBXS_GEMM_PANEL=N      Smallest column panel of a split SYRK or
                             SYR2K; zero (default) takes
-                            LIBXS_GEMM_BN. A panel owns its
-                            columns, hence it is the unit of parallel
-                            work and its operand is packed once; the
-                            width grows to n/(2*ntasks) where fewer
-                            tasks allow it. The tile sizes above then
-                            apply to the diagonal block alone, and
-                            only where no BLAS SYRK is available.
+                            LIBXS_GEMM_BN. A larger value yields
+                            fewer and wider panels (fewer tasks).
+                            The tile sizes above then apply to the
+                            diagonal block alone, and only where no
+                            BLAS SYRK is available.
     LIBXS_GEMM_BACKEND=N    Select runtime backend chain start:
                             0 auto (default), 1 MKL JIT,
                             2 LIBXSMM, 3 BLAS, 4 built-in fallback.
@@ -587,18 +702,14 @@ therefore degrades to later JIT, never to a wrong kernel.
     LIBXS_GEMM_JIT_MAX=N    Arithmetic-intensity threshold for JIT
                             dispatch. JIT/LIBXSMM kernels are only
                             generated when the kernel shape's AI
-                            (flops/bytes) is below N (default: 7,
-                            roughly the AI of an 80x80x80 kernel).
+                            (flops/bytes) is below N (default: 7).
                             Set to 0 to disable JIT entirely.
     LIBXS_GEMM_JIT_WARMUP=N Number of calls a shape must
                             accumulate before JIT compilation is
                             attempted. Shapes called fewer than N
-                            times use the BLAS fallback; only shapes
-                            with proven reuse pay the JIT compile
-                            cost. Reuse is counted per dispatch, hence
-                            the first shape of an empty registry is
-                            compiled immediately (a caller dispatching
-                            only once cannot accumulate calls).
+                            times use the BLAS fallback. Reuse is
+                            counted per dispatch; the first shape of
+                            an empty registry is compiled immediately.
                             Counted in a fixed-size table, not in the
                             registry (see LIBXS_GEMM_NWARMUP); once a
                             shape's JIT has been attempted it is never
@@ -612,21 +723,18 @@ therefore degrades to later JIT, never to a wrong kernel.
                             Set to 0 for a summary at teardown instead
                             (registry, histogram, and warm-up slots).
                             Every line carries the origin of the
-                            process, because ranks share one stream:
-                            "LIBXS INFO[rid]:" with rid as libxs_rid,
+                            process, "LIBXS INFO[rid]:" with rid as
+                            libxs_rid,
                             hence the local rank where it is known and
                             the process id otherwise.
-    LIBXS_SYRK_PRINT=1      Print every BLAS DSYRK/DSYR2K call taken
-                            (see LIBXS_SYRK_BLAS) to stderr
+    LIBXS_SYRK_PRINT=1      Print every double-precision BLAS SYR2K
+                            call taken (see LIBXS_SYRK_BLAS) to stderr
                             (compile-time gate, enabled by default).
-    LIBXS_SYRK_BLAS=0|1     Resolve the BLAS DSYRK/DSYR2K entry points
-                            and prefer them for any shape wider than
-                            one tile. The tiled path (and with it the
-                            kernel of the dispatched config) is then
-                            unreachable, so the SYRK dispatch neither
-                            compiles a kernel nor takes a registry
-                            entry for such a shape. Set to 0 to tile
-                            and to make the kernel matter (default: 1).
+    LIBXS_SYRK_BLAS=0|1     Resolve the BLAS SYRK/SYR2K entry points
+                            (double and single precision) and prefer them for any shape wider than
+                            one tile; such a shape then compiles no
+                            kernel and takes no registry entry. Set to
+                            0 to tile (default: 1).
 
 ## Example (C)
 

@@ -6,15 +6,3 @@
 # Per project, and deliberately not a policy file: "make documentation" copies
 # tool_checkenvars.sh from LIBXS and would revert a name removed here.
 # Regenerate with: scripts/tool_checkenvars.sh --all
-LIBXS_DUMP
-LIBXS_DUMP_BUILD
-LIBXS_DUMP_FILE
-LIBXS_DUMP_FILES
-LIBXS_MATDIFF_SHUFFLE
-LIBXS_PREDICT_DECOMPOSE_FOLDS
-LIBXS_PREDICT_REFINE
-LIBXS_PREDICT_RF_FRONTIER
-LIBXS_PREDICT_RF_RATE
-LIBXS_PREDICT_TANGENT
-LIBXS_PREDICT_WINDOW_FOLDS
-LIBXS_SIGNAL

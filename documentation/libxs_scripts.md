@@ -1,5 +1,7 @@
 # Scripts
 
+`tool_normalize.sh`, `tool_checkstruct.py`, and `tool_checkenvars.sh` are policy files: they are maintained in LIBXS and copied into dependent projects by `make documentation`, hence a change belongs in LIBXS.
+
 ## Build Support
 
 **tool_source.sh** — Generate `libxs_source.h` (header-only amalgamation). Called by `make headers`.

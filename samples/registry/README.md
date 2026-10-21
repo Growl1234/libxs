@@ -55,9 +55,3 @@ skipped when running single-threaded.
 
 Fortran variant with hardcoded parameters (10000 keys, 10 repeats).
 Measures registration, cold lookup, and locked lookup.
-
-## Scaling Behavior
-
-All phases of `registry.x` pass the registry's lock, which bypasses the thread-local
-cache. Reads and writes are hence serialized, and their per-op duration
-grows with the number of threads contending for the lock.

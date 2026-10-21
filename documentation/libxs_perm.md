@@ -3,8 +3,8 @@
 Header: `libxs_perm.h`
 
 Permutation-based data reordering: deterministic co-prime shuffling
-(in-place and out-of-place with optional SIMD gather) and
-smoothness-optimized row permutations for matrices.
+(in-place and out-of-place), sorting, space-filling curves, k-d trees,
+and smoothness-optimized row permutations for matrices.
 
 ## Shuffling
 
@@ -14,10 +14,8 @@ deterministic permutation of count elements. The mapping is affine:
     dst[k] = src[(N-1) - ((C*k + offset) mod N)]
 
 The stride must be co-prime to count; passing NULL selects
-libxs_coprime2(count). The offset parameter extends the basic
-co-prime permutation into an affine family, expanding the number
-of available permutations from ~φ(N)/2 to ~N·φ(N)/2.
-Pass offset=0 for the standard (non-affine) shuffle.
+libxs_coprime2(count). A nonzero offset selects another member of
+the affine family. Pass offset=0 for the standard (non-affine) shuffle.
 
 ```C
 int libxs_shuffle(void* inout, size_t elemsize, size_t count,
@@ -26,7 +24,7 @@ int libxs_shuffle(void* inout, size_t elemsize, size_t count,
 ```
 
 In-place shuffle of count elements of elemsize bytes each.
-Uses cycle following with a bit vector (N/8 bytes auxiliary).
+Needs N/8 bytes of scratch memory.
 nrepeat controls the number of successive permutation
 applications (NULL or pointing to 1 means one pass). Returns
 EXIT_SUCCESS, or EXIT_FAILURE for invalid arguments or if the
@@ -40,8 +38,6 @@ int libxs_shuffle2(void* dst, const void* src, size_t elemsize,
 
 Out-of-place shuffle from src to dst. dst and src must not
 overlap. If \*nrepeat is zero an ordinary copy is performed.
-Uses AVX2/AVX-512 gather instructions when available for 4-
-and 8-byte elements (offset=0 path).
 
 ```C
 size_t libxs_unshuffle(size_t count, const size_t* shuffle);
@@ -59,18 +55,19 @@ int libxs_unshuffle2(void* dst, const void* src, size_t elemsize,
   const size_t* nrepeat);
 ```
 
-Single-pass inverse of libxs_shuffle2. Computes the modular
-inverse C_inv = C^{-1} mod N via the extended Euclidean
-algorithm, then gathers elements using the inverse permutation:
+Inverse of libxs_shuffle2 for the same shuffle, offset, and nrepeat,
+in a single pass per repetition (no need to repeat libxs_shuffle2).
 
-    dst[m] = src[C_inv * (N-1-offset-m) mod N]
+```C
+#define LIBXS_SHUFFLE_INDEX(I, N, C, B)
+#define LIBXS_UNSHUFFLE_INDEX(J, N, CINV, B)
+```
 
-This restores the original order in one O(N) pass rather than
-the R-1 repeated applications that libxs_unshuffle would
-require. The loop structure (sequential write, strided read)
-is identical to the forward shuffle and amenable to the same
-SIMD gather optimizations. Supports multi-pass inversion
-(nrepeat > 1) by iterating f^{-1}.
+Index maps for shuffling without moving data. `LIBXS_SHUFFLE_INDEX(I, N, C,
+B)` is the index libxs_shuffle2 reads for destination I (stride C, offset B).
+`LIBXS_UNSHUFFLE_INDEX(J, N, CINV, B)` is its inverse, the index
+libxs_unshuffle2 reads for destination J, with CINV =
+`libxs_mod_inverse(C, N)`.
 
 ## General-Purpose Sort
 
@@ -95,8 +92,8 @@ int libxs_cmp_i32(const void* a, const void* b, void* ctx);
 int libxs_cmp_u32(const void* a, const void* b, void* ctx);
 ```
 
-Built-in comparators enable an O(n) radix sort fast path.
-Custom comparators use O(n log n) heap sort.
+Prefer the built-in comparators: they enable a radix-sort fast path,
+whereas custom comparators fall back to a comparison sort.
 
 Index comparators order an array of indices (base) by keys that ctx
 points to, and leave the keys untouched (e.g., to permute a payload):
@@ -148,6 +145,21 @@ floor(64/ndims) bits. The decode routine deinterleaves the key
 back to ndims coordinates.
 
 ```C
+uint64_t libxs_hilbert_bits(
+  const unsigned int coords[], int ndims, int bits_per_dim);
+void libxs_hilbert_decode_bits(
+  uint64_t code, unsigned int coords[], int ndims, int bits_per_dim);
+uint64_t libxs_morton_bits(
+  const unsigned int coords[], int ndims, int bits_per_dim);
+void libxs_morton_decode_bits(
+  uint64_t code, unsigned int coords[], int ndims, int bits_per_dim);
+```
+
+Same curves with an explicit number of bits per coordinate
+(1 to 32, with ndims·bits_per_dim at most 64); the encoders return
+zero for arguments out of range.
+
+```C
 int libxs_stratify_morton(
   const unsigned int src_coords[], int src_ndims,
   unsigned int dst_coords[], int dst_ndims);
@@ -172,6 +184,19 @@ which must not exceed 32. The target dimensionality must be smaller than
 the source dimensionality. The functions return EXIT_SUCCESS or
 EXIT_FAILURE.
 
+```C
+int libxs_stratify_morton_bits(
+  const unsigned int src_coords[], int src_ndims, int src_bits,
+  unsigned int dst_coords[], int dst_ndims, int dst_bits);
+int libxs_stratify_hilbert_bits(
+  const unsigned int src_coords[], int src_ndims, int src_bits,
+  unsigned int dst_coords[], int dst_ndims, int dst_bits);
+```
+
+Same with explicit bits per source and target coordinate (each 1 to 32).
+Requires dst_ndims < src_ndims, src_ndims·src_bits <= 64, and
+dst_ndims·dst_bits >= src_ndims·src_bits; otherwise EXIT_FAILURE.
+
 ## k-d Tree
 
 ```C
@@ -189,8 +214,7 @@ typedef struct libxs_kdtree_config_t {
 Split callback for custom tree construction. Writes chosen
 split dimension into `*dim` and left-child count into `*pos`.
 The callback may reorder idx[0..count-1] to place left entries
-first; if it does, the partition function skips its internal
-quickselect. nleaves gives the current number of leaves already
+first. nleaves gives the current number of leaves already
 assigned. Return 0 for a valid split, nonzero to force a leaf.
 
 Config struct: min_leaf controls minimum node size (0 = split
@@ -203,8 +227,9 @@ void libxs_kdtree_build(const double* pts, int* idx, int n,
 
 Build a k-d tree in-place. Points are stored row-major:
 pts[i*stride + k] is coordinate k of point i. The index array
-idx[0..n-1] is rearranged into implicit tree structure.
-config may be NULL (round-robin median, leaf at 1 element).
+idx[0..n-1] must hold the identity {0, 1, ..., n-1} on entry and is
+rearranged into implicit tree structure. config may be NULL
+(round-robin median, leaf at 1 element).
 
 ```C
 int libxs_kdtree_partition(const double* pts, int* idx, int n,
@@ -215,7 +240,7 @@ int libxs_kdtree_partition(const double* pts, int* idx, int n,
 Partition n points into leaves and write leaf IDs into
 assignments[0..n-1]. Returns the number of leaves. Same tree
 logic as build, but produces cluster assignments instead of a
-query-tree index.
+query-tree index. As for build, idx must hold the identity on entry.
 
 ```C
 int libxs_kdtree_nearest(const double* pts, const int* idx,
@@ -240,21 +265,14 @@ returning how many were written (0..k; fewer when n or max_dist2
 bounds it).
 
 The result is exact: the same k points a linear scan would pick,
-in the same order. The tree only skips subtrees that cannot hold a
-closer point, so it replaces a scan without changing the answer —
-which matters when the neighbours feed an estimate rather than
-only a ranking.
+in the same order.
 
-Both searches require a tree built with `config == NULL` (or a
-config whose `split` is NULL and `min_leaf` is at most 1), because
-the query recomputes the split dimension as `depth % ndims` and
-treats every node as split at its middle element. A tree built with
-a custom split function does not record its choices, and leaves of
-more than one point are not ordered, so neither can be searched.
+Both searches require a tree built with `config == NULL`, or with a
+config whose `split` is NULL and `min_leaf` is at most 1; other
+trees cannot be searched.
 
-A kd-tree stops paying as dimension rises: it beats a scan while n
-is large against 2^ndims, and degenerates toward visiting every
-node beyond roughly ten dimensions. Prefer a scan there.
+Beyond roughly ten dimensions the search is no faster than a linear
+scan; prefer a scan there.
 
 Convenience wrappers for 2D (interleaved x,y layout):
 
@@ -264,6 +282,37 @@ int libxs_kdtree2d_nearest(const double* pts, const int* idx,
   const unsigned char* used, int n,
   double x, double y, double max_dist2);
 ```
+
+## Spatial Index
+
+```C
+typedef struct libxs_spatial_t {
+  uint64_t* codes;
+  void** values;
+  int n;
+} libxs_spatial_t;
+
+int libxs_spatial_build(libxs_spatial_t* sp,
+  const libxs_registry_t* registry);
+int libxs_spatial_build_codes(libxs_spatial_t* sp,
+  const uint64_t codes[], void* const values[], int n);
+int libxs_spatial_nearest(const libxs_spatial_t* sp,
+  uint64_t query_code, int k, void** out_values);
+void libxs_spatial_destroy(libxs_spatial_t* sp);
+```
+
+An index of values sorted by a 64-bit locality code, such as
+`libxs_hilbert`. `libxs_spatial_build` takes the codes from the first
+eight bytes of each key of a [registry](libxs_reg.md) (keys of at least
+eight bytes), and
+`libxs_spatial_build_codes` from parallel arrays, which it copies; use the
+latter when the registry key is not a locality code. Both return
+EXIT_SUCCESS, or EXIT_FAILURE for invalid arguments, an empty input, or a
+failed allocation. The values are stored as pointers, not copied.
+
+`libxs_spatial_nearest` writes up to k values whose codes are numerically
+closest to query_code to out_values and returns how many were written.
+`libxs_spatial_destroy` releases the index.
 
 ## Smooth Sorting
 
@@ -297,12 +346,12 @@ differences between consecutive rows).
 
 | Method     | Description                                          |
 |------------|------------------------------------------------------|
-| `NONE`     | No permutation (early return)                        |
+| `NONE`     | No permutation (early return, perm is not written)   |
 | `IDENTITY` | Identity permutation (perm[i] = i)                   |
 | `NORM`     | Sort rows by ascending L1-norm                       |
 | `MEAN`     | Sort rows by ascending row mean (mean over the columns) |
 | `GREEDY`   | Nearest-neighbor chain: starting from row 0, each step picks the unvisited row with the smallest Euclidean distance to the current row |
-| `MORTON`   | Sort rows by Morton (Z-order) key computed from quantized column values |
-| `HILBERT`  | Sort rows by Hilbert curve key computed from quantized column values |
+| `MORTON`   | Sort rows by Morton (Z-order) key computed from quantized column values (first 53 columns) |
+| `HILBERT`  | Sort rows by Hilbert curve key computed from quantized column values (first 53 columns) |
 
 Returns EXIT_SUCCESS or EXIT_FAILURE.

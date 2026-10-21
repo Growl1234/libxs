@@ -14,7 +14,7 @@ make
 ```
 
 Produces `scratch.x` (C). The Fortran variant `scratchf.x` is built only
-when a Fortran compiler is found (GNU Fortran 4.6 or later) and the library
+when a Fortran compiler is found (GNU Fortran needs 4.6 or later) and the library
 was built beforehand: without a built library the sample is compiled
 header-only and the Fortran variant is skipped.
 
@@ -42,7 +42,7 @@ header-only and the Fortran variant is skipped.
 |---------------|-----------|------------------------------------------------------|
 | MAX_MALLOC_MB | 100       | Upper bound on individual allocation size in MB      |
 | MAX_MALLOC_N  | 24        | Array size for random-number table and alloc slots   |
-| __TBB         | undefined | Baseline is TBB `scalable_malloc` instead of malloc |
+| __TBB         | undefined | Baseline is TBB `scalable_malloc` instead of malloc  |
 
 ### Example
 

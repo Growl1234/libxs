@@ -2,8 +2,9 @@
 
 Header: `libxs_hist.h`
 
-Thread-safe histogram with running statistics. Buckets by `vals[0]`;
-additional values per entry track user-defined statistics.
+Histogram with running statistics. Buckets by `vals[0]`; additional values per
+entry track user-defined statistics. Functions taking a `lock` are thread-safe
+when one is given; a NULL `lock` means no locking.
 
 ## Types
 
@@ -15,10 +16,9 @@ typedef void (*libxs_hist_update_t)(double* dst, const double* src, int count);
 typedef void (*libxs_hist_fold_t)(void* ctx, double* queue, int nvals, int nsamples);
 ```
 
-An update function reduces one value into one bucket, pairwise and in an order
-that must not matter. A fold instead sees a whole batch of samples at once and
-keeps state of its own, which is what a bucket cannot express — relating samples
-to one another rather than summarizing them independently.
+An update function reduces one value into one bucket; the order of updates must
+not matter. A fold receives a whole batch of samples at once and may keep state
+of its own, e.g., to relate samples to one another.
 
 ```C
 typedef struct libxs_hist_info_t {
@@ -30,9 +30,8 @@ typedef struct libxs_hist_info_t {
 } libxs_hist_info_t;
 ```
 
-`sum` is accumulated on push and is therefore independent of the update
-functions: it is a true total even where a bucket keeps a mean, a minimum or a
-maximum. `nsamples` equals the sum of the bucket counts.
+`sum` is the total of the pushed values regardless of the update functions.
+`nsamples` equals the sum of the bucket counts.
 
 ## Functions
 
@@ -75,18 +74,20 @@ void libxs_hist_query_mode(libxs_lock_t* lock,
 
 Values at a percentile [0..1], at the median (0.5), or of the most populated
 bucket. All report per-bucket aggregates, blending only towards a populated
-neighbour, so the result describes samples that were actually observed. The mode
-is preferable for a multi-modal distribution, where a percentile can fall
-between clusters; its `vals[0]` is the bucket's upper bound rather than an
-aggregate.
+neighbour. Prefer the mode for a multi-modal distribution; its `vals[0]` is the
+bucket's upper bound rather than an aggregate.
 
 ```C
 void libxs_hist_print(FILE* ostream, const libxs_hist_t* hist,
   const int prec[], const char fmt[], ...);
 ```
 
-Print to stream. `prec[k]` controls precision; negative skips output.
-NULL ostream/fmt accepted.
+Print to stream: `fmt` (may be NULL) is a `printf` format for a header line,
+followed by its arguments. Each non-empty bucket then prints one line with its
+number, upper bound, count, and values. `prec[k]` (`nvals` entries, or NULL for
+`%f`) sets the precision of value `k`, and `prec[0]` also that of the bound; a
+negative entry omits its value, and a negative `prec[0]` omits the bucket lines.
+A NULL `ostream` prints nothing. Printing takes no lock.
 
 ## Interval Union
 
@@ -99,23 +100,18 @@ double libxs_span_total(const libxs_span_t* span, int* inexact);
 void libxs_hist_fold_union(void* ctx, double* queue, int nvals, int nsamples);
 ```
 
-The time a set of intervals covers, as opposed to the sum of their lengths,
-which counts overlapping intervals more than once. `nsegments` bounds how far
-out of order intervals may arrive, not how many there may be: an interval
-beginning before what has already been retired is added whole and counted in
-`inexact`, which makes the total an upper bound. It never understates, so a
-ratio of summed length over covered time is a lower bound on how many intervals
-overlapped.
+The time a set of intervals covers, counting overlaps once. `nsegments` bounds
+how far out of order intervals may arrive, not how many there may be: an
+interval beginning before what has already been retired is added whole and
+counted in `inexact`, and the total is then an upper bound.
 
 `libxs_hist_fold_union` is a ready-made `libxs_hist_fold_t` that expects `ctx`
 to be a `libxs_span_t*` and reads the last two values of a sample as
 `(begin, end)`; pass it to `libxs_hist_create` to obtain both a distribution of
 durations and the time they covered from one push.
 
-Values must share an origin a double can hold exactly. Wall-clock nanoseconds
-do not — far above 2^53 the spacing between representable values is hundreds of
-nanoseconds, enough to make adjacent intervals appear to touch — so subtract an
-epoch first.
+Values must share an origin a double can hold exactly: subtract an epoch from
+wall-clock nanoseconds first.
 
 ## Update Functions
 
@@ -132,5 +128,4 @@ void libxs_hist_update_max(double* dst, const double* src, int count);
 - `max` — `*dst = max(*dst, *src)`
 
 Custom callbacks use the same signature; `count` enables online
-algorithms without external state. A callback that needs the whole sample, or
-state outside a bucket, is a fold rather than an update.
+algorithms without external state.

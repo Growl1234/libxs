@@ -32,9 +32,8 @@ typedef struct libxs_ngram_entry_t {
 ```
 
 The successor list is bounded by a Space-Saving policy that evicts the least
-frequent entry, so `total` may exceed the sum of the retained counts. The
-difference is real uncertainty, and the probability model charges it to backoff
-rather than hiding it.
+frequent entry, so `total` may exceed the sum of the retained counts; `prob`
+assigns the difference to backoff.
 
 ```C
 typedef struct libxs_ngram_t {
@@ -108,8 +107,8 @@ matches. A non-NULL `order` receives the context length that produced the result
 from a guess. Returns the number of ids written to `out_ids`.
 
 `stats` reports per-order key and observation counts plus the live footprint.
-Report `entries` as the honest size: `nbytes` follows the hash table's
-power-of-two capacity and therefore steps rather than growing smoothly.
+`nbytes` follows the hash table's power-of-two capacity and grows in steps;
+`entries` tracks the model size.
 
 ## Example
 

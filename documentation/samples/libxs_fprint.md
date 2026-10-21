@@ -1,12 +1,13 @@
 # Fingerprint
 
-This sample runs experiments for the LIBXS fingerprint API (`libxs_fprint`).
-It focuses on the fingerprint itself, leaving Rosetta as the higher-level
-algebra/type-discovery showcase.
+This sample exercises the LIBXS fingerprint API (`libxs_fprint`) and reports
+its properties as CSV tables. Rosetta covers the higher-level algebra and
+type discovery.
 
 ## What It Produces
 
-Set `FPRINT_OUTDIR` to collect CSV artifacts:
+Set `FPRINT_OUTDIR` to collect CSV artifacts (without it, results go to stdout
+only):
 
 ```bash
 mkdir -p results/fprint

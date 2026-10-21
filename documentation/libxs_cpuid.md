@@ -2,7 +2,7 @@
 
 Header: `libxs_cpuid.h`
 
-Portable CPU feature detection for x86-64, AArch64, and RISC-V targets. Returns an ISA level that can be compared numerically — higher values indicate more capable instruction sets. x86 levels use thermometer ordering: higher numeric value implies all features of lower levels. AVX10/256 sits below AVX512 because it lacks 512-bit vectors. The VEX-encoded AVX-VNNI-INT8 extension has no 512-bit form: `LIBXS_X86_AVX512_INT8` and above need AVX10.2, and AMX CPUs without it report as `LIBXS_X86_AVX512_AMX`.
+Portable CPU feature detection for x86-64, AArch64, and RISC-V targets. Returns an ISA level that can be compared numerically — higher values indicate more capable instruction sets. x86 levels use thermometer ordering: higher numeric value implies all features of lower levels. AVX10/256 ranks below AVX512 (no 512-bit vectors). `LIBXS_X86_AVX512_INT8` and above need AVX10.2, and AMX CPUs without it report as `LIBXS_X86_AVX512_AMX`.
 
 ## ISA Constants
 
@@ -15,7 +15,7 @@ Portable CPU feature detection for x86-64, AArch64, and RISC-V targets. Returns 
 | `LIBXS_X86_SSE42` | 1004 | SSE4.2 |
 | `LIBXS_X86_AVX` | 1005 | AVX |
 | `LIBXS_X86_AVX2` | 1006 | AVX2 + FMA |
-| `LIBXS_X86_AVX10_256` | 1030 | AVX10.1/256: all features, 256-bit max (Sierra Forest) |
+| `LIBXS_X86_AVX10_256` | 1030 | AVX10.1/256: all features, 256-bit max |
 | `LIBXS_X86_AVX512` | 1100 | AVX-512 (F + CD + DQ + BW + VL + VNNI) |
 | `LIBXS_X86_AVX512_AMX` | 1105 | AVX-512 + AMX (TILE + INT8 + BF16); Sapphire/Granite Rapids |
 | `LIBXS_X86_AVX512_INT8` | 1110 | AMX + AVX10.2: 512-bit VPDPBUUD/BSSD |
@@ -71,4 +71,4 @@ Returns the SIMD vector length in bytes for the given ISA level (0 for scalar-on
 int libxs_cpuid_amx_enable(void);
 ```
 
-Request AMX tile state (XTILE_DATA) from the OS. Must be called before any AMX tile instruction. Returns `EXIT_SUCCESS` if tiles are ready (or were already enabled), `EXIT_FAILURE` on unsupported platform or OS refusal. Not called automatically by `libxs_cpuid` to avoid the per-thread XSAVE overhead for non-AMX workloads.
+Request AMX tile state (XTILE_DATA) from the OS. Must be called before any AMX tile instruction. Returns `EXIT_SUCCESS` if tiles are ready (or were already enabled), `EXIT_FAILURE` on unsupported platform or OS refusal. Not called automatically by `libxs_cpuid`.
