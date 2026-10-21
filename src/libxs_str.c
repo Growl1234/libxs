@@ -9,6 +9,7 @@
 ******************************************************************************/
 #include <libxs/libxs_str.h>
 #include <libxs/libxs_utils.h>
+#include "libxs_main.h"
 
 
 /**
@@ -180,42 +181,51 @@ LIBXS_API int libxs_strimatch(const char a[], const char b[], const char delims[
 LIBXS_API_INLINE
 int internal_libxs_stridist(const char* a, int na, const char* b, int nb)
 {
-  int buffer[3][65], result, i, j;
-  int* prev2 = buffer[0];
-  int* prev1 = buffer[1];
-  int* cur = buffer[2];
-  if (0 == na || 0 == nb) result = (0 == na) ? nb : na;
+  int buffer[3][65], result, i, j, pool = 0;
+  int *heap = NULL, *prev2 = buffer[0], *prev1 = buffer[1], *cur = buffer[2];
+  if (0 >= na || 0 >= nb) result = (0 >= na) ? nb : na;
   else {
     if (na < nb) { /* ensure nb <= na for O(min) space */
       const char* t = a; a = b; b = t;
       i = na; na = nb; nb = i;
     }
-    LIBXS_ASSERT(nb <= 64);
-    for (j = 0; j <= nb; ++j) prev1[j] = j;
-    for (i = 1; i <= na; ++i) {
-      const int ca = internal_libxs_strilower(a[i - 1]);
-      int* rotate;
-      cur[0] = i;
-      for (j = 1; j <= nb; ++j) {
-        const int cb = internal_libxs_strilower(b[j - 1]);
-        int val = prev1[j - 1] + (ca != cb); /* substitution */
-        if (prev1[j] + 1 < val) val = prev1[j] + 1; /* deletion */
-        if (cur[j - 1] + 1 < val) val = cur[j - 1] + 1; /* insertion */
-        if (1 < i && 1 < j && prev2[j - 2] + 1 < val
-          && ca == internal_libxs_strilower(b[j - 2])
-          && internal_libxs_strilower(a[i - 2]) == cb)
-        {
-          val = prev2[j - 2] + 1; /* transposition */
-        }
-        cur[j] = val;
+    if (64 < nb) { /* rows longer than the stack buffer */
+      heap = (int*)internal_libxs_scratch_malloc(3 * ((size_t)nb + 1) * sizeof(int), &pool);
+      if (NULL != heap) {
+        prev2 = heap; prev1 = heap + nb + 1; cur = heap + 2 * (nb + 1);
       }
-      rotate = prev2;
-      prev2 = prev1;
-      prev1 = cur;
-      cur = rotate;
     }
-    result = prev1[nb];
+    if (64 < nb && NULL == heap) {
+      result = na; /* no memory for the rows: the longer length bounds the distance */
+    }
+    else {
+      for (j = 0; j <= nb; ++j) prev1[j] = j;
+      for (i = 1; i <= na; ++i) {
+        const int ca = internal_libxs_strilower(a[i - 1]);
+        int* rotate;
+        cur[0] = i;
+        for (j = 1; j <= nb; ++j) {
+          const int cb = internal_libxs_strilower(b[j - 1]);
+          int val = prev1[j - 1] + (ca != cb); /* substitution */
+          if (prev1[j] + 1 < val) val = prev1[j] + 1; /* deletion */
+          if (cur[j - 1] + 1 < val) val = cur[j - 1] + 1; /* insertion */
+          if (1 < i && 1 < j && prev2[j - 2] + 1 < val
+            && ca == internal_libxs_strilower(b[j - 2])
+            && internal_libxs_strilower(a[i - 2]) == cb)
+          {
+            val = prev2[j - 2] + 1; /* transposition */
+          }
+          cur[j] = val;
+        }
+        rotate = prev2;
+        prev2 = prev1;
+        prev1 = cur;
+        cur = rotate;
+      }
+      result = prev1[nb];
+    }
   }
+  if (NULL != heap) internal_libxs_scratch_free(heap, pool);
   return result;
 }
 
