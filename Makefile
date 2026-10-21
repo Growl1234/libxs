@@ -645,7 +645,7 @@ ALIAS_LIBDIR := $(subst $$$$,$(if $(findstring $$$$/,$$$$$(POUTDIR)),,\$${prefix
 PCTEMPLATE := $(ROOTSCR)/$(PROJECT).pc.in
 PCSUBST_BASE = $(SED) \
   -e 's|@PROJECT@|$(PROJECT)|g' \
-  -e 's|@DESCRIPTION@|Specialized tensor operations|g' \
+  -e 's|@DESCRIPTION@|Portable C library providing building blocks for memory operations, numerics, synchronization, and more|g' \
   -e 's|@URL@|https://github.com/hfp/$(PROJECT)/|g' \
   -e 's|@VERSION@|$(VERSION_STRING)|g' \
   -e 's|@PREFIX@|$(ALIAS_PREFIX)|g' \
@@ -684,8 +684,9 @@ FORCE:
 
 $(PPKGDIR)/$(PROJECT)-static.pc: FORCE
 $(PPKGDIR)/$(PROJECT)-shared.pc: FORCE
+# only the Fortran module calls into OpenMP, and only when compiled with it (OMP)
 $(PCMKDIR)/$(PROJECT)Config.cmake: $(ROOTSCR)/$(PROJECT)Config.cmake $(PCMKDIR)/.make FORCE
-	@$(SED) -e 's|@LIBXS_OPENMP@|$(if $(strip $(FC)),ON,OFF)|g' <$< >$@
+	@$(SED) -e 's|@LIBXS_OPENMP@|$(if $(and $(strip $(FC)),$(filter-out 0,$(OMP))),ON,OFF)|g' <$< >$@
 	@$(SED) -e 's|@VERSION@|$(VERSION_STRING)|g' \
 		<$(ROOTSCR)/$(PROJECT)ConfigVersion.cmake.in >$(PCMKDIR)/$(PROJECT)ConfigVersion.cmake
 	@$(MKDIR) -p $(OUTDIR)/cmake/$(PROJECT) && $(CP) $(PCMKDIR)/$(PROJECT)Config*.cmake $(OUTDIR)/cmake/$(PROJECT)
@@ -734,7 +735,7 @@ deb:
 		echo "Source: $${ARCHIVE_NAME}" >control; \
 		echo "Section: libs" >>control; \
 		echo "Homepage: https://github.com/hfp/$(PROJECT)/" >>control; \
-		echo "Vcs-Git: https://github.com/hfp/$(PROJECT)/$(PROJECT).git" >>control; \
+		echo "Vcs-Git: https://github.com/hfp/$(PROJECT).git" >>control; \
 		echo "Maintainer: $${ARCHIVE_AUTHOR}" >>control; \
 		echo "Priority: optional" >>control; \
 		echo "Build-Depends: debhelper (>= 13)" >>control; \
@@ -744,13 +745,13 @@ deb:
 		echo "Section: libs" >>control; \
 		echo "Architecture: amd64" >>control; \
 		echo "Depends: \$${shlibs:Depends}, \$${misc:Depends}" >>control; \
-		echo "Description: Specialized tensor operations" >>control; \
-		wget -T $(TIMEOUT) -qO- "https://api.github.com/repos/$(PROJECT)/$(PROJECT)" \
+		echo "Description: Portable C library providing building blocks for memory operations, numerics, synchronization, and more" >>control; \
+		wget -T $(TIMEOUT) -qO- "https://api.github.com/repos/hfp/$(PROJECT)" \
 		| $(SED) -n 's/ *\"description\": \"\(..*\)\".*/\1/p' \
 		| fold -s -w 79 | $(SED) -e 's/^/ /' -e 's/[[:space:]][[:space:]]*$$//' >>control; \
 		echo "$${ARCHIVE_NAME} ($${VERSION_ARCHIVE}-$(VERSION_PACKAGE)) UNRELEASED; urgency=low" >changelog; \
 		echo >>changelog; \
-		wget -T $(TIMEOUT) -qO- "https://api.github.com/repos/$(PROJECT)/$(PROJECT)/releases/tags/$${VERSION_ARCHIVE}" \
+		wget -T $(TIMEOUT) -qO- "https://api.github.com/repos/hfp/$(PROJECT)/releases/tags/$${VERSION_ARCHIVE}" \
 		| $(SED) -n 's/ *\"body\": \"\(..*\)\".*/\1/p' \
 		| $(SED) -e 's/\\r\\n/\n/g' -e 's/\\"/"/g' -e 's/\[\([^]]*\)\]([^)]*)/\1/g' \
 		| $(SED) -n 's/^\* \(..*\)/\* \1/p' \
