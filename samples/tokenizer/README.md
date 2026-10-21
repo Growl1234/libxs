@@ -19,6 +19,10 @@ make -C samples/tokenizer PEDANTIC=2
 printf '%s\n' 'UTF-8 text here' | ./samples/tokenizer/tokenizer.x -
 ```
 
-Output reports the input byte count followed by each token's kind, logical byte
-length, physical cell count, and sentence-boundary flag. A nonzero exit status
-means encoding or round-trip verification failed.
+Without an argument the input is `Who is Alice? Alice saw 123.`; several arguments
+are joined by single spaces, and `-` reads stdin.
+
+The input is encoded at the native, word and syllable granularity in turn. Each
+prints a line `NAME: input-bytes=N cells=N`, followed by one line per token with its
+cell offset, kind, logical byte length, physical cell count, and sentence-boundary
+flag. A nonzero exit status means encoding or round-trip verification failed.

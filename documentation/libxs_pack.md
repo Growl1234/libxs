@@ -15,7 +15,7 @@ int libxs_unpack(void* values, const void* packed,
 ```
 
 Packs `n` integers of `type` (`LIBXS_DATATYPE_I8` to `I64`, `U8` to `U64`) at
-`nbits` each (1 to eight times the type size) into `CEILING(n*nbits/64)` words.
+`nbits` each (1 to eight times the type size) into ⌈n·nbits/64⌉ words.
 Bits beyond `nbits` are ignored. Unpacking sign-extends signed types from
 `nbits` and zero-extends unsigned types. Both return `EXIT_SUCCESS`, or
 `EXIT_FAILURE` for a type or width out of range.

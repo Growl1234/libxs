@@ -88,8 +88,8 @@
  * a size test needs no device knowledge. Override with OZAKI_SYM_XOVER.
  *
  * The test is strict, so this names the first size that takes the full loop:
- * 1024 still wants the triangular form everywhere measured (1.02 on Xeon,
- * GH200 and H100, 1.27 on PVC), and 2048 is where it stops paying.
+ * 1024 still wants the triangular form on every device measured (1.02 to
+ * 1.27), and 2048 is where it stops paying.
  */
 #define OZ1_XOVER_DEFAULT 2048
 

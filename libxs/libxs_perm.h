@@ -71,7 +71,7 @@ LIBXS_EXTERN_C typedef struct libxs_spatial_t {
  * Compute a row permutation that reorders rows of an m-by-n
  * column-major matrix for smoothness (decaying forward differences).
  *
- * method:   LIBXS_SORT_NONE..LIBXS_SORT_GREEDY
+ * method:   LIBXS_SORT_NONE..LIBXS_SORT_HILBERT
  * m, n:     matrix dimensions (m rows, n columns)
  * mat:      column-major matrix data (const, not modified)
  * ld:       leading dimension (ld >= m)
@@ -230,7 +230,8 @@ LIBXS_API int libxs_kdtree_partition(
  * Find the nearest point to query[0..ndims-1] within squared Euclidean
  * distance max_dist2. Returns the point index (into original pts layout)
  * or -1 if no point is within range. The used array (may be NULL) marks
- * points to skip (non-zero = skip).
+ * points to skip (non-zero = skip). Same tree requirement as for
+ * libxs_kdtree_knearest (split NULL, min_leaf <= 1).
  */
 LIBXS_API int libxs_kdtree_nearest(
   const double* pts, const int* idx, const unsigned char* used,
@@ -254,9 +255,10 @@ LIBXS_API int libxs_kdtree_nearest(
  * dimensions. Prefer a scan there rather than paying for the tree as well.
  *
  * Requires a tree built by libxs_kdtree_build with config == NULL (or a config
- * whose split is NULL), because the query recomputes the split dimension as
- * depth % ndims - as libxs_kdtree_nearest does. A tree built with a custom
- * split function does not record its choices and cannot be searched this way.
+ * whose split is NULL and min_leaf <= 1), because the query recomputes the split
+ * dimension as depth % ndims and treats every node as split at its middle
+ * element - as libxs_kdtree_nearest does. A tree built with a custom split
+ * function or larger leaves does not record that and cannot be searched this way.
  */
 LIBXS_API int libxs_kdtree_knearest(
   const double* pts, const int* idx, const unsigned char* used,
@@ -276,7 +278,7 @@ LIBXS_API_INLINE int libxs_kdtree2d_nearest(const double* pts, const int* idx,
   return libxs_kdtree_nearest(pts, idx, used, n, 2, 2, q, max_dist2);
 }
 
-/** In-place shuffle: element i goes to (N-1) - ((C*i + offset) mod N). */
+/** In-place shuffle: element k receives element (N-1) - ((C*k + offset) mod N). */
 LIBXS_API int libxs_shuffle(void* inout, size_t elemsize, size_t count,
   /** Shall be co-prime to count-argument; uses libxs_coprime2(count) if shuffle=NULL. */
   const size_t* shuffle, size_t offset,

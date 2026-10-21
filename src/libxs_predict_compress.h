@@ -23,7 +23,7 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
        * the set that is left. Judging each entry against the whole corpus and
        * removing the flagged ones together was the defect: redundancy is a
        * property of a neighbourhood, so entries that are individually
-       * recoverable are jointly load-bearing, and removing them all destroys
+       * recoverable are not recoverable together, and removing them all destroys
        * the density that made each one redundant. It measured as a retained
        * set worse than a random subset of the same size (crystal: 41.1%
        * against 58.3% at ~7200 entries).
@@ -53,7 +53,7 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
                 model->has_missing, internal_libxs_predict_ehash(model, cl, li));
               /**
                * Unanimity is required, not merely a confident majority, and that
-               * is load-bearing rather than redundant: it also pins the vote
+               * matters beyond accuracy: it also pins the vote
                * fraction at 1.0, so `quality` cannot select among classify
                * outputs and the drop set is the same whatever is asked for.
                * Letting the threshold decide instead was measured and is far

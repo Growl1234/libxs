@@ -38,7 +38,10 @@ int libxs_matdiff(libxs_matdiff_t* info,
   const int* ldref, const int* ldtst);
 ```
 
-Compute scalar differences between two matrices. Supports all real and integer `libxs_data_t` types, plus `LIBXS_DATATYPE_C64` and `LIBXS_DATATYPE_C32` (interleaved complex; dimensions refer to complex elements).
+Compute scalar differences between two matrices. Supports `F64`, `F32`, `I64`,
+`I32`, `U32`, `I16`, `U16`, and `I8`, plus `LIBXS_DATATYPE_C64` and
+`LIBXS_DATATYPE_C32` (interleaved complex; dimensions refer to complex
+elements). Any other type (`U8`, `U64`) returns `EXIT_FAILURE`.
 
 ```C
 int libxs_matdiff_grade(libxs_matdiff_t* info,
@@ -59,14 +62,20 @@ other type is reported rather than silently left ungraded.
 double libxs_matdiff_epsilon(const libxs_matdiff_t* input);
 ```
 
-Combined error margin from absolute and relative norms. Optionally logs to file via `LIBXS_MATDIFF` env var.
+Combined error margin from absolute and relative norms. If the environment
+variable `LIBXS_MATDIFF` names a file, the margin is appended to it as one line;
+if it names a directory, the line goes to `libxs_matdiff.log` inside it. Further
+space-separated words in `LIBXS_MATDIFF` are appended to the line, followed by
+the command line.
 
 ```C
 int libxs_matdiff_combine(libxs_matdiff_t* output,
   const libxs_matdiff_t* input);
 ```
 
-Combine two single-matrix infos (`ref=NULL`) into a meta-diff. Per-side statistics are exact; `linf_abs` is the mean shift, `l2_abs` a statistical bound.
+Combine two single-matrix infos (`ref=NULL`) into a meta-diff. Per-side
+statistics are exact; `linf_abs` is the mean shift, `l2_abs` a statistical
+bound.
 
 ```C
 void libxs_matdiff_reduce(libxs_matdiff_t* output,
@@ -102,8 +111,8 @@ int libxs_setdiff(libxs_data_t datatype,
   const void* b, int nb, double tol);
 ```
 
-Supports all libxs_data_t types. Returns the number of unmatched
-elements, or -1 for unsupported types. The distance is at least
+Supports all `libxs_data_t` types except `U64`. Returns the number of
+unmatched elements, or -1 for unsupported types. The distance is at least
 abs(na - nb) when the vector lengths differ.
 
 ```C
@@ -112,26 +121,24 @@ int libxs_setdiff_min(libxs_data_t datatype,
   const void* b, int nb, double* tol);
 ```
 
-Minimizes the multiset distance over all tolerances using Golden
-Section Search (libxs_gss_min). Returns the minimum unmatched count.
-The pointer tol (may be NULL) receives the smallest tolerance that
-achieves this minimum. Supported types: F64, F32, C64, C32 only
-(integer types are not meaningful here; returns max(na, nb) with
-tol set to zero).
-
-The distance as a function of tolerance is monotonically
-non-increasing (a step function with discrete drops), which makes
-it unimodal — the prerequisite for Golden Section Search.
+Minimizes the multiset distance over all tolerances. The distance is a
+non-increasing step function of the tolerance and reaches its minimum at the
+largest distance between a value of a and a value of b; bisection
+(libxs_bisect_min) then locates the left edge of that lowest step. Returns
+the minimum unmatched count. The pointer tol (may be NULL) receives the
+smallest tolerance that achieves this minimum. Supported types: F64, F32,
+C64, C32 only (integer types are not meaningful here; returns max(na, nb)
+with tol set to zero).
 
 ## Polynomial Fingerprint
 
 Structural fingerprint for n-dimensional data based on Macaulay bracket
-(truncated-power) polynomials. For 1-D data, the fingerprint records per-derivative-order
-norms of the forward finite differences, normalized to the unit interval
-[0,1]. Higher dimensions are handled hierarchically: the innermost dimension
-is fingerprinted first, each child fingerprint is collapsed to a Sobolev
-self-norm scalar, and those scalars form the 1-D input for the next outer
-dimension.
+(truncated-power) polynomials. For 1-D data, the fingerprint records
+per-derivative-order norms of the forward finite differences, normalized to
+the unit interval [0,1]. Higher dimensions are handled hierarchically: the
+innermost dimension is fingerprinted first, each child fingerprint is
+collapsed to a Sobolev self-norm scalar, and those scalars form the 1-D input
+for the next outer dimension.
 
 Because the fingerprint is normalized to the unit interval, datasets of
 different lengths (or shapes) produce directly comparable fingerprints.
@@ -211,20 +218,17 @@ decay ratios are comparable across different element counts
 
 Interpretation of the return value:
 
-    r << 1   Structured data: forward differences shrink with
-             derivative order. Data is smooth and compressible
-             under Newton truncation.
+    r << 1      Structured data: forward differences shrink with
+                derivative order. Data is smooth and compressible
+                under Newton truncation.
 
-    r ~= 1   Noise / random data: forward differences grow at the
-             rate expected for uncorrelated sequences (~2x per
-             order before normalization).
+    1 < r ≤ 2   Noise / random data: forward differences of
+                uncorrelated samples grow by up to 2x per order
+                (r ≈ 1.4 at order 1, 1.8 at order 8). Since a
+                difference at most doubles a norm, r cannot exceed 2.
 
-    r >> 1   Should not occur for well-formed data; indicates
-             divergent finite differences (numerical overflow or
-             pathological input).
-
-    1e30     Returned when no valid ratio can be computed (e.g.,
-             order == 0 or l2[0] == 0 or n < 2).
+    1e30        Returned when no valid ratio can be computed (e.g.,
+                order == 0 or l2[0] == 0 or n < 2).
 
 The decay ratio is the key discriminator for type discovery
 (see below) and for the Newton-truncation compressibility
@@ -261,21 +265,16 @@ order is clamped to min(order, extent-1, LIBXS_FPRINT_MAXORDER).
 
 The flags parameter is a bitwise OR of preprocessing options:
 
-  LIBXS_FPRINT_SORT      Sort values before differencing
-                         (permutation-invariant fingerprint).
-
-  LIBXS_FPRINT_AUTOCORR  Replace signal with its autocorrelation
-                         before differencing (shift-invariant).
-
-  LIBXS_FPRINT_PERAXIS   Per-axis mode. Differentiates along
-                         dimension 'axis' only and takes the
-                         per-order maximum of each norm across
-                         all positions in the remaining dimensions.
-
-  LIBXS_FPRINT_WITH_BERNSTEIN  Also store the libxs_fprint_bernstein
-                         norms of the samples as differenced (1-D only,
-                         at the cost of that call); libxs_fprint_diff
-                         then compares them as well.
+- `LIBXS_FPRINT_SORT`: sort values before differencing
+  (permutation-invariant fingerprint).
+- `LIBXS_FPRINT_AUTOCORR`: replace the signal with its autocorrelation
+  before differencing (shift-invariant).
+- `LIBXS_FPRINT_PERAXIS`: per-axis mode. Differentiates along dimension
+  `axis` only and takes the per-order maximum of each norm across all
+  positions in the remaining dimensions.
+- `LIBXS_FPRINT_WITH_BERNSTEIN`: also store the libxs_fprint_bernstein
+  norms of the samples as differenced (1-D only, at the cost of that call);
+  libxs_fprint_diff then compares them as well.
 
 Without LIBXS_FPRINT_PERAXIS, hierarchical mode is used (sweeps
 the innermost dimension first, collapses via Sobolev self-norms).
@@ -298,10 +297,10 @@ the opaque buffer. The function probes all concrete types whose
 element width divides the byte count, fingerprints each, and
 selects the interpretation with the smallest decay ratio
 (libxs_fprint_decay). The discovered type is written to
-info->datatype. If no candidate has r < 1, the function returns
-EXIT_FAILURE. Ties are broken by preferring the smallest element
-width. Float candidates whose maximum absolute value is below
-1e-37 (subnormals) are rejected.
+info->datatype. There is no threshold on r: if no candidate yields a
+finite decay ratio, the function returns EXIT_FAILURE. Ties are broken by
+preferring the smallest element width. Float candidates whose maximum
+absolute value is below 1e-37 (subnormals) are rejected.
 
 ```C
 int libxs_fprint_partial(libxs_fprint_t* info,
@@ -330,7 +329,7 @@ Junction derivatives between the two regions are not recomputed,
 so the result is approximate with error proportional to
 order / min(a->n, b->n). The linf field is the maximum of the
 un-scaled maxima from both sides, re-scaled to the combined length.
-Returns EXIT_FAILURE if either input has n < 1 or combined n < 2.
+Returns EXIT_FAILURE if the combined n is below 2.
 
 ```C
 double libxs_fprint_diff(
@@ -339,8 +338,11 @@ double libxs_fprint_diff(
 ```
 
 Weighted Sobolev distance between two fingerprints:
-d = sqrt( sum over k of weights[k] \* [(a->l2[k] - b->l2[k])^2
-+ (a->mean[k] - b->mean[k])^2] ).
+
+```text
+d = sqrt( sum_k weights[k] * [(a->l2[k] - b->l2[k])^2 + (a->mean[k] - b->mean[k])^2] )
+```
+
 The number of orders compared is min(a->order, b->order) + 1.
 If weights is NULL, default weights w(k) = 1/k! are used, which
 naturally dampens higher-order (noisier) derivatives. Where both
@@ -383,13 +385,13 @@ int libxs_fprint_bernstein_diff(double* dist, libxs_data_t datatype,
 ```
 
 Exact Sobolev distance between the Bernstein approximants of two sample
-sets of any lengths: dist = sqrt(Σₖ w(k) ‖(B_a − B_b)⁽ᵏ⁾‖²) for k = 0..order,
-with w(k) = 1/k! if weights is NULL. Unlike `libxs_fprint_diff`, which
-compares summaries, it is a metric on the data themselves (zero only for
-equal samples), and it needs both sample sets. The shorter set is
-degree-elevated exactly to the longer one's degree, so similar data do not
-suffer cancellation; this adds O(n (n − m)) to the cost of
-`libxs_fprint_bernstein`. The Fortran generic
+sets of any lengths: dist = sqrt(Σₖ w(k) ‖(B_a − B_b)⁽ᵏ⁾‖²) for
+k = 0..order, with w(k) = 1/k! if weights is NULL. Unlike
+`libxs_fprint_diff`, which compares summaries, it is a metric on the data
+themselves (zero only for equal samples), and it needs both sample sets.
+The shorter set is degree-elevated exactly to the longer one's degree, so
+similar data do not suffer cancellation; this adds O(n (n − m)) to the cost
+of `libxs_fprint_bernstein`. The Fortran generic
 `libxs_fprint_bernstein_diff(dist, a, b[, order][, weights])` takes
 REAL(C_DOUBLE) or REAL(C_FLOAT) samples.
 
@@ -660,7 +662,8 @@ The isqrt2 variant returns a factor of x.
 double libxs_pow2(int n);
 ```
 
-2^n via IEEE-754 exponent. Valid for n in [-1022, 1023]. Returns 0.0 for underflow (subnormals flushed to zero) and +Inf for overflow.
+2^n via IEEE-754 exponent. Valid for n in [-1022, 1023]. Returns 0.0 for
+underflow (subnormals flushed to zero) and +Inf for overflow.
 
 ## Modular Arithmetic
 
@@ -689,7 +692,9 @@ unsigned int libxs_mod_u64(uint64_t x, unsigned int p,
   unsigned int pow36);                         /* inline */
 ```
 
-Fast modular reduction via Barrett. The 64-bit variant uses a radix-2^18 split.
+Fast modular reduction via Barrett. The 32-bit variant is valid for any
+`x`; the 64-bit variant uses a radix-2^18 split and is valid for x < 2^54
+and p < 8192.
 
 ## BF16 Conversion
 
@@ -701,7 +706,9 @@ libxs_bf16_t libxs_round_bf16(double x);   /* inline */
 double libxs_bf16_to_f64(libxs_bf16_t v);  /* inline */
 ```
 
-Round to BF16 (round-to-nearest-even) and expand to float or double. Uses native `__bf16` when available (`LIBXS_BF16`), otherwise portable bit manipulation.
+Round to BF16 (round-to-nearest-even) and expand to float or double. Uses
+native `__bf16` when available (`LIBXS_BF16`), otherwise portable bit
+manipulation.
 
 ```C
 void libxs_dekker_bf16(double val, int ndigits,
@@ -715,7 +722,9 @@ iterative subtraction. `dst[0]` holds the dominant digit (the BF16
 rounding of the input); `dst[1]` holds the residual after subtracting
 the first digit's contribution, rounded to BF16; and so on. The sum
 `libxs_bf16_to_f64(dst[0]) + ... + libxs_bf16_to_f64(dst[ndigits-1])`
-reconstructs the original to approximately `7 * ndigits` bits of
-precision (each BF16 digit carries 7 fraction bits). Seven digits
-exceed the 52-bit mantissa of double. The `_f32` variant keeps the
-residual arithmetic in single precision for float storage/conversion paths.
+reconstructs the original to about `8 * ndigits` significant bits
+(each BF16 digit carries 8, the implicit bit included), so seven digits
+cover the 53-bit significand of double. BF16 has the exponent range of
+float: a value beyond it overflows, and digits below it are lost. The
+`_f32` variant keeps the residual arithmetic in single precision for
+float storage/conversion paths.

@@ -12,21 +12,27 @@ cd samples/ozaki
 make -j $(nproc)
 ```
 
-LIBXS must be built first from the repository root. When a sibling
-`libxstream` directory is detected, the optional OpenCL/GPU path is
-compiled in (see OZAKI_OCL below).
+The sample builds header-only when LIBXS is not built yet. When a
+sibling `libxstream` directory is detected, the optional OpenCL/GPU path
+is compiled in (see OZAKI_OCL below); `make OCL=0` leaves it out.
 
 `make LIBXSMM=1` puts LIBXSMM's int8 kernels ahead of the built-in
 VNNI/AMX kernels; `OZAKI_XSMM=0` returns to the built-in kernels at
-runtime. It needs a built sibling `libxsmm` directory.
+runtime. It needs a built sibling `libxsmm` directory. `make DNNL=1`
+(with `DNNLROOT` set) runs Scheme-1 int8 GEMMs through oneDNN, and
+`make TESTROOT=<path>` compiles in external test code (see
+[TESTROOT.md](TESTROOT.md)).
 
 ## Link-Time Interception
 
-Two link-time variants are built per precision:
+One of two link-time variants is built for each of DGEMM, SGEMM, ZGEMM,
+and CGEMM, depending on how BLAS is linked:
 
-- `dgemm-blas.x` / `sgemm-blas.x` — dynamically linked against BLAS
-- `dgemm-wrap.x` / `sgemm-wrap.x` — linked with `--wrap=` (GNU ld)
-- `zgemm-wrap.x` / `cgemm-wrap.x` — complex GEMM wrappers
+- `dgemm-wrap.x`, `sgemm-wrap.x`, `zgemm-wrap.x`, `cgemm-wrap.x` —
+  static BLAS (default), linked with `--wrap=` (GNU ld)
+- `dgemm-blas.x`, `sgemm-blas.x`, `zgemm-blas.x`, `cgemm-blas.x` —
+  `make BLAS_STATIC=0`, dynamically linked against BLAS and intercepted
+  with `LD_PRELOAD=libwrap.so`
 
 Static (`libwrap.a`) and shared (`libwrap.so`) wrapper libraries are
 built by default. The shared library can intercept any application:
@@ -50,9 +56,9 @@ validates both schemes, `test-mhd.sh` tests MHD file-based input.
 dgemm-wrap.x [A.mhd|M [B.mhd|N [K [TA [TB [ALPHA [BETA [LDA [LDB [LDC]]]]]]]]]]
 ```
 
-Defaults: M=N=K=257, TA=TB=0, ALPHA=BETA=1.0. The first argument can
-be 0 followed by MHD filenames to load A and B matrices from files.
-The `zgemm-wrap.x` and `cgemm-wrap.x` drivers call ZGEMM and CGEMM.
+Defaults: M=N=K=257, TA=TB=0, ALPHA=BETA=1.0. Passing MHD filenames
+as the first two arguments loads A and B from files. The `zgemm-*.x`
+and `cgemm-*.x` drivers call ZGEMM and CGEMM.
 
 ## Environment Variables
 
@@ -61,7 +67,7 @@ The `zgemm-wrap.x` and `cgemm-wrap.x` drivers call ZGEMM and CGEMM.
 | Variable        | Default   | Description                                                       |
 |-----------------|-----------|-------------------------------------------------------------------|
 | OZAKI           | 3         | 0=bypass (BLAS), 1=mantissa slicing, 2=CRT, 3=adaptive            |
-| OZAKI_COMPLEX   | (auto)    | Complex dispatch: 0=BLAS, 1=CPU, 2=GPU+fallback. Auto: 2 if on    |
+| OZAKI_COMPLEX   | (auto)    | Complex dispatch: 0=BLAS, 1=CPU, 2=GPU+fallback, 3=BLAS, with real GEMMs issued inside it kept on BLAS. Auto: 0 if OZAKI=0, else 2 |
 | OZAKI_N         | (auto)    | Slices (Sch.1: fp64=8, fp32=4) or moduli (Sch.2: fp64=16, fp32=9) |
 | OZAKI_AMX       | (auto)    | CPU: 0=VNNI, 1=AMX. Auto: AMX for Sch.1, for Sch.2 from N~640     |
 | OZAKI_XSMM      | 1         | With `make LIBXSMM=1`: 0=built-in int8 kernels, 1=LIBXSMM         |
@@ -91,14 +97,16 @@ threads, whereas Scheme 1 prefers one thread per core.
 
 | Variable          | Default   | Description                                                      |
 |-------------------|-----------|------------------------------------------------------------------|
-| OZAKI_FLAGS       | 3         | Sch.1 bitmask: 1=Triangular, 2=Symmetrize, 0=full S^2 square     |
+| OZAKI_FLAGS       | (auto)    | Sch.1: 3=triangular and symmetrized, 0=full S^2 square (other values are ignored). Auto: 3 below OZAKI_SYM_XOVER, else 0 |
+| OZAKI_SYM_XOVER   | 2048      | Largest of M, N, K from which auto OZAKI_FLAGS selects 0         |
 | OZAKI_TRIM        | 0         | Levels to trim (0=default). ~7 bits/level (Sch.1), ~4 bits (Sch.2); negative buys precision back |
 | OZAKI_MAXK        | 32768     | Max K per preprocessing pass (0=full K in one pass)              |
-| OZAKI_THRESHOLD   | 12        | Intensity threshold. Bypass when flops/(bytes\*thr)<1. 0=always  |
+| OZAKI_THRESHOLD   | 12        | Intensity threshold (debug build: 0). Bypass when flops/(bytes\*thr)<1. 0=always |
 
 `OZAKI_MAXK` also travels to the GPU context, where it decides the
-derived K-grouping; the LIBXSTREAM Ozaki README states that rule, so
-that one K bound is not described twice.
+derived K-grouping; the
+[LIBXSTREAM Ozaki README](https://github.com/hfp/libxstream/blob/main/samples/ozaki/README.md)
+states that rule, so that one K bound is not described twice.
 
 ### GPU Path (requires LIBXSTREAM)
 
@@ -111,9 +119,11 @@ that one K bound is not described twice.
 GPU-specific kernel tuning variables (OZAKI_RTM, OZAKI_RTN, OZAKI_WG,
 OZAKI_SG, OZAKI_KU, OZAKI_RC, OZAKI_PB, OZAKI_HIER, OZAKI_GROUPS,
 OZAKI_PREFETCH, OZAKI_SCALAR_ACC, OZAKI_CACHE, OZAKI_ARENA) are
-documented in the LIBXSTREAM Ozaki README. This driver reads them only
-to forward them, so their meaning and their defaults are stated there
-and not here.
+documented in the
+[LIBXSTREAM Ozaki README](https://github.com/hfp/libxstream/blob/main/samples/ozaki/README.md).
+LIBXSTREAM reads them itself, except OZAKI_GROUPS, which this driver
+reads and passes to the GPU context; all of them take effect only with
+`OZAKI_OCL=1`.
 
 ### Monitoring and Diagnostics
 
@@ -123,6 +133,7 @@ and not here.
 | OZAKI_STAT      | 0         | Track C-matrix (0), A-representation (1), or B-representation (2) |
 | OZAKI_DUMP      | 0         | Dump A/B as MHD files at the given call-count (0=off)             |
 | OZAKI_EPS       | inf       | Dump A/B when epsilon error exceeds threshold                     |
+| OZAKI_IDX       | 0         | Additional OZAKI_EPS metric: 1=linf_abs, 2=linf_rel, 3=l2_rel (0=epsilon only) |
 | OZAKI_RSQ       | 0         | Dump A/B when RSQ drops below threshold (updated after dump)      |
 | OZAKI_EXIT      | 1         | Exit on accuracy violation after dump. 0=continue                 |
 
@@ -136,6 +147,7 @@ and not here.
 | NREPEAT      | 3         | Number of GEMM calls (first call is warmup when >1)                |
 | EVIL         | 0         | Adversarial exponent-span test (see below)                         |
 | TAME         | 0         | Keep n mantissa bits and clear the rest (see below)                |
+| SCALE        | 0         | Multiply A and B by 2^n after generation                           |
 | OZAKI_DECAY  | 0         | Decay diagnostic + K-permutation (0-4, see below)                  |
 | GEMM_HOSTMEM | 0         | Operands from LIBXSTREAM (page-locked) instead of `malloc`         |
 
@@ -275,15 +287,15 @@ timings vary between runs, the more so on a many-core part.
 ## Example
 
 ```bash
-./dgemm-wrap.x 256                          # CRT scheme (default)
-OZAKI=1 ./dgemm-wrap.x 256                  # mantissa slicing
-OZAKI_TRIM=2 OZAKI=1 ./dgemm-wrap.x 256     # drop 2 diagonals below the default
-OZAKI=2 OZAKI_GROUPS=4 ./dgemm-wrap.x 4096  # CRT with K-grouping
-OZAKI=3 ./dgemm-wrap.x 4096                 # adaptive scheme selection
-EVIL=512 ./dgemm-wrap.x 1024                # accuracy grading (wide exponent span)
-EVIL=1 ./dgemm-wrap.x 1024                  # narrow span (cutoff drops pairs)
-EVIL=-52 ./dgemm-wrap.x 1024                # per-element span (worst for cutoff)
-OZAKI_DECAY=1 OZAKI=1 ./dgemm-wrap.x 256    # decay diagnostic (no reorder)
-OZAKI_DECAY=2 OZAKI=1 ./dgemm-wrap.x 256    # sort by norm + decay diagnostic
-OZAKI_DECAY=4 OZAKI=1 ./dgemm-wrap.x 256    # greedy NN + decay diagnostic
+./dgemm-wrap.x 256                                      # adaptive scheme (default)
+OZAKI=1 ./dgemm-wrap.x 256                              # mantissa slicing
+OZAKI_TRIM=2 OZAKI=1 ./dgemm-wrap.x 256                 # drop 2 diagonals below the default
+OZAKI_OCL=1 OZAKI=2 OZAKI_GROUPS=4 ./dgemm-wrap.x 4096  # GPU CRT with K-grouping
+OZAKI=3 ./dgemm-wrap.x 4096                             # adaptive scheme selection
+EVIL=512 ./dgemm-wrap.x 1024                            # accuracy grading (wide exponent span)
+EVIL=1 ./dgemm-wrap.x 1024                              # narrow span (cutoff drops pairs)
+EVIL=-52 ./dgemm-wrap.x 1024                            # per-element span (worst for cutoff)
+OZAKI_DECAY=1 OZAKI=1 ./dgemm-wrap.x 256                # decay diagnostic (no reorder)
+OZAKI_DECAY=2 OZAKI=1 ./dgemm-wrap.x 256                # sort by norm + decay diagnostic
+OZAKI_DECAY=4 OZAKI=1 ./dgemm-wrap.x 256                # greedy NN + decay diagnostic
 ```

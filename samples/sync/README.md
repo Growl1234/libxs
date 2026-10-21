@@ -8,7 +8,7 @@ Two binaries over `libxs_sync.h`: `sync_lock.x` for the lock kinds and
 Micro-benchmark for the lock implementations provided by LIBXS
 (`libxs_sync.h`). Measures single-thread latency (uncontended
 acquire/release) and multi-thread throughput (mixed read/write
-workload) for every compiled lock kind:
+workload) for each lock kind:
 
 | Lock kind            | Description                                      |
 |----------------------|--------------------------------------------------|
@@ -17,8 +17,9 @@ workload) for every compiled lock kind:
 | LIBXS_LOCK_MUTEX     | OS-native mutex / pthread_mutex_t (if available) |
 | LIBXS_LOCK_RWLOCK    | Reader/writer lock / pthread_rwlock_t            |
 
-The default lock is always benchmarked. The remaining kinds are
-conditionally compiled depending on platform support.
+All four kinds are always benchmarked. Platform support only decides
+whether a kind is the OS-native primitive or LIBXS's own implementation,
+which the output labels "OS-native" or "Other".
 
 ## Build
 
@@ -64,8 +65,8 @@ Each measured line names the lock kind it belongs to, and the run reports the
 pause budgets it was built with, because a contended figure depends on those
 more than on anything else on the command line.
 
-To reach the regime a hot internal lock lives in - a critical section of a few
-instructions, taken by every thread - ask for a short one and nothing but
+To reach the regime a hot internal lock lives in — a critical section of a few
+instructions, taken by every thread — ask for a short one and nothing but
 writes:
 
 ```bash
@@ -98,6 +99,10 @@ hands one task's value to the rest.
 |----------|---------------|--------------------------------------|
 | nthreads | all available | Tasks in the team                    |
 | nrepeat  | 100000        | Rendezvous per measurement           |
+
+The output gives the cost per rendezvous in nanoseconds and cycles, once
+for `wait:` (plain rendezvous) and once for `bcast:` (rendezvous with a
+broadcast value).
 
 The team is asked how large it actually is rather than told: a barrier
 initialized for more tasks than the runtime grants waits for one that

@@ -24,7 +24,7 @@ typedef struct libxs_timer_info_t {
 int libxs_timer_info(libxs_timer_info_t* info);
 ```
 
-Query timer properties. `info->tsc` is non-zero when RDTSC (x86), CNTVCT_EL0 (AArch64), or MFTB (PPC64) is available. Triggers lazy library initialization if necessary.
+Query timer properties. `info->tsc` is non-zero when a calibrated cycle counter is in use: RDTSC (x86), CNTVCT_EL0 (AArch64), or MFTB (PPC64), calibrated at initialization if the counter is invariant (Release builds only). Otherwise `info->tsc` is zero and the OS real-time clock is used. Triggers lazy library initialization if necessary. Returns `EXIT_SUCCESS`, or `EXIT_FAILURE` if `info` is NULL.
 
 ```C
 libxs_timer_tick_t libxs_timer_tick(void);
@@ -37,7 +37,7 @@ libxs_timer_tick_t libxs_timer_ncycles(
   libxs_timer_tick_t tick0, libxs_timer_tick_t tick1);   /* inline */
 ```
 
-Unsigned difference `tick1 - tick0`, handling wrap-around safely. Implemented via `LIBXS_DELTA`.
+Absolute difference of two ticks (`LIBXS_DELTA`), i.e., `tick1 - tick0` for samples taken in that order. A wrap-around of the counter is not handled.
 
 ```C
 double libxs_timer_duration(

@@ -16,10 +16,12 @@ is left untouched.
 
     make
 
-Requires a Fortran compiler (gfortran, ifort, or ifx). The
-Makefile picks up the compiler from the top-level Makefile.inc.
-MKL or BLAS linkage is enabled (BLAS=1) so that dispatch can
-use JIT-compiled kernels when available.
+Requires a Fortran compiler (gfortran, ifort, or ifx) and LIBXS
+built first from the repository root (the sample is not built
+header-only). The Makefile picks up the compiler from the top-level
+Makefile.inc. BLAS is linked by default (BLAS=1). JIT-compiled kernels
+need `make MKL=1` (sequential) or `make MKL=2` (threaded) for MKL's
+JIT, or `make LIBXSMM=1` with a built sibling `libxsmm` directory.
 
 ## Run
 
@@ -80,8 +82,8 @@ would: one task per thread, or `tasks` per thread over a dynamic DO.
       TASK:      0.002 s (100 calls)
                      27.9 GFLOPS/s
 
-At N=64 the update fits a single tile (`libxs_syrk=1`), hence all lines
-match; a split pays off at larger N.
+Here `libxs_syrk=1`, i.e., the update is not split (see above), hence
+all lines match; a split pays off at larger N.
 
 ## Notes
 
@@ -90,9 +92,12 @@ match; a split pays off at larger N.
   remains valid until libxs_finalize or the registry is destroyed.
   There is no need to release it manually.
 
-- Internally, SYRK/SYR2K decompose into GEMM tiles (default
-  192x32x48, see `LIBXS_GEMM_BM`, `LIBXS_GEMM_BN`, `LIBXS_GEMM_BK`)
-  on the diagonal and off-diagonal blocks.
+- Internally, a split SYRK/SYR2K partitions C into column panels
+  (`LIBXS_GEMM_PANEL`). The off-diagonal part of a panel is a GEMM;
+  its diagonal block is a BLAS SYRK (`LIBXS_SYRK_BLAS`, default on),
+  or else GEMM tiles (default 192x32x48, see `LIBXS_GEMM_BM`,
+  `LIBXS_GEMM_BN`, `LIBXS_GEMM_BK`). An unsplit update wider than one
+  tile is a single BLAS SYRK when available.
 
 - Scratch memory for the temporary block products is a thread-local
   buffer that grows on demand, hence tasks need no synchronization:

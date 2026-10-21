@@ -70,7 +70,7 @@ LIBXS_API const char* libxs_stristr(const char a[], const char b[]);
 LIBXS_API int libxs_strimatch(const char a[], const char b[], const char delims[], int* count);
 
 /**
- * Compute similarity between strings A and B as a minimum-cost word matching.
+ * Compute similarity between strings A and B as a heuristic minimum-cost word matching.
  * Words are split by optional delimiters (same as strimatch). Each matched word
  * pair contributes its character-level edit distance (libxs_stridist).
  * Unmatched words contribute their full length. The result is order-independent.
@@ -83,7 +83,7 @@ LIBXS_API int libxs_strisimilar(const char a[], const char b[],
 /**
  * Return a pointer to the i-th token in a delimited string (non-destructive).
  * str: delimited string (e.g., "M,N,K" or "foo;bar;baz").
- * delims: delimiter characters (NULL defaults to ",").
+ * delims: delimiter characters (NULL or empty defaults to LIBXS_DELIMS).
  * index: 0-based token index.
  * length: if non-NULL, receives the trimmed token length.
  * Returns pointer into str, or NULL if index is out of range.
@@ -95,7 +95,7 @@ LIBXS_API const char* libxs_strtoken(const char str[],
  * Word-level set difference: count how many words in the smaller string cannot be
  * matched (within edit distance tolerance) to any word in the larger string.
  * Matching is greedy, case-insensitive, and each word can be matched at most once.
- * Returns the number of unmatched words (0 = all words matched), or -1 on NULL input.
+ * Returns the number of unmatched words (0 = all words matched), or -1 on NULL/empty input.
  * Optional count receives the total word count of the larger string.
  */
 LIBXS_API int libxs_stridiff(const char a[], const char b[],

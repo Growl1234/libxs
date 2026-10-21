@@ -80,7 +80,7 @@ Destroy the pool and release all associated memory. Accepts NULL.
 int libxs_malloc_pool_info(const libxs_malloc_pool_t* pool, libxs_malloc_pool_info_t* info);
 ```
 
-Query aggregate pool statistics including the per-bucket histogram.
+Query aggregate pool statistics including the per-bucket histogram. A NULL `pool` selects the default pool.
 
 ```C
 void libxs_malloc_pool_print(FILE* ostream, const char prefix[],
@@ -93,7 +93,7 @@ Print pool statistics and per-bucket histogram to `ostream`. Each non-empty buck
 libxs_malloc_pool_t* libxs_default_pool(void);
 ```
 
-Access the default host memory pool (created at `libxs_init`). Printed automatically at `libxs_finalize` when `LIBXS_VERBOSE` >= 4.
+Access the default host memory pool (created at `libxs_init`). Printed automatically at `libxs_finalize` when `LIBXS_VERBOSE` >= 3 (or negative), as is every pool destroyed by `libxs_free_pool`.
 
 ## General Allocation
 
@@ -101,7 +101,7 @@ Access the default host memory pool (created at `libxs_init`). Printed automatic
 void* libxs_malloc(libxs_malloc_pool_t* pool, size_t size, int alignment);
 ```
 
-Allocate `size` bytes from the given `pool`. `LIBXS_MALLOC_AUTO` uses automatic alignment with inline metadata. `LIBXS_MALLOC_NATIVE` preserves the allocator's native pointer (out-of-band metadata via registry). Values greater than 1 are interpreted as explicit alignment in Bytes (inline metadata). Returns NULL on failure or if `pool` is NULL.
+Allocate `size` bytes from the given `pool`. `LIBXS_MALLOC_AUTO` uses automatic alignment with inline metadata. `LIBXS_MALLOC_NATIVE` preserves the allocator's native pointer (out-of-band metadata via registry). Values greater than 1 are interpreted as explicit alignment in Bytes (inline metadata). A NULL `pool` selects the default pool. Returns NULL on failure or if `size` is zero.
 
 ```C
 void libxs_free(void* pointer);
@@ -121,8 +121,8 @@ Query the size of an allocation made with `libxs_malloc`. The pool is derived in
 a cached chunk, which returns its memory to the system. A negative value removes
 the bound. Unset, the bound follows the pool's own high-water mark with headroom,
 so it settles at what a workload concurrently holds instead of at a constant. A
-bound below that cannot reduce what is held - it only keeps eviction firing on
-memory that is not surplus - and what reclaims idle memory is the age-based
+bound below that cannot reduce what is held — it only keeps eviction firing on
+memory that is not surplus — and what reclaims idle memory is the age-based
 eviction rather than the bound. Run with `LIBXS_VERBOSE=3` to see the pool report,
 which states the high-water and the bound it implies.
 

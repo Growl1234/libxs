@@ -8,8 +8,7 @@ content from anonymous bytes.
 
 ## What It Shows
 
-The sample proceeds through the levels described in the algebra
-paper (Section "Hierarchical Type Discovery"):
+The sample proceeds through these levels:
 
 | Step           | Tool used                  | What it finds               |
 |----------------|----------------------------|-----------------------------|
@@ -80,8 +79,8 @@ This writes `summary.csv`, the record matrices `rosetta_original.mhd`
 and `rosetta_shuffled.mhd`, and the images `rosetta_fields.png` and
 `rosetta_fields_shuffled.png`. The `fields` images are normalized per
 field, making the ordered and shuffled record traces easy to compare
-visually. The artifact mode is optional
-and leaves the interactive sample output unchanged.
+visually. The artifact mode is optional and leaves the interactive
+sample output unchanged.
 
 ## Example Output
 

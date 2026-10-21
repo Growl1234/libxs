@@ -16,7 +16,7 @@ deterministic permutation of count elements. The mapping is affine:
 The stride must be co-prime to count; passing NULL selects
 libxs_coprime2(count). The offset parameter extends the basic
 co-prime permutation into an affine family, expanding the number
-of available permutations from ~phi(N)/2 to ~N*phi(N)/2.
+of available permutations from ~φ(N)/2 to ~N·φ(N)/2.
 Pass offset=0 for the standard (non-affine) shuffle.
 
 ```C
@@ -29,7 +29,8 @@ In-place shuffle of count elements of elemsize bytes each.
 Uses cycle following with a bit vector (N/8 bytes auxiliary).
 nrepeat controls the number of successive permutation
 applications (NULL or pointing to 1 means one pass). Returns
-EXIT_SUCCESS or EXIT_FAILURE.
+EXIT_SUCCESS, or EXIT_FAILURE for invalid arguments or if the
+auxiliary memory cannot be allocated (inout is then unchanged).
 
 ```C
 int libxs_shuffle2(void* dst, const void* src, size_t elemsize,
@@ -48,8 +49,9 @@ size_t libxs_unshuffle(size_t count, const size_t* shuffle);
 
 Return the number of libxs_shuffle2 applications needed to
 restore the original element order for the given count and
-co-prime stride. The cycle length depends only on C and N,
-not on the offset.
+co-prime stride, assuming offset=0. A nonzero offset can change
+the cycle length unless C+1 is co-prime to N (never for even N);
+libxs_unshuffle2 inverts any offset in one pass.
 
 ```C
 int libxs_unshuffle2(void* dst, const void* src, size_t elemsize,
@@ -106,19 +108,21 @@ int libxs_cmp_i32_idx(const void* a, const void* b, void* ctx);
 
 With a built-in value comparator, ctx controls the mode:
 
-  ctx = NULL   Sort base in-place.
-  ctx != NULL  Read from ctx, write sorted result to base
-               (out-of-place, source unchanged).
+- `ctx == NULL`: sort base in-place.
+- `ctx != NULL`: read from ctx, write the sorted result to base
+  (out-of-place, source unchanged).
 
 With a custom comparator, ctx is user state passed to cmp
 and base is sorted in-place.
 
 Examples:
 
-  libxs_sort(data, n, sizeof(double), libxs_cmp_f64, NULL);
-  libxs_sort(dst, n, sizeof(double), libxs_cmp_f64, src);
-  libxs_sort(perm, n, sizeof(int), libxs_cmp_i32_idx, keys);
-  libxs_sort(perm, n, sizeof(int), my_indirect_cmp, keys);
+```C
+libxs_sort(data, n, sizeof(double), libxs_cmp_f64, NULL);
+libxs_sort(dst, n, sizeof(double), libxs_cmp_f64, src);
+libxs_sort(perm, n, sizeof(int), libxs_cmp_i32_idx, keys);
+libxs_sort(perm, n, sizeof(int), my_indirect_cmp, keys);
+```
 
 ## Space-Filling Curves
 
@@ -159,11 +163,14 @@ resulting key is decoded as target-dimensional coordinates using
 the same curve family. This gives deterministic rank-preserving
 embeddings such as 3D to 2D:
 
-    code = curve(src_coords, 3)
-    dst_coords = inverse_curve(code, 2)
+    code = curve(src_coords, 3)          /* 21 bits per coordinate */
+    dst_coords = inverse_curve(code, 2)  /* 32 bits per coordinate */
 
-The target dimensionality must be smaller than the source
-dimensionality. The functions return EXIT_SUCCESS or EXIT_FAILURE.
+Each source coordinate keeps floor(64/src_ndims) bits, and each target
+coordinate receives ceil(src_ndims·floor(64/src_ndims)/dst_ndims) bits,
+which must not exceed 32. The target dimensionality must be smaller than
+the source dimensionality. The functions return EXIT_SUCCESS or
+EXIT_FAILURE.
 
 ## k-d Tree
 
@@ -180,7 +187,7 @@ typedef struct libxs_kdtree_config_t {
 ```
 
 Split callback for custom tree construction. Writes chosen
-split dimension into *dim and left-child count into *pos.
+split dimension into `*dim` and left-child count into `*pos`.
 The callback may reorder idx[0..count-1] to place left entries
 first; if it does, the partition function skips its internal
 quickselect. nleaves gives the current number of leaves already
@@ -239,9 +246,11 @@ which matters when the neighbours feed an estimate rather than
 only a ranking.
 
 Both searches require a tree built with `config == NULL` (or a
-config whose `split` is NULL), because the query recomputes the
-split dimension as `depth % ndims`. A tree built with a custom
-split function does not record its choices and cannot be searched.
+config whose `split` is NULL and `min_leaf` is at most 1), because
+the query recomputes the split dimension as `depth % ndims` and
+treats every node as split at its middle element. A tree built with
+a custom split function does not record its choices, and leaves of
+more than one point are not ordered, so neither can be searched.
 
 A kd-tree stops paying as dimension rises: it beats a scan while n
 is large against 2^ndims, and degenerates toward visiting every
@@ -277,28 +286,23 @@ Compute a row permutation that reorders the rows of an m-by-n
 column-major matrix for smoothness (decaying forward
 differences between consecutive rows).
 
-Parameters:
+| Parameter  | Description                                          |
+|------------|------------------------------------------------------|
+| `method`   | Sorting strategy (see constants above)               |
+| `m`, `n`   | Matrix dimensions (m rows, n columns)                |
+| `mat`      | Column-major matrix data (read-only)                 |
+| `ld`       | Leading dimension (ld ≥ m)                           |
+| `datatype` | Element type (F64, F32, I32, U32, I16, U16, I8, U8)  |
+| `perm`     | Output array of m ints; perm[i] = source row for position i after reordering |
 
-  method    Sorting strategy (see constants above).
-  m, n      Matrix dimensions (m rows, n columns).
-  mat       Column-major matrix data (read-only).
-  ld        Leading dimension (ld >= m).
-  datatype  Element type (F64, F32, I32, U32, I16, U16, I8, U8).
-  perm      Output array of m ints; perm[i] = source row for
-            position i after reordering.
-
-Methods:
-
-  NONE      No permutation (early return).
-  IDENTITY  Identity permutation (perm[i] = i).
-  NORM      Sort rows by ascending L1-norm.
-  MEAN      Sort rows by ascending column mean.
-  GREEDY    Nearest-neighbor chain: starting from row 0,
-            each step picks the unvisited row with the
-            smallest Euclidean distance to the current row.
-  MORTON    Sort rows by Morton (Z-order) key computed from
-            quantized column values.
-  HILBERT   Sort rows by Hilbert curve key computed from
-            quantized column values.
+| Method     | Description                                          |
+|------------|------------------------------------------------------|
+| `NONE`     | No permutation (early return)                        |
+| `IDENTITY` | Identity permutation (perm[i] = i)                   |
+| `NORM`     | Sort rows by ascending L1-norm                       |
+| `MEAN`     | Sort rows by ascending row mean (mean over the columns) |
+| `GREEDY`   | Nearest-neighbor chain: starting from row 0, each step picks the unvisited row with the smallest Euclidean distance to the current row |
+| `MORTON`   | Sort rows by Morton (Z-order) key computed from quantized column values |
+| `HILBERT`  | Sort rows by Hilbert curve key computed from quantized column values |
 
 Returns EXIT_SUCCESS or EXIT_FAILURE.

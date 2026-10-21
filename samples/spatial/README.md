@@ -8,7 +8,7 @@ files in this flat directory.
 | Prefix       | Topic                                    |
 |--------------|------------------------------------------|
 | `stratify_*` | 3D-to-2D layout via space-filling curves |
-| `paircnt_*`  | Spatial pair counting (planned)          |
+| `paircnt_*`  | Spatial pair counting                    |
 
 Underlying libxs primitives (from `libxs_perm.h`):
 
@@ -18,16 +18,24 @@ Underlying libxs primitives (from `libxs_perm.h`):
 
 ## Building
 
-Build libxs first so that `lib/libxs.so` exists:
+The default target builds the C sample `paircnt_dd.x` (header-only when the
+library is not built). The Python scripts load the shared library, so build
+libxs with `STATIC=0` first so that `lib/libxs.so` exists:
 
 ```bash
 cd ../..
-make PEDANTIC=2
+make PEDANTIC=2 STATIC=0
 cd samples/spatial
 make
 ```
 
-Optional Python adapters need `numpy` and `h5py`:
+The scripts look for the library given by `--libxs PATH`, then by the
+environment variable `LIBXS_LIBRARY`, then in `lib/` of the repository, then
+on the system search path.
+
+Optional Python adapters need `numpy` and `h5py`; `paircnt_validate.py` also
+needs `corrfunc` (which needs `libgsl-dev` to build). All three are listed in
+`requirements.txt`:
 
 ```bash
 python3 -m venv .venv
@@ -62,7 +70,7 @@ possible empty cells.
 
 ### Usage
 
-The default target runs the dense 3D sample:
+The `dense3d` target runs the synthetic dense 3D sample:
 
 ```bash
 make dense3d
@@ -112,13 +120,13 @@ from the CaloChallenge project. The challenge HDF5 files contain
 showers` and `--hdf5-reshape D H W` with the geometry stated for the selected
 dataset. Useful starting points are:
 
-| Source                | Format / notes                       |
-|-----------------------|--------------------------------------|
-| [CaloChallenge][cc]   | Overview, geometry, evaluation.      |
-| [Dataset 1][cc1]      | ATLAS photons/pions, flat showers.   |
-| [Dataset 2][cc2]      | Electrons, reshape to `45 16 9`.     |
-| [Dataset 3][cc3]      | Hi-gran electrons, `45 50 18`.       |
-| [Legacy sets][ccl]    | Submitted outputs for repro figures. |
+| Source              | Format / notes                       |
+|---------------------|--------------------------------------|
+| [CaloChallenge][cc] | Overview, geometry, evaluation.      |
+| [Dataset 1][cc1]    | ATLAS photons/pions, flat showers.   |
+| [Dataset 2][cc2]    | Electrons, reshape to `45 16 9`.     |
+| [Dataset 3][cc3]    | Hi-gran electrons, `45 50 18`.       |
+| [Legacy sets][ccl]  | Submitted outputs for repro figures. |
 
 [cc]:  https://calochallenge.github.io/homepage/
 [cc1]: https://doi.org/10.5281/zenodo.8099322
@@ -128,21 +136,40 @@ dataset. Useful starting points are:
 
 Arguments:
 
-| Option              | Description                          |
-|---------------------|--------------------------------------|
-| `--shape D H W`     | Volume shape (default `8 16 16`).    |
-| `--curve`           | `hilbert` or `morton`.               |
-| `--frame`           | `compact` or `canonical`.            |
-| `--libxs`           | Path to libxs shared library.        |
-| `--hdf5`            | Read volume from an HDF5 file.       |
-| `--hdf5-dataset`    | HDF5 dataset name (default `ECAL`).  |
-| `--hdf5-layout`     | `auto`/`dhw`/`ndhw`/`ncdhw`/`flat`.  |
-| `--hdf5-reshape`    | Reshape flat data to `D H W`.        |
-| `--hdf5-event`      | Event index (default `0`).           |
-| `--hdf5-channel`    | Channel index (default `0`).         |
-| `--out`             | Write 8-bit PGM of the sheet.        |
-| `--map-csv`         | Write `src,z,y,x,dst,v,u` rows.      |
-| `--out-hdf5`        | Write sheet+map to HDF5 file.        |
+| Option           | Description                                 |
+|------------------|---------------------------------------------|
+| `--shape D H W`  | Volume shape (default `8 16 16`).           |
+| `--curve`        | `hilbert` or `morton`.                      |
+| `--frame`        | `compact` or `canonical`.                   |
+| `--libxs`        | Path to libxs shared library.               |
+| `--hdf5`         | Read volume from an HDF5 file.              |
+| `--hdf5-dataset` | HDF5 dataset name (default `ECAL`).         |
+| `--hdf5-layout`  | `auto`/`dhw`/`ndhw`/`ncdhw`/`ndhwc`/`flat`. |
+| `--hdf5-reshape` | Reshape flat data to `D H W`.               |
+| `--hdf5-event`   | Event index (default `0`).                  |
+| `--hdf5-channel` | Channel index (default `0`).                |
+| `--out`          | Write 8-bit PGM of the sheet.               |
+| `--map-csv`      | Write `src,z,y,x,dst,v,u` rows.             |
+| `--out-hdf5`     | Write sheet+map to HDF5 file.               |
+
+The Makefile targets take these variables:
+
+| Variable           | Default        | Used by                            |
+|--------------------|----------------|------------------------------------|
+| `PYTHON`           | `python3`      | all script targets                 |
+| `FRAME`            | `compact`      | all script targets                 |
+| `HDF5_FILE`        | (required)     | `hdf5`                             |
+| `HDF5_DATASET`     | `ECAL`         | `hdf5`                             |
+| `HDF5_LAYOUT`      | `auto`         | `hdf5`                             |
+| `HDF5_RESHAPE`     | (none)         | `hdf5`                             |
+| `HDF5_EVENT`       | `0`            | `hdf5`                             |
+| `HDF5_CHANNEL`     | `0`            | `hdf5`                             |
+| `MEDMNIST3D_NPZ`   | (none)         | `medmnist3d`, `medmnist3d-metrics` |
+| `MEDMNIST3D_ROOT`  | `~/.medmnist`  | `medmnist3d`, `medmnist3d-metrics` |
+| `MEDMNIST3D_FLAG`  | `organmnist3d` | `medmnist3d`, `medmnist3d-metrics` |
+| `MEDMNIST3D_SIZE`  | `28`           | `medmnist3d`, `medmnist3d-metrics` |
+| `MEDMNIST3D_SPLIT` | `train`        | `medmnist3d`, `medmnist3d-metrics` |
+| `MEDMNIST3D_INDEX` | `0`            | `medmnist3d`, `medmnist3d-metrics` |
 
 ### MedMNIST3D
 
@@ -192,6 +219,24 @@ If `MEDMNIST3D_NPZ` is omitted, the script looks for a dataset under
 make medmnist3d MEDMNIST3D_ROOT=~/.medmnist MEDMNIST3D_FLAG=nodulemnist3d
 ```
 
+Arguments of `stratify_medmnist3d.py`:
+
+| Option        | Description                                        |
+|---------------|----------------------------------------------------|
+| `--npz`       | MedMNIST3D NPZ file (otherwise `--root`/`--flag`). |
+| `--root`      | Directory of NPZ files (default `~/.medmnist`).    |
+| `--flag`      | 3D subset (default `organmnist3d`).                |
+| `--size`      | Image size used with `--root` (default `28`).      |
+| `--split`     | `train`, `val`, or `test` (default `train`).       |
+| `--index`     | Sample index within the split (default `0`).       |
+| `--curve`     | `hilbert` or `morton`.                             |
+| `--frame`     | `compact` or `canonical`.                          |
+| `--libxs`     | Path to libxs shared library.                      |
+| `--out`       | Write 8-bit PGM of the sheet.                      |
+| `--map-csv`   | Write the source-to-destination map as CSV.        |
+| `--label-csv` | Write the selected label as CSV.                   |
+| `--out-hdf5`  | Write sheet+map to HDF5 file.                      |
+
 ### Metrics
 
 The `stratify_dense3d_metrics.py` script reports invariants and locality
@@ -217,6 +262,12 @@ multi-order L2 descriptors of value and finite-difference structure. The
 round trip, while `fprint.source_sheet.diff` summarizes how different the
 stratified 2D sheet looks as a structured field.
 
+The metrics script takes `--shape`, `--curve`, `--frame`, `--libxs`, and the
+`--hdf5*` options of `stratify_dense3d.py`. A MedMNIST3D volume is selected
+with `--medmnist3d-npz FILE`, or with `--medmnist3d` and `--medmnist3d-root`,
+`--medmnist3d-flag`, `--medmnist3d-size`; `--medmnist3d-split` and
+`--medmnist3d-index` pick the sample. `--csv FILE` writes the metrics as CSV.
+
 ### Geometry
 
 The current sample treats the source as a regular `D,H,W` index grid. This is
@@ -227,22 +278,50 @@ Supporting other detector geometries should be data-driven rather than encoded
 as a list of known experiments. A general geometry adapter needs one of the
 following descriptions:
 
-| Geometry input              | Role                               |
-|-----------------------------|------------------------------------|
-| Integer logical coords      | Direct Hilbert/Morton input.       |
-| Floating physical coords    | Quantized before stratification.   |
-| Adjacency edges (optional)  | Neighbor-distortion metrics.       |
-| Voxel weights (optional)    | Physics metrics for unequal bins.  |
+| Geometry input             | Role                              |
+|----------------------------|-----------------------------------|
+| Integer logical coords     | Direct Hilbert/Morton input.      |
+| Floating physical coords   | Quantized before stratification.  |
+| Adjacency edges (optional) | Neighbor-distortion metrics.      |
+| Voxel weights (optional)   | Physics metrics for unequal bins. |
 
 ---
 
-## Pair Counting (paircnt\_\*) — planned
+## Pair Counting (paircnt\_\*)
 
 Spatial pair counting inspired by Corrfunc: given a point catalog, bin all
 pairs by separation distance to compute correlation functions. The approach
 uses libxs kd-tree partition for cell decomposition and cell-pair pruning
 (minimum-separation skip), with vectorized inner loops for the actual distance
 computation and bin assignment.
+
+### Usage
+
+```bash
+python3 paircnt_gendata.py --npoints 10000 --boxsize 420.0 --out catalog.dat
+./paircnt_dd.x catalog.dat --rmin 0.1 --rmax 25 --nbins 20
+python3 paircnt_validate.py catalog.dat
+```
+
+`paircnt_dd.x <catalog> [--rmin R] [--rmax R] [--nbins N] [--leaf N]`
+reads a catalog of `x y z` lines, or a Fortran fastfood file when the name
+ends in `.ff`, and prints one `rmin rmax npairs` row per logarithmic bin.
+Timings and the total pair count go to stderr.
+
+| Option      | Default | Description                                  |
+|-------------|---------|----------------------------------------------|
+| `--rmin`    | `0.1`   | Smallest bin edge (greater than zero).       |
+| `--rmax`    | `25.0`  | Largest bin edge (greater than `--rmin`).    |
+| `--nbins`   | `20`    | Number of bins (at most 128).                |
+| `--boxsize` | `0`     | Periodic box: not supported (rejected).      |
+| `--leaf`    | `64`    | Smallest kd-tree leaf (1 to 256).            |
+
+`paircnt_gendata.py` writes uniform points (`--clustered` with `--nclusters`
+for clustered ones) with `--npoints`, `--boxsize`, `--seed` (default `42`),
+and `--out` (`.ff` selects the fastfood format). `paircnt_validate.py` runs
+`paircnt_dd.x` (`--exe`, default `./paircnt_dd.x`) and Corrfunc's
+non-periodic `DD` with the same `--rmin`, `--rmax`, and `--nbins` on a text
+catalog, compares the counts bin by bin, and exits non-zero on a mismatch.
 
 Design goals:
 

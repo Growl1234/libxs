@@ -88,6 +88,7 @@ nav:
   - Sync: samples/libxs_sync.md
 - Tests:
   - Fprint: tests/fprint.md
+  - GEMM Dispatch: tests/gemm_dispatch.md
   - Hash: tests/hash.md
   - Headeronly: tests/headeronly.md
   - Hist: tests/hist.md
@@ -97,12 +98,30 @@ nav:
   - Math: tests/math.md
   - Memory: tests/memory.md
   - MHD: tests/mhd.md
+  - MHD PNG: tests/mhd_png.md
+  - Mix: tests/mix.md
+  - N-gram: tests/ngram.md
+  - Pack: tests/pack.md
   - Perm: tests/perm.md
+  - Perm Sort: tests/perm_sort.md
+  - Predict Blend: tests/predict_blend.md
+  - Predict Calib: tests/predict_calib.md
+  - Predict Coord: tests/predict_coord.md
+  - Predict HKNN Load: tests/predict_hknn_load.md
+  - Predict Missing: tests/predict_missing.md
+  - Predict Neighbors: tests/predict_neighbors.md
+  - Predict Prob: tests/predict_prob.md
+  - Predict Serial: tests/predict_serial.md
+  - Predict Weights: tests/predict_weights.md
   - Registry: tests/registry.md
   - Setdiff: tests/setdiff.md
+  - String: tests/str.md
   - Sync Atomics: tests/sync_atomics.md
   - Sync Barrier: tests/sync_barrier.md
+  - Sync Ring: tests/sync_ring.md
+  - Sync Singleton: tests/sync_singleton.md
   - Timer: tests/timer.md
+  - Token: tests/token.md
 
 - More:
   - Contributing: libxs_contrib.md

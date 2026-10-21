@@ -32,7 +32,7 @@ The header provides a suite of macros for atomic loads, stores, compare-and-swap
 | `LIBXS_ATOMIC_RELEASE(DST, KIND)` | Release (store zero) |
 | `LIBXS_ATOMIC_SYNC(KIND)` | Full memory fence |
 
-The `KIND` parameter selects the memory order but is ignored on most backends (sequential consistency is always used).
+The `KIND` parameter selects the memory order (`LIBXS_ATOMIC_SEQ_CST` or `LIBXS_ATOMIC_RELAXED`) with the GCC builtins (`__atomic_*`). The legacy sync builtins and the Windows Interlocked intrinsics ignore it, and `LIBXS_ATOMIC_SYNC` is always a full fence.
 
 ## Lock Abstraction
 
@@ -45,13 +45,13 @@ LIBXS_LOCK_TRYLOCK(KIND, LOCK)
 LIBXS_LOCK_RELEASE(KIND, LOCK)
 ```
 
-Generic lock interface parameterized by `KIND`:
+Generic lock interface parameterized by `KIND`. `LIBXS_LOCK_TRYLOCK` succeeded if its result equals `LIBXS_LOCK_ACQUIRED(KIND)`, a value that depends on the backend.
 
 | KIND | Backend |
 |:-----|:--------|
 | `LIBXS_LOCK_SPINLOCK` | Atomic spin-lock |
-| `LIBXS_LOCK_MUTEX` | Pthreads / Windows CRITICAL_SECTION |
-| `LIBXS_LOCK_RWLOCK` | Pthreads reader-writer lock |
+| `LIBXS_LOCK_MUTEX` | Pthreads mutex / Windows SRW lock (Windows mutex if targeting pre-Vista) |
+| `LIBXS_LOCK_RWLOCK` | Pthreads reader-writer lock / Windows SRW lock (Windows mutex if targeting pre-Vista) |
 | `LIBXS_LOCK_ATOMIC` | Lightweight atomic lock |
 
 The default lock kind used by the library is `LIBXS_LOCK` (resolves to one of the above based on build configuration).

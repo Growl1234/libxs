@@ -41,7 +41,7 @@ use the same read and decode APIs.
 
 Granularity belongs to the tokenizer, not to each encode call:
 
-```c
+```C
 libxs_tokenizer_t* tokenizer =
   libxs_tokenizer_create(LIBXS_TOKEN_GRANULARITY_WORD);
 libxs_token_stream_t stream;
@@ -58,9 +58,12 @@ otherwise policy-neutral, and every policy preserves all input bytes.
 The stream is self-describing. Decoding does not require the tokenizer or a
 lexicon:
 
-```c
+```C
 libxs_token_stream_decode(&stream, &decoded, &decoded_size);
 ```
+
+The decoded bytes are allocated with `malloc` and zero-terminated; the caller
+releases them with `free`.
 
 For every successful encoding:
 
@@ -74,16 +77,18 @@ including whitespace, spelling, case, punctuation, numbers, and UTF-8 bytes.
 
 Physical cells are traversed by logical span:
 
-```c
+```C
 size_t pos = 0;
 while (pos < stream.size) {
   libxs_token_info_t info;
-  unsigned char payload[64];
   if (EXIT_SUCCESS != libxs_token_read(stream.data, stream.size, pos,
-    payload, sizeof(payload), &info)) break;
+    NULL, 0, &info)) break;
   pos += info.cells;
 }
 ```
+
+A NULL payload reads metadata only. Otherwise, the capacity must cover
+`info.length` bytes, or the read fails.
 
 `info.kind` describes text, number, whitespace, punctuation, markup, literal,
 reference, or control payload. `info.is_sentence` is carried by the final cell
@@ -93,7 +98,7 @@ of a logical metatoken.
 
 `libxs_lexeme_t` remains an independent 8-byte lexical occurrence:
 
-```c
+```C
 typedef struct libxs_lexeme_t {
   unsigned int id;
   unsigned short length;

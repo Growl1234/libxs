@@ -5,12 +5,14 @@ Benchmarks three shuffling strategies and compares their throughput:
 | Label       | Method                                                            |
 |-------------|-------------------------------------------------------------------|
 | RNG-shuffle | Fisher-Yates via `libxs_rng_u32` (reference baseline)             |
-| DS1-shuffle | `libxs_shuffle` — deterministic in-place (coprime stride)        |
-| DS2-shuffle | `libxs_shuffle2` — deterministic out-of-place (src to dst)       |
+| DS1-shuffle | `libxs_shuffle` — deterministic in-place (coprime stride)         |
+| DS2-shuffle | `libxs_shuffle2` — deterministic out-of-place (src to dst)        |
 
 Each iteration works on an array of unsigned integers initialized to
-0..n-1. On the final iteration the shuffled result can optionally be
-written as a PNG image file or analyzed for randomness quality.
+0..n-1. On the final iteration the shuffled result can be written as a
+PNG image (see below). Every run ends with round-trip checks of
+`libxs_shuffle2`/`libxs_unshuffle2`, once with the given offset and once
+with offset 42, each reported as PASS or FAIL.
 
 ## Build
 
@@ -30,15 +32,21 @@ make
 | nelems     | 64 MB / elemsize | Number of elements                     |
 | elemsize   | 4                | Element size in bytes (1, 2, 4, or 8)  |
 | niters     | 1                | Shuffle passes per timed measurement   |
-| repeat     | 3                | Timed iterations (first is warmup)     |
+| repeat     | 3                | Timed iterations after one warm-up     |
 
 ### Environment Variables
 
 | Variable | Default | Description                                                   |
 |----------|---------|---------------------------------------------------------------|
+| BIAS     | 0       | Coprime selection in [-1, +1] (`libxs_coprime_bias`)          |
+| OFFSET   | 0       | Offset of the deterministic shuffles                          |
 | RANDOM   | 0       | Non-zero: count inversions and report randomness (rand=%)     |
 | SPLIT    | 1       | Partitioning depth for the STATS metrics                      |
 | STATS    | 0       | Non-zero: print partition imbalance (imb) and distance (dst)  |
+
+BIAS=-1 selects the smallest non-trivial coprime, 0 one near sqrt(n), and
++1 one near n/2. If BIAS, OFFSET, RANDOM or STATS is non-zero, the sample
+first prints n, the selected coprime, bias and offset.
 
 ### Example
 
@@ -58,9 +66,11 @@ STATS=1 SPLIT=2 ./shuffle.x
 
 ## What Is Measured
 
-Reported bandwidth is 2 * data-size / time (in MB/s). The factor of
-two accounts for reading and writing each element during the shuffle.
-The first iteration is excluded from the average.
+Reported bandwidth is 2 * data-size / time (in MB/s, with 1 MB = 2^20
+Bytes). The factor of two accounts for reading and writing each element
+during the shuffle. The sample runs `repeat + 1` iterations: the first
+is a warm-up, and when `repeat` is larger than 1 the average over the
+remaining `repeat` iterations is printed at the end.
 
 Optional quality metrics:
 
@@ -71,14 +81,17 @@ Optional quality metrics:
   uniform value, split into hierarchical partitions (SPLIT).
 - imb — Partition imbalance, measuring how unevenly element sums
   are distributed across sub-partitions (SPLIT).
+- With STATS=1, the sample also prints the fingerprint distance
+  (Sobolev, order 4) between the original and each shuffled array,
+  and between the RNG-shuffled and each deterministic result.
 
 ### Image Output
 
 When RANDOM is not set and the element size is 1, 2, 4, or 8 bytes,
 the final shuffled array is written as a PNG image per method
 (shuffle_rng.png, shuffle_ds1.png, shuffle_ds2.png). The images are
-shaped close to square (isqrt(n) x n/isqrt(n)) and converted to
-unsigned 8-bit via modulus.
+shaped close to square (isqrt(n) x n/isqrt(n)); each pixel is an 8-bit
+hash of the element value and its position.
 
 ## Compile-Time Knobs
 

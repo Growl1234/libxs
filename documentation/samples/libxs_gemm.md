@@ -3,7 +3,7 @@
 Exercises the LIBXS batched GEMM API (`libxs_gemm.h`) in several
 flavors: strided, pointer-array, indexed, and grouped. All programs
 are multithreaded via OpenMP, report wall-clock time and GFLOPS/s,
-and optionally validate results via `libxs_matdiff`.
+and optionally print a checksum of the results via `libxs_matdiff`.
 
 ## Building
 
@@ -12,7 +12,11 @@ cd samples/gemm
 make
 ```
 
-LIBXS must be built first from the repository root.
+The C programs build header-only when LIBXS is not built yet; only
+`gemm_indexf.x` (Fortran) needs LIBXS built first from the repository
+root. `make MKL=1` (sequential) or `make MKL=2` (threaded) links MKL and
+enables MKL's JIT kernels; `make LIBXSMM=1` enables LIBXSMM kernels and
+needs a built sibling `libxsmm` directory.
 
 ## Programs
 
@@ -60,7 +64,7 @@ Defaults: M=N=K=23, batchsize=30000, nrepeat=3, beta=1.0, pad=0.
 
 Fortran variant of gemm_index. Demonstrates the LIBXS Fortran module
 interface with one-based index arrays and C_LOC/C_SIZEOF interop.
-Requires a Fortran compiler.
+Requires a Fortran compiler and a built LIBXS (skipped otherwise).
 
 Compiled with OpenMP, `libxs_gemm_index` (and `libxs_gemm_batch`) run
 over an OpenMP team unless called from within a parallel region, sized by
@@ -88,7 +92,8 @@ base_m=8, beta=1.0, pad=0.
 
 ## Validation
 
-Set the CHECK environment variable to validate results:
+Set the CHECK environment variable to any non-zero value to print a
+checksum of the first and the last C-matrix (`libxs_matdiff`):
 
 ```bash
 CHECK=1 ./gemm_strided.x
@@ -114,4 +119,6 @@ when no BLAS SYRK is available.
 Set `LIBXS_GEMM_PRINT=0` to print a compact GEMM registry summary at
 termination. The first line reports registry size, capacity, memory,
 and the selected `LIBXS_GEMM_BACKEND` policy; the second line reports
-a histogram by datatype and backend.
+a histogram by datatype and backend; the third line reports the
+occupied warm-up slots and how many of them settled without a JIT
+kernel (`nojit`).

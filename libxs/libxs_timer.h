@@ -18,7 +18,7 @@ typedef unsigned long long libxs_timer_tick_t;
 
 /** Timer properties filled by libxs_timer_info. */
 LIBXS_EXTERN_C typedef struct libxs_timer_info_t {
-  /** Non-zero if a calibrated TSC (RDTSC/CNTVCT_EL0) is available, zero if the RTC fallback is used. */
+  /** Non-zero if a calibrated TSC (RDTSC/CNTVCT_EL0) is used, zero if the RTC fallback is used. */
   int tsc;
 } libxs_timer_info_t;
 
@@ -39,8 +39,8 @@ LIBXS_API int libxs_timer_info(libxs_timer_info_t* info);
 LIBXS_API libxs_timer_tick_t libxs_timer_tick(void);
 
 /**
- * Returns the unsigned difference between two timer ticks (tick1 - tick0).
- * Handles wrap-around safely; use this instead of plain subtraction.
+ * Returns the absolute difference between two timer ticks (tick1 - tick0 if
+ * sampled in that order). A wrap-around of the counter is not handled.
  */
 LIBXS_API_INLINE libxs_timer_tick_t libxs_timer_ncycles(libxs_timer_tick_t tick0, libxs_timer_tick_t tick1) {
   return LIBXS_DELTA(tick0, tick1);

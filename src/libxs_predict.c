@@ -626,7 +626,7 @@ LIBXS_EXTERN_C struct libxs_predict_t {
  * here rather than in the model, so concurrent streams cannot interfere and the
  * model stays read-only while scoring. The escape weights are per output
  * because the rate that suits one output does not suit another: within a single
- * PVC model the best rate was measured at 0.55, 0.80 and 0.20 for three of its
+ * model the best rate was measured at 0.55, 0.80 and 0.20 for three of its
  * outputs, and one shared bank can only converge to a compromise none of them
  * wants.
  */

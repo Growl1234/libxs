@@ -2,7 +2,7 @@
 
 Header: `libxs_reg.h`
 
-Thread-safe key-value store backed by a hash table with per-thread caching.
+Key-value store backed by a hash table with per-thread caching. Operations are thread-safe when a lock is given (e.g., `libxs_registry_lock`).
 
 ## Configuration Macros
 
@@ -47,9 +47,9 @@ Return a pointer to the registry's internal lock. The returned lock can be passe
 ## Iteration
 
 ```C
-void* libxs_registry_begin(libxs_registry_t* registry,
+void* libxs_registry_begin(const libxs_registry_t* registry,
   const void** key, size_t* cursor);
-void* libxs_registry_next(libxs_registry_t* registry,
+void* libxs_registry_next(const libxs_registry_t* registry,
   const void** key, size_t* cursor);
 ```
 
@@ -64,7 +64,7 @@ void* libxs_registry_set(libxs_registry_t* registry,
   libxs_lock_t* lock /* = NULL */);
 ```
 
-Insert or update a key-value pair. The key must be binary-reproducible (zero-initialize padding). `value_init` may be NULL to defer initialization. Re-registering an existing key reallocates if the new value is larger. When `lock` is NULL the registry's internal lock is used. Returns a pointer to the stored value.
+Insert or update a key-value pair. The key must be binary-reproducible (zero-initialize padding). `value_init` may be NULL to defer initialization. Re-registering an existing key reallocates if the new value is larger. When `lock` is NULL no locking is performed (the caller guarantees exclusion); pass `libxs_registry_lock(registry)` to use the registry's internal lock. Returns a pointer to the stored value.
 
 ```C
 void* libxs_registry_get(const libxs_registry_t* registry,
@@ -100,8 +100,8 @@ lookup cache *before* taking the lock, so a repeated query of the same
 key costs no lock at all. That fast path is restricted to values too
 large for the registry's inline storage, whose heap buffer does not move
 when the table is rehashed, and it assumes the entry is neither removed
-nor resized while another thread queries it -- true for a registry that
-only grows. `libxs_registry_get` is unchanged and still takes the lock
+nor resized while another thread queries it, which holds for a registry
+that only grows. `libxs_registry_get` is unchanged and still takes the lock
 whenever one is given.
 
 ```C
@@ -114,7 +114,7 @@ int libxs_registry_get_copy(const libxs_registry_t* registry,
 Thread-safe query: copies up to `value_size` bytes of the stored value into `value_out` under the lock. Unlike `libxs_registry_get`, the caller never receives a raw pointer into the registry's internal storage, making this safe under concurrent modifications. Returns non-zero if the key was found, zero otherwise.
 
 ```C
-int libxs_registry_has(libxs_registry_t* registry,
+int libxs_registry_has(const libxs_registry_t* registry,
   const void* key, size_t key_size,
   libxs_lock_t* lock /* = NULL */);
 ```
@@ -122,7 +122,7 @@ int libxs_registry_has(libxs_registry_t* registry,
 Check whether a key exists. Non-zero if found.
 
 ```C
-size_t libxs_registry_value_size(libxs_registry_t* registry,
+size_t libxs_registry_value_size(const libxs_registry_t* registry,
   const void* key, size_t key_size,
   libxs_lock_t* lock /* = NULL */);
 ```
@@ -153,7 +153,7 @@ int libxs_registry_save(const libxs_registry_t* registry,
   void* buffer, size_t* size);
 ```
 
-Save the registry to a binary buffer. Pass `buffer = NULL` to query the required size (written to `*size`). On success, `*size` contains the number of bytes written. Returns `EXIT_SUCCESS` or `EXIT_FAILURE`.
+Save the registry to a binary buffer. On input, `*size` is the capacity of `buffer`. Pass `buffer = NULL` to query the required size (written to `*size`). On success, `*size` contains the number of bytes written. Returns `EXIT_SUCCESS` or `EXIT_FAILURE`; a buffer that is too small fails and `*size` receives the required size.
 
 ```C
 libxs_registry_t* libxs_registry_load(const void* buffer, size_t size,
@@ -167,8 +167,8 @@ Load a registry from a binary buffer (previously produced by `libxs_registry_sav
 ## Status
 
 ```C
-int libxs_registry_info(libxs_registry_t* registry,
+int libxs_registry_info(const libxs_registry_t* registry,
   libxs_registry_info_t* info);
 ```
 
-Query registry capacity, number of entries, and total bytes stored.
+Query registry capacity, number of entries, and total bytes (table overhead and stored values). Returns `EXIT_SUCCESS` or `EXIT_FAILURE`.

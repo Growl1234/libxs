@@ -12,7 +12,7 @@ of [LIBXSMM](https://github.com/libxsmm/libxsmm).
 |------------------|--------------------|--------------------------------------------|
 | [Registry][dreg] | `libxs_reg.h`      | Thread-safe key-value store                |
 | [Predict][dprd]  | `libxs_predict.h`  | Fingerprint-guided parameter prediction    |
-| [Malloc][dmal]   | `libxs_malloc.h`   | Pool allocator (no system calls at steady) |
+| [Malloc][dmal]   | `libxs_malloc.h`   | Pool allocator (steady state: no syscalls) |
 | [Memory][dmem]   | `libxs_mem.h`      | Byte compare, matrix copy/transpose        |
 | [String][dstr]   | `libxs_str.h`      | Edit distance, substring, similarity       |
 | [N-gram][dngr]   | `libxs_ngram.h`    | Variable-order n-gram counts and backoff   |
@@ -61,11 +61,12 @@ See also: [Fortran Interface](documentation/libxs_fortran.md),
 make
 ```
 
-The library is compiled for SSE4.2 by default but dynamically
-dispatches to the best ISA available at runtime (up to AVX-512).
+The library is compiled for the build host's highest SSE level (up to SSE4.2)
+by default but dynamically dispatches to the best ISA available at runtime
+(up to AVX-512).
 Use `SSE=0` to compile natively for the build host.
 The library is built into `lib/<target>`, e.g., `lib/x86_64` by default or
-`lib/sapphirerapids` with `SSE=0`, and `lib/` refers to the latest build.
+`lib/<cpu>` with `SSE=0`, and `lib/` refers to the latest build.
 This lets a shared file system serve different systems.
 
 | Variable | Default | Description                                 |
@@ -73,7 +74,7 @@ This lets a shared file system serve different systems.
 | GNU      | 1       | GNU GCC-compatible compiler (0: Intel)      |
 | DBG      | 0       | Debug build                                 |
 | SYM      | 0       | Include debug symbols (-g)                  |
-| SSE      | 1       | x86 baseline: 0=native, 1=SSE4.2 (portable) |
+| SSE      | 1       | x86 baseline: 0=native, 1=host's SSE level  |
 | LIBARCH  | (auto)  | Name of the build folder (`lib/<target>`)   |
 
 CMake is also supported:
@@ -138,10 +139,10 @@ USE :: libxs, ONLY: libxs_memcmp
 
 **Environment** — read when the library initializes:
 
-| Variable      | Default | Description                                                    |
-|---------------|---------|----------------------------------------------------------------|
-| LIBXS_VERBOSE | 0       | Verbosity level; set but empty means 1                         |
-| LIBXS_PTRACE  | 0       | Linux: any process may attach a debugger (not only an ancestor) |
+| Variable      | Default | Description                                                           |
+|---------------|---------|-----------------------------------------------------------------------|
+| LIBXS_VERBOSE | 0       | Verbosity level; empty means 1, negative means all (debug build: all) |
+| LIBXS_PTRACE  | 0       | Linux: any process may attach a debugger (not only an ancestor)       |
 
 ## Samples
 
@@ -154,6 +155,7 @@ USE :: libxs, ONLY: libxs_memcmp
 | [rosetta]     | Hierarchical type discovery on opaque data      |
 | [setdiff]     | Deterministic set-difference tolerance          |
 | [shuffle]     | Shuffling strategies comparison                 |
+| [pack]        | Bit packing at fixed vs per-group width         |
 | [scratch]     | Pool allocator vs system malloc                 |
 | [spatial]     | Stratification, pair counting, kd-tree          |
 | [fprint]      | Fingerprint structure/geometry tests            |
@@ -171,6 +173,7 @@ USE :: libxs, ONLY: libxs_memcmp
 [rosetta]:   documentation/samples/libxs_rosetta.md
 [setdiff]:   documentation/samples/libxs_setdiff.md
 [shuffle]:   documentation/samples/libxs_shuffle.md
+[pack]:      documentation/samples/libxs_pack.md
 [scratch]:   documentation/samples/libxs_scratch.md
 [spatial]:   documentation/samples/libxs_spatial.md
 [fprint]:    documentation/samples/libxs_fprint.md

@@ -11,7 +11,7 @@ CURL=$(command -v curl)
 GIT=$(command -v git)
 SED=$(command -v sed)
 
-PRJ_DEFAULT="libxs/libxs"
+PRJ_DEFAULT="hfp/libxs"
 
 if [ "${CURL}" ] && [ "${GIT}" ] && [ "${SED}" ]; then
   N=0

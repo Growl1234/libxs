@@ -122,6 +122,7 @@ LIBXS_API int libxs_mhd_read_header(
   char extension[],
   /**
    *  Size (in Bytes) of an user-defined extended data record;
+   * in/out: capacity of extension on input, size of the record on output;
    * can be a NULL-argument (optional).
    */
   size_t* extension_size);

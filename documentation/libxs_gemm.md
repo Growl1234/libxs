@@ -9,6 +9,56 @@ C := alpha * op(A) * op(B) + beta * C, where op() is an optional
 transpose. Kernels are dispatched via MKL JIT, LIBXSMM, or BLAS;
 a built-in default kernel (auto-vectorized) is used as fallback.
 
+## Kernel Providers
+
+LIBXS does not link a kernel provider. MKL JIT, LIBXSMM, and BLAS are
+linked by the application, and LIBXS receives their entry points as
+function pointers (`libxs_gemm_backend_t`). One LIBXS build hence
+serves applications with or without MKL or LIBXSMM, and the provider's
+version is the one the application links.
+
+**C.** The dispatch functions are header inlines. They are compiled in
+the application's translation unit and take the address of what the
+application's headers declare (`libxs_gemm_backend_init`):
+
+| Provider | Enabled by |
+| :--- | :--- |
+| MKL JIT and BLAS | `-D__MKL`, or `mkl.h` included before `libxs_gemm.h` |
+| LIBXSMM | `-D__LIBXSMM`, or `libxsmm.h` included before `libxs_gemm.h` |
+| BLAS | `-D__BLAS` (Fortran `dgemm_`/`sgemm_`) |
+
+```C
+#include <mkl.h> /* or libxsmm.h */
+#include <libxs/libxs_gemm.h>
+```
+
+`LIBXS_GEMM_JIT` is defined if a generator was found. To pass pointers
+explicitly, fill a `libxs_gemm_backend_t` and call one of the `_rt`
+forms.
+
+**Fortran.** `libxs/libxs_jit.F` plays the role of the header inlines.
+It is not part of the library: the application compiles it with its
+own sources and flags (preprocessed, hence `.F`), and uses
+`USE LIBXS_JIT` in place of `USE LIBXS`. The module passes the
+provider's entry points as procedure pointers (`C_FUNLOC`) to the
+dispatch of module LIBXS, where they are OPTIONAL `C_FUNPTR` arguments.
+
+```bash
+$FC -D__LIBXS [-D__MKL] [-D__LIBXSMM] -I<libxs>/libxs \
+  -c <libxs>/libxs/libxs_jit.F
+```
+
+`-D__LIBXS` is the application's flag for using LIBXS; without it, the
+module falls back to plain BLAS, so that call sites need not change
+when LIBXS is optional. BLAS is required at link time.
+
+**Runtime.** Where dynamic linking is supported, the library also looks
+up `dgemm_`, `sgemm_`, the MKL JIT entry points, and
+`libxsmm_dispatch_gemm` among the symbols already loaded by the
+process, and uses them for any backend pointer left NULL. Linking a
+provider into the application is then sufficient, even without the
+compile-time detection above.
+
 ## Types
 
 ```C
@@ -41,9 +91,10 @@ typedef struct libxs_gemm_config_t {
 ```
 
 Configuration holding dispatched GEMM kernels. Kernel priority:
+
 1. JIT kernel (dgemm_jit/sgemm_jit + jitter),
 2. XGEMM kernel (xgemm),
-3. BLAS kernel (dgemm_blas/sgemm_blas) -- always non-NULL after
+3. BLAS kernel (dgemm_blas/sgemm_blas) — always non-NULL after
    dispatch (falls back to built-in auto-vectorized C code).
 
 warmup counts dispatches of this shape and is maintained by
@@ -75,14 +126,8 @@ libxs_gemm_config_t* libxs_gemm_dispatch(
   void* registry /* = NULL */);
 ```
 
-Inline function that selects the backend at compile time:
-
-- MKL JIT (if mkl.h is included before libxs_gemm.h),
-- LIBXSMM (if libxsmm.h is included),
-- BLAS dgemm/sgemm (if __BLAS, __MKL, or MKL_H is defined),
-- built-in default otherwise.
-
-On registry hit, returns a pointer to the cached config (hash
+Inline function that selects the backend at compile time (see
+[Kernel Providers](#kernel-providers)). On registry hit, returns a pointer to the cached config (hash
 probe only). On miss, dispatches a new kernel and stores it.
 If registry is NULL, an internal registry is used.
 
@@ -95,7 +140,8 @@ void libxs_gemm_backend_init(libxs_gemm_backend_t* backend);
 
 It zero-initializes backend and fills the pointers available at the
 caller's compile time. Unavailable backends are left NULL, i.e.,
-dispatch falls through to the built-in default kernel.
+dispatch takes what the library found at runtime, and the built-in
+default kernel otherwise.
 
 ### Config ownership (registry pointer or caller copy)
 
@@ -160,11 +206,14 @@ LIBXSMM, and BLAS. To supply backend pointers explicitly, use the
 `_rt` forms, which are the only dispatch symbols exported by the
 library itself:
 
-| Operation | Explicit backend (library symbol) |
-| :--- | :--- |
-| GEMM | `libxs_gemm_dispatch_rt` (takes shape structs) |
-| SYR2K | `libxs_syr2k_dispatch_rt` |
-| SYRK | `libxs_syrk_dispatch_rt` |
+| Operation | Explicit backend (library symbol) | Caller copy |
+| :--- | :--- | :--- |
+| GEMM | `libxs_gemm_dispatch_rt` (takes shape structs) | `libxs_gemm_dispatch_cpy_rt` |
+| SYR2K | `libxs_syr2k_dispatch_rt` | `libxs_syr2k_dispatch_cpy_rt` |
+| SYRK | `libxs_syrk_dispatch_rt` | `libxs_syrk_dispatch_cpy_rt` |
+
+The `_cpy_rt` forms take a config as first argument and return nonzero
+if it was populated, like the `_cpy` inlines.
 
 ### C (runtime, explicit backend selection)
 
@@ -177,6 +226,7 @@ typedef struct libxs_gemm_backend_t {
   libxs_xgemm_dispatch_t  xgemm_dispatch;
   libxs_gemm_dblas_t dgemm_blas;
   libxs_gemm_sblas_t sgemm_blas;
+  libxs_blas_nthreads_t blas_nthreads;
 } libxs_gemm_backend_t;
 
 libxs_gemm_config_t* libxs_gemm_dispatch_rt(
@@ -192,8 +242,11 @@ kernel_shape: actual kernel dimensions (may differ, e.g., tight
 ldc for scratch). NULL means same as shape. If kernel_shape
 differs from shape, the kernel is looked up under kernel_shape
 first (double-dispatch), avoiding redundant code generation.
-backend: function pointers for backends. NULL means built-in
-default only. Same registry semantics as above. The BLAS pointers
+backend: function pointers for backends. A NULL backend, or a NULL
+member, takes what the library found at runtime, and the built-in
+default otherwise. blas_nthreads tells whether the BLAS is threaded
+(e.g., `MKL_Get_Max_Threads`) where the library cannot find out
+itself (static link). Same registry semantics as above. The BLAS pointers
 take the two hidden lengths of transa and transb as trailing
 `size_t` arguments (always 1), which a BLAS compiled from Fortran
 expects; a C BLAS ignores them.
@@ -205,10 +258,8 @@ backend is not supplied or cannot dispatch the shape.
 
 Automatic selection takes a generated kernel only for resident
 operands, recognized by leading dimensions that match the kernel's
-own extent. A larger leading dimension means the operand is a window
-into a larger matrix: it streams, and neither generator packs or
-prefetches the panel the way a BLAS `gemm` does, so BLAS wins there
-by a wide margin. This is what a tiled caller (SYRK, SYR2K) hands
+own extent. A larger leading dimension (a window into a larger
+matrix) reaches BLAS. This is what a tiled caller (SYRK, SYR2K) hands
 down, hence such tiles reach BLAS by default while a standalone small
 matrix still reaches the generators. `LIBXS_GEMM_BACKEND=1` or `=2`
 requests the respective generator regardless.
@@ -251,8 +302,9 @@ rc = libxs_gemm_dispatch(config, LIBXS_DATATYPE_F64,
 ```
 
 The LIBXS_JIT adapter module provides the same dispatch API
-but fills in BLAS (and MKL JIT when compiled with __MKL)
-automatically. Requires BLAS at link time.
+but fills in BLAS, and MKL JIT or LIBXSMM when compiled with
+`-D__MKL` or `-D__LIBXSMM`. The application compiles `libxs_jit.F`
+itself (see [Kernel Providers](#kernel-providers)).
 
 ### Fortran (LIBXS, explicit backends)
 
@@ -385,8 +437,8 @@ arrays, 0 for constant-stride mode).
 
 Symmetric rank-2k and rank-k updates built on top of GEMM dispatch.
 
-For small problems (n <= LIBXS_GEMM_BLOCK_M and k <= LIBXS_GEMM_BLOCK_K),
-the dispatched kernel handles the full GEMM in one call. For larger
+For small problems (n within LIBXS_GEMM_BM and LIBXS_GEMM_BN, and
+k <= LIBXS_GEMM_BK), the dispatched kernel handles the full GEMM in one call. For larger
 problems, the implementation tiles the output into blocks and
 accumulates along K. Full-size tiles use the dispatched JIT kernel;
 remainder tiles fall back to BLAS (if available) or the built-in
@@ -553,7 +605,7 @@ therefore degrades to later JIT, never to a wrong kernel.
                             attempted again, whether it succeeded or
                             was refused by LIBXS_GEMM_JIT_MAX.
                             Set to 0 or 1 to compile immediately
-                            on first miss (default: 8, clamped to 254).
+                            on first miss (default: 8, clamped to 253).
     LIBXS_GEMM_PRINT=N      Print dispatch info every N-th call
                             to stderr (compile-time gate, enabled
                             by default).
@@ -564,9 +616,9 @@ therefore degrades to later JIT, never to a wrong kernel.
                             "LIBXS INFO[rid]:" with rid as libxs_rid,
                             hence the local rank where it is known and
                             the process id otherwise.
-    LIBXS_SYRK_PRINT=N      Print DSYRK/DSYR2K BLAS fallback calls
-                            to stderr (compile-time gate, enabled
-                            by default).
+    LIBXS_SYRK_PRINT=1      Print every BLAS DSYRK/DSYR2K call taken
+                            (see LIBXS_SYRK_BLAS) to stderr
+                            (compile-time gate, enabled by default).
     LIBXS_SYRK_BLAS=0|1     Resolve the BLAS DSYRK/DSYR2K entry points
                             and prefer them for any shape wider than
                             one tile. The tiled path (and with it the

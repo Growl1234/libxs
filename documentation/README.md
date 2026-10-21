@@ -10,13 +10,15 @@ make documentation    # Build PDFs
 make mkdocs           # Serve with live reload
 ```
 
+Building the PDFs requires Pandoc and LaTeX. Serving the documentation requires the packages in `.theme/requirements.txt` (`pip install -r .theme/requirements.txt`).
+
 ## Presentations
 
 Slide decks built with [mkslides](https://github.com/MartenBE/mkslides) (Reveal.js).
 
 | Presentation | File | Purpose |
 | --- | --- | --- |
-| Ozaki Getting Started | `ozaki/index.md` | Introduction, deployment, and MPI reference |
+| Practical Ozaki Schemes | `ozaki/index.md` | Introduction, deployment, and MPI reference |
 | Self-Diagnosing Parameter Prediction | `predict/index.md` | Confidence-gated prediction and deployment safety |
 
 ```bash

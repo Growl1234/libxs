@@ -13,9 +13,9 @@ unsigned int libxs_hash(const void* data, size_t size,
   unsigned int seed);
 ```
 
-Produce a 32-bit hash from a byte buffer of the given size.
-NULL buffer is accepted (returns seed). Uses CRC32-C when
-SSE4.2 is available, otherwise a software table-based CRC32.
+Produce a 32-bit hash from a byte buffer of the given size. A NULL
+buffer is accepted only with a size of zero (returns seed). Uses CRC32-C
+when SSE4.2 is available, otherwise a software table-based CRC32.
 
 ```C
 uint64_t libxs_hash64(const void* data, size_t size, uint64_t seed);
@@ -48,7 +48,9 @@ uint64_t libxs_hash_string(const char string[]);
 
 64-bit hash of a character string. Short strings (up to 8
 bytes) are stored directly, which cannot collide; longer strings
-use `libxs_hash64`. NULL-string is accepted (returns zero).
+use `libxs_hash64`. NULL-string is accepted (returns zero). A short
+string is stored in the host's byte order, hence its value differs
+between little- and big-endian hosts.
 
 From Fortran (`USE libxs`), the generic `libxs_hash64` takes a
 contiguous array of `CHARACTER(C_CHAR)`, `INTEGER(C_INT8_T)`,
@@ -65,7 +67,7 @@ unsigned int libxs_hash_iso3309(const void* data,
 CRC-32 using the ISO 3309 polynomial (used by PNG, gzip, and
 similar formats). Software-only, no hardware acceleration.
 Pre-condition and post-XOR with 0xFFFFFFFF are the caller's
-responsibility. NULL buffer is accepted.
+responsibility. A NULL buffer is accepted only with a size of zero.
 
 ## Adler-32
 
@@ -75,4 +77,4 @@ unsigned int libxs_adler32(const void* data,
 ```
 
 Adler-32 checksum (the variant used by zlib). The standard
-initial seed is 1. NULL buffer is accepted.
+initial seed is 1. A NULL buffer is accepted only with a size of zero.

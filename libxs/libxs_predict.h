@@ -156,7 +156,7 @@ LIBXS_EXTERN_C typedef struct libxs_predict_query_t {
    * A model that was just built has its corpus and reports one.
    */
   int corpus;
-  /** GSS iterations performed during quality optimization (0 if quality >= 0). */
+  /** Orders scored by the order search at build (0 unless build had order <= 0). */
   int iterations;
   /** Auto-detected differencing order (0 if DIFF not enabled or not needed). */
   int diff_order;
@@ -356,8 +356,8 @@ LIBXS_API void libxs_predict_set_smooth(libxs_predict_t* model,
 /**
  * Set round-trip consistency penalty (0..1).
  * When >0 and the refinement round-trip distance exceeds the cluster
- * diameter, confidence is scaled toward the quality threshold:
- *   conf = quality + conf / (1 + amount * rt_dist/dmax)
+ * diameter, confidence is scaled toward the floor (libxs_predict_set_floor):
+ *   conf = floor + (conf - floor) / (1 + amount * rt_dist/dmax)
  * 0 (default): inconsistency only skips refinement.
  * 1: full penalty (halves confidence at rt_dist == dmax).
  */
@@ -485,9 +485,9 @@ LIBXS_API void libxs_predict_set_target(libxs_predict_t* model, int target);
  * LIBXS_PREDICT_PCA: principal component rotation + dim. reduction.
  * LIBXS_PREDICT_SETDIFF: auto feature selection via setdiff scores.
  * LIBXS_PREDICT_FISHER: auto feature selection via Fisher criterion.
- * LIBXS_PREDICT_RF: Random Forest classification (per-output).
- * LIBXS_PREDICT_HKNN: hierarchical kNN with RF-derived partition
- *   from Hilbert-stratified input space.
+ * LIBXS_PREDICT_RF: Random Forest classification or regression (per-output).
+ * LIBXS_PREDICT_HKNN: hierarchical kNN over a Fisher/Gini-guided
+ *   kd-tree partition refined by Lloyd iterations.
  *
  * LIBXS_PREDICT_AUTO_DECOMPOSE selects among the applicable modes at build,
  * by building each on part of the corpus and scoring it on a part held back.
@@ -758,8 +758,8 @@ LIBXS_API int libxs_predict_push(libxs_lock_t* lock,
  * entries and no entry corresponds to one push. Such a call returns failure
  * rather than picking an interpretation.
  *
- * Weights are serialized (file version 3). A model saved with weights loads with
- * them; a file written before version 3 loads with every weight at 1, which is
+ * Weights are serialized (file version 2). A model saved with weights loads with
+ * them; a file written before version 2 loads with every weight at 1, which is
  * what it meant.
  */
 LIBXS_API int libxs_predict_push_weighted(libxs_lock_t* lock,
@@ -774,8 +774,8 @@ LIBXS_API int libxs_predict_push_weighted(libxs_lock_t* lock,
  * nclusters: number of clusters (0 = auto-determine).
  * order:     maximum polynomial order for interpolation.
  *            >0 = use at most this order.
- *             0 = auto-optimize via GSS.
- *            <0 = auto-optimize with |order| GSS iterations.
+ *             0 = auto-select by scanning orders 1..LIBXS_FPRINT_MAXORDER.
+ *            <0 = auto-select by scanning orders 1..|order|.
  * quality:   enables model compression (0..1); 0.0 (default) keeps every entry.
  *            Any positive value drops the entries that a leave-one-out query
  *            recovers *exactly* from a *unanimous* neighbourhood. It does not

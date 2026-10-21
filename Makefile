@@ -356,6 +356,7 @@ DOCMDS := $(addprefix $(ABSDIR)/,$(filter-out \
     $(DOCDIR)/$(PROJECT)_samples.md \
     $(DOCDIR)/$(PROJECT)_scripts.md \
     $(DOCDIR)/$(PROJECT)_fortran.md \
+    $(DOCDIR)/$(PROJECT)_opencl.md \
     $(DOCDIR)/$(PROJECT)_contrib.md, \
   $(shell cd $(ROOTDIR) && $(if $(GIT),$(GIT) ls-files,ls -1) \
     $(DOCDIR)/$(PROJECT)_*.md 2>/dev/null)))
@@ -438,7 +439,8 @@ documentation: $(DOCFILE)
 endif
 
 .PHONY: mkdocs
-mkdocs: $(POLICYMDS) mkdocs-tests $(ROOTDIR)/$(DOCDIR)/index.md
+mkdocs: $(POLICYMDS) mkdocs-tests $(ROOTDIR)/$(DOCDIR)/index.md \
+    $(ROOTDIR)/$(DOCDIR)/$(PROJECT)_scripts.md $(ROOTDIR)/$(DOCDIR)/$(PROJECT)_samples.md
 #	@mkdocs build --clean
 	@mkdocs serve
 
@@ -451,14 +453,21 @@ mkslides:
 .PHONY: mkdocs-tests
 mkdocs-tests: $(TSTMDS)
 
-$(ROOTDIR)/$(DOCDIR)/tests/%.md: $(ROOTDIR)/$(TSTDIR)/%.c $(ROOTDIR)/$(DOCDIR)/tests/.make
+# The page includes the test source when MkDocs builds, so an existing page
+# is kept: a description written into it survives a change of the source.
+$(ROOTDIR)/$(DOCDIR)/tests/%.md: | $(ROOTDIR)/$(TSTDIR)/%.c $(ROOTDIR)/$(DOCDIR)/tests/.make
 	@TITLE=$$(printf '%s\n' "$*" | $(SED) \
 		-e 's/_/ /g' \
 		-e 's/-/ /g' \
 		-e 's/\<\(.\)/\u\1/g' \
 		-e 's/\<Fprint\>/Fingerprint/g' \
+		-e 's/\<Gemm\>/GEMM/g' \
 		-e 's/\<Headeronly\>/Header-Only/g' \
-		-e 's/\<Mhd\>/MHD/g'); \
+		-e 's/\<Hknn\>/HKNN/g' \
+		-e 's/\<Mhd\>/MHD/g' \
+		-e 's/\<Ngram\>/N-gram/g' \
+		-e 's/\<Png\>/PNG/g' \
+		-e 's/\<Str\>/String/g'); \
 	echo "# $${TITLE}" >$@; \
 	echo "" >>$@; \
 	echo "$${TITLE} test source." >>$@

@@ -12,7 +12,7 @@
 
 #include "libxs.h"
 
-/** Calculate a hash value for the given buffer and seed; accepts NULL-buffer. */
+/** Calculate a hash value for the given buffer and seed; NULL-buffer only if size is zero. */
 LIBXS_API unsigned int libxs_hash(const void* data, size_t size, unsigned int seed);
 LIBXS_API unsigned int libxs_hash8(unsigned int data);
 LIBXS_API unsigned int libxs_hash16(unsigned int data);
@@ -33,7 +33,7 @@ LIBXS_API unsigned int libxs_adler32(const void* data, size_t size, unsigned int
 
 /**
  * Calculate a 64-bit hash for the given character string; accepts NULL-string.
- * A string of at most eight bytes is its own value, which cannot collide.
+ * A string of at most eight bytes is its own value (host byte order), which cannot collide.
  */
 LIBXS_API uint64_t libxs_hash_string(const char string[]);
 

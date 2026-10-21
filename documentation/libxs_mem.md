@@ -7,18 +7,15 @@ buffer comparison, and matrix copy/transposition.
 
 ## Memory Macros
 
-The `LIBXS_MEM*` macros are deliberately non-generic: they unroll a
-byte-loop whose count is a `signed char`, so SIZE must not exceed 127
-bytes. A larger SIZE is truncated (silently, outside of debug builds)
-and zeroes or copies the wrong number of bytes — or none at all. Use
-plain `memset`/`memcpy` beyond that limit; `sizeof` of a struct grows
-past 127 bytes easily.
+The `LIBXS_MEM*` macros expand to an inline byte loop rather than a
+library call, which suits small sizes; prefer `memset`/`memcpy` for
+large buffers.
 
 ```C
 LIBXS_MEMSET(DST, SRC, SIZE)
 ```
 
-Set SIZE bytes at DST to the value SRC, unrolled at compile-time.
+Set SIZE bytes at DST to the value SRC.
 
 ```C
 LIBXS_MEMZERO(DST)
@@ -30,7 +27,7 @@ Zero all bytes of *DST (size derived from sizeof(*DST)).
 LIBXS_MEMCPY(DST, SRC, SIZE)
 ```
 
-Copy SIZE bytes from SRC to DST, unrolled at compile time.
+Copy SIZE bytes from SRC to DST.
 
 ```C
 LIBXS_ASSIGN(DST, SRC)

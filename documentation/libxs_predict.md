@@ -22,6 +22,7 @@ typedef enum libxs_predict_mode_t {
 ```
 
 ORable flags controlling prediction behavior:
+
 - AUTO (0): fingerprint decides per-output (default).
 - INTERPOLATE: force polynomial for all outputs.
 - CLASSIFY: force kNN vote for all outputs.
@@ -40,6 +41,7 @@ forces kNN-weighted projection forward with temporal heuristics.
 
 ```C
 typedef enum libxs_predict_decompose_t {
+  LIBXS_PREDICT_AUTO_DECOMPOSE = -1,
   LIBXS_PREDICT_RAW     = 0,
   LIBXS_PREDICT_SPREAD  = 1,
   LIBXS_PREDICT_PCA     = 2,
@@ -52,6 +54,10 @@ typedef enum libxs_predict_decompose_t {
 
 Controls input processing and prediction strategy:
 
+- AUTO_DECOMPOSE (-1): choose among the applicable modes at
+  build by trial (each is built on part of the corpus and scored
+  on a held-back part). Read the chosen mode from
+  `libxs_predict_query_t::decompose`.
 - RAW (0): no decomposition, standard kNN (default).
 - SPREAD: sum/diff modes for anti-correlated pairs (2 series).
   Forward: sum = (A+B)/2, diff = (A-B)/2.
@@ -73,13 +79,16 @@ Controls input processing and prediction strategy:
   At build time, computes per-feature Fisher score, applies
   sqrt weighting above median, zeroes below. Supervised.
   Generally best for kNN classification.
-- RF: Random Forest classification. At build time, trains an
-  ensemble of 100 decision trees per output (bootstrap
-  sampling, sqrt(ninputs) random features per split, Gini
-  impurity). At eval time, returns majority vote across
-  trees. Per-output confidence = vote fraction. Excels on
+- RF: Random Forest. At build time, trains an ensemble of
+  64 decision trees per output by default (bootstrap
+  sampling, sqrt(ninputs) random features per split; see
+  `libxs_predict_set_forest`). An integral output spanning
+  at most 128 levels is classified (Gini impurity, vote
+  across trees), any other output is regressed. Per-output
+  confidence is the average Laplace-smoothed support of the
+  leaves voting for the chosen class. Excels on
   high-dimensional classification (37+ features). Persisted
-  in save/load (compact on-disk format: 15 bytes/node).
+  in save/load.
 - HKNN: hierarchical kNN. At build time, partitions data
   using a Fisher-guided kd-tree (output-aware dimension
   selection, adaptive balance penalty) followed by Lloyd
@@ -108,6 +117,7 @@ typedef enum libxs_predict_transform_t {
 ```
 
 Per-output transforms applied transparently:
+
 - IDENTITY (0): no transform (default).
 - LOG: forward = log(x+1), inverse = exp(x)-1.
 - SQRT: forward = sqrt(x), inverse = x*x.
@@ -125,7 +135,8 @@ libxs_lock_t* libxs_predict_lock(libxs_predict_t* model);
 ```
 
 Create a model for the given input/output dimensionality.
-Returns NULL on invalid arguments. Destroy accepts NULL.
+Returns NULL on invalid arguments or allocation failure.
+Destroy accepts NULL.
 The lock accessor returns a pointer to the model's internal
 lock for use with push/eval (NULL if model is NULL).
 
@@ -163,10 +174,14 @@ void libxs_predict_set_refine(libxs_predict_t* model,
 ```
 
 Set the number of forward-inverse-forward refinement
-iterations applied during eval. Default (0): iterate
-automatically when per-output confidence drops below 0.9.
-When set to >0, always perform the given number of iterations
-regardless of confidence.
+iterations applied during eval.
+
+- iterations=0 (default): off, except for a single pass when
+  set_consistency>0 and a per-output confidence is below 0.9.
+- iterations<0: a single pass when a per-output confidence is
+  below 0.9.
+- iterations>0: always perform that many iterations
+  regardless of confidence.
 
 ```C
 void libxs_predict_set_smooth(libxs_predict_t* model,
@@ -174,8 +189,9 @@ void libxs_predict_set_smooth(libxs_predict_t* model,
 ```
 
 Control multi-cluster blending at eval time.
+
 - amount<0: auto-determine blending radius from model structure.
-- amount=0: no blending (default after manual assignment).
+- amount=0 (default): no blending.
 - amount>0: blend predictions from clusters within
   (1+amount)*nearest_distance radius. Only smooth-mode outputs
   are blended; categorical outputs remain unblended.
@@ -195,8 +211,9 @@ prediction is geometrically inconsistent.
   (no confidence change).
 - amount>0: confidence is actively penalized proportional
   to the round-trip distance:
-  `conf = quality + conf / (1 + amount * rt_dist / dmax)`
-- amount=1: halves confidence above the quality floor when
+  `conf = floor + (conf - floor) / (1 + amount * rt_dist / dmax)`
+  where floor is set by `libxs_predict_set_floor` (default 0).
+- amount=1: halves confidence above the floor when
   the round-trip distance equals the cluster diameter.
 
 This catches predictions where the model contradicts itself:
@@ -238,11 +255,18 @@ void libxs_predict_set_diff(libxs_predict_t* model,
 ```
 
 Declare timeseries structure for automatic sliding-window
-construction. The model's ninputs must equal nseries * window;
-noutputs is the forecast horizon.
+construction. For a positive window, the model's ninputs must
+equal nseries * window + nderiv + naux (see
+`libxs_predict_set_series_deriv` and `libxs_predict_set_series_aux`);
+noutputs is the forecast horizon. With window =
+`LIBXS_PREDICT_AUTO_WINDOW` (0), the window is selected at build,
+and a negative window selects it by trial; in both cases ninputs
+is an upper bound and `libxs_predict_query_t::window` reports the
+window in force.
 
 When set_series has been called, push(lock, model, values, NULL)
-accumulates one timestep (nseries values per call). The build
+accumulates one timestep (nseries + naux values per call: the
+series first, then the auxiliary features). The build
 step then constructs all valid sliding windows internally:
 input = concatenated windows across all series, output = the
 next horizon values of the target series.
@@ -251,6 +275,7 @@ set_target selects which series to predict (0-based, default 0).
 set_decompose selects input processing mode (see above).
 
 set_diff enables auto-differencing for non-stationary series:
+
 - `set_diff(model, 0)`: auto-detect order from fingerprint decay.
 - `set_diff(model, d)`: explicit order d (1 = linear detrend).
 - Default is disabled (-1).
@@ -301,8 +326,10 @@ int libxs_predict_push(libxs_lock_t* lock,
 ```
 
 Push one training entry. When set_series was called and
-outputs is NULL, inputs holds nseries values representing
+outputs is NULL, inputs holds nseries + naux values representing
 one timestep; sliding windows are constructed at build time.
+At eval, such a model takes the raw window followed by the naux
+auxiliary values (nseries * window + naux values).
 Returns EXIT_SUCCESS or EXIT_FAILURE.
 
 ```C
@@ -314,21 +341,29 @@ Build the model from pushed entries. nclusters=0 selects
 sqrt(n) clusters automatically. order>0 uses at most that
 order, order=0 auto-optimizes, order<0 scans up to |order|.
 
-The quality parameter (0..1) controls model compression and
-confidence scaling:
-- quality=0: no compression, no coverage scaling (default).
-- quality>0: leave-one-out pass removes entries that are
-  perfectly predictable by their neighbors. Additionally,
-  confidence is scaled by coverage at eval time:
-  `conf = quality + coverage * (raw_conf - quality)`
-  where coverage is the product of two factors:
-  - inter-cluster: min(cluster_entries / expected_entries, 1).
-    Penalizes underpopulated clusters.
-  - intra-cluster: 1/(1 + query_dist/cluster_dmax).
-    Penalizes queries far from the cluster center.
-  The quality value acts as a confidence floor — predictions
-  in sparse regions approach quality but never go below it.
-  The quality is persisted in save/load.
+The quality parameter (0..1) controls model compression:
+
+- quality=0: no compression (default).
+- quality>0: a leave-one-out pass removes the entries that
+  every output recovers exactly from a unanimous
+  neighborhood. For a classify output every positive value
+  yields the same drop set; an interpolating output reads the
+  magnitude as a residual tolerance. The quality is persisted
+  in save/load.
+
+Quality does not affect confidence. With
+`libxs_predict_set_floor` > 0, confidence is scaled by coverage
+at eval time:
+`conf = floor + coverage * (raw_conf - floor)`
+where coverage is the product of two factors:
+
+- inter-cluster: min(cluster_entries / expected_entries, 1).
+  Penalizes underpopulated clusters.
+- intra-cluster: 1/(1 + query_dist/cluster_dmax).
+  Penalizes queries far from the cluster center.
+
+Predictions in sparse regions approach the floor but never go
+below it. The floor is persisted in save/load.
 
 ```C
 int libxs_predict_build_task(libxs_predict_t* model,
@@ -407,12 +442,12 @@ void libxs_predict_get(const libxs_predict_t* model,
   int index, double inputs[], double outputs[]);
 ```
 
-query fills a statistics struct (cluster count, entry count,
-compression ratio, polynomial order, diff_order).
+query fills a statistics struct (see `libxs_predict_query_t`
+below).
 get retrieves the i-th pushed entry (0-based).
 
 `nscan` reports the entries in the largest cluster, which is what
-a neighbour query walks in the worst case: local evidence is
+a neighbor query walks in the worst case: local evidence is
 gathered by scanning a cluster, so scoring cost grows with `nscan`
 rather than with `nentries`. Read it to know what a query costs
 before paying for it — a model whose partition is skewed, or built
@@ -492,12 +527,17 @@ of silently loading a partial model.
 ```C
 int libxs_predict_load_csv(libxs_predict_t* model,
   const char filename[], const char delims[],
-  const char* inputs[], int ninputs,
-  const char* outputs[], int noutputs);
+  const char inputs[], const char outputs[],
+  char header[], int header_size, char* delim_out);
 ```
 
 Load delimited text and push entries. delims=NULL auto-detects
-separator. Returns number of entries pushed, or -1 on error.
+separator. inputs and outputs are comma-separated column names
+(matched case-insensitively against the header line) or 0-based
+indices, as many as the model's ninputs and noutputs; NULL
+selects sequential columns. header (optional) receives the
+header line, delim_out (optional) the delimiter in use. Returns
+number of entries pushed, or -1 on error.
 
 ## Structures
 
@@ -518,9 +558,10 @@ typedef struct libxs_predict_info_t {
 
 Populated by eval when info is non-NULL. confidence holds
 per-output confidence (0..1), incorporating:
+
 - variety: kNN vote agreement (classify) or 1.0 (interpolation),
 - coverage: cluster population and query centrality (when
-  quality>0, see libxs_predict_build),
+  the floor is >0, see libxs_predict_build),
 - consistency: round-trip penalty (when set_consistency>0).
 lower/upper hold per-output prediction intervals (NULL when
 set_quantile is 0, i.e. disabled). When enabled, bounds are
@@ -532,17 +573,27 @@ distance gives normalized distance to nearest centroid.
 ```C
 typedef struct libxs_predict_query_t {
   double compression;
+  int ninputs;
+  int noutputs;
+  int version;    /* serialization version (current if built here) */
+  int neighbors;  /* smallest resolved neighbor count, 0 if none */
   int order;
   int nclusters;
   int nentries;
+  int corpus;     /* 0 if the entries cannot be rebuilt from */
   int iterations;
   int diff_order;
-  int window;   /* effective sliding window (0 if series mode off) */
-  int nbank;    /* window views built (1 when disabled) */
-  int nscan;    /* entries in the LARGEST cluster */
+  int window;     /* effective sliding window (0 if series mode off) */
+  int nbank;      /* window views built (1 when disabled) */
+  int nscan;      /* entries in the LARGEST cluster */
+  double escan;   /* entries an average query scans */
+  int decompose;  /* decomposition mode in force */
+  int coordinate; /* RANK, SCORE, or 0 if only scaled */
+  int ncoord;     /* coordinates per stored point */
 } libxs_predict_query_t;
 ```
 
 Populated by query. compression = raw/model size ratio.
-order = polynomial order used. diff_order = differencing
-order (0 if disabled).
+ninputs/noutputs = the model's shape, which a caller evaluating
+into its own buffer sizes it from. order = polynomial order used.
+diff_order = differencing order (0 if disabled).

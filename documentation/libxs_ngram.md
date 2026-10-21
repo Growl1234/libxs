@@ -93,6 +93,9 @@ int libxs_ngram_stats(const libxs_ngram_t* model,
   libxs_ngram_stats_t* stats);
 ```
 
+`lookup` returns the record of the length-`n` context ending at `hist[hlen-1]`,
+or NULL if there is none.
+
 `prob` is interpolated backoff: it blends orders `1..min(maxorder,hlen)` with
 weight `total/(total+1)` per order over an additive-smoothed unigram prior. After
 `finalize`, probabilities over ids `1..vocab` sum to one for every history —
@@ -102,7 +105,7 @@ which makes the model usable as a code-length model and not only as a ranker.
 that has a record, falling back to the global most-frequent list when none
 matches. A non-NULL `order` receives the context length that produced the result
 (0 for the global fallback), so a caller can tell a deeply grounded prediction
-from a guess.
+from a guess. Returns the number of ids written to `out_ids`.
 
 `stats` reports per-order key and observation counts plus the live footprint.
 Report `entries` as the honest size: `nbytes` follows the hash table's
@@ -115,9 +118,10 @@ libxs_ngram_t model;
 unsigned int hist[LIBXS_NGRAM_ORDER_MAX];
 int hlen = 0;
 if (EXIT_SUCCESS == libxs_ngram_create(&model, 3)) {
-  unsigned int id;
+  unsigned int id, vocab = 0;
   while (next_token(&id)) {
     libxs_ngram_observe(&model, hist, hlen, id);
+    if (vocab < id) vocab = id;
     if (LIBXS_NGRAM_ORDER_MAX > hlen) hist[hlen++] = id;
     else {
       memmove(hist, hist + 1, (LIBXS_NGRAM_ORDER_MAX - 1) * sizeof(*hist));

@@ -40,7 +40,7 @@
  * is cheaper than a flag that makes one contract mean two things.
  */
 LIBXS_EXTERN_C typedef struct libxs_mix_t {
-  /** Per-slot weight, summing to one over slots that have ever been active. */
+  /** Per-slot weight; the slots active in the last update sum to one. */
   double* weight;
   /** Number of slots. */
   int nslot;

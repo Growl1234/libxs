@@ -105,7 +105,7 @@ int libxs_mhd_read_header(const char header_filename[],
   char extension[], size_t* extension_size);
 ```
 
-Parse an MHD header file. `info->ndims` is an in/out parameter (maximum on input, actual on output). `filename` receives the data-file path (may differ from the header when data is stored separately). Extension data is optional.
+Parse an MHD header file. `info->ndims` is an in/out parameter (maximum on input, actual on output). `filename` receives the data-file path (may differ from the header when data is stored separately). Extension data is optional: on input, `*extension_size` is the capacity of `extension`; on output, it is the size of the extension record in the file (at most the capacity is read). Returns `EXIT_SUCCESS` or `EXIT_FAILURE`.
 
 ```C
 int libxs_mhd_read(const char filename[],
@@ -117,7 +117,7 @@ int libxs_mhd_read(const char filename[],
   void* handler_context);
 ```
 
-Read image data into `data`. Optional `handler_info` triggers type conversion; optional `handler` supplies a custom per-element callback (can also serve as a comparison function without allocating a buffer).
+Read image data into `data`. Optional `handler_info` triggers type conversion; optional `handler` supplies a custom per-element callback (can also serve as a comparison function without allocating a buffer). Returns `EXIT_SUCCESS` or `EXIT_FAILURE`.
 
 ## Write
 
@@ -129,7 +129,7 @@ int libxs_mhd_write(const char filename[],
   const libxs_mhd_write_info_t* write_info);
 ```
 
-Write image data in the extended MHD format. `info->header_size` is updated on output. Pass NULL for `write_info` when no conversion or extension is needed.
+Write image data in the extended MHD format. `info->header_size` is updated on output. Pass NULL for `write_info` when no conversion or extension is needed. Returns `EXIT_SUCCESS` or `EXIT_FAILURE`.
 
 From Fortran (`USE libxs`), the generic `libxs_mhd_write` takes a contiguous array of `REAL(8)`, `REAL(4)`, `INTEGER(4)`, or `INTEGER(8)`, the image extents (first dimension fastest), and optionally the extension as an array of `INTEGER(C_INT8_T)`. It returns zero on success.
 
@@ -147,7 +147,7 @@ int libxs_png_write(const char filename[],
   const libxs_mhd_write_info_t* write_info);
 ```
 
-Write the same PNG explicitly and without an MHD file: `size` holds width and height, `pitch` the leading dimension (NULL: same as `size`). With a handler in `write_info`, what the handler returns is scaled; the extension is not written.
+Write the same PNG explicitly and without an MHD file: `size` holds width and height, `pitch` the leading dimension (NULL: same as `size`). With a handler in `write_info`, what the handler returns is scaled; the extension is not written. Returns `EXIT_SUCCESS` or `EXIT_FAILURE`.
 
 From Fortran (`USE libxs`), the generic `libxs_png_write` takes a contiguous array of `REAL(8)`, `REAL(4)`, `INTEGER(4)`, or `INTEGER(8)`, the two extents (width first), and optionally the range as two `REAL(8)`. It returns zero on success.
 

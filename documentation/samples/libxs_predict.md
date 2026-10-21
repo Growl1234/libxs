@@ -1,11 +1,11 @@
 # Predict Samples
 
-Nine executables demonstrating fingerprint-guided prediction:
+Twelve executables demonstrating fingerprint-guided prediction:
 
 - **predict_params** — Parameter prediction from structured CSV
   (GPU kernel tuning, configuration databases).
 - **predict_sunspots** — Timeseries forecasting via sliding-window kNN
-  (monthly sunspot numbers, 1749-present).
+  (monthly sunspot numbers, 1749–present).
 - **predict_earthquakes** — Spatial prediction of earthquake magnitude
   from location and depth (USGS catalog).
 - **predict_discharge** — River discharge forecasting via sliding-window
@@ -22,18 +22,24 @@ Nine executables demonstrating fingerprint-guided prediction:
 - **predict_ett** — ETT (Electricity Transformer Temperature) hourly
   forecasting with univariate, multivariate, PCA, and local-attention
   modes (ETTh1, standard benchmark for timeseries LLMs).
+- **predict_prob** — Probability harness: scores P(y|x) for a candidate
+  over the distinct-value support of one output (`libxs_predict_prob`).
+- **predict_dist** — Validates `libxs_predict_prob`: normalization,
+  agreement of its entry points, and sampling from the distribution.
+- **predict_higgs** — Binary classification on the HIGGS dataset
+  (28 features); `--help` prints the options.
 ## Build
 
     make
 
 Or from the LIBXS root:
 
-    make samples/predict
+    make samples/predict/
 ## XGBoost Comparison
 
-`predict_params`, `predict_crystal`, `predict_earthquakes` and `predict_ett`
-accept an `xgb` keyword that trains XGBoost on **exactly** the entries LIBXS was
-built from and reports both models side by side.  It is compiled in when XGBoost is found,
+`predict_params`, `predict_crystal`, `predict_earthquakes`, `predict_ett` and
+`predict_higgs` accept an `xgb` keyword that trains XGBoost on exactly the entries
+LIBXS was built from and reports both models side by side. It is compiled in when XGBoost is found,
 which needs the development headers (a pip-installed `xgboost` ships the shared
 library only):
 
@@ -46,15 +52,15 @@ LIBXS-only run.
 
 Keywords may be written anywhere on the command line and numbers fill the
 positional slots in order, so `predict_crystal.x data.csv xgb` and
-`predict_crystal.x data.csv 0.8 2 0 xgb` are the same run.  A token that is
+`predict_crystal.x data.csv 0.8 2 0 xgb` are the same run. A token that is
 neither a number nor a known keyword is refused: it used to land in the next
 numeric slot as `atof("xgb") == 0`, which trained on two rows and reported an
-accuracy for them.  `predict_params` is the exception in that its keywords must
-still precede the file names, which cannot be told from keywords by shape.
+accuracy for them. `predict_params` is the exception in that such a token is
+taken as the next file name.
 
 Per-output, XGBoost is posed the same task LIBXS chose for itself: a
 classification over the attested value set where LIBXS classifies, a regression
-where it interpolates.  An output with a single attested value is reported as
+where it interpolates. An output with a single attested value is reported as
 constant and not trained (five of the sixteen kernel parameters are constant in
 `tune_multiply_PVC.csv`, so an average over all outputs is dominated by columns
 both models get for free).
@@ -70,26 +76,27 @@ Hyperparameters are fixed so the numbers are reproducible, and overridable:
 | `XGB_REGOBJ`  | *(per sample)* | Regression objective                      |
 | `XGB_LATENCY` | 4096           | Rows the per-query timing uses (0 = skip) |
 
-Where a sample reports timings it reports XGBoost's phases apart - marshalling
+Where a sample reports timings it reports XGBoost's phases apart — marshalling
 the corpus into XGBoost's layout, the boosting rounds, and the batched prediction
-- because only the rounds are the counterpart of a LIBXS build, and a single
-figure covering all three had been read as if it were.  The per-query line is the
+— because only the rounds are the counterpart of a LIBXS build, and a single
+figure covering all three had been read as if it were. The per-query line is the
 same distinction for inference, and it is reported on both sides: one query at a
 time (`libxs_predict_eval`, and `XGB_LATENCY` rows through XGBoost's inplace
 prediction) and a whole matrix at once (`libxs_predict_eval_batch_task` across the
-threads, and XGBoost's batched call).  Comparing one library's batch against the
+threads, and XGBoost's batched call). Comparing one library's batch against the
 other's per-query loop measures the two interfaces, not the two models.
 
 `XGB_REGOBJ` matters where the reported metric is mean absolute error:
 `predict_earthquakes` therefore proposes `reg:absoluteerror`, and forcing
 `reg:squarederror` there moves the magnitude error 0.237 to 0.254, which is
-enough to invert the comparison.  `predict_params` and `predict_crystal` propose
+enough to invert the comparison. `predict_params` and `predict_crystal` propose
 `reg:squarederror`.
 
-`predict_crystal` additionally reads `GATE`: a comma-separated list of
-confidence thresholds (default `0.9`).  The first entry drives the
+`predict_crystal`, `predict_higgs` and `predict_params` additionally read `GATE`:
+a comma-separated list of confidence thresholds (default `0.9`, and `0.5` for
+`predict_params`). The first entry drives the
 confidence-gated line; supplying more than one also prints a precision/coverage
-sweep for both models.  Comparing two confidence signals at one threshold
+sweep for both models. Comparing two confidence signals at one threshold
 compares two different operating points, so a sweep is the only way to tell a
 better-calibrated signal from a differently-scaled one:
 
@@ -97,29 +104,32 @@ better-calibrated signal from a differently-scaled one:
 
 ### Examples
 
-    ./predict_params.x 0.8 mix xgb ../smm/params/tune_multiply_PVC.csv
+    ./predict_params.x 0.8 mix xgb /path/to/libxstream/samples/smm/params/tune_multiply_PVC.csv
     ./predict_crystal.x predict_crystal.csv 0.8 2 0 xgb
+
+The parameter CSVs are not part of LIBXS: they ship with LIBXSTREAM in
+`samples/smm/params/`.
 
 The `mix` keyword matters for the parameter CSVs: they are sorted by problem
 size, so the default prefix split holds out the *largest* shapes and measures
-extrapolation, which changes which model looks better.  Use `mix` for
+extrapolation, which changes which model looks better. Use `mix` for
 interpolation, omit it for extrapolation, and say which one a number came from.
 
 `quantile` reports interval coverage split into attested and novel entries, and
-only the novel column is a calibration.  An attested entry's own value lies in
+only the novel column is a calibration. An attested entry's own value lies in
 its neighbourhood and carries the largest distance weight, so a central band of
 any width contains it: measured over both parts together, the same nominal 80%
-reads anywhere from 16% to 98% depending only on the split.  An output that is
+reads anywhere from 16% to 98% depending only on the split. An output that is
 constant in the corpus yields a zero-width interval covering everything, and a
-level tighter than one neighbour's share of the weight cannot move either edge --
+level tighter than one neighbour's share of the weight cannot move either edge —
 both are reported rather than left to be inferred from the numbers.
 
 `GFLOPS` is loaded as an output like every other column, so the schema does not
-depend on which CSV publishes it.  A zero means the column is withheld, not that
+depend on which CSV publishes it. A zero means the column is withheld, not that
 the kernel achieved nothing: such a column is a constant the model reproduces
-exactly, so it predicts zero and is hidden from the report.  Where it is
+exactly, so it predicts zero and is hidden from the report. Where it is
 published, every shape is additionally weighed by the throughput its tuned
-parameters reached -- so a miss counts what it costs rather than once -- and the
+parameters reached — so a miss counts what it costs rather than once — and the
 predicted throughput says whether tuning a shape is worth the run.
 
 Exact-match on kernel parameters remains a proxy for kernel quality even then:
@@ -132,16 +142,20 @@ Reports validation quality on a held-out subset.
 
 ### Usage
 
-    ./predict_params.x [fraction] [auto|cat|compress[Q]|interp|rf|hknn|knn|xgb] [-N] <csvfile> [modelfile [confidence-prefix]]
+    ./predict_params.x [fraction] [auto|cat|compress[Q]|consist[C]|interp|mix|quantile[Q]|rf|hknn|knn|smooth[A]|xgb] [-N] <csvfile> [modelfile [confidence-prefix]]
 
     fraction   Validation split 0..1 for quality report (default: 0.8).
     auto       Auto-detect mode per output (default).
     cat        Force categorical (kNN) for all outputs.
     compress   Drop redundant entries (Q: threshold, default 0.9).
+    consist    Round-trip consistency penalty (C: 0..1, default 0.9).
     interp     Force interpolation for all outputs.
+    mix        Draw the validation split by co-prime stride rather than as a prefix.
+    quantile   Prediction intervals (Q: level 0..0.5, default 0.1).
     rf         Random Forest classification.
     hknn       Hierarchical kNN (Fisher-guided partition).
     knn        Plain kNN.
+    smooth     Multi-cluster blending (A: radius, or -1 = auto; default -1).
     xgb        Also train XGBoost on the same split and compare.
     -N         Max polynomial order (default: 0 = auto).
     csvfile    Delimited text file.
@@ -156,7 +170,7 @@ stores no partition.
 
 ### Example
 
-    ./predict_params.x ../../samples/smm/params/tune_multiply_PVC.csv
+    ./predict_params.x /path/to/libxstream/samples/smm/params/tune_multiply_PVC.csv
     ./predict_params.x 0.8 hknn tune_multiply_PVC.csv model.bin
 ## predict_sunspots
 
@@ -168,10 +182,10 @@ Timeseries forecasting using sliding-window nearest-neighbor prediction.
 
     NOPHASE=1  Drop the solar-cycle phase input.
     NOBANK=1   Use a single window view instead of the bank.
-    WINDOW=n   Fix the window (default: auto).  WINDOW=-1 selects it by
+    WINDOW=n   Fix the window (default: auto). WINDOW=-1 selects it by
                trial instead, which costs about 7x the build time and picks
                9 rather than 14 here (mean error over six months 18.71 ->
-               18.30).  WINDOW=-w also offers w as a candidate.
+               18.30). WINDOW=-w also offers w as a candidate.
 
 ### Example
 
@@ -179,15 +193,15 @@ Timeseries forecasting using sliding-window nearest-neighbor prediction.
 
 The sample carries one auxiliary input alongside the window
 (libxs_predict_set_series_aux): the phase of the solar cycle, measured from
-the training slice so nothing is tuned by hand.  Longer horizons gain the
-most (t+6 23.70 -> 21.77, t+3 20.72 -> 18.94); t+1 is unchanged.  NOPHASE=1
+the training slice so nothing is tuned by hand. Longer horizons gain the
+most (t+6 23.70 -> 21.77, t+3 20.72 -> 18.94); t+1 is unchanged. NOPHASE=1
 drops it.
 
 The forecast is averaged over two views of the window
 (libxs_predict_set_series_bank), the second reading half the lags of the
-first: t+1 improves 17.52 -> 16.79 and t+6 20.30, at no extra corpus.  Pass a
+first: t+1 improves 17.52 -> 16.79 and t+6 20.30, at no extra corpus. Pass a
 larger count for more views (a third reaches 20.14 at t+6); NOBANK=1 drops
-back to one.  Views are unavailable under a decomposition, where the inputs
+back to one. Views are unavailable under a decomposition, where the inputs
 are no longer lags.
 
 ### Data Source
@@ -201,8 +215,10 @@ Predict earthquake magnitude from geographic location and depth.
 
 ### Usage
 
-    ./predict_earthquakes.x <usgs_csv> [train_fraction] [compress[Q]] [hknn|rf] [xgb]
+    ./predict_earthquakes.x <usgs_csv> [train_fraction] [compress[Q]] [consist[C]] [hknn|rf|none] [xgb]
 
+    consist    Round-trip consistency penalty (C: 0..1, default 0.9).
+    none       Plain kNN (otherwise the mode is selected at build by trial).
     xgb        Also train XGBoost on the same split and compare.
 
 The kNN vote reports the median rather than the mean here.
@@ -274,16 +290,21 @@ composition features.
 
 ### Usage
 
-    ./predict_crystal.x <crystal_csv> [train_fraction] [order] [nclusters] [compress[Q]] [fisher|hknn|setdiff|rf|none] [rank|score] [xgb]
+    ./predict_crystal.x <crystal_csv> [train_fraction] [order] [nclusters] [compress[Q]] [consist[C]] [fisher|hknn|setdiff|rf|pca|none] [rank|score] [gaps[F]] [xgb]
 
+    consist    Round-trip consistency penalty (C: 0..1, default 0.9).
     fisher     Fisher discriminant feature weighting.
     hknn       Hierarchical kNN (Gini-guided partition).
     setdiff    Setdiff feature selection.
-    rf         Random Forest classification (default).
-    none       Raw kNN without feature processing.
+    rf         Random Forest classification.
+    pca        Principal component rotation of the inputs.
+    none       Raw kNN without feature processing (otherwise the mode is
+               selected at build by trial).
     rank       Neighbour modes place inputs by rank.
     score      Neighbour modes place inputs by what they say about the class
                (default: chosen by trial between the two from 8 inputs on).
+    gaps       Blank that fraction of input values (F: default 0.1) to exercise
+               the absent-value path (libxs_predict_set_missing).
     xgb        Also train XGBoost on the same split and compare.
 
 ### Example
@@ -300,17 +321,18 @@ cubic(7).
 ## predict_bits
 
 Code length of a held-out stream in bits per event, under the model and
-under the training distribution of the same output.  Use it to ask whether
+under the training distribution of the same output. Use it to ask whether
 the inputs inform the output at all, which an error figure does not answer.
 
 ### Usage
 
     ./predict_bits.x <csvfile> <innames> <outname> [fraction] [vocabulary] [hknn]
 
-    vocabulary  Distinct values the caller considers possible.  0 uses the
+    vocabulary  Distinct values the caller considers possible. 0 uses the
                 attested support plus one aggregate novel atom, so an
                 unattested outcome costs infinite bits; pass a count above
                 the support size to keep the figure finite.
+    hknn        Non-zero selects the hierarchical partition.
 
 ### Example
 
@@ -322,28 +344,30 @@ broken setup reports, so pair the question with one whose answer is known.
 
 Magnitude is not determined by location (3.265 bits against the training
 distribution's 3.248) and depth is (1.478 against 7.615).
-
 ## predict_ett
 
 ETT (Electricity Transformer Temperature) hourly forecasting.
 Supports univariate and multivariate modes with PCA decomposition
-and per-query local-correlation attention.  Standard benchmark
+and per-query local-correlation attention. Standard benchmark
 for comparison against transformer-based timeseries models.
 
 ### Usage
 
-    ./predict_ett.x <ett_csv> [nseries=1..7] [attend|spread|pca|hknn|rf|nocompress|xgb]
+    ./predict_ett.x <ett_csv> [nseries=1..7] [attend|spread|pca|hknn|rf|none|compress[Q]|xgb]
 
     nseries    Number of input channels (1=OT only, 7=all).
     attend     Per-query local-correlation channel weighting.
     spread     Sum/diff decomposition across channels.
     pca        PCA rotation of multi-channel input space.
+    none       No decomposition (otherwise the mode is selected at build by
+               trial, which costs one full build per candidate per fold).
+    compress   Drop redundant entries (Q: threshold, default 0.9); off unless asked.
     xgb        Also train XGBoost on the same windows and compare.
 
-`xgb` reads the built sliding windows back out of the model, so it implies
-`nocompress` (compression prunes entries before they can be read) and is refused
+`xgb` reads the built sliding windows back out of the model, so it overrides
+`compress` (compression prunes entries before they can be read) and is refused
 alongside `attend`, a decomposition, or `BANK`, each of which zeroes the weight
-of lags the distance does not read.  The effective window applies to both models,
+of lags the distance does not read. The effective window applies to both models,
 so `WINDOW=96` compares them at the conventional input length rather than at the
 auto-selected one — the two rank differently at the two lengths.
 
@@ -357,11 +381,13 @@ auto-selected one — the two rank differently at the two lengths.
 ### Data Source
 
 ETTh1 (Electricity Transformer Temperature, hourly) from
-Zhou et al. 2021 (Informer).  17,420 hourly readings of an
-oil-filled electrical transformer (July 2016 - June 2018).
+Zhou et al. 2021 (Informer). 17,420 hourly readings of an
+oil-filled electrical transformer (July 2016 – June 2018).
 Seven channels: HUFL, HULL, MUFL, MULL, LUFL, LULL, OT.
-Target: OT (oil temperature).  Standard split: train months
-1-12, test months 17-24, horizon H=96 steps (4 days).
+Target: OT (oil temperature). The sample trains on the first
+66.1% (months 1–16, the standard training and validation
+months) and tests on the rest, horizon H=96 steps (4 days).
 
-Download: github.com/zhouhaoyi/ETDataset/blob/main/ETT-small/ETTh1.csv
-Rename to predict_ett.csv (CRLF line endings accepted).
+`predict_ett.csv` is ETTh1 as published at
+github.com/zhouhaoyi/ETDataset/blob/main/ETT-small/ETTh1.csv
+(a fresh download with CRLF line endings is accepted as well).

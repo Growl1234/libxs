@@ -14,13 +14,14 @@ make
 ## Usage
 
 ```bash
+mkdir -p results/setdiff
 ./setdiff.x [outdir [sizes [reps [land_n [land_steps]]]]]
 ```
 
 | Positional | Default                 | Description |
 |------------|-------------------------|-------------|
 | outdir     | `results/setdiff`       | Directory for CSV output |
-| sizes      | `128 1024 8192 65536`   | Vector sizes for tolerance and scaling runs |
+| sizes      | `128 1024 8192 65536`   | Vector sizes for tolerance and scaling runs, as one quoted argument separated by spaces |
 | reps       | `10`                    | Repetitions per scaling size |
 | land_n     | `32`                    | Tolerance-landscape vector length |
 | land_steps | `40`                    | Number of tolerance grid steps |
@@ -33,5 +34,6 @@ make
 - `scaling.csv` — fixed-tolerance and automatic-tolerance timings
 - `complex.csv` — complex-valued validation case
 
-The sample uses a fixed pseudo-random seed and writes into a deterministic
-output directory by default.
+The output directory must exist; the sample does not create it and fails
+if it cannot write there. The sample uses a fixed pseudo-random seed, and
+timings in `scaling.csv` are CPU time (`clock`).

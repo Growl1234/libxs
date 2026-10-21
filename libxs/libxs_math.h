@@ -225,9 +225,9 @@ LIBXS_API int libxs_setdiff(
 
 /**
  * Minimize the multiset distance (libxs_setdiff) over all tolerances
- * using Golden Section Search (libxs_gss_min). Returns the minimum
- * unmatched count; *tol optionally receives the smallest tolerance
- * achieving this minimum (may be NULL).
+ * by bisecting for the left edge of the lowest step (libxs_bisect_min).
+ * Returns the minimum unmatched count; *tol optionally receives the
+ * smallest tolerance achieving this minimum (may be NULL).
  * Supported types: F64, F32, C64, C32 (not integer types).
  */
 LIBXS_API int libxs_setdiff_min(
@@ -311,8 +311,9 @@ LIBXS_API double libxs_fprint_raw(
 
 /**
  * Geometric-mean per-order decay ratio of a fingerprint:
- *   r = (l2[K] / l2[0])^(1/K).
- * Decaying fingerprints have r < 1; noise/random data has r > 1.
+ *   r = (l2[K] / l2[0])^(1/K) / (n-1), with K = order.
+ * Smooth data has r << 1, uncorrelated data r between 1 and 2;
+ * returns 1e30 if no ratio can be computed.
  */
 LIBXS_API double libxs_fprint_decay(const libxs_fprint_t* info);
 

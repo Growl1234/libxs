@@ -19,24 +19,23 @@ OpenMP; `_SEQ` is serial.
 
 ESPAN (exponent span) selects the initialization mode:
 
-  ESPAN == 0   Shuffle mode. A coprime permutation maps each
-               linear index to a unique value in \[-|SCALE|, +|SCALE|\].
-               Covers the full LD\*NCOLS range (including padding).
+- `ESPAN == 0`: shuffle mode. A co-prime permutation of the linear index
+  (over LD·NCOLS) gives each element a distinct value in
+  \[−|SCALE|, +|SCALE|\].
+- `ESPAN != 0`: adversarial exponent-span mode for stress-testing
+  floating-point emulation (Ozaki scheme, etc.). Base values are shuffled in
+  \[1, 2), and column j is scaled by 2^e with
 
-  ESPAN != 0   Adversarial exponent-span mode for stress-testing
-               floating-point emulation (Ozaki scheme, etc.).
-               Base values are shuffled in \[1, 2), then each
-               column j is scaled by
+  ```text
+  e = sign(ESPAN) · (round(2·|ESPAN|·j / (NCOLS−1)) − |ESPAN|)
+  ```
 
-                 2^(sign(ESPAN) \* floor(|ESPAN| \* j / (NCOLS-1)))
+  so column 0 has exponent −ESPAN and the last column +ESPAN, 2·|ESPAN|
+  binades in total. SCALE is ignored in this mode. Use +ESPAN for matrix A
+  and −ESPAN for matrix B so that A·B remains well-conditioned while each
+  operand individually has adversarial exponent range.
 
-               so column 0 has exponent 0 and the last column has
-               exponent +/-|ESPAN|. Padding rows \[NROWS, LD) are
-               zero-filled.
-
-               Use +ESPAN for matrix A and -ESPAN for matrix B so
-               that A\*B remains well-conditioned while each operand
-               individually has adversarial exponent range.
+In both modes, padding rows \[NROWS, LD) are zero-filled.
 
 Example — adversarial DGEMM test with exponent span 512:
 

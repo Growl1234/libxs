@@ -65,9 +65,10 @@ logarithm was taken.
 ## Abstention and Disabled Slots
 
 Abstention (`active[k] == 0`) is not a probability of zero. The pool renormalizes
-over the experts that spoke, so a silent expert neither dilutes the mixture nor
-loses weight for staying quiet. With every expert active the renormalization is
-a no-op, because the weights sum to one.
+over the experts that spoke, so a silent expert does not dilute the mixture.
+An update renormalizes the experts that spoke to sum to one, while a silent
+expert keeps its absolute weight: its weight relative to the others changes
+while it is quiet, and the weights as a whole need not sum to one.
 
 A weight of zero means the slot is disabled permanently: a bank sized for the
 widest configuration holds unused slots at zero and share mass does not

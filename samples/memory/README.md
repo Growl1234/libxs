@@ -12,8 +12,11 @@ cd samples/memory
 make
 ```
 
-Produces `memcmp.x` (C) and, if a Fortran compiler is found,
-`memcmpf.x` and `matcpyf.x`.
+Produces `memcmp.x` and `itrans.x` (C). The Fortran variants `memcmpf.x`
+and `matcpyf.x` are built only when a Fortran compiler is found (GNU
+Fortran 4.6 or later) and the library was built beforehand: without a built
+library the sample is compiled header-only and the Fortran variants are
+skipped.
 
 ## Usage (C)
 
@@ -62,13 +65,32 @@ MISMATCH=3 OFFSET=3 ./memcmp.x 32 0 0 5
 
 Environment variables and compile-time macros apply only to `memcmp.x`.
 
+## Usage (C — itrans)
+
+```bash
+./itrans.x [m [n [ldi [ldo]]]]
+```
+
+| Argument | Default        | Description                 |
+|----------|----------------|-----------------------------|
+| m        | 64             | First matrix dimension      |
+| n        | m              | Second matrix dimension     |
+| ldi      | m (enforced m) | Leading dimension of input  |
+| ldo      | n (enforced n) | Leading dimension of output |
+
+Checks the in-place transpose `libxs_itrans` and its parallel variant
+`libxs_itrans_task` against a reference. It prints only on a mismatch;
+the exit status tells whether both checks passed. The element type is
+`double`, selected at compile time with `-DELEM_TYPE=type`.
+
 ## Usage (Fortran — memcmpf)
 
 ```bash
 ./memcmpf.x [nelements [nrepeat]]
 ```
 
-Element type is hard-coded as INTEGER(4). Compares ~2 GB by default.
+Element type is hard-coded as INTEGER(4). Compares ~2 GB by default,
+with 5 repetitions.
 Reports per-iteration times (ms) and average throughput (MB/s).
 
 ## Usage (Fortran — matcpyf)
@@ -77,14 +99,14 @@ Reports per-iteration times (ms) and average throughput (MB/s).
 ./matcpyf.x [m [n [ldi [ldo [nrepeat [nmb]]]]]]
 ```
 
-| Argument | Default        | Description                 |
-|----------|----------------|-----------------------------|
-| m        | 4096           | First matrix dimension      |
-| n        | m              | Second matrix dimension     |
-| ldi      | m (enforced m) | Leading dimension of input  |
-| ldo      | ldi            | Leading dimension of output |
-| nrepeat  | 2              | Number of repetitions       |
-| nmb      | 2048           | Memory budget in MB         |
+| Argument | Default          | Description                 |
+|----------|------------------|-----------------------------|
+| m        | 4096             | First matrix dimension      |
+| n        | m                | Second matrix dimension     |
+| ldi      | m (enforced m)   | Leading dimension of input  |
+| ldo      | ldi (enforced m) | Leading dimension of output |
+| nrepeat  | 2                | Number of repetitions       |
+| nmb      | 2048             | Memory budget in MB         |
 
 Benchmarks `libxs_matcopy` and `libxs_matcopy_task` for matrix copy
 and zeroing. When the matrix is square and ldi==ldo, also benchmarks
@@ -102,5 +124,4 @@ Three comparison implementations are benchmarked:
 
 Each kernel gets freshly initialized data before its timed section.
 An untimed warm-up pass runs before the first measured iteration.
-The summary reports min / median / max across iterations plus peak
-MB/s. Reported MB/s counts both buffers (2 * nbytes / time).
+The summary reports min / median / max MB/s across iterations. Reported MB/s counts both buffers (2 * nbytes / time).

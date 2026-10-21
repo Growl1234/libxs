@@ -3,12 +3,24 @@
 Benchmarks the performance of the LIBXS registry (key-value store)
 dispatch path under different access patterns and concurrency levels.
 
+## Building
+
+```bash
+cd samples/registry
+make
+```
+
+Produces `registry.x` (C). The Fortran variant `registryf.x` is built only
+when a Fortran compiler is found and the library was built beforehand: without
+a built library the sample is compiled header-only and the Fortran variant is
+skipped.
+
 ## Programs
 
 ### registry.x (C)
 
 ```bash
-./registry.x [total [nrepeat [nthreads]]]
+./registry.x [total [nrepeat [nthreads [keysize]]]]
 ```
 
 | Argument | Default       | Description                               |
@@ -16,6 +28,12 @@ dispatch path under different access patterns and concurrency levels.
 | total    | 10000         | Number of unique keys to register (min 2) |
 | nrepeat  | 10            | Repeat iterations for lookup phases       |
 | nthreads | max available | Number of OpenMP threads                  |
+| keysize  | sweep         | Pin one key size in Bytes (8 to 64)       |
+
+Without `keysize`, the single-threaded phases sweep key sizes of 8, 12, 16,
+28, 32, 48 and 64 Bytes and print one row per size. A pinned `keysize` prints
+the per-phase detail and the registry's size, capacity and footprint instead.
+The multi-threaded phases use the pinned size, or 12-Byte keys by default.
 
 Measurements:
 
@@ -40,6 +58,6 @@ Measures registration, cold lookup, and locked lookup.
 
 ## Scaling Behavior
 
-All phases pass the registry's lock, which bypasses the thread-local
+All phases of `registry.x` pass the registry's lock, which bypasses the thread-local
 cache. Reads and writes are hence serialized, and their per-op duration
 grows with the number of threads contending for the lock.

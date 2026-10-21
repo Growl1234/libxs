@@ -198,8 +198,8 @@ typedef struct libxs_gemm_config_t {
  *   shape, e.g., tight ldc for scratch). NULL means same as shape.
  *   If kernel_shape differs, the kernel is looked up/registered under
  *   its own key, avoiding redundant code generation.
- * backend: backend function pointers (MKL JIT, LIBXSMM, BLAS). NULL
- *   means no backends (built-in default only).
+ * backend: backend function pointers (MKL JIT, LIBXSMM, BLAS). A NULL
+ *   backend or member takes what the library resolved at runtime, if any.
  * Backend selection can be restricted with LIBXS_GEMM_BACKEND:
  *   0=auto/default, 1=MKL JIT, 2=LIBXSMM, 3=BLAS/MKL, 4=built-in.
  *   Selected external backends still fall back when unavailable.

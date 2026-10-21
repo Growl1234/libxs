@@ -7,7 +7,7 @@
 # SPDX-License-Identifier: BSD-3-Clause                                       #
 ###############################################################################
 # Synchronize packaging metadata (RPM spec, Debian changelog) with the
-# project version from VERSION. Only patches when the version actually
+# project version from version.txt. Only patches when the version actually
 # changed. Run from the repository root:
 #   sh scripts/tool_pkgversion.sh
 ###############################################################################

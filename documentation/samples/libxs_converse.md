@@ -7,11 +7,8 @@ abstains; nothing is generated from outside the corpus unless you ask for it.
 
 It is built only on libxs primitives (lexemes, metatokens, fingerprints, registries,
 n-grams, parameter prediction) and is self-contained: nothing is downloaded, no
-external service is contacted, and no data is used beyond the files you give it. It is experimental and adds no stable
-public API.
-
-For the design and the measurements, see `~/papers/converse/paper.tex` and
-`~/papers/converse/insights.md`.
+external service is contacted, and no data is used beyond the files you give it. It
+is experimental and adds no stable public API.
 
 ## Build
 
@@ -32,7 +29,7 @@ Or, from the `libxs` root, `make PEDANTIC=2 samples/converse`.
 | :--- | :--- | :--- |
 | `converse-qa.x` | interactive, `-e`, `-c`, `-L` | questions, evaluation, recombination |
 | `converse-lm.x` | `-E`, `-c -K KIND`, `-L` | next-token models, byte model |
-| `converse-norm.x` | prompt, `-e`, `-t`, `-r`, `-m` | spelling normalization |
+| `converse-norm.x` | prompt, `-e`, `-t`, `-r`, `-m`, `-L` | spelling normalization |
 | `converse.x` | everything above but normalization | anything, and all documented examples |
 
 `converse.x` accepts every command below. The split binaries link only what they
@@ -41,7 +38,8 @@ does. One exception worth knowing: the byte model lives in the LM half, so under
 `converse-qa.x` the recombination probe prints `no seam judge` and leaves its bpc
 columns at zero. Use `converse.x` if you want those columns.
 
-Run any binary without arguments to print its full option and environment list.
+Run any binary without arguments to print its options and the main environment
+variables.
 
 ## Getting text in
 
@@ -61,7 +59,7 @@ Pass files directly, or use `-b PREFIX` to pick up a numbered set without listin
 ```bash
 ./converse.x texts/prose1.txt texts/prose2.txt
 ./converse.x -b texts/grimm                  # texts/grimm.txt, grimm-1.txt, ...
-./converse.x -b docs ~/libxs/documentation/*.md
+./converse.x -b docs ../../documentation/*.md
 ```
 
 `-b PREFIX` probes `PREFIX`, `PREFIX.txt` and numbered parts (`PREFIX-N.txt`,
@@ -71,8 +69,9 @@ above).
 
 `-b` also names the **state files**: the basename of the prefix is the prefix of
 everything the run persists, so `-b docs` keeps `docs.dat`, `docs.lex` and so on, and
-several corpora can live side by side in one directory. Without `-b`, state is named
-`converse.*`.
+several corpora can live side by side in one directory. When `-b` is given more than
+once, the first one names the state. Without `-b`, state is named after the current
+directory (`converse.*` when run from the sample directory).
 
 Any UTF-8 text works. Suitable sources are Project Gutenberg books, a Wikipedia
 extract, your own notes, or the documentation of this repository. Larger corpora are
@@ -139,7 +138,8 @@ the sample answers:
 - anything else question-shaped — the best matching sentence, ranked and cited.
 
 Every answer is followed by a citation naming where it came from: the section title
-when the corpus has headings, and always the file and the line. An answer assembled from several propositions cites the range of lines it rests on
+when the corpus has headings, and always the file and the line. An answer assembled
+from several propositions cites the range of lines it rests on
 (`texts/grimm.txt:2544-2579`), one range per file, and a single line when it is one
 line. Titles are only printed when the text really carries them — a corpus of flat
 prose is cited by file and line alone rather than by a sentence that happened to look
@@ -172,7 +172,7 @@ Three behaviours to expect:
 Questions are case-insensitive.
 
 Non-question input is treated as a composition request and answered from the
-fingerprint path instead. `-n N` sets how many sentences a response may use.
+fingerprint path instead. `-n N` sets how many sentences a response may use (default 1).
 
 ## Checking answers against a fixture
 
@@ -183,8 +183,7 @@ how to tell whether a rule-file or corpus change helped:
 ./converse.x -e -b texts/grimm
 ```
 
-The fixture is `<prefix>.eval` (so `grimm.eval` for `-b grimm`, `converse.eval`
-otherwise). Each non-comment line has three required fields and two optional ones:
+The fixture is `<prefix>.eval` (so `grimm.eval` for `-b grimm`). Each non-comment line has three required fields and two optional ones:
 
 ```text
 question|evidence-terms|reply-terms|fact-terms|citation-terms
@@ -264,10 +263,13 @@ printf 'First sentence. Second one.' | ./summarize.x -
 ./summarize.x -g -r -n 8 texts/prose1.txt texts/prose2.txt   # compose
 ```
 
-- default: summarize one file by repeatedly fusing adjacent sentences.
+- default: summarize one file by repeatedly fusing adjacent sentences. A single
+  argument that is not a readable file, or several arguments, are summarized as
+  literal text (joined by spaces); no argument or `-` reads stdin.
 - `-g`: compose mode — ingest all files, take the first as the target, and emit a
   short assembled text (`-n` is the phrase budget).
 - `-r`: reflow text first, joining cosmetic line breaks (useful for Gutenberg files).
+- `-h`: print the usage.
 
 ## Recombining text from the corpus
 
@@ -315,10 +317,11 @@ check to `-E`. Many further knobs exist; run the binary with no arguments to lis
 
 Everything corpus- and language-specific lives in local rule files rather than in the
 source, and they are what decide which questions can be answered. Two files, both
-optional and both ignored by git:
+optional:
 
-- `converse.rules` — the LANGUAGE: function words and syntactic classes. A
-  `<prefix>.rules` file REPLACES it (for a corpus in another language).
+- `converse.rules` — the LANGUAGE: function words and syntactic classes. The English
+  file is part of the repository. A `<prefix>.rules` file REPLACES it (for a corpus in
+  another language).
 - `<prefix>.relations` — this CORPUS: aliases, role words, place names. It EXTENDS
   the language file, so it need not restate function words.
 
@@ -379,7 +382,7 @@ After ingestion the sample reports what it learned (`relation facts: N learned`,
 print the facts themselves — reading them is the only way to tell whether they are
 true.
 
-Optional `converse.bridges` adds evidence-backed answer frames, five fields per line:
+Optional `<prefix>.bridges` adds evidence-backed answer frames, five fields per line:
 
 ```text
 name|query-groups|evidence-groups|score|reply
@@ -391,20 +394,20 @@ literal space in evidence terms. The reply is literal text or a small frame such
 
 ## Files the sample writes
 
-All state is kept in the working directory, named after the `-b` prefix
-(`converse.*` without one), and all of it is ignored by git:
+All state is kept in the working directory, named after the `-b` prefix (after the
+directory without one), and all of it except `.norms` is ignored by git:
 
 | file | holds |
 | :--- | :--- |
 | `<prefix>.dat` | the ingested corpus |
 | `<prefix>.par` | the source texts the corpus refers to; required with `.dat` |
 | `<prefix>.lex` | lexicon and token IDs |
-| `<prefix>.prd` | the answer reranker |
+| `<prefix>.prd` | the answer reranker, trained only with `CONVERSE_PREDICT=1` |
 | `<prefix>.src` | the file names the corpus refers to, for citations |
 | `<prefix>.facts` | the derived fact layers, rebuilt when the corpus changes |
 | `<prefix>.norms` | spelling corrections, written by `converse-norm.x -t` |
 
 Delete one of `.dat` / `.par` and both are rebuilt. The fixtures and rule files
 (`<prefix>.eval`, `<prefix>.learn.eval`, `<prefix>.predict`, `converse.rules`,
-`<prefix>.relations`, `converse.bridges`) are inputs you write; the sample never
+`<prefix>.relations`, `<prefix>.bridges`) are inputs you write; the sample never
 modifies them.

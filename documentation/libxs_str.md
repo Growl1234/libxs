@@ -58,12 +58,13 @@ int libxs_stridiff(const char a[], const char b[],
 Word-level set difference with edit-distance tolerance. Counts
 how many words in the *smaller* string cannot be matched (within
 `tolerance` edits) to any word in the larger string. Matching is
-greedy (cheapest pair first), case-insensitive, and each word
-can be consumed at most once.
+greedy (each word of the smaller string, in order, takes its
+cheapest unused partner), case-insensitive, and each word can be
+consumed at most once.
 
 Parameters:
 
-- `a`, `b` — input strings (NULL returns -1)
+- `a`, `b` — input strings (NULL or empty returns -1)
 - `delims` — word separator characters (NULL uses default:
   space, tab, semicolon, comma, colon, dash)
 - `tolerance` — maximum edit distance (`libxs_stridist`) for two words to
@@ -74,12 +75,13 @@ Parameters:
 
 Returns the number of unmatched words from the smaller string.
 A return value of 0 means every word in the shorter string found
-a match in the longer one. Returns -1 for NULL input.
+a match in the longer one. Returns -1 for NULL or empty input.
 
 Properties:
 
-- Symmetric: `stridiff(a, b, ...)` equals `stridiff(b, a, ...)`
-  because matching operates from the smaller side.
+- Symmetric when the word counts differ: `stridiff(a, b, ...)`
+  equals `stridiff(b, a, ...)` because matching operates from the
+  smaller side (from `a` if both have the same number of words).
 - Order-independent: word positions do not affect the result.
 - Tolerance=0 gives exact word-level multiset difference.
 - Tolerance=1 handles common morphological variation (plurals,
@@ -93,8 +95,8 @@ defect = libxs_stridiff(
   "The cache stores frequently accessed data.",
   "Frequently accessed data is kept in memory.",
   NULL, 1, &total);
-/* defect=2 (unmatched: "kept", "memory"), total=7 */
-/* redundancy = 1 - defect/total = 0.71 */
+/* defect=3 (unmatched: "The", "cache", "stores"), total=7 */
+/* redundancy = 1 - defect/total = 0.57 */
 ```
 
 ## Word Similarity
@@ -115,7 +117,7 @@ word-order analysis.
 
 Strings are split into words using the same delimiters as
 `libxs_strimatch`. Each word in `a` is matched to a word in `b`
-via minimum-cost bipartite matching, where the cost of a pair is
+by a heuristic for minimum-cost bipartite matching, where the cost of a pair is
 the character-level edit distance of `libxs_stridist`
 (case-insensitive, an adjacent transposition counting as one edit).
 Unmatched words (when the strings have different word counts)
@@ -142,8 +144,8 @@ const char* libxs_strtoken(const char str[],
 ```
 
 Non-destructive access to the `index`-th token in a delimited
-string. Tokens are separated by characters in `delims` (default:
-comma). Leading and trailing whitespace within each token is
+string. Tokens are separated by characters in `delims` (NULL or
+empty: `LIBXS_DELIMS`, i.e., comma, semicolon, colon). Leading and trailing whitespace within each token is
 trimmed. Returns a pointer into `str` at the token start, or
 NULL if `index` is out of range. Optional `length` receives the
 trimmed token length.
@@ -195,7 +197,8 @@ size_t libxs_format_value(char buffer[], int buffer_size,
   size_t nbytes, const char scale[], const char* unit, int base);
 ```
 
-Format a scalar value with SI-style scaling. Example:
+Format a scalar value with binary scaling: each step divides by
+2^`base` and selects the next character of `scale`. Example:
 
 ```C
 libxs_format_value(buf, sizeof(buf), nbytes, "KMGT", "B", 10);
@@ -216,8 +219,8 @@ The string utilities form a hierarchy of comparison granularity:
 | `stridiff`     | words       | unmatched count     | redundancy measurement  |
 | `strisimilar`  | words       | total edit cost     | structural similarity   |
 
-`stridiff` is the word-level analog of the byte-level
+`stridiff` is the word-level analog of the element-level
 `libxs_setdiff` (from `libxs_math.h`). Where `setdiff` counts
 unmatched elements in numeric arrays within a tolerance,
 `stridiff` counts unmatched words within an edit-distance
-tolerance. Both are order-independent and symmetric.
+tolerance. Both are order-independent.
