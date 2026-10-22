@@ -233,6 +233,43 @@ static int knn_check(const double* pts, int* idx, int n, int ndims,
 }
 
 
+/* The budgeted search: exact without a budget (or with n), else sorted true distances, each no
+ * nearer than the exact one of its rank, and at least min(k, budget) of them (unbounded radius). */
+static int knn_check_budget(const double* pts, int* idx, int n, int ndims,
+  const double* query, double max_dist2, int k, int line)
+{
+  static const int budgets[] = { 0, -1, 4, 16 };
+  int tidx[KNN_MAXK], oidx[KNN_MAXK], i, b, result = 1;
+  double td2[KNN_MAXK], od2[KNN_MAXK];
+  const int no = knn_oracle(pts, n, ndims, ndims, query, max_dist2, oidx, od2, k);
+  for (b = 0; b < 4 && 0 != result; ++b) {
+    const int budget = (0 <= budgets[b] ? budgets[b] : n);
+    const int nt = libxs_kdtree_knearest_budget(pts, idx, NULL, n, ndims, ndims,
+      query, max_dist2, tidx, td2, k, budget);
+    const int exact = (0 >= budget || n <= budget);
+    if ((0 != exact && nt != no) || nt > no || (1e300 <= max_dist2 && nt < LIBXS_MIN(no, budget))) {
+      FPRINTF(stderr, "ERROR line #%i: budget %i found %i, oracle %i\n", line, budget, nt, no);
+      result = 0;
+    }
+    for (i = 0; i < nt && 0 != result; ++i) {
+      double d2 = 0;
+      int dd;
+      for (dd = 0; dd < ndims; ++dd) {
+        const double d = pts[(size_t)tidx[i] * ndims + dd] - query[dd];
+        d2 += d * d;
+      }
+      if (d2 != td2[i] || td2[i] < od2[i] || (0 != exact && td2[i] != od2[i])
+        || (0 < i && td2[i - 1] > td2[i]))
+      {
+        FPRINTF(stderr, "ERROR line #%i: budget %i d2[%i]=%g, oracle %g\n", line, budget, i, td2[i], od2[i]);
+        result = 0;
+      }
+    }
+  }
+  return result;
+}
+
+
 static void knn_fill(double* pts, int n, int ndims, unsigned int seed, int mod)
 {
   int i, dd;
@@ -242,6 +279,46 @@ static void knn_fill(double* pts, int n, int ndims, unsigned int seed, int mod)
       pts[(size_t)i * ndims + dd] = (double)((seed >> 8) % (unsigned int)mod);
     }
   }
+}
+
+
+/* Splits at the middle position along axis 0 (no reordering) and records the leaves passed in:
+ * seen[0] calls, seen[1] the last count, seen[2] decreases. */
+static int split_count(int* dim, int* pos, double* threshold, const double* pts, int* idx,
+  int count, int depth, int nleaves, void* ctx)
+{
+  int *const seen = (int*)ctx;
+  if (nleaves < seen[1]) ++seen[2];
+  seen[1] = nleaves;
+  ++seen[0];
+  *dim = 0;
+  *pos = count / 2;
+  LIBXS_UNUSED(threshold);
+  LIBXS_UNUSED(pts);
+  LIBXS_UNUSED(idx);
+  LIBXS_UNUSED(depth);
+  return 0;
+}
+
+
+/* Median split along the axes in turn, in coordinates twice those of pts: the threshold is the
+ * callback's own (as for a split by other coordinates than the tree's). */
+static int split_scaled(int* dim, int* pos, double* threshold, const double* pts, int* idx,
+  int count, int depth, int nleaves, void* ctx)
+{
+  const int d = depth % 3;
+  int i, j;
+  for (i = 1; i < count; ++i) { /* insertion sort along d */
+    const int t = idx[i];
+    for (j = i; 0 < j && pts[3 * t + d] < pts[3 * idx[j - 1] + d]; --j) idx[j] = idx[j - 1];
+    idx[j] = t;
+  }
+  *dim = d;
+  *pos = count / 2;
+  *threshold = pts[3 * idx[*pos - 1] + d] + pts[3 * idx[*pos] + d]; /* 2 * midway */
+  LIBXS_UNUSED(nleaves);
+  LIBXS_UNUSED(ctx);
+  return 0;
 }
 
 
@@ -270,15 +347,21 @@ int main(void)
             int dd;
             /* a query AT a stored point exercises the exact-match case */
             for (dd = 0; dd < ndims; ++dd) query[dd] = pts[dd];
-            if (!knn_check(pts, idx, n, ndims, query, 1e300, k, __LINE__)) {
+            if (!knn_check(pts, idx, n, ndims, query, 1e300, k, __LINE__)
+              || !knn_check_budget(pts, idx, n, ndims, query, 1e300, k, __LINE__))
+            {
               exit(EXIT_FAILURE);
             }
             for (dd = 0; dd < ndims; ++dd) query[dd] = 1.5 + 3.0 * dd;
-            if (!knn_check(pts, idx, n, ndims, query, 1e300, k, __LINE__)) {
+            if (!knn_check(pts, idx, n, ndims, query, 1e300, k, __LINE__)
+              || !knn_check_budget(pts, idx, n, ndims, query, 1e300, k, __LINE__))
+            {
               exit(EXIT_FAILURE);
             }
             /* a radius bound must drop the far members, not reorder the near */
-            if (!knn_check(pts, idx, n, ndims, query, 50.0, k, __LINE__)) {
+            if (!knn_check(pts, idx, n, ndims, query, 50.0, k, __LINE__)
+              || !knn_check_budget(pts, idx, n, ndims, query, 50.0, k, __LINE__))
+            {
               exit(EXIT_FAILURE);
             }
           }
@@ -569,6 +652,142 @@ int main(void)
     }
   }
 
+  /* split rules of the tree: median equals the default, middle partitions a grid into boxes */
+  { static double pts[KNN_MAXN * 3];
+    static int idx[KNN_MAXN], ref[KNN_MAXN], leaf[KNN_MAXN], leaf2[KNN_MAXN];
+    libxs_kdtree_config_t config;
+    double lo_thr = 0;
+    int i, l, nleaves, nleaves2, dd;
+    knn_fill(pts, 300, 3, 7u, 1000);
+    for (i = 0; i < 300; ++i) idx[i] = ref[i] = i;
+    libxs_kdtree_build(pts, ref, 300, 3, 3, NULL);
+    config.min_leaf = 0;
+    config.split = libxs_kdtree_split_median;
+    config.ctx = NULL;
+    config.nodes = NULL;
+    libxs_kdtree_build(pts, idx, 300, 3, 3, &config);
+    if (0 != memcmp(idx, ref, sizeof(int) * 300)) {
+      FPRINTF(stderr, "ERROR line #%i: median split differs from the default\n", __LINE__);
+      exit(EXIT_FAILURE);
+    }
+    for (i = 0; i < 300; ++i) idx[i] = ref[i] = i;
+    config.min_leaf = 4;
+    nleaves = libxs_kdtree_partition(pts, idx, 300, 3, 3, leaf, &config);
+    config.split = NULL;
+    nleaves2 = libxs_kdtree_partition(pts, ref, 300, 3, 3, leaf2, &config);
+    if (nleaves != nleaves2 || 0 != memcmp(leaf, leaf2, sizeof(int) * 300)) {
+      FPRINTF(stderr, "ERROR line #%i: median partition differs from the default\n", __LINE__);
+      exit(EXIT_FAILURE);
+    }
+    /* a 4x6x5 grid: every leaf is the full set of grid points in its bounding box */
+    for (i = 0; i < 120; ++i) {
+      pts[3 * i + 0] = (double)(i % 4);
+      pts[3 * i + 1] = (double)((i / 4) % 6);
+      pts[3 * i + 2] = (double)(i / 24);
+      idx[i] = i;
+    }
+    config.min_leaf = 8;
+    config.split = libxs_kdtree_split_middle;
+    nleaves = libxs_kdtree_partition(pts, idx, 120, 3, 3, leaf, &config);
+    for (l = 0; l < nleaves; ++l) {
+      double lo[3] = { 1e300, 1e300, 1e300 }, hi[3] = { -1e300, -1e300, -1e300 };
+      int count = 0, inbox = 0;
+      for (i = 0; i < 120; ++i) {
+        if (l == leaf[i]) {
+          for (dd = 0; dd < 3; ++dd) {
+            lo[dd] = LIBXS_MIN(lo[dd], pts[3 * i + dd]);
+            hi[dd] = LIBXS_MAX(hi[dd], pts[3 * i + dd]);
+          }
+          ++count;
+        }
+      }
+      for (i = 0; i < 120; ++i) {
+        int in = 1;
+        for (dd = 0; dd < 3; ++dd) in &= (lo[dd] <= pts[3 * i + dd] && pts[3 * i + dd] <= hi[dd]);
+        inbox += in;
+      }
+      if (0 == count || 8 < count || inbox != count) {
+        FPRINTF(stderr, "ERROR line #%i: middle leaf %i has %i points, %i in its box\n",
+          __LINE__, l, count, inbox);
+        exit(EXIT_FAILURE);
+      }
+    }
+    for (i = 0; i < 120; ++i) {
+      if (0 > leaf[i] || nleaves <= leaf[i]) {
+        FPRINTF(stderr, "ERROR line #%i: point %i not assigned\n", __LINE__, i);
+        exit(EXIT_FAILURE);
+      }
+    }
+    /* the tree in preorder: every point descends to its leaf */
+    { static libxs_kdtree_node_t nodes[2 * KNN_MAXN];
+      double scaled[3];
+      int s, nleaf_nodes = 0;
+      config.nodes = nodes;
+      for (i = 0; i < 120; ++i) idx[i] = i;
+      nleaves = libxs_kdtree_partition(pts, idx, 120, 3, 3, leaf, &config);
+      for (l = 0; l < 2 * nleaves - 1; ++l) nleaf_nodes += (0 > nodes[l].dim ? 1 : 0);
+      for (i = 0; i < 120 && nleaf_nodes == nleaves; ++i) {
+        if (leaf[i] != libxs_kdtree_descend(nodes, pts + 3 * i)) nleaf_nodes = -1;
+      }
+      if (nleaf_nodes != nleaves) {
+        FPRINTF(stderr, "ERROR line #%i: middle tree does not route to its leaves\n", __LINE__);
+        exit(EXIT_FAILURE);
+      }
+      for (s = 0; s < 2; ++s) { /* distinct coordinates per axis: median, then own coordinates */
+        for (i = 0; i < 300; ++i) {
+          pts[3 * i + 0] = (double)((i * 7) % 300);
+          pts[3 * i + 1] = (double)((i * 11) % 300);
+          pts[3 * i + 2] = (double)((i * 13) % 300);
+          idx[i] = i;
+        }
+        config.min_leaf = 4;
+        config.split = (0 == s ? NULL : split_scaled);
+        nleaves = libxs_kdtree_partition(pts, idx, 300, 3, 3, leaf, &config);
+        for (i = 0; i < 300; ++i) {
+          for (dd = 0; dd < 3; ++dd) scaled[dd] = (0 == s ? 1.0 : 2.0) * pts[3 * i + dd];
+          if (leaf[i] != libxs_kdtree_descend(nodes, scaled)) {
+            FPRINTF(stderr, "ERROR line #%i: point %i descends to %i, not leaf %i (%s)\n", __LINE__,
+              i, libxs_kdtree_descend(nodes, scaled), leaf[i], 0 == s ? "median" : "own coordinates");
+            exit(EXIT_FAILURE);
+          }
+        }
+      }
+      config.split = libxs_kdtree_split_middle;
+      config.nodes = NULL;
+    }
+    /* identical points have no extent: one leaf */
+    for (i = 0; i < 16; ++i) {
+      pts[3 * i + 0] = pts[3 * i + 1] = pts[3 * i + 2] = 1.0;
+      idx[i] = i;
+    }
+    config.min_leaf = 1;
+    if (1 != libxs_kdtree_partition(pts, idx, 16, 3, 3, leaf, &config)) {
+      FPRINTF(stderr, "ERROR line #%i: identical points split\n", __LINE__);
+      exit(EXIT_FAILURE);
+    }
+    /* build passes the leaves so far to the split function, as partition does */
+    { int seen[3] = { 0, 0, 0 };
+      knn_fill(pts, 64, 3, 11u, 1000);
+      for (i = 0; i < 64; ++i) idx[i] = i;
+      config.min_leaf = 4;
+      config.split = split_count;
+      config.ctx = seen;
+      libxs_kdtree_build(pts, idx, 64, 3, 3, &config);
+      if (2 > seen[0] || 0 >= seen[1] || 0 != seen[2]) {
+        FPRINTF(stderr, "ERROR line #%i: build passed nleaves %i after %i calls (%i decreases)\n",
+          __LINE__, seen[1], seen[0], seen[2]);
+        exit(EXIT_FAILURE);
+      }
+      config.ctx = NULL;
+    }
+    /* called directly, the markers do not split */
+    if (0 == libxs_kdtree_split_median(&i, &l, &lo_thr, pts, idx, 16, 0, 0, NULL)
+      || 0 == libxs_kdtree_split_middle(&i, &l, &lo_thr, pts, idx, 16, 0, 0, NULL))
+    {
+      FPRINTF(stderr, "ERROR line #%i: a marker split\n", __LINE__);
+      exit(EXIT_FAILURE);
+    }
+  }
   /* kdtree2d: basic nearest neighbor */
   { double pts[] = {0.0,0.0, 1.0,0.0, 0.0,1.0, 1.0,1.0};
     int idx[] = {0, 1, 2, 3};

@@ -150,6 +150,7 @@ int main(int argc, char* argv[])
     cfg.min_leaf = leaf;
     cfg.split = NULL;
     cfg.ctx = NULL;
+    cfg.nodes = NULL;
     tick = libxs_timer_tick();
     libxs_kdtree_build(cat.pts, idx, cat.n, PAIRCNT_NDIMS,
       PAIRCNT_NDIMS, &cfg);

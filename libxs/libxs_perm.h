@@ -39,24 +39,44 @@ LIBXS_EXTERN_C typedef int (*libxs_sort_cmp_t)(
 /**
  * Split callback for custom k-d tree construction.
  * Receives points, index array (node slice), node count, depth,
- * and the current number of leaves already assigned.
+ * and the current number of leaves already assigned (in preorder).
  * Writes chosen dimension into *dim and split position into *pos
- * (number of elements going left, 1..count-1).
- * The callback may reorder idx[0..count-1] so that idx[0..pos-1]
- * are the left entries and idx[pos..count-1] are the right entries.
- * If the callback reorders idx, the partition function skips its
- * internal quickselect.
+ * (number of elements going left, 1..count-1), and reorders
+ * idx[0..count-1] so that idx[0..pos-1] are the left entries and
+ * idx[pos..count-1] the right ones. *threshold arrives as HUGE_VAL:
+ * left so, the tree places it midway between the two sides along
+ * *dim (in pts); a callback splitting by other coordinates writes
+ * its own (entries below it go left).
  * Return 0 for a valid split, nonzero to force a leaf.
  */
 LIBXS_EXTERN_C typedef int (*libxs_kdtree_split_t)(
-  int* dim, int* pos, const double* pts, int* idx,
+  int* dim, int* pos, double* threshold, const double* pts, int* idx,
   int count, int depth, int nleaves, void* ctx);
 
-/** Configuration for k-d tree build and partition. */
+/**
+ * A node of a tree from libxs_kdtree_partition, in preorder. A split
+ * (dim >= 0) has its left child next in the array and its right child
+ * at index next; entries below threshold along dim went left. A leaf
+ * (dim < 0) has its leaf id in next.
+ */
+typedef struct libxs_kdtree_node_t {
+  double threshold;
+  int dim, next;
+} libxs_kdtree_node_t;
+
+/**
+ * Configuration for k-d tree build and partition; zero-initialize it
+ * (libxs_kdtree_config_t config = { 0 }) so that unset fields stay off.
+ * split:    NULL (median), libxs_kdtree_split_middle, or custom.
+ * nodes:    partition only: receives the tree in preorder, 2*nleaves-1
+ *           nodes, at most 2n-1 (NULL: no tree).
+ * min_leaf: nodes of at most min_leaf points are leaves (0: down to 1).
+ */
 typedef struct libxs_kdtree_config_t {
-  int min_leaf;
   libxs_kdtree_split_t split;
   void* ctx;
+  libxs_kdtree_node_t* nodes;
+  int min_leaf;
 } libxs_kdtree_config_t;
 
 /** Sorted Hilbert-code spatial index over registry entries. */
@@ -205,6 +225,20 @@ LIBXS_API int libxs_stratify_hilbert_bits(
   unsigned int dst_coords[], int dst_ndims, int dst_bits);
 
 /**
+ * Split rules of the tree itself, for libxs_kdtree_config_t.split. Both are
+ * markers that build and partition recognize; called directly, they only
+ * return nonzero. libxs_kdtree_split_median is the default (split NULL): the
+ * median along the axes in turn, the tree that libxs_kdtree_nearest and
+ * libxs_kdtree_knearest search. libxs_kdtree_split_middle splits at the middle
+ * of the range of the axis with the largest extent (e.g., grid coordinates):
+ * points below the middle go left, and a node without extent stays a leaf.
+ */
+LIBXS_API int libxs_kdtree_split_median(int* dim, int* pos, double* threshold,
+  const double* pts, int* idx, int count, int depth, int nleaves, void* ctx);
+LIBXS_API int libxs_kdtree_split_middle(int* dim, int* pos, double* threshold,
+  const double* pts, int* idx, int count, int depth, int nleaves, void* ctx);
+
+/**
  * Build a k-d tree in-place for n points in ndims dimensions.
  * Points are stored row-major: pts[i*stride + k] is coordinate k of point i.
  * stride >= ndims (allows for padding or interleaved auxiliary data).
@@ -225,6 +259,15 @@ LIBXS_API void libxs_kdtree_build(
 LIBXS_API int libxs_kdtree_partition(
   const double* pts, int* idx, int n, int ndims, int stride,
   int* assignments, const libxs_kdtree_config_t* config);
+
+/**
+ * The leaf id a point descends to in the nodes libxs_kdtree_partition wrote
+ * (config.nodes): below a split's threshold left, otherwise right. The point
+ * is in the coordinates of the thresholds (those of pts, or of the split
+ * callback that wrote them). Returns -1 for NULL arguments, or where a node
+ * does not lead forward (no tree of partition).
+ */
+LIBXS_API int libxs_kdtree_descend(const libxs_kdtree_node_t nodes[], const double point[]);
 
 /**
  * Find the nearest point to query[0..ndims-1] within squared Euclidean
@@ -251,19 +294,38 @@ LIBXS_API int libxs_kdtree_nearest(
  * only a ranking.
  *
  * A kd-tree stops paying as dimension rises: it beats a scan while n is large
- * against 2^ndims, and degenerates toward visiting every node beyond roughly ten
- * dimensions. Prefer a scan there rather than paying for the tree as well.
+ * against 2^ndims. Measured with k = 8, uniformly random points need n of about
+ * 64 * 2^ndims before the tree is faster. Structured data (a lower intrinsic
+ * dimension) pays earlier: 1.26x faster at 37 dimensions and 60,000 points,
+ * whereas data without such structure was 3.4x slower than a scan at 28
+ * dimensions and 100,000 points. Whether a scan is the better choice depends on
+ * the data rather than on ndims alone: time a few queries both ways.
  *
  * Requires a tree built by libxs_kdtree_build with config == NULL (or a config
- * whose split is NULL and min_leaf <= 1), because the query recomputes the split
- * dimension as depth % ndims and treats every node as split at its middle
- * element - as libxs_kdtree_nearest does. A tree built with a custom split
- * function or larger leaves does not record that and cannot be searched this way.
+ * whose split is NULL or libxs_kdtree_split_median, and min_leaf <= 1), because
+ * the query recomputes the split dimension as depth % ndims and treats every
+ * node as split at its middle element - as libxs_kdtree_nearest does. A tree
+ * built with another split function or larger leaves does not record that and
+ * cannot be searched this way.
  */
 LIBXS_API int libxs_kdtree_knearest(
   const double* pts, const int* idx, const unsigned char* used,
   int n, int ndims, int stride, const double* query, double max_dist2,
   int out_idx[], double out_dist2[], int k);
+
+/**
+ * As libxs_kdtree_knearest (same tree requirement and output), but the tree is
+ * searched best bin first: the waiting subtree with the smallest lower bound of
+ * its distance next, until none can hold a nearer point or budget points have
+ * been examined (one distance each). With budget <= 0 there is no limit and the
+ * result is exact (the same distances as libxs_kdtree_knearest); with a budget
+ * it is the k nearest among the points examined, still sorted ascending. This is
+ * the search for dimensions where the exact one visits most of the tree.
+ */
+LIBXS_API int libxs_kdtree_knearest_budget(
+  const double* pts, const int* idx, const unsigned char* used,
+  int n, int ndims, int stride, const double* query, double max_dist2,
+  int out_idx[], double out_dist2[], int k, int budget);
 
 /** Convenience wrappers for 2D (interleaved x,y layout). */
 LIBXS_API_INLINE void libxs_kdtree2d_build(double* pts, int* idx, int n) {
