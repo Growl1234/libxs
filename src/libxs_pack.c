@@ -16,6 +16,12 @@
 #if !defined(LIBXS_PACK_SW) && 0
 # define LIBXS_PACK_SW
 #endif
+/* AVX2 decoder (8 permutes per group of 8): measured no faster than the scalar decoder */
+#if !defined(LIBXS_PACK_AVX2_UNPACK) && 0
+# define LIBXS_PACK_AVX2_UNPACK
+#endif
+/* values per group of the exceptions format: a bitmap byte (and a vector lane) per value */
+#define LIBXS_PACK_EXC_GROUP 8
 
 #define LIBXS_PACK_MASK(NBITS) (64 > (NBITS) \
   ? ((((uint64_t)1) << (NBITS)) - 1) : ~((uint64_t)0))
@@ -447,7 +453,7 @@ size_t internal_libxs_vunpack64_avx512(uint64_t* LIBXS_RESTRICT out,
 #endif
 
 
-#if defined(LIBXS_PACK_AVX2)
+#if defined(LIBXS_PACK_AVX2) && defined(LIBXS_PACK_AVX2_UNPACK)
 /* As internal_libxs_vunpack64_sw, a group of 8 as two halves: qword loads (masked to the
  * w bytes, rounded up to whole qwords), and a permute across two registers per word. */
 LIBXS_API_INLINE LIBXS_INTRINSICS(LIBXS_X86_AVX2)
@@ -744,12 +750,15 @@ LIBXS_API_INLINE size_t internal_libxs_vunpack64_exc_sw(uint64_t* LIBXS_RESTRICT
   const unsigned char* LIBXS_RESTRICT widths, const unsigned char* LIBXS_RESTRICT data,
   size_t n, size_t nbytes, int is_signed)
 {
-  const size_t ngroups = (n + 7) / 8;
-  uint64_t tmp[8];
+  const size_t ngroups = (n + LIBXS_PACK_EXC_GROUP - 1) / LIBXS_PACK_EXC_GROUP;
+  uint64_t tmp[LIBXS_PACK_EXC_GROUP];
   size_t i, pos = 0;
   for (i = 0; i < ngroups; ++i) {
-    const size_t base = 8 * i, m = LIBXS_MIN((size_t)8, n - base);
-    if (8 == m) pos += internal_libxs_vunpack8_exc(out + base, data, pos, nbytes, widths[i], is_signed);
+    const size_t base = LIBXS_PACK_EXC_GROUP * i;
+    const size_t m = LIBXS_MIN((size_t)LIBXS_PACK_EXC_GROUP, n - base);
+    if (LIBXS_PACK_EXC_GROUP == m) {
+      pos += internal_libxs_vunpack8_exc(out + base, data, pos, nbytes, widths[i], is_signed);
+    }
     else {
       pos += internal_libxs_vunpack8_exc(tmp, data, pos, nbytes, widths[i], is_signed);
       memcpy(out + base, tmp, m * sizeof(*tmp));
@@ -767,14 +776,15 @@ size_t internal_libxs_vunpack64_exc_avx512(uint64_t* LIBXS_RESTRICT out,
   const unsigned char* LIBXS_RESTRICT widths, const unsigned char* LIBXS_RESTRICT data,
   size_t n, int is_signed)
 {
-  const size_t ngroups = (n + 7) / 8;
+  const size_t ngroups = (n + LIBXS_PACK_EXC_GROUP - 1) / LIBXS_PACK_EXC_GROUP;
   const __m512i lane = _mm512_set_epi64(7, 6, 5, 4, 3, 2, 1, 0);
   const __m512i word = _mm512_set1_epi64(63), one = _mm512_set1_epi64(1);
   const __m512i sixtyfour = _mm512_set1_epi64(64), ones = _mm512_set1_epi64(-1);
   const __m512i zero = _mm512_setzero_si512();
   size_t i, pos = 0;
   for (i = 0; i < ngroups; ++i) {
-    const size_t base = 8 * i, m = LIBXS_MIN((size_t)8, n - base);
+    const size_t base = LIBXS_PACK_EXC_GROUP * i;
+    const size_t m = LIBXS_MIN((size_t)LIBXS_PACK_EXC_GROUP, n - base);
     const int hb = widths[i], v = hb & 0x7F;
     __m512i wl, bits, lo, hi, shift, back, x;
     __mmask64 bytes;
@@ -809,7 +819,7 @@ size_t internal_libxs_vunpack64_exc_avx512(uint64_t* LIBXS_RESTRICT out,
     if (0 != is_signed) {
       x = _mm512_xor_si512(_mm512_srli_epi64(x, 1), _mm512_sub_epi64(zero, _mm512_and_si512(x, one)));
     }
-    if (8 == m) _mm512_storeu_si512((void*)(out + base), x);
+    if (LIBXS_PACK_EXC_GROUP == m) _mm512_storeu_si512((void*)(out + base), x);
     else _mm512_mask_storeu_epi64(out + base, (__mmask8)((1u << m) - 1), x);
     pos += nb;
   }
@@ -846,7 +856,7 @@ LIBXS_API_INLINE size_t internal_libxs_vunpack64(uint64_t* LIBXS_RESTRICT out,
   if (3 == kind) result = internal_libxs_vunpack64_avx512(out, widths, data, n, g, is_signed);
   else
 #endif
-#if defined(LIBXS_PACK_AVX2)
+#if defined(LIBXS_PACK_AVX2) && defined(LIBXS_PACK_AVX2_UNPACK)
   /* 8 permutes per group (no qword permute across registers) amortize from 16 values on */
   if (2 <= kind && 16 <= g) result = internal_libxs_vunpack64_avx2(out, widths, data, n, g, is_signed);
   else
@@ -997,7 +1007,7 @@ LIBXS_API size_t libxs_vpack(void* packed, const void* values,
       if (0 < w && 0 == (g & 7)) { /* byte-aligned: 8 values take w bytes */
         for (k = m; k < ((m + 7) & ~(size_t)7); ++k) buf[k] = 0;
 #if !defined(LIBXS_PACK_SW)
-        if (8 == g) {
+        if (LIBXS_PACK_EXC_GROUP == g) {
 # if defined(LIBXS_PACK_AVX512)
           if (3 == kind) nbytes += internal_libxs_vpack8_exc_avx512(head + 1 + i, data + nbytes, buf, w);
           else
@@ -1028,7 +1038,7 @@ LIBXS_API size_t libxs_vpack(void* packed, const void* values,
     LIBXS_UNUSED(nbytes);
 #endif
 #if !defined(LIBXS_PACK_SW)
-    if (8 == g) {
+    if (LIBXS_PACK_EXC_GROUP == g) {
       for (; 0 != (nbytes & 7); ++nbytes) data[nbytes] = 0;
       result = nhead + nbytes / 8;
     }
@@ -1078,13 +1088,13 @@ LIBXS_API size_t libxs_vunpack(void* values, const void* packed, size_t npacked,
         if (0 == (g & 7)) nbits = 8 * 64 * ((nbits / 8 + 63) / 64); /* 8 streams in whole words */
 # endif
 # if !defined(LIBXS_PACK_SW)
-        if (8 == g) nbits = 0; /* depends on the data: checked after decoding */
+        if (LIBXS_PACK_EXC_GROUP == g) nbits = 0; /* depends on the data: checked after decoding */
 # endif
         LIBXS_ASSERT(nhead + (nbits + 63) / 64 <= npacked);
       }
 #endif
 #if !defined(LIBXS_PACK_SW)
-      if (8 == g) { /* exceptions */
+      if (LIBXS_PACK_EXC_GROUP == g) { /* exceptions */
         const size_t nbytes = (nhead < npacked ? 8 * (npacked - nhead) : 0);
         if (8 == typesize && 0 != probe.c[0]) {
           bit = internal_libxs_vunpack64_exc((uint64_t*)values, head + 1, data, n, nbytes, is_signed);
@@ -1092,7 +1102,8 @@ LIBXS_API size_t libxs_vunpack(void* values, const void* packed, size_t npacked,
         else {
           size_t pos = 0;
           for (i = 0; i < ngroups; ++i) {
-            const size_t base = 8 * i, m = LIBXS_MIN((size_t)8, n - base);
+            const size_t base = LIBXS_PACK_EXC_GROUP * i;
+            const size_t m = LIBXS_MIN((size_t)LIBXS_PACK_EXC_GROUP, n - base);
             pos += internal_libxs_vunpack8_exc(buf, data, pos, (0 != probe.c[0] ? nbytes : 0), head[1 + i],
               is_signed);
             internal_libxs_pack_store(values, buf, type, base, m);

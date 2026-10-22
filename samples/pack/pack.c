@@ -267,8 +267,8 @@ typedef struct kd_ctx_t {
 
 /* Splits a box at the middle of the allowed axis that lowers the bits most (both halves as leaves,
  * the axis and their flags counted), else a leaf. */
-static int kd_split(int* dim, int* pos, const double* pts, int* idx, int count, int depth,
-  int nleaves, void* ctx)
+static int kd_split(int* dim, int* pos, double* threshold, const double* pts, int* idx, int count,
+  int depth, int nleaves, void* ctx)
 {
   const kd_ctx_t *const kd = (const kd_ctx_t*)ctx;
   double best = leaf_cost(kd->z, idx, count, kd->exc);
@@ -314,6 +314,7 @@ static int kd_split(int* dim, int* pos, const double* pts, int* idx, int count, 
     *pos = bestl;
     result = 0;
   }
+  LIBXS_UNUSED(threshold); /* the tree places it in pts */
   LIBXS_UNUSED(depth);
   LIBXS_UNUSED(nleaves);
   return result;
@@ -354,6 +355,7 @@ static int kd_costs(stats_t* st, const int64_t* q, size_t n, const int32_t* shap
       config.min_leaf = 1;
       config.split = kd_split;
       config.ctx = &ctx;
+      config.nodes = NULL;
       for (k = 0; k < NKD; ++k) {
         int nleaves, l;
         for (i = 0; i < n; ++i) idx[i] = (int)i;
