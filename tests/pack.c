@@ -120,6 +120,118 @@ static int check_variable(libxs_data_t type)
 }
 
 
+static void store(void* values, libxs_data_t type, size_t i, uint64_t v)
+{
+  switch (LIBXS_TYPESIZE(type)) {
+    case 1: ((uint8_t*)values)[i] = (uint8_t)v; break;
+    case 2: ((uint16_t*)values)[i] = (uint16_t)v; break;
+    case 4: ((uint32_t*)values)[i] = (uint32_t)v; break;
+    default: ((uint64_t*)values)[i] = v;
+  }
+}
+
+
+/** Groups of 8 with a few values at the full width among small ones (zeros included): exceptions. */
+static int check_exceptions(libxs_data_t type)
+{
+  static const int small[] = { 0, 1, 3, 7 };
+  const int typesize = (int)LIBXS_TYPESIZE(type), maxbits = 8 * typesize;
+  const uint64_t sign = (0 == (1 & LIBXS_TYPEORDER(type)) ? (((uint64_t)1) << (maxbits - 1)) : 0);
+  const uint64_t mask = (64 > maxbits ? ((((uint64_t)1) << maxbits) - 1) : ~((uint64_t)0));
+  uint64_t values[NMAX], back[NMAX], packed[2 * NMAX];
+  int result = EXIT_SUCCESS, is, k;
+  for (is = 0; is < (int)(sizeof(small) / sizeof(*small)) && EXIT_SUCCESS == result; ++is) {
+    for (k = 1; k <= 3 && EXIT_SUCCESS == result; ++k) { /* values at the full width per group */
+      const size_t n = NMAX - (size_t)k; /* a partial last group */
+      const size_t bound = libxs_vpack_bound(n, maxbits, 8), ngroups = (n + 7) / 8;
+      size_t i, nwords, nread, nexc = 0;
+      for (i = 0; i < n; ++i) {
+        const size_t lane = (i + (i / 8) * 3) & 7; /* where the wide values are moves per group */
+        uint64_t v = (lane < (size_t)k ? (rng_next() & mask) | (sign >> 1)
+          : (rng_next() & ((((uint64_t)1) << small[is]) - 1)));
+        if (0 != sign && 0 != (rng_next() & 1)) v = (0 - v) & mask; /* either sign */
+        store(values, type, i, v);
+      }
+      for (i = 0; i < 2 * NMAX; ++i) packed[i] = SENTINEL;
+      memset(back, 0xFF, sizeof(back));
+      nwords = libxs_vpack(packed, values, type, n, maxbits, 8);
+      nread = libxs_vunpack(back, packed, nwords, type, n);
+      for (i = 0; i < ngroups; ++i) nexc += (0 != (((const unsigned char*)packed)[1 + i] & 0x80) ? 1 : 0);
+      if (0 == nwords || nwords > bound || nread != nwords) {
+        fprintf(stderr, "exceptions: %i words (bound %i, read %i) for type %i, small %i, wide %i\n",
+          (int)nwords, (int)bound, (int)nread, (int)type, small[is], k);
+        result = EXIT_FAILURE;
+      }
+      else if (SENTINEL != packed[nwords]) {
+        fprintf(stderr, "exceptions: overrun (type %i, small %i, wide %i)\n", (int)type, small[is], k);
+        result = EXIT_FAILURE;
+      }
+      else if (0 != memcmp(values, back, n * (size_t)typesize)) {
+        fprintf(stderr, "exceptions: mismatch (type %i, small %i, wide %i)\n", (int)type, small[is], k);
+        result = EXIT_FAILURE;
+      }
+#if !defined(LIBXS_PACK_SW)
+      else if (8 == typesize && 0 == nexc) {
+        fprintf(stderr, "exceptions: none used (type %i, small %i, wide %i)\n", (int)type, small[is], k);
+        result = EXIT_FAILURE;
+      }
+#endif
+      LIBXS_UNUSED(nexc);
+    }
+  }
+  return result;
+}
+
+
+#if !defined(LIBXS_PACK_SW) && (defined(LIBXS_PACK_AVX512) || defined(LIBXS_PACK_AVX2))
+/** The AVX-512 and AVX2 encoders of a group of 8 write the header and bytes of the scalar one. */
+static int check_exc_simd(void)
+{
+  const int arch = libxs_cpuid(NULL);
+  int result = EXIT_SUCCESS, t;
+  for (t = 0; t < 100000 && EXIT_SUCCESS == result; ++t) {
+    unsigned char ha = 0, hb = 0, outa[80], outb[80];
+    uint64_t in[8], any = 0;
+    int i, w;
+    for (i = 0; i < 8; ++i) { /* widths of 0 to 64 */
+      const int b = (int)(rng_next() % 65);
+      in[i] = (64 > b ? (rng_next() & ((((uint64_t)1) << b) - 1)) : rng_next());
+      any |= in[i];
+    }
+    w = (int)LIBXS_NBITS(any);
+    if (0 < w) {
+      size_t na, nb;
+      memset(outa, 0, sizeof(outa));
+      na = internal_libxs_vpack8_exc(&ha, outa, in, w);
+# if defined(LIBXS_PACK_AVX512)
+      if (LIBXS_X86_AVX512 <= arch) {
+        memset(outb, 0, sizeof(outb));
+        nb = internal_libxs_vpack8_exc_avx512(&hb, outb, in, w);
+        if (na != nb || ha != hb || 0 != memcmp(outa, outb, sizeof(outa))) {
+          fprintf(stderr, "exceptions: AVX-512 encoder differs (width %i)\n", w);
+          result = EXIT_FAILURE;
+        }
+      }
+# endif
+# if defined(LIBXS_PACK_AVX2)
+      if (LIBXS_X86_AVX2 <= arch && EXIT_SUCCESS == result) {
+        memset(outb, 0, sizeof(outb));
+        nb = internal_libxs_vpack8_exc_avx2(&hb, outb, in, w);
+        if (na != nb || ha != hb || 0 != memcmp(outa, outb, sizeof(outa))) {
+          fprintf(stderr, "exceptions: AVX2 encoder differs (width %i)\n", w);
+          result = EXIT_FAILURE;
+        }
+      }
+# endif
+      LIBXS_UNUSED(nb);
+    }
+  }
+  LIBXS_UNUSED(arch);
+  return result;
+}
+#endif
+
+
 /** All-zero values cost only the header; invalid arguments and empty streams are rejected. */
 static int check_edges(void)
 {
@@ -158,6 +270,10 @@ int main(int argc, char* argv[])
   for (i = 0; i < (int)(sizeof(types) / sizeof(*types)) && EXIT_SUCCESS == result; ++i) {
     result = check_fixed(types[i]);
     if (EXIT_SUCCESS == result) result = check_variable(types[i]);
+    if (EXIT_SUCCESS == result) result = check_exceptions(types[i]);
   }
+#if !defined(LIBXS_PACK_SW) && (defined(LIBXS_PACK_AVX512) || defined(LIBXS_PACK_AVX2))
+  if (EXIT_SUCCESS == result) result = check_exc_simd();
+#endif
   return result;
 }

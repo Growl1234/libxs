@@ -36,11 +36,13 @@ Every group of `group` values (1 to 255; 0 selects `LIBXS_VPACK_GROUP`,
 which is 8) is stored at the width its largest magnitude needs, so groups of
 small values or zeros cost little. Values are taken as integers of `maxbits`
 bits (1 to eight times the type size); signed types fold the sign so that
-small magnitudes of either sign stay narrow. The stream records the group
-size and the widths, so unpacking needs only `n` and the number of words
-available (`npacked`, checked against the stream in debug builds only). It
-does not record the type: unpack with a type of the same signedness as used
-for packing.
+small magnitudes of either sign stay narrow. A group of 8 (the default) may
+instead store a smaller regular width and the few values above it at the
+group's full width (exceptions, marked by a bitmap) if that takes fewer bytes.
+The stream records the group size and the widths, so unpacking needs only `n`
+and the number of words available (`npacked`, checked against the stream in
+debug builds only). It does not record the type: unpack with a type of the
+same signedness as used for packing.
 
 `libxs_vpack` returns the number of words written, at most
 `libxs_vpack_bound(n, maxbits, group)`, and `libxs_vunpack` the number of words

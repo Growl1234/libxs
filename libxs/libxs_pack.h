@@ -38,7 +38,9 @@ LIBXS_API int libxs_unpack(void* values, const void* packed,
  * integers of maxbits bits (signed types sign-extended from maxbits, unsigned
  * types masked), and signed types fold the sign so that small magnitudes of
  * either sign stay narrow. A group size that is a multiple of 8 keeps every
- * group's data byte-aligned, which is the fast path. The stream records the
+ * group's data byte-aligned, which is the fast path. A group of 8 (default)
+ * may instead store a smaller regular width and the few values above it at
+ * the full width (exceptions) if that takes fewer bytes. The stream records the
  * group size and widths; only n has to be known to unpack. Returns the number
  * of 64-bit words written, at most libxs_vpack_bound, or zero for invalid
  * arguments or n of zero.

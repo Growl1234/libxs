@@ -1,8 +1,8 @@
 # Pack
 
-Measures bit packing (`libxs_pack.h`) at a fixed width against a width per
-group of values (`libxs_vpack`): bits per value, ratio, and time per value.
-Every round trip is verified.
+Measures bit packing (`libxs_pack.h`) at a fixed width (`libxs_pack`) against
+a width per group of values (`libxs_vpack`): bits per value, ratio, and time
+per value. Every round trip is verified.
 
 ## Build
 
@@ -38,10 +38,30 @@ extension holds a REAL(8) eps, an INT32 number of blocks, and an INT32 shape(3)
 per block provides eps and the blocks itself, so a dump of the data to analyze
 can carry its own blocking.
 
-The output compares the fixed width with a width per group of 4 to 32 values,
-with deltas between neighbors, and for floating-point data with a quantization
-step of twice `eps`, plus the bits that a width per value would need.
+The output compares the fixed width with a width per group of 4 to 64 values
+(with exceptions for groups of 8), with deltas between neighbors, and for
+floating-point data with a quantization step of twice `eps`, plus the bits that
+a width per value would need.
 With MHD files, a second table splits each group size into the payload and
 the cost of storing the widths: one byte per width, 7 bits per width, a base
 per 8 groups with 3- or 2-bit offsets (`base+3`, `base+2`), and the entropy
 of the widths as a bound. Each row gives bits per value and the ratio.
+
+A third table estimates the bits of other ways to store a group of 8, without
+implementing them: a zero mask with only the nonzeros packed, exceptions (the
+values above a regular width patched separately), both, the same for deltas,
+per block deltas along each axis of the block (shape from the MHD extension),
+per block groups of 8 in each order of the block's axes (and the best order per
+block), per block sub-boxes with one width each (a k-d tree,
+`libxs_kdtree_partition`), and dyadic trees of 4 to 64 values in stream order.
+The row "kd-tree rows, exceptions" is a prototype of such a format: every block
+as sub-boxes of whole rows (split at the middle of axis 1 or 2) with exceptions,
+encoded, decoded, and checked, with a length word per block. `KDLEAF=n` in the
+environment lets it split only into leaves of at least `n` values.
+
+With `RECORD=n` in the environment, every stream is packed in records of `n`
+values (CP2K: 1024), each with a length word, and every record decodes into a
+reused buffer, which keeps the decoded values in cache as CP2K does.
+
+With a Fortran compiler (unless `FORTRAN=0`), the output also has a group of 8
+in Fortran (`vpack.f`): eight interleaved streams in plain array syntax.

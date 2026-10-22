@@ -11,7 +11,7 @@ CFLAGS = $(NULL)
 DFLAGS = $(NULL)
 
 BLAS = 0
-OMP = 0
+OMP = 1
 SYM = 1
 SSE = 0
 
@@ -38,8 +38,21 @@ HEADERS := $(wildcard $(INCDIR)/*.h) \
            $(DEPDIR)/libxs/libxs_source.h
 CSOURCS := $(wildcard $(SRCDIR)/*.c)
 COBJCTS := $(patsubst %,$(BLDDIR)/%,$(notdir $(CSOURCS:.c=-c.o)))
-SOURCES := $(CSOURCS)
+# Fortran variant (vpack.f) unless no Fortran compiler is found or FORTRAN=0
+ifneq (,$(strip $(FC)))
+  F77SRCS := $(wildcard $(SRCDIR)/*.f)
+  F77OBJS := $(patsubst %,$(BLDDIR)/%,$(notdir $(F77SRCS:.f=-f77.o)))
+  DFLAGS += -DPACK_FORTRAN
+  # the main program is C
+  ifneq (0,$(INTEL))
+  ifeq (,$(strip $(GFC)))
+    FLDMAIN := -nofor-main
+  endif
+  endif
+endif
+SOURCES := $(CSOURCS) $(F77SRCS)
 OBJECTS := $(COBJCTS)
+FTNOBJS := $(F77OBJS)
 XFILES := $(OUTDIR)/$(OUTNAME).x
 
 .PHONY: all
@@ -48,14 +61,22 @@ all: $(XFILES)
 .PHONY: compile
 compile: $(OBJECTS) $(FTNOBJS)
 
+ifneq (,$(strip $(FTNOBJS)))
+$(OUTDIR)/$(OUTNAME).x: $(OUTDIR)/.make $(OBJECTS) $(FTNOBJS) $(XLIB)
+	$(FLD) -o $@ $(OBJECTS) $(FTNOBJS) $(XLIB) $(FLDMAIN) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+else
 $(OUTDIR)/$(OUTNAME).x: $(OUTDIR)/.make $(OBJECTS) $(XLIB)
 	$(LD) -o $@ $(OBJECTS) $(XLIB) $(SLDFLAGS) $(LDFLAGS) $(CLDFLAGS)
+endif
 
 $(BLDDIR)/%-cpp.o: $(SRCDIR)/%.cpp .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc
 	$(CXX) $(DFLAGS) $(IFLAGS) $(CXXFLAGS) $(CTARGET) -c $< -o $@
 
 $(BLDDIR)/%-c.o: $(SRCDIR)/%.c .state $(BLDDIR)/.make $(HEADERS) Makefile $(DEPDIR)/Makefile.inc
 	$(CC) $(DFLAGS) $(IFLAGS) $(CFLAGS) $(CTARGET) -c $< -o $@
+
+$(BLDDIR)/%-f77.o: $(SRCDIR)/%.f .state $(BLDDIR)/.make Makefile $(DEPDIR)/Makefile.inc
+	$(FC) $(FCMTFLAGS) $(DFLAGS) $(IFLAGS) $(FCFLAGS) $(FTARGET) -c $< -o $@ $(FMFLAGS) $(BLDDIR)
 
 .PHONY: clean
 clean:
