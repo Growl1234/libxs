@@ -447,17 +447,18 @@
 #define LIBXS_INTRINSICS_BITSCANBWD32_SW(N) LIBXS_INTRINSICS_BITSCANBWD_SW32((unsigned int)(N))
 #define LIBXS_INTRINSICS_BITSCANBWD64_SW(N) LIBXS_INTRINSICS_BITSCANBWD_SW64((unsigned long long)(N))
 
-#if defined(__GNUC__) && !defined(__NO_INTRINSICS)
+/* Compiler builtins, not target-specific intrinsics: independent of __NO_INTRINSICS. */
+#if defined(__GNUC__)
 # define LIBXS_INTRINSICS_BITSCANFWD32(N) (0 != (N) ? __builtin_ctz(N) : 0)
 # define LIBXS_INTRINSICS_BITSCANFWD64(N) (0 != (N) ? __builtin_ctzll(N) : 0)
 # define LIBXS_INTRINSICS_BITSCANBWD32(N) (0 != (N) ? (31 - __builtin_clz(N)) : 0)
 # define LIBXS_INTRINSICS_BITSCANBWD64(N) (0 != (N) ? (63 - __builtin_clzll(N)) : 0)
-#elif !defined(_WIN32) || defined(__NO_INTRINSICS) /* fallback implementation */
+#elif !defined(_MSC_VER) /* fallback implementation */
 # define LIBXS_INTRINSICS_BITSCANFWD32 LIBXS_INTRINSICS_BITSCANFWD32_SW
 # define LIBXS_INTRINSICS_BITSCANFWD64 LIBXS_INTRINSICS_BITSCANFWD64_SW
 # define LIBXS_INTRINSICS_BITSCANBWD32 LIBXS_INTRINSICS_BITSCANBWD32_SW
 # define LIBXS_INTRINSICS_BITSCANBWD64 LIBXS_INTRINSICS_BITSCANBWD64_SW
-#else /* Windows */
+#else /* MSVC: _BitScanForward/_BitScanReverse on every target (libxs_utils.c) */
 # if !defined(_WIN64)
 # define LIBXS_INTRINSICS_BITSCANFWD64 LIBXS_INTRINSICS_BITSCANFWD64_SW
 # define LIBXS_INTRINSICS_BITSCANBWD64 LIBXS_INTRINSICS_BITSCANBWD64_SW

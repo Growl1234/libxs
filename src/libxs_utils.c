@@ -8,6 +8,9 @@
 * SPDX-License-Identifier: BSD-3-Clause                                       *
 ******************************************************************************/
 #include <libxs/libxs_utils.h>
+#if !defined(__GNUC__) && defined(_MSC_VER)
+# include <intrin.h>
+#endif
 
 
 LIBXS_API int LIBXS_INTRINSICS_BITSCANFWD32_SW(unsigned int n)
@@ -26,7 +29,7 @@ LIBXS_API int LIBXS_INTRINSICS_BITSCANFWD64_SW(unsigned long long n)
 }
 
 
-#if defined(_WIN32) && !defined(__NO_INTRINSICS)
+#if !defined(__GNUC__) && defined(_MSC_VER) /* compiler intrinsics on every target, as libxs_utils.h */
 
 LIBXS_API unsigned int LIBXS_INTRINSICS_BITSCANFWD32(unsigned int n)
 {
