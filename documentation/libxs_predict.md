@@ -217,6 +217,7 @@ the k nearest neighbors.
 ```C
 void libxs_predict_set_central(libxs_predict_t* model, int mode);
 void libxs_predict_set_neighbors(libxs_predict_t* model, int k);
+void libxs_predict_set_reach(libxs_predict_t* model, int nclusters);
 void libxs_predict_set_coordinate(libxs_predict_t* model,
   int coordinate);
 void libxs_predict_set_floor(libxs_predict_t* model, double floor);
@@ -229,6 +230,7 @@ void libxs_predict_set_forest(libxs_predict_t* model,
 | ------------- | ---------------------------------------------------------------------- |
 | `set_central` | Vote of a many-valued output: 1 median, 2 mean, 0 (default) chosen per output at build; negative also prints the choice. |
 | `set_neighbors` | Neighbors the vote reads: k>0 pins it, 0 (default) derives it, k<0 selects it per output at build by trial. Persisted. |
+| `set_reach`   | Further clusters a flat vote gathers from, scanned by the nearest any member can be and stopped once none can hold one of the k nearest: n>0 at most n, n<0 decided at build by trial (with or without at most \|n\|), 0 (default) that trial at 4, `LIBXS_PREDICT_REACH_NONE` none. Set before build; persisted. |
 | `set_coordinate` | Coordinate an input contributes to the distance (`libxs_predict_coord_t`, default `LIBXS_PREDICT_AUTO_COORD`). |
 | `set_floor`   | Floor (0..1) the confidence rescalings pull toward; 0 (default) disables them. Persisted. |
 | `set_missing` | Non-zero: `load_csv` admits rows with an empty or unparsable input field as absent (NaN) instead of skipping them (default 0). Call before push. |
@@ -737,5 +739,6 @@ All are read at build and default to the behavior without them.
 | `LIBXS_PREDICT_WINDOW_FOLDS`    | Held-back splits scored per candidate window when `set_series` is given a negative window (default 3, at least 1). |
 | `LIBXS_PREDICT_DECOMPOSE_FOLDS` | Folds scored per candidate when the decomposition or the coordinate is chosen by trial (default 3 for a series, 1 otherwise; 0 or less keeps the default). |
 | `LIBXS_PREDICT_REFINE`          | Overrides `libxs_predict_set_refine` (same values). |
+| `LIBXS_PREDICT_REACH`           | Overrides `libxs_predict_set_reach` at build (same values, `none` for `LIBXS_PREDICT_REACH_NONE`). |
 | `LIBXS_PREDICT_RF_FRONTIER`     | N > 0 builds each forest tree in up to N (at most 64) frontier parts; the trees are the same. Off by default. |
 | `LIBXS_PREDICT_RF_RATE`         | Shrinkage of the forest's boosted corrections (default 0.1, applied to regression outputs). Setting it also enables corrections for classification outputs; 0 or less disables them. |

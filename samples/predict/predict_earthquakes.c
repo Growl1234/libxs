@@ -120,6 +120,7 @@ int main(int argc, char* argv[])
                 ? "selected at build" : "requested");
             fprintf(stdout, "Built: %d clusters, %.1fx compression, order=%d"
               " (%.2f s)\n", qi.nclusters, qi.compression, qi.order, dt_build);
+            fprintf(stdout, "Reach: %d further clusters\n", qi.reach);
             tick = libxs_timer_tick();
             for (i = train_end; i < total; ++i) {
               double predicted[NOUTPUTS], expected[NOUTPUTS], err;

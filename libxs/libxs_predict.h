@@ -19,6 +19,8 @@
  * fingerprint-guided auto-detection at build time.
  */
 #define LIBXS_PREDICT_AUTO_WINDOW 0
+/** libxs_predict_set_reach: no cluster beyond the routed one (see there). */
+#define LIBXS_PREDICT_REACH_NONE (-2147483647 - 1)
 
 
 /** Prediction mode flags (ORable). */
@@ -210,6 +212,11 @@ LIBXS_EXTERN_C typedef struct libxs_predict_query_t {
    * classes, which may be more or fewer.
    */
   int ncoord;
+  /**
+   * Further clusters a flat vote gathers from (see set_reach): the reach in
+   * effect, which a trial at build may have chosen; 0 for none.
+   */
+  int reach;
 } libxs_predict_query_t;
 
 /** Kind of quantity libxs_predict_prob reports for an output. */
@@ -562,6 +569,43 @@ LIBXS_API void libxs_predict_set_decompose(libxs_predict_t* model,
  * way the built one did.
  */
 LIBXS_API void libxs_predict_set_neighbors(libxs_predict_t* model, int k);
+
+/**
+ * Let the vote of a flat cluster also gather from further clusters. The k
+ * nearest of all scanned entries vote, so a query near a cluster's edge reads
+ * the neighbours beyond it instead of the cluster's farther members.
+ *
+ * Clusters are scanned by the least distance any of their members can have, and
+ * the scan stops once no cluster left can hold an entry nearer than the k-th
+ * kept, or after the given number of clusters. Uncapped, the vote reads the
+ * corpus's k nearest; inputs that may be absent void the bound, and the scan
+ * then runs to the cap.
+ *
+ * nclusters > 0 applies the reach. nclusters < 0 lets the build decide by trial
+ * whether to apply |nclusters|: every stored entry is held out and answered with
+ * and without it, and it is applied when the outputs the vote answers err less
+ * on average with it. 0 (default) is that trial at a reach of 4, and
+ * LIBXS_PREDICT_REACH_NONE gathers from the routed cluster alone.
+ * LIBXS_PREDICT_REACH overrides the setting at build ("none" for the latter).
+ *
+ * Measured at a reach of 4 with the derived neighbour count: crystal 76.8 to
+ * 79.0% accurate (one cluster for the whole corpus reaches 78.7%), scanning 3.8
+ * further clusters per query; a GPU-tuning table's held-out shapes 63.0 to 63.4%
+ * exact with gated precision 69.3 to 70.4% at the same coverage, scanning 2.8.
+ * The trial chose the reach on both. On a checkerboard the confidence ranks
+ * better at every coverage, while the error over a dense grid of queries falls
+ * on the axis-aligned board and rises on the turned one; the trial, which reads
+ * the stored cells, chose the reach there too. Uncapped, the scan reached the
+ * same answers while visiting up to 20 times the clusters.
+ *
+ * The build's leave-one-out stages gather the same way, so the setting belongs
+ * before the build. The reach in effect is saved and a loaded model gathers with
+ * it; a model saved without one gathers from its routed cluster. A timeseries
+ * model, compression, the probability readers and the forest read their own
+ * cluster or trees as before, and hKNN, whose per-output clusters answer, runs
+ * no trial.
+ */
+LIBXS_API void libxs_predict_set_reach(libxs_predict_t* model, int nclusters);
 
 /**
  * Set the coordinate each input contributes to the neighbour distance

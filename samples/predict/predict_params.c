@@ -214,6 +214,7 @@ int main(int argc, char* argv[])
               fprintf(stdout, "Built: %d clusters, %.1fx compression, order=%d"
                 " (%d entries, %.2f s)\n", qi.nclusters, qi.compression,
                 qi.order, qi.nentries, dt_build);
+              fprintf(stdout, "Reach: %d further clusters\n", qi.reach);
             }
             { const int nval = LIBXS_MAX(
                 (int)(ntotal * eval_fraction + 0.5), 1);

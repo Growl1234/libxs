@@ -54,15 +54,6 @@ LIBXS_EXTERN_C typedef struct internal_libxs_predict_hknn_split_ctx_t {
   int target_output;
   int target_group;
   const int* output_groups;
-  /**
-   * The splits made, in the order the partition makes them (preorder), each by
-   * the range of the order array its node holds, so the tree can be rebuilt.
-   * base is that array, NULL where no tree is kept.
-   */
-  const int* base;
-  int *rec_lo, *rec_cnt, *rec_pos, *rec_feat;
-  double* rec_thr;
-  int nrec, maxrec;
 } internal_libxs_predict_hknn_split_ctx_t;
 
 
@@ -258,7 +249,7 @@ LIBXS_API_INLINE void internal_libxs_predict_hknn_work(
 
 
 LIBXS_API_INLINE int internal_libxs_predict_hknn_split(
-  int* dim, int* pos, const double* pts, int* idx,
+  int* dim, int* pos, double* threshold, const double* pts, int* idx,
   int count, int depth, int nleaves, void* ctx)
 {
   internal_libxs_predict_hknn_split_ctx_t* state =
@@ -373,17 +364,10 @@ LIBXS_API_INLINE int internal_libxs_predict_hknn_split(
       for (i = 0; i < count; ++i) idx[i] = pairs[i].idx;
       *dim = best_feat;
       *pos = best_pos + 1;
+      /* midway between the two values the boundary separates (inputs, not pts) */
+      *threshold = 0.5 * (model->entries[idx[best_pos]].inputs[best_feat]
+        + model->entries[idx[best_pos + 1]].inputs[best_feat]);
       result = 0;
-      if (NULL != state->base && state->nrec < state->maxrec) {
-        const int r = state->nrec++;
-        state->rec_lo[r] = (int)(idx - state->base);
-        state->rec_cnt[r] = count;
-        state->rec_pos[r] = best_pos + 1;
-        state->rec_feat[r] = best_feat;
-        /* midway between the two values the boundary separates */
-        state->rec_thr[r] = 0.5 * (model->entries[idx[best_pos]].inputs[best_feat]
-          + model->entries[idx[best_pos + 1]].inputs[best_feat]);
-      }
     }
   }
   return result;
@@ -459,80 +443,6 @@ LIBXS_API_INLINE void internal_libxs_predict_hknn_team_free(
 
 
 /**
- * The tree of one partition, rebuilt from the splits it recorded. The partition
- * takes a node, then its left part, then its right part, so the records arrive
- * in the preorder the tree is stored in, and a node was split exactly when the
- * next record holds its range. A leaf names the cluster its entries were given.
- * Where this cannot complete the tree is left empty, and a query is routed as
- * before by the cluster of its nearest entry.
- */
-LIBXS_API_INLINE void internal_libxs_predict_hknn_tree_emit(
-  internal_libxs_predict_hknn_tree_t* tree,
-  const internal_libxs_predict_hknn_split_ctx_t* state,
-  int p, const int order[], const int assign[])
-{
-  const int nmax = 2 * state->nrec + 1;
-  int stack_pool = 0, sp = 0, r = 0, ok = 1;
-  int* const stack = (int*)LIBXS_PREDICT_MALLOC(
-    (size_t)3 * (state->nrec + 1) * sizeof(int), stack_pool);
-  tree->nnodes = 0;
-  tree->feature = (int*)malloc((size_t)nmax * sizeof(int));
-  tree->threshold = (double*)malloc((size_t)nmax * sizeof(double));
-  tree->next = (int*)malloc((size_t)nmax * sizeof(int));
-  if (NULL == stack || NULL == tree->feature || NULL == tree->threshold
-    || NULL == tree->next || 0 >= p)
-  {
-    ok = 0;
-  }
-  else {
-    stack[0] = 0;
-    stack[1] = p;
-    stack[2] = -1;
-    sp = 1;
-  }
-  while (0 < sp && 0 != ok) {
-    const int lo = stack[3 * (sp - 1)], cnt = stack[3 * (sp - 1) + 1];
-    const int parent = stack[3 * (sp - 1) + 2], node = tree->nnodes;
-    --sp;
-    if (nmax <= node) ok = 0;
-    else {
-      ++tree->nnodes;
-      if (0 <= parent) tree->next[parent] = node;
-      if (r < state->nrec && state->rec_lo[r] == lo && state->rec_cnt[r] == cnt) {
-        const int pos = state->rec_pos[r];
-        tree->feature[node] = state->rec_feat[r];
-        tree->threshold[node] = state->rec_thr[r];
-        tree->next[node] = -1;
-        ++r;
-        /* the right part waits; the left one is the next node */
-        stack[3 * sp] = lo + pos;
-        stack[3 * sp + 1] = cnt - pos;
-        stack[3 * sp + 2] = node;
-        stack[3 * sp + 3] = lo;
-        stack[3 * sp + 4] = pos;
-        stack[3 * sp + 5] = -1;
-        sp += 2;
-      }
-      else {
-        tree->feature[node] = -1;
-        tree->threshold[node] = 0;
-        tree->next[node] = assign[order[lo]];
-      }
-    }
-  }
-  if (0 == ok || r != state->nrec) {
-    free(tree->feature);
-    free(tree->threshold);
-    free(tree->next);
-    tree->feature = tree->next = NULL;
-    tree->threshold = NULL;
-    tree->nnodes = 0;
-  }
-  LIBXS_PREDICT_FREE(stack, stack_pool);
-}
-
-
-/**
  * Partition the corpus by kd-tree, splitting each node on the feature and
  * boundary that best separate its outputs. Called by the builder; where the
  * model carries a team, the other tasks score the features of the large nodes
@@ -579,13 +489,10 @@ LIBXS_API_INLINE void internal_libxs_predict_hknn_partition(
     state.target_output = -1;
     state.target_group = -1;
     state.output_groups = NULL;
-    state.base = NULL;
-    state.rec_lo = state.rec_cnt = state.rec_pos = state.rec_feat = NULL;
-    state.rec_thr = NULL;
-    state.nrec = state.maxrec = 0;
     config.min_leaf = min_leaf;
     config.split = internal_libxs_predict_hknn_split;
     config.ctx = &state;
+    config.nodes = NULL;
     if (n > 1) {
       /**
        * One tree per output. Grouping outputs whose Cramer's V reached 0.5 read
@@ -614,45 +521,34 @@ LIBXS_API_INLINE void internal_libxs_predict_hknn_partition(
       if (NULL != model->hknn_po_assignments
         && NULL != model->hknn_po_nclusters)
       {
-        /* a split per leaf but one, and a tree has fewer leaves than entries */
-        int rec_pool = 0, thr_pool = 0;
-        int* const rec = (int*)LIBXS_PREDICT_MALLOC(
-          (size_t)4 * p * sizeof(int), rec_pool);
-        double* const thr = (double*)LIBXS_PREDICT_MALLOC(
-          (size_t)p * sizeof(double), thr_pool);
-        if (NULL != rec && NULL != thr && NULL != model->hknn_po_trees) {
-          state.rec_lo = rec;
-          state.rec_cnt = rec + p;
-          state.rec_pos = rec + 2 * p;
-          state.rec_feat = rec + 3 * p;
-          state.rec_thr = thr;
-          state.maxrec = p;
-        }
         state.output_groups = groups;
         for (g = 0; g < ngroups; ++g) {
           model->hknn_po_assignments[g] = (int*)calloc(
             (size_t)p, sizeof(int));
           if (NULL != model->hknn_po_assignments[g]) {
+            /* the partition writes the tree it grows, at most 2p-1 nodes; a
+             * group without one routes by its nearest entry */
+            internal_libxs_predict_hknn_tree_t* const tree = (NULL != model->hknn_po_trees)
+              ? (model->hknn_po_trees + g) : NULL;
+            if (NULL != tree && 0 < p) {
+              tree->nodes = (libxs_kdtree_node_t*)malloc(
+                (size_t)(2 * p - 1) * sizeof(libxs_kdtree_node_t));
+            }
             state.target_output = -1;
             state.target_group = g;
             for (i = 0; i < p; ++i) order[i] = i;
-            state.base = (0 < state.maxrec) ? order : NULL;
-            state.nrec = 0;
+            config.nodes = (NULL != tree) ? tree->nodes : NULL;
             model->hknn_po_nclusters[g] = libxs_kdtree_partition(
               pts, order, p, m, m,
               model->hknn_po_assignments[g], &config);
-            if (NULL != state.base) {
-              internal_libxs_predict_hknn_tree_emit(model->hknn_po_trees + g,
-                &state, p, order, model->hknn_po_assignments[g]);
+            if (NULL != tree && NULL != tree->nodes) {
+              tree->nnodes = LIBXS_MAX(2 * model->hknn_po_nclusters[g] - 1, 0);
             }
           }
         }
-        state.base = NULL;
+        config.nodes = NULL;
         state.output_groups = NULL;
         state.target_group = -1;
-        state.maxrec = 0;
-        LIBXS_PREDICT_FREE(thr, thr_pool);
-        LIBXS_PREDICT_FREE(rec, rec_pool);
       }
       state.target_output = -1;
     }
@@ -885,16 +781,17 @@ LIBXS_API_INLINE int internal_libxs_predict_hknn_route(const libxs_predict_t* mo
   if (NULL != inputs && NULL != model->hknn_po_trees
     && 0 < model->hknn_po_trees[g].nnodes)
   {
-    const internal_libxs_predict_hknn_tree_t* const tree = model->hknn_po_trees + g;
+    const libxs_kdtree_node_t* const nodes = model->hknn_po_trees[g].nodes;
     int node = 0, done = 0;
+    /* libxs_kdtree_descend would send an absent input right; it routes instead */
     while (0 == done) {
-      const int f = tree->feature[node];
+      const int f = nodes[node].dim;
       if (0 > f) {
-        result = tree->next[node];
+        result = nodes[node].next;
         done = 1;
       }
       else if (LIBXS_NOTNAN(inputs[f])) {
-        node = (inputs[f] < tree->threshold[node]) ? (node + 1) : tree->next[node];
+        node = (inputs[f] < nodes[node].threshold) ? (node + 1) : nodes[node].next;
       }
       else done = 1;
     }

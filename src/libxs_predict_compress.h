@@ -46,7 +46,7 @@ LIBXS_API_INLINE void internal_libxs_predict_compress(
               double conf = 0, var = 0;
               const double actual = cl->raw_outputs[(size_t)li * n + j];
               const double predicted = internal_libxs_predict_classify2(
-                cl, mc, cl->kd_pts + (size_t)li * mc, j, n,
+                model, -1, cl, mc, cl->kd_pts + (size_t)li * mc, j, n,
                 cl->ndistinct[j], 0, li, dropped, NULL, -1, &conf, &var,
                 0, NULL, NULL,
                 internal_libxs_predict_central(model, j), NULL,

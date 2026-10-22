@@ -167,6 +167,7 @@ int main(int argc, char* argv[])
               qi.ncoord, qi.ninputs);
             fprintf(stdout, "Built: %d clusters, %.1fx compression, order=%d"
               " (%.2f s)\n", qi.nclusters, qi.compression, qi.order, dt_build);
+            fprintf(stdout, "Reach: %d further clusters\n", qi.reach);
             tick = libxs_timer_tick();
             for (t = train_end; t < total; ++t) {
               double inputs[NFEAT], predicted;

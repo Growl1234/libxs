@@ -198,12 +198,12 @@ LIBXS_API_INLINE size_t internal_libxs_predict_hknn_tree_write(unsigned char* ds
   if (NULL != dst) memcpy(dst, &nn, sizeof(nn));
   result += sizeof(nn);
   for (k = 0; k < nn; ++k) {
-    const uint16_t f = (uint16_t)((0 <= tree->feature[k]) ? tree->feature[k] : UINT16_MAX);
-    const uint32_t next = (uint32_t)tree->next[k];
+    const uint16_t f = (uint16_t)((0 <= tree->nodes[k].dim) ? tree->nodes[k].dim : UINT16_MAX);
+    const uint32_t next = (uint32_t)tree->nodes[k].next;
     if (NULL != dst) memcpy(dst + result, &f, sizeof(f));
     result += sizeof(f);
     if (UINT16_MAX != f) {
-      if (NULL != dst) memcpy(dst + result, tree->threshold + k, sizeof(double));
+      if (NULL != dst) memcpy(dst + result, &tree->nodes[k].threshold, sizeof(double));
       result += sizeof(double);
     }
     if (NULL != dst) memcpy(dst + result, &next, sizeof(next));
@@ -469,9 +469,10 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
   required += 1;
   /* the entry-weight and input-hash flags, introduced with version 2 */
   required += 2 * sizeof(uint8_t);
-  /* the resolved neighbour counts, one byte each behind a flag */
+  /* the resolved neighbour counts, one byte each behind a flag, and the reach */
   required += sizeof(uint8_t);
   if (NULL != model->k_sel) required += (size_t)n;
+  if (0 < model->reach_eff) required += sizeof(uint8_t);
   if (NULL != model->hknn_po_assignments && NULL != model->hknn_po_clusters) {
     const int ng = (model->hknn_ngroups > 0) ? model->hknn_ngroups : n;
     required += sizeof(uint16_t) + (size_t)n * sizeof(uint16_t);
@@ -518,11 +519,13 @@ LIBXS_API_INLINE int internal_libxs_predict_save_hknn(
     /* introduced with version 2; an older file simply has no weights */
     WRITE_U8(0 != model->has_eweight ? 1 : 0);
     WRITE_U8(has_ih);
-    WRITE_U8(NULL != model->k_sel ? 1 : 0);
+    /* the flag's second bit, unset in an older version-2 file: a reach follows */
+    WRITE_U8((NULL != model->k_sel ? 1 : 0) | (0 < model->reach_eff ? 2 : 0));
     if (NULL != model->k_sel) {
       int ks;
       for (ks = 0; ks < model->noutputs; ++ks) WRITE_U8(model->k_sel[ks]);
     }
+    if (0 < model->reach_eff) WRITE_U8(LIBXS_MIN(model->reach_eff, 255));
     /* introduced with version 2; an older file has no rank coordinate */
     WRITE_U16((NULL != model->input_knot ? LIBXS_PREDICT_KNOTS : 0)
       | (NULL != model->input_score ? LIBXS_PREDICT_SCOREFLAG : 0));
@@ -663,8 +666,9 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       required += (size_t)model->noutputs * sizeof(double);
     }
     required += sizeof(uint8_t); /* whether input hashes follow the clusters */
-    /* the resolved neighbour counts, one byte each behind a flag */
+    /* the resolved neighbour counts, one byte each behind a flag, and the reach */
     if (NULL != model->k_sel) required += (size_t)model->noutputs;
+    if (0 < model->reach_eff) required += sizeof(uint8_t);
     required += (size_t)model->ninputs * 2 * sizeof(double);
     if (NULL != model->input_knot) {
       required += (size_t)model->ninputs * LIBXS_PREDICT_KNOTS * sizeof(double);
@@ -789,11 +793,12 @@ LIBXS_API int libxs_predict_save(const libxs_predict_t* model, void* buffer, siz
       /* introduced with version 2; an older file simply has no weights */
       WRITE_U8(has_ew);
       WRITE_U8(has_ih);
-      /* introduced with version 2; an older file derives the count instead */
-      WRITE_U8(NULL != model->k_sel ? 1 : 0);
+      /* version 2: an older file derives the count; one without bit 2 has no reach */
+      WRITE_U8((NULL != model->k_sel ? 1 : 0) | (0 < model->reach_eff ? 2 : 0));
       if (NULL != model->k_sel) {
         for (j = 0; j < model->noutputs; ++j) WRITE_U8(model->k_sel[j]);
       }
+      if (0 < model->reach_eff) WRITE_U8(LIBXS_MIN(model->reach_eff, 255));
       WRITE_U16(model->order);
       WRITE_U8(model->iterations);
       WRITE_U32(model->nentries);
@@ -1122,12 +1127,8 @@ LIBXS_API_INLINE int internal_libxs_predict_hknn_tree_read(const unsigned char**
     result = (INT_MAX > nn) ? internal_libxs_predict_avail(*src, end, (size_t)nn,
       sizeof(uint16_t) + sizeof(uint32_t)) : EXIT_FAILURE;
     if (EXIT_SUCCESS == result) {
-      tree->feature = (int*)malloc((size_t)nn * sizeof(int));
-      tree->threshold = (double*)malloc((size_t)nn * sizeof(double));
-      tree->next = (int*)malloc((size_t)nn * sizeof(int));
-      if (NULL == tree->feature || NULL == tree->threshold || NULL == tree->next) {
-        result = EXIT_FAILURE;
-      }
+      tree->nodes = (libxs_kdtree_node_t*)malloc((size_t)nn * sizeof(libxs_kdtree_node_t));
+      if (NULL == tree->nodes) result = EXIT_FAILURE;
       else tree->nnodes = (int)nn;
     }
     for (k = 0; k < nn && EXIT_SUCCESS == result; ++k) {
@@ -1148,9 +1149,9 @@ LIBXS_API_INLINE int internal_libxs_predict_hknn_tree_read(const unsigned char**
         else if ((uint32_t)po_nc <= next) result = EXIT_FAILURE;
       }
       if (EXIT_SUCCESS == result) {
-        tree->feature[k] = (UINT16_MAX != f) ? (int)f : -1;
-        tree->threshold[k] = thr;
-        tree->next[k] = (int)next;
+        tree->nodes[k].dim = (UINT16_MAX != f) ? (int)f : -1;
+        tree->nodes[k].threshold = thr;
+        tree->nodes[k].next = (int)next;
       }
     }
   }
@@ -1436,7 +1437,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
   uint16_t ninp = 0, nout = 0, nclust = 0, has_weights = 0, nknots = 0;
   int ok = EXIT_SUCCESS, c, j, has_ew = 0, has_ih = 0;
   uint8_t* ksel = NULL;
-  int ksel_pool = 0;
+  int ksel_pool = 0, reach = 0;
   ok = internal_libxs_predict_read(&src, end, &ninp, 2);
   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &nout, 2);
   if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &nclust, 2);
@@ -1454,7 +1455,7 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
   if (EXIT_SUCCESS == ok && 1 < version) {
     uint8_t v = 0;
     ok = internal_libxs_predict_read(&src, end, &v, 1);
-    if (EXIT_SUCCESS == ok && 0 != v) {
+    if (EXIT_SUCCESS == ok && 0 != (v & 1)) {
       ksel = (uint8_t*)LIBXS_PREDICT_MALLOC((size_t)nout, ksel_pool);
       if (NULL == ksel) {
         ok = EXIT_FAILURE;
@@ -1465,12 +1466,21 @@ LIBXS_API_INLINE libxs_predict_t* internal_libxs_predict_load_hknn(
         }
       }
     }
+    if (EXIT_SUCCESS == ok && 0 != (v & 2)) {
+      uint8_t r = 0;
+      ok = internal_libxs_predict_read(&src, end, &r, 1);
+      reach = r;
+    }
   }
   if (EXIT_SUCCESS == ok) {
     model = libxs_predict_create((int)ninp, (int)nout);
     if (NULL == model) ok = EXIT_FAILURE;
     /* create() stamps the current version; this one came from a file */
     else model->version = (int)version;
+  }
+  /* what the file holds is the reach in effect, kept without a trial to rerun */
+  if (EXIT_SUCCESS == ok) {
+    libxs_predict_set_reach(model, (0 < reach) ? reach : LIBXS_PREDICT_REACH_NONE);
   }
   if (EXIT_SUCCESS == ok && NULL != ksel) {
     model->k_sel = (int*)malloc((size_t)nout * sizeof(int));
@@ -2105,7 +2115,7 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
       if (EXIT_SUCCESS == ok && 1 < version) {
         uint8_t v = 0;
         ok = internal_libxs_predict_read(&src, end, &v, 1);
-        if (EXIT_SUCCESS == ok && 0 != v) {
+        if (EXIT_SUCCESS == ok && 0 != (v & 1)) {
           model->k_sel = (int*)malloc((size_t)model->noutputs * sizeof(int));
           if (NULL == model->k_sel) ok = EXIT_FAILURE;
           else {
@@ -2116,6 +2126,12 @@ LIBXS_API libxs_predict_t* libxs_predict_load(const void* buffer, size_t size)
               model->k_sel[ks] = (int)kv;
             }
           }
+        }
+        if (EXIT_SUCCESS == ok) {
+          uint8_t r = 0;
+          if (0 != (v & 2)) ok = internal_libxs_predict_read(&src, end, &r, 1);
+          /* what the file holds is the reach in effect, kept without a trial to rerun */
+          libxs_predict_set_reach(model, (0 < r) ? (int)r : LIBXS_PREDICT_REACH_NONE);
         }
       }
       if (EXIT_SUCCESS == ok) ok = internal_libxs_predict_read(&src, end, &order, 2);

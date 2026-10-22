@@ -284,6 +284,9 @@ LIBXS_API_INLINE double internal_libxs_predict_decompose_probe(
      * measured as it would be built.
      */
     probe->kreq = model->kreq;
+    /* the reach in effect, as a fixed one: a probe runs no trial of its own */
+    probe->reach = (0 < model->reach_eff) ? model->reach_eff : LIBXS_PREDICT_REACH_NONE;
+    probe->reach_eff = model->reach_eff;
     { int nfit = 0, stride, seen = 0;
       for (i = 0; i < model->nentries; ++i) {
         if (0 == role[i]) ++nfit;
@@ -558,6 +561,8 @@ internal_libxs_predict_neighbors_prep(libxs_predict_t* model, int ntasks)
       probe->smooth = model->smooth;
       probe->floor = model->floor;
       probe->refine = model->refine;
+      probe->reach = (0 < model->reach_eff) ? model->reach_eff : LIBXS_PREDICT_REACH_NONE;
+      probe->reach_eff = model->reach_eff;
       probe->missing_mode = model->missing_mode;
       probe->rf_ntrees = model->rf_ntrees;
       probe->rf_depth = model->rf_depth;
@@ -614,7 +619,9 @@ LIBXS_API_INLINE void internal_libxs_predict_neighbors_loo(
         for (t = 0; t < scan.nfound; ++t) {
           for (u = t; 0 < u && (scan.dists[order[u - 1]] > scan.dists[t]
             || (scan.dists[order[u - 1]] == scan.dists[t]
-              && scan.idx[order[u - 1]] > scan.idx[t])); --u)
+              && (scan.cls[order[u - 1]] > scan.cls[t]
+                || (scan.cls[order[u - 1]] == scan.cls[t]
+                  && scan.idx[order[u - 1]] > scan.idx[t])))); --u)
           {
             order[u] = order[u - 1];
           }
@@ -630,7 +637,8 @@ LIBXS_API_INLINE void internal_libxs_predict_neighbors_loo(
             ? cl->raw_outputs[(size_t)scan.exact_idx * n + j]
             : cl->raw_outputs[j];
           for (t = 0; t < scan.nfound; ++t) {
-            cand[t] = cl->raw_outputs[(size_t)scan.idx[order[t]] * n + j];
+            cand[t] = internal_libxs_predict_scan_value(model, cl, &scan,
+              order[t], n, j);
           }
           for (ci = 0; ci < LIBXS_PREDICT_NNEIGHBORS; ++ci) {
             const int kc = LIBXS_MIN(internal_libxs_predict_neighbors_cand(ci),
