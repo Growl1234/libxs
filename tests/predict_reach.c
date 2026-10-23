@@ -136,9 +136,12 @@ int main(void)
   libxs_predict_t* deflt = build_model(4, 0);
   int result = (NULL != one && NULL != own && NULL != all && NULL != tried
     && NULL != deflt) ? EXIT_SUCCESS : EXIT_FAILURE;
-  /* the reach changes what the vote reads, or it never arrived */
-  if (EXIT_SUCCESS == result && 0 == differ(own, all)) {
-    fprintf(stderr, "a reach changed no answer\n");
+  /**
+   * The reach changes what the vote reads, or it never arrived. The shares show
+   * it where the winners agree: a discrete answer is reported as voted.
+   */
+  if (EXIT_SUCCESS == result && 0 == differ_share(own, all)) {
+    fprintf(stderr, "a reach changed no vote\n");
     result = EXIT_FAILURE;
   }
   /**
@@ -153,11 +156,15 @@ int main(void)
     result = EXIT_FAILURE;
   }
   /* a trial, named or the default, settles on one of the two it compared */
-  if (EXIT_SUCCESS == result && 0 != differ(own, tried) && 0 != differ(all, tried)) {
+  if (EXIT_SUCCESS == result && 0 != differ(own, tried) + differ_share(own, tried)
+    && 0 != differ(all, tried) + differ_share(all, tried))
+  {
     fprintf(stderr, "a reach decided by trial answered as neither candidate\n");
     result = EXIT_FAILURE;
   }
-  if (EXIT_SUCCESS == result && 0 != differ(own, deflt) && 0 != differ(all, deflt)) {
+  if (EXIT_SUCCESS == result && 0 != differ(own, deflt) + differ_share(own, deflt)
+    && 0 != differ(all, deflt) + differ_share(all, deflt))
+  {
     fprintf(stderr, "the default reach answered as neither candidate\n");
     result = EXIT_FAILURE;
   }
@@ -170,13 +177,16 @@ int main(void)
       fprintf(stderr, "a model failed to reload\n");
       result = EXIT_FAILURE;
     }
-    else if (0 != differ(all, a) || 0 != differ(tried, t) || 0 != differ(own, o)) {
+    else if (0 != differ(all, a) + differ_share(all, a)
+      || 0 != differ(tried, t) + differ_share(tried, t)
+      || 0 != differ(own, o) + differ_share(own, o))
+    {
       fprintf(stderr, "a reloaded model gathers differently\n");
       result = EXIT_FAILURE;
     }
     else {
       libxs_predict_set_reach(o, 3);
-      if (0 != differ(all, o)) {
+      if (0 != differ(all, o) + differ_share(all, o)) {
         fprintf(stderr, "a reach set on a loaded model did not apply\n");
         result = EXIT_FAILURE;
       }

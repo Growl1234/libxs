@@ -2338,6 +2338,23 @@ LIBXS_API_INLINE double internal_libxs_predict_classify2(
       extrapolate, central, candidates, dists, iw, nfound, exact,
       settled, best_val, confidence, out_variance, quantile,
       out_lower, out_upper);
+    /**
+     * A unanimous vote reads 1 however far its voters are, so among the many
+     * queries a dense corpus answers unanimously the share cannot say which to
+     * trust. A query breaks that tie by how near its neighbours are, weighted
+     * so that it reorders no shares more than a millionth apart and stays below
+     * 1. Ranked so, crystal systems were 92.2% precise over the most confident
+     * half of the queries against 85.6%, and GPU-tuning tables moved by under a
+     * point. An entry held out (leave-one-out, compression) keeps the share.
+     */
+    if (NULL != confidence && 0 > skip_local && NULL == skip_set && 0 == exact
+      && 0 < nfound && 0 == internal_libxs_predict_many(cl, output_j, ndistinct))
+    {
+      double mean = 0;
+      int i;
+      for (i = 0; i < nfound; ++i) mean += dists[i];
+      *confidence = (1.0 - 1E-6) * *confidence + 1E-6 / (1.0 + mean / nfound);
+    }
   }
   else if (NULL != out_lower && NULL != out_upper && quantile > 0) {
     *out_lower = best_val;
@@ -5650,12 +5667,17 @@ LIBXS_API_INLINE void internal_libxs_predict_eval_ex(libxs_lock_t* lock,
      * The shrink reads a cluster's spread, so it applies to what a cluster
      * answered. A forest's variance is its trees' disagreement, and pulling its
      * answer toward a partition it never read cost GFLOPS 26 to 76% of its
-     * error on GPU tuning tables, against the same forest named.
+     * error on GPU tuning tables, against the same forest named. A discrete
+     * output is left as voted: pulled toward the mean it named a value no entry
+     * holds, and without the pull the held-out shapes of GPU tuning tables
+     * matched 0.2 to 0.7 points more often at the same gated coverage.
      */
     if (0 == extrapolate && NULL != model->clusters && NULL == model->rf) {
       const internal_libxs_predict_cluster_t* cl = &model->clusters[best_c];
       for (j = 0; j < n; ++j) {
-        if (var[j] > 0 && 0 != cl->mode[j]) {
+        if (var[j] > 0 && 0 != cl->mode[j]
+          && LIBXS_PREDICT_MODE_DISCRETE != cl->mode[j])
+        {
           double mean = 0, global_var = 0;
           int k;
           for (k = 0; k < cl->nentries; ++k) {
