@@ -81,6 +81,9 @@ foreach(test_name IN LISTS LIBXS_C_TESTS)
   else()
     target_link_libraries(${test_target} PRIVATE libxs)
   endif()
+  if(LIBXS_SAMPLES_OMP)
+    target_link_libraries(${test_target} PRIVATE OpenMP::OpenMP_C)
+  endif()
   set_target_properties(
     ${test_target}
     PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<0:>"

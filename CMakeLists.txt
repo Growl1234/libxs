@@ -21,6 +21,8 @@ project(
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
+include(CMakeDependentOption)
+include(CheckCCompilerFlag)
 include(CheckLanguage)
 
 # auto-detect only if not given, an explicit -DLIBXS_FORTRAN=OFF is honored
@@ -32,7 +34,6 @@ if(NOT DEFINED LIBXS_FORTRAN OR LIBXS_FORTRAN)
   endif()
 endif()
 
-option(LIBXS_OMP "Build with OpenMP support" ON)
 option(LIBXS_FORTRAN
        "Build Fortran module interface (auto-detected if not set)"
        ${_libxs_fortran})
@@ -41,6 +42,11 @@ option(LIBXS_INSTALL_HEADER_ONLY
 
 option(BUILD_TESTING "Build unit tests" OFF)
 option(LIBXS_BUILD_SAMPLES "Build samples; requires BLAS" "${BUILD_TESTING}")
+
+cmake_dependent_option(LIBXS_FORTRAN_OMP "Enable OpenMP in the Fortran module"
+                       OFF "LIBXS_FORTRAN" OFF)
+cmake_dependent_option(LIBXS_SAMPLES_OMP "Enable OpenMP in samples and tests"
+                       ON "BUILD_TESTING OR LIBXS_BUILD_SAMPLES" OFF)
 
 if(LIBXS_FORTRAN)
   if(NOT CMAKE_Fortran_COMPILER)
@@ -110,7 +116,17 @@ set_property(
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-if(LIBXS_OMP)
+set(_libxs_openmp_components)
+if(LIBXS_SAMPLES_OMP)
+  list(APPEND _libxs_openmp_components C)
+  if(LIBXS_FORTRAN AND LIBXS_BUILD_SAMPLES)
+    list(APPEND _libxs_openmp_components Fortran)
+  endif()
+endif()
+if(LIBXS_FORTRAN_OMP)
+  list(APPEND _libxs_openmp_components Fortran)
+endif()
+if(_libxs_openmp_components)
   # Homebrew's libomp is keg-only. Supply a search hint, not compiler flags.
   if(APPLE
      AND CMAKE_C_COMPILER_ID MATCHES "^(AppleClang|Clang)$"
@@ -129,19 +145,13 @@ if(LIBXS_OMP)
       endif()
     endif()
   endif()
-  set(_libxs_openmp_components C)
-  if(LIBXS_FORTRAN)
-    list(APPEND _libxs_openmp_components Fortran)
-  endif()
+  list(REMOVE_DUPLICATES _libxs_openmp_components)
   find_package(OpenMP REQUIRED COMPONENTS ${_libxs_openmp_components})
-  unset(_libxs_openmp_components)
 endif()
+unset(_libxs_openmp_components)
 
 include(CheckLibraryExists)
 set(LIBXS_PUBLIC_LIBRARIES Threads::Threads ${CMAKE_DL_LIBS})
-if(LIBXS_OMP)
-  list(APPEND LIBXS_PUBLIC_LIBRARIES OpenMP::OpenMP_C)
-endif()
 check_library_exists(m sqrt "" LIBXS_HAS_LIBM)
 if(LIBXS_HAS_LIBM)
   list(APPEND LIBXS_PUBLIC_LIBRARIES m)
@@ -178,6 +188,22 @@ set_target_properties(
 
 target_compile_definitions(libxs PRIVATE LIBXS_BUILD=1)
 
+# OpenMP SIMD needs no threading runtime. Keep it off the Fortran module, where
+# SIMD-only flags would also activate conditional calls to omp_*.
+if(CMAKE_C_COMPILER_ID STREQUAL "Intel")
+  set(_libxs_simd_flag "-qopenmp-simd")
+else()
+  set(_libxs_simd_flag "-fopenmp-simd")
+endif()
+check_c_compiler_flag("${_libxs_simd_flag}" LIBXS_C_HAS_OPENMP_SIMD)
+if(LIBXS_C_HAS_OPENMP_SIMD)
+  target_compile_options(libxs
+                         PRIVATE $<$<COMPILE_LANGUAGE:C>:${_libxs_simd_flag}>)
+  target_compile_definitions(libxs
+                             PRIVATE $<$<COMPILE_LANGUAGE:C>:__OPENMP_SIMD>)
+endif()
+unset(_libxs_simd_flag)
+
 target_include_directories(
   libxs
   PUBLIC "${LIBXS_PUBLIC_INCLUDE_DIRS}"
@@ -186,15 +212,12 @@ target_include_directories(
 target_link_libraries(libxs PUBLIC ${LIBXS_PUBLIC_LIBRARIES})
 
 if(LIBXS_FORTRAN)
-  # Export any extra runtime libraries without requiring C-only consumers to
-  # enable Fortran just to resolve the OpenMP::OpenMP_Fortran target.
-  if(LIBXS_OMP)
-    set(_libxs_fortran_openmp_libraries ${OpenMP_Fortran_LIBRARIES})
-    list(REMOVE_ITEM _libxs_fortran_openmp_libraries ${OpenMP_C_LIBRARIES})
+  # Export runtime libraries without requiring C-only consumers to enable
+  # Fortran just to resolve the OpenMP::OpenMP_Fortran target.
+  if(LIBXS_FORTRAN_OMP)
     target_link_libraries(
       libxs PRIVATE $<BUILD_INTERFACE:OpenMP::OpenMP_Fortran>
-                    "$<INSTALL_INTERFACE:${_libxs_fortran_openmp_libraries}>")
-    unset(_libxs_fortran_openmp_libraries)
+                    "$<INSTALL_INTERFACE:${OpenMP_Fortran_LIBRARIES}>")
   endif()
   set(LIBXS_Fortran_MODULE_DIR "${CMAKE_CURRENT_BINARY_DIR}/mod")
   set_target_properties(libxs PROPERTIES Fortran_MODULE_DIRECTORY
@@ -228,11 +251,8 @@ else()
 endif()
 # pkg-config needs the runtime libraries rather than CMake imported targets.
 set(LIBXS_PRIVATE_LIBRARIES ${CMAKE_DL_LIBS})
-if(LIBXS_OMP)
-  list(APPEND LIBXS_PRIVATE_LIBRARIES ${OpenMP_C_LIBRARIES})
-  if(LIBXS_FORTRAN)
-    list(APPEND LIBXS_PRIVATE_LIBRARIES ${OpenMP_Fortran_LIBRARIES})
-  endif()
+if(LIBXS_FORTRAN_OMP)
+  list(APPEND LIBXS_PRIVATE_LIBRARIES ${OpenMP_Fortran_LIBRARIES})
 endif()
 list(REMOVE_DUPLICATES LIBXS_PRIVATE_LIBRARIES)
 set(LIBS_PRIVATE "Libs.private:")

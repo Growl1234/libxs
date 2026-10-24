@@ -18,6 +18,12 @@ function(libxs_common_target_setup target)
   target_link_libraries(${target} PRIVATE libxs)
 endfunction()
 
+function(libxs_sample_c_openmp target)
+  if(LIBXS_SAMPLES_OMP)
+    target_link_libraries(${target} PRIVATE OpenMP::OpenMP_C)
+  endif()
+endfunction()
+
 function(libxs_add_c_program target rel_dir output_name)
   add_executable(${target} ${ARGN})
   libxs_common_target_setup(${target})
@@ -28,7 +34,7 @@ function(libxs_add_fortran_program target rel_dir output_name)
   if(LIBXS_FORTRAN)
     add_executable(${target} ${ARGN})
     target_link_libraries(${target} PRIVATE libxs ${BLAS_LIBRARIES})
-    if(LIBXS_OMP)
+    if(LIBXS_SAMPLES_OMP)
       target_link_libraries(${target} PRIVATE OpenMP::OpenMP_Fortran)
     endif()
     libxs_set_runtime_output(${target} "${rel_dir}" "${output_name}")
@@ -88,7 +94,7 @@ if(LIBXS_FORTRAN)
                  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/pack/vpack.f")
   target_compile_definitions(libxs_sample_pack
                              PRIVATE $<$<COMPILE_LANGUAGE:C>:PACK_FORTRAN>)
-  if(LIBXS_OMP)
+  if(LIBXS_SAMPLES_OMP)
     target_link_libraries(libxs_sample_pack PRIVATE OpenMP::OpenMP_Fortran)
   endif()
 endif()
@@ -181,16 +187,18 @@ foreach(
         predict_higgs)
   libxs_add_c_program("libxs_sample_${name}" samples/predict "${name}"
                       "${PROJECT_SOURCE_DIR}/samples/predict/${name}.c")
+  libxs_sample_c_openmp("libxs_sample_${name}")
 endforeach()
 
 foreach(name IN ITEMS gemm_strided gemm_batch gemm_groups gemm_index)
   libxs_add_c_program("libxs_sample_${name}" samples/gemm "${name}"
                       "${PROJECT_SOURCE_DIR}/samples/gemm/${name}.c")
+  libxs_sample_c_openmp("libxs_sample_${name}")
 endforeach()
 if(LIBXS_FORTRAN)
   add_library(libxs_sample_jit OBJECT "${PROJECT_SOURCE_DIR}/libxs/libxs_jit.F")
   target_link_libraries(libxs_sample_jit PUBLIC libxs)
-  if(LIBXS_OMP)
+  if(LIBXS_SAMPLES_OMP)
     target_link_libraries(libxs_sample_jit PUBLIC OpenMP::OpenMP_Fortran)
   endif()
   target_compile_definitions(libxs_sample_jit PRIVATE __LIBXS)
@@ -224,6 +232,20 @@ libxs_add_c_program(libxs_sample_paircnt_dd samples/spatial paircnt_dd
 libxs_add_c_program(libxs_sample_tokenizer samples/tokenizer tokenizer
                     "${PROJECT_SOURCE_DIR}/samples/tokenizer/tokenizer.c")
 
+# These sample directories enable OpenMP in their GNU Make builds.
+foreach(
+  target IN
+  ITEMS libxs_sample_pack
+        libxs_sample_sync_lock
+        libxs_sample_sync_barrier
+        libxs_sample_registry
+        libxs_sample_memcmp
+        libxs_sample_itrans
+        libxs_sample_scratch
+        libxs_sample_paircnt_dd)
+  libxs_sample_c_openmp(${target})
+endforeach()
+
 if(LIBXS_FORTRAN)
   libxs_add_fortran_program(libxs_sample_syrk samples/syrk syrk
                             "${PROJECT_SOURCE_DIR}/samples/syrk/syrk.f")
@@ -251,6 +273,7 @@ if(NOT APPLE)
   add_library(libxs_ozaki_impl_s OBJECT ${LIBXS_OZAKI_IMPL_SRCS})
   foreach(target IN ITEMS libxs_ozaki_impl_d libxs_ozaki_impl_s)
     libxs_common_target_setup(${target})
+    libxs_sample_c_openmp(${target})
     target_include_directories(${target}
                                PRIVATE "${PROJECT_SOURCE_DIR}/samples/ozaki")
     set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -263,6 +286,7 @@ if(NOT APPLE)
               "${PROJECT_SOURCE_DIR}/samples/ozaki/wrap.c")
   foreach(target IN ITEMS libxs_ozaki_entry_d libxs_ozaki_entry_s)
     libxs_common_target_setup(${target})
+    libxs_sample_c_openmp(${target})
     target_include_directories(${target}
                                PRIVATE "${PROJECT_SOURCE_DIR}/samples/ozaki")
     set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -277,6 +301,7 @@ if(NOT APPLE)
     PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${LIBXS_OZAKI_DIR}/$<0:>" OUTPUT_NAME
                                                                    wrap)
   target_link_libraries(libxs_ozaki_wrap_static PRIVATE libxs ${BLAS_LIBRARIES})
+  libxs_sample_c_openmp(libxs_ozaki_wrap_static)
 
   add_library(
     libxs_ozaki_wrap_shared SHARED
@@ -289,6 +314,7 @@ if(NOT APPLE)
                OUTPUT_NAME wrap)
   target_link_libraries(libxs_ozaki_wrap_shared PRIVATE libxs ${BLAS_LIBRARIES}
                                                         ${CMAKE_DL_LIBS})
+  libxs_sample_c_openmp(libxs_ozaki_wrap_shared)
 
   # Keep symbols from static dependencies internal to the BLAS interposer.
   include(CheckCSourceCompiles)
@@ -306,6 +332,7 @@ if(NOT APPLE)
   function(libxs_add_ozaki_driver target output_name)
     add_executable(${target} "${PROJECT_SOURCE_DIR}/samples/ozaki/gemm.c")
     libxs_common_target_setup(${target})
+    libxs_sample_c_openmp(${target})
     target_include_directories(${target}
                                PRIVATE "${PROJECT_SOURCE_DIR}/samples/ozaki")
     target_link_libraries(${target} PRIVATE libxs ${BLAS_LIBRARIES})
@@ -336,6 +363,7 @@ if(NOT APPLE)
   function(libxs_add_ozaki_wrap_driver target output_name)
     add_executable(${target} "${PROJECT_SOURCE_DIR}/samples/ozaki/gemm.c")
     libxs_common_target_setup(${target})
+    libxs_sample_c_openmp(${target})
     target_include_directories(${target}
                                PRIVATE "${PROJECT_SOURCE_DIR}/samples/ozaki")
     target_link_libraries(${target} PRIVATE libxs_ozaki_wrap_static libxs
