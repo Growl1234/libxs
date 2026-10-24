@@ -31,6 +31,8 @@ if(NOT DEFINED LIBXS_FORTRAN OR LIBXS_FORTRAN)
     set(_libxs_fortran ON)
   endif()
 endif()
+
+option(LIBXS_OMP "Build with OpenMP support" ON)
 option(LIBXS_FORTRAN
        "Build Fortran module interface (auto-detected if not set)"
        ${_libxs_fortran})
@@ -108,15 +110,38 @@ set_property(
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-set(_libxs_openmp_components C)
-if(LIBXS_FORTRAN)
-  list(APPEND _libxs_openmp_components Fortran)
+if(LIBXS_OMP)
+  # Homebrew's libomp is keg-only. Supply a search hint, not compiler flags.
+  if(APPLE
+     AND CMAKE_C_COMPILER_ID MATCHES "^(AppleClang|Clang)$"
+     AND NOT DEFINED OpenMP_ROOT
+     AND NOT DEFINED ENV{OpenMP_ROOT})
+    find_program(LIBXS_BREW NAMES brew)
+    if(LIBXS_BREW)
+      execute_process(
+        COMMAND "${LIBXS_BREW}" --prefix libomp
+        OUTPUT_VARIABLE _libxs_libomp_prefix
+        RESULT_VARIABLE _libxs_libomp_result
+        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+      if(_libxs_libomp_result EQUAL 0 AND IS_DIRECTORY
+                                          "${_libxs_libomp_prefix}")
+        set(OpenMP_ROOT "${_libxs_libomp_prefix}")
+      endif()
+    endif()
+  endif()
+  set(_libxs_openmp_components C)
+  if(LIBXS_FORTRAN)
+    list(APPEND _libxs_openmp_components Fortran)
+  endif()
+  find_package(OpenMP REQUIRED COMPONENTS ${_libxs_openmp_components})
+  unset(_libxs_openmp_components)
 endif()
-find_package(OpenMP REQUIRED COMPONENTS ${_libxs_openmp_components})
-unset(_libxs_openmp_components)
 
 include(CheckLibraryExists)
-set(LIBXS_PUBLIC_LIBRARIES Threads::Threads OpenMP::OpenMP_C ${CMAKE_DL_LIBS})
+set(LIBXS_PUBLIC_LIBRARIES Threads::Threads ${CMAKE_DL_LIBS})
+if(LIBXS_OMP)
+  list(APPEND LIBXS_PUBLIC_LIBRARIES OpenMP::OpenMP_C)
+endif()
 check_library_exists(m sqrt "" LIBXS_HAS_LIBM)
 if(LIBXS_HAS_LIBM)
   list(APPEND LIBXS_PUBLIC_LIBRARIES m)
@@ -163,12 +188,14 @@ target_link_libraries(libxs PUBLIC ${LIBXS_PUBLIC_LIBRARIES})
 if(LIBXS_FORTRAN)
   # Export any extra runtime libraries without requiring C-only consumers to
   # enable Fortran just to resolve the OpenMP::OpenMP_Fortran target.
-  set(_libxs_fortran_openmp_libraries ${OpenMP_Fortran_LIBRARIES})
-  list(REMOVE_ITEM _libxs_fortran_openmp_libraries ${OpenMP_C_LIBRARIES})
-  target_link_libraries(
-    libxs PRIVATE $<BUILD_INTERFACE:OpenMP::OpenMP_Fortran>
-                  "$<INSTALL_INTERFACE:${_libxs_fortran_openmp_libraries}>")
-  unset(_libxs_fortran_openmp_libraries)
+  if(LIBXS_OMP)
+    set(_libxs_fortran_openmp_libraries ${OpenMP_Fortran_LIBRARIES})
+    list(REMOVE_ITEM _libxs_fortran_openmp_libraries ${OpenMP_C_LIBRARIES})
+    target_link_libraries(
+      libxs PRIVATE $<BUILD_INTERFACE:OpenMP::OpenMP_Fortran>
+                    "$<INSTALL_INTERFACE:${_libxs_fortran_openmp_libraries}>")
+    unset(_libxs_fortran_openmp_libraries)
+  endif()
   set(LIBXS_Fortran_MODULE_DIR "${CMAKE_CURRENT_BINARY_DIR}/mod")
   set_target_properties(libxs PROPERTIES Fortran_MODULE_DIRECTORY
                                          "${LIBXS_Fortran_MODULE_DIR}")
@@ -200,9 +227,12 @@ else()
   set(LIBS "\${libdir}/libxs.a")
 endif()
 # pkg-config needs the runtime libraries rather than CMake imported targets.
-set(LIBXS_PRIVATE_LIBRARIES ${CMAKE_DL_LIBS} ${OpenMP_C_LIBRARIES})
-if(LIBXS_FORTRAN)
-  list(APPEND LIBXS_PRIVATE_LIBRARIES ${OpenMP_Fortran_LIBRARIES})
+set(LIBXS_PRIVATE_LIBRARIES ${CMAKE_DL_LIBS})
+if(LIBXS_OMP)
+  list(APPEND LIBXS_PRIVATE_LIBRARIES ${OpenMP_C_LIBRARIES})
+  if(LIBXS_FORTRAN)
+    list(APPEND LIBXS_PRIVATE_LIBRARIES ${OpenMP_Fortran_LIBRARIES})
+  endif()
 endif()
 list(REMOVE_DUPLICATES LIBXS_PRIVATE_LIBRARIES)
 set(LIBS_PRIVATE "Libs.private:")

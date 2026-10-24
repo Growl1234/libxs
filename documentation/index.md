@@ -96,9 +96,14 @@ cmake --build build
 cmake --install build --prefix $HOME/libxs
 ```
 
+OpenMP is enabled by default for C and, when built, Fortran. Set `LIBXS_OMP=OFF`
+to build without OpenMP. On macOS, Homebrew's `libomp` is detected via
+`brew --prefix libomp`; use `OpenMP_ROOT` for another installation.
+
 | Option                    | Default | Description                                 |
 |---------------------------|---------|---------------------------------------------|
 | LIBXS_FORTRAN             | (auto)  | Build the Fortran module                    |
+| LIBXS_OMP                 | ON      | Enable OpenMP                               |
 | LIBXS_INSTALL_HEADER_ONLY | OFF     | Also install the header-only implementation |
 | BUILD_TESTING             | OFF     | Build the tests (requires BLAS)             |
 | BUILD_SHARED_LIBS         | OFF     | Build the shared library                    |
