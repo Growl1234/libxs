@@ -319,7 +319,7 @@ int main(int argc, char* argv[])
                       1e6 * dt_eval / ntest,
                       1e6 * xtime.query / xtime.nquery,
                       (0 < dt_batch) ? (1e6 * dt_batch / ntest) : 0.0,
-                      (0 < total) ? (1e6 * xtime.predict / total) : 0.0);
+                      (0 < ntest) ? (1e6 * xtime.predict / ntest) : 0.0);
                   }
                   fprintf(stdout, "XGBoost accuracy: %.2f%% of %d\n",
                     (0 < ntest) ? (100.0 * xok / ntest) : 0.0, ntest);
