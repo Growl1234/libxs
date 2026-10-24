@@ -96,12 +96,34 @@ cmake --build build
 cmake --install build --prefix $HOME/libxs
 ```
 
-| Option                    | Default | Description                                 |
-|---------------------------|---------|---------------------------------------------|
-| LIBXS_FORTRAN             | (auto)  | Build the Fortran module                    |
-| LIBXS_INSTALL_HEADER_ONLY | OFF     | Also install the header-only implementation |
-| BUILD_TESTING             | OFF     | Build the tests (requires BLAS)             |
-| BUILD_SHARED_LIBS         | OFF     | Build the shared library                    |
+The CMake build requires OpenMP for C and, when enabled, Fortran. The library,
+tests, and samples are compiled with OpenMP, including the Fortran module's
+parallel wrappers. CMake selects the compiler flags and runtime libraries.
+
+| Option                    | Default        | Description                                 |
+|---------------------------|----------------|---------------------------------------------|
+| LIBXS_FORTRAN             | (auto)         | Build the Fortran module                    |
+| LIBXS_INSTALL_HEADER_ONLY | OFF            | Also install the header-only implementation |
+| LIBXS_BUILD_SAMPLES       | `BUILD_TESTING` | Build the samples (requires BLAS)           |
+| BUILD_TESTING             | OFF            | Build unit tests                            |
+| BUILD_SHARED_LIBS         | OFF            | Build the shared library                    |
+
+Samples can be built independently with `-DLIBXS_BUILD_SAMPLES=ON`. On the first
+configuration, this option defaults to `BUILD_TESTING`; later changes to
+`BUILD_TESTING` do not override its cached value. When both options are enabled,
+CTest also registers the shell tests that use the samples. Set `-DLIBXS_BUILD_SAMPLES=OFF`
+to build only the unit tests, without requiring BLAS.
+
+For a fresh build directory, enable tests and their default samples with:
+
+```bash
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build -j 8
+(cd build && ctest --output-on-failure -j 8)
+```
+
+Executables and their supplied data are placed under `build/samples`, and
+the test runner is available as `build/tests/test.sh`.
 
 ## Installation
 
@@ -135,7 +157,7 @@ desired headers:
 
 Both builds install pkg-config files (`libxs.pc`) and a CMake package
 (target `libxs::libxs`). A static library needs `--static` to also
-list its dependencies (pthread, libm, libdl, librt):
+list its dependencies (OpenMP when enabled, pthread, libm, libdl, librt):
 
 ```bash
 cc app.c $(pkg-config --cflags libxs) $(pkg-config --libs --static libxs)
