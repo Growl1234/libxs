@@ -317,6 +317,9 @@ typedef struct internal_libxs_predict_rf_grow_t {
   const internal_libxs_predict_entry_t* entries;
   const unsigned char* bins;
   const double* bin_edge;
+  /** Bytes per row of the bins, and where in it this output's label sits, or
+   *  negative where the label is read from the entry (a real-valued output). */
+  int bin_stride, label_at;
   /** Reused by mutually exclusive split and partition phases. */
   double* values_scratch;
   int* index_scratch;
@@ -339,6 +342,12 @@ typedef struct internal_libxs_predict_rf_tree_t {
   int nnodes;
 } internal_libxs_predict_rf_tree_t;
 
+/** A node that exists and is not grown: its rows as a range of the subset, its
+ *  depth, and its index among the nodes grown so far. */
+typedef struct internal_libxs_predict_rf_unit_t {
+  int si, nc, depth, node;
+} internal_libxs_predict_rf_unit_t;
+
 typedef struct internal_libxs_predict_rf_team_t {
   libxs_barrier_t barrier;
   int* bootstrap;
@@ -348,11 +357,10 @@ typedef struct internal_libxs_predict_rf_team_t {
   internal_libxs_predict_rf_build_node_t*
     part[INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX];
   int part_n[INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX];
-  int fr_si[INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX];
-  int fr_nc[INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX];
-  int fr_depth[INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX];
-  int fr_node[INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX];
+  internal_libxs_predict_rf_unit_t fr[INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX];
   int top_n, nfrontier;
+  /* the next unit of the frontier a rank takes */
+  volatile int next;
   volatile int failed;
 } internal_libxs_predict_rf_team_t;
 
@@ -361,8 +369,9 @@ typedef struct internal_libxs_predict_rf_t {
   /** Build-only calibration fold per corpus row, encoded as fold+1 or zero. */
   unsigned char* calib_fold;
   /**
-   * Each input binned to one byte, nentries*ninputs, and the nbins+1 edges those
-   * bins are cut at, per input. A wide node then accumulates counts per bin over
+   * Each input binned to one byte, a row of bin_stride bytes per entry, and the
+   * nbins+1 edges those bins are cut at, per input. A row's inputs are followed
+   * by one label byte per output, so a node's rows are read from the bins alone. A wide node then accumulates counts per bin over
    * its subset and scores nbins candidate thresholds, instead of sorting the
    * subset once per candidate feature and scoring every distinct value it holds.
    * Build scratch only: NULL once the forest is grown, and never serialized.
@@ -375,6 +384,7 @@ typedef struct internal_libxs_predict_rf_t {
    */
   unsigned char* bins;
   double* bin_edge;
+  int bin_stride;
   /* how calib_fold, bins and bin_edge were allocated, being build scratch */
   int fold_pool, bins_pool, edge_pool;
   /** Offset added to a rounded output to bring its labels to zero. Only a
@@ -1102,28 +1112,27 @@ LIBXS_API_INLINE void internal_libxs_predict_extent(libxs_predict_t* model)
      * internal_libxs_predict_normalize already treats as "do not scale".
      */
     for (j = 0; j < m; ++j) {
-      model->input_min[j] = 0;
-      model->input_rng[j] = 0;
+      model->input_min[j] = HUGE_VAL;
+      model->input_rng[j] = -HUGE_VAL;
     }
-    for (j = 0; j < m; ++j) {
-      int seeded = 0;
-      for (i = 0; i < p; ++i) {
-        const double v = model->entries[i].inputs[j];
+    /* one pass over the entries rather than one per input: a pass walks every
+     * entry's pointer, and the extent does not depend on the order */
+    for (i = 0; i < p; ++i) {
+      const double* const inputs = model->entries[i].inputs;
+      for (j = 0; j < m; ++j) {
+        const double v = inputs[j];
         if (LIBXS_NOTNAN(v)) {
-          if (0 == seeded) {
-            model->input_min[j] = v;
-            model->input_rng[j] = v;
-            seeded = 1;
-          }
-          else {
-            if (v < model->input_min[j]) model->input_min[j] = v;
-            if (v > model->input_rng[j]) model->input_rng[j] = v;
-          }
+          if (v < model->input_min[j]) model->input_min[j] = v;
+          if (v > model->input_rng[j]) model->input_rng[j] = v;
         }
       }
     }
-    for (j = 0; j < m; ++j) {
-      model->input_rng[j] -= model->input_min[j];
+    for (j = 0; j < m; ++j) { /* a maximum below the minimum saw no value */
+      if (model->input_rng[j] < model->input_min[j]) {
+        model->input_min[j] = 0;
+        model->input_rng[j] = 0;
+      }
+      else model->input_rng[j] -= model->input_min[j];
     }
   }
 }
@@ -4443,11 +4452,17 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
   /* the builder's alone: it rewrites the corpus and resolves what follows.
    * Every task tested the same state above, so the verdict is already shared */
   if (0 == tid && EXIT_SUCCESS == result) {
+    int rewrote = 0;
+    /**
+     * The entries were scanned for gaps by the public build before it came here,
+     * and the order search re-enters over the same entries. A series expanded
+     * here is new, and the decomposition below rescans what it rewrites.
+     */
     if (NULL != model && 0 < model->nts && 0 == model->nentries) {
       internal_libxs_predict_ts_expand(model);
+      internal_libxs_predict_missing_all(model);
     }
     if (NULL != model && 0 < model->nentries) {
-      internal_libxs_predict_missing_all(model);
       /* a property of the corpus, read by the partition and every cluster */
       result = internal_libxs_predict_discrete_all(model);
       /**
@@ -4493,15 +4508,16 @@ LIBXS_API_INLINE int internal_libxs_predict_build_impl(libxs_barrier_t* barrier,
         || (LIBXS_PREDICT_SPREAD == model->decompose && model->nseries >= 2)))
     {
       internal_libxs_predict_pca_build(model);
+      rewrote = 1;
     }
     /**
-     * The scan above ran before the decomposition rewrote the entries, so it
-     * cannot speak for what they hold now. A mode that reached this point is one
-     * that carries gaps, and a gap it was given survives as a gap; a NaN that
-     * appears here instead was manufactured, and the distance must be told either
-     * way rather than treating it as a coordinate.
+     * The scan ran before the decomposition rewrote the entries, so it cannot
+     * speak for what they hold now. A mode that reached this point is one that
+     * carries gaps, and a gap it was given survives as a gap; a NaN that appears
+     * here instead was manufactured, and the distance must be told either way
+     * rather than treating it as a coordinate.
      */
-    if (EXIT_SUCCESS == result && NULL != model && 0 < model->nentries) {
+    if (0 != rewrote && EXIT_SUCCESS == result && 0 < model->nentries) {
       internal_libxs_predict_missing_all(model);
     }
     if (NULL != model && 0 < model->nentries && NULL == model->weights) {
@@ -5034,7 +5050,11 @@ LIBXS_API int libxs_predict_build(libxs_predict_t* model,
   int nclusters, int order, double quality)
 {
   /* a build resolves the coordinate afresh; the order search inside it does not */
-  if (NULL != model) model->coord_sel = -1;
+  if (NULL != model) {
+    model->coord_sel = -1;
+    /* as libxs_predict_build_task does: the corpus is scanned once per build */
+    if (0 < model->nentries) internal_libxs_predict_missing_all(model);
+  }
   /* one task, so no rendezvous is needed and none is required of the caller */
   return internal_libxs_predict_build_impl(NULL, model, nclusters, order,
     quality, 0, 1);

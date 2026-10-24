@@ -110,6 +110,14 @@
 #  define LIBXS_PREDICT_RF_BUILD_TEAMS 100
 #endif
 /**
+ * Units of a tree per member of its build team. One each leaves the team waiting
+ * on the largest; several, taken largest first, let the members that finish early
+ * take what is left.
+ */
+#if !defined(LIBXS_PREDICT_RF_BUILD_UNITS)
+#  define LIBXS_PREDICT_RF_BUILD_UNITS 4
+#endif
+/**
  * Trees per candidate while scoring depth: enough to average out the
  * bootstrap, few enough that trying four depths is not four full builds.
  */
@@ -137,6 +145,14 @@
 /** Queries advanced together through one packed tree. */
 #if !defined(LIBXS_PREDICT_RF_PACKET)
 #  define LIBXS_PREDICT_RF_PACKET 16
+#endif
+/**
+ * Trees one query descends together, a level at a time: each tree's next node
+ * is a load that does not wait for another tree's, so the descents overlap
+ * where one after the other they wait on every level of every tree.
+ */
+#if !defined(LIBXS_PREDICT_RF_LOCKSTEP)
+#  define LIBXS_PREDICT_RF_LOCKSTEP 32
 #endif
 
 
@@ -296,10 +312,11 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_sort(
  * bin edges rather than every distinct value the subset holds. No sort, and a
  * scan whose length is the number of bins instead of the size of the subset.
  *
- * The partition it scores is exactly the one the caller re-forms from the raw
- * column, because a row is binned into the first bin whose upper edge holds it:
- * "bin at most b" and "value at most edge[b+1]" are then the same set, and
- * edge[b+1] is what the threshold is set to. Nothing here may loosen that.
+ * The partition it scores is exactly the one the caller re-forms from the bin
+ * reported in `bin_out`, and the one the descent re-forms from the raw column,
+ * because a row is binned into the first bin whose upper edge holds it: "bin at
+ * most b" and "value at most edge[b+1]" are then the same set, and edge[b+1] is
+ * what the threshold is set to. Nothing here may loosen that.
  *
  * The features of a group are accumulated in one pass rather than one at a time.
  * The subset is scattered over the corpus, so the pass is a gather and its cost
@@ -310,9 +327,10 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_sort(
  */
 LIBXS_API_INLINE int internal_libxs_predict_rf_split_hist(
   const internal_libxs_predict_entry_t* entries,
-  const unsigned char* bins, const double* bin_edge, int nbins,
+  const unsigned char* bins, int stride, int label_at,
+  const double* bin_edge, int nbins,
   const int* subset, int nsub, int nfeat, int nfeatsub,
-  internal_libxs_predict_rf_build_node_t* node, size_t seed,
+  internal_libxs_predict_rf_build_node_t* node, int* bin_out, size_t seed,
   int output_idx, int label_off, int regress, int min_leaf, int nclass,
   double* values_scratch, int* index_scratch)
 {
@@ -358,7 +376,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_hist(
       memset(acc, 0, (size_t)nf * per * sizeof(double));
       for (i = 0; i < nsub; ++i) {
         const int row = subset[i];
-        const unsigned char* const bin = bins + (size_t)row * nfeat;
+        const unsigned char* const bin = bins + (size_t)row * stride;
         if (0 != regress) {
           const double d = entries[row].outputs[output_idx] - mu;
           for (j = 0; j < nf; ++j) {
@@ -370,8 +388,8 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_hist(
           }
         }
         else {
-          int lab = (LIBXS_ROUNDX(int,
-            entries[row].outputs[output_idx]) + label_off) & 127;
+          int lab = (0 <= label_at) ? bin[label_at] : ((LIBXS_ROUNDX(int,
+            entries[row].outputs[output_idx]) + label_off) & 127);
           if (lab >= ncls) lab = ncls - 1;
           for (j = 0; j < nf; ++j) {
             acc[((size_t)j * nbins + bin[fsel[base + j]]) * width + lab] += 1.0;
@@ -408,6 +426,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_hist(
                   best_score = sse;
                   node->feature = fsel[base + j];
                   node->threshold = edge[b + 1];
+                  *bin_out = b;
                 }
               }
             }
@@ -453,6 +472,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_hist(
                   best_score = gini;
                   node->feature = fsel[base + j];
                   node->threshold = edge[b + 1];
+                  *bin_out = b;
                 }
               }
             }
@@ -478,19 +498,22 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_split_hist(
  */
 LIBXS_API_INLINE int internal_libxs_predict_rf_split(
   const internal_libxs_predict_entry_t* entries,
-  const unsigned char* bins, const double* bin_edge, int nbins,
+  const unsigned char* bins, int stride, int label_at,
+  const double* bin_edge, int nbins,
   const int* subset, int nsub, int nfeat, int nfeatsub,
-  internal_libxs_predict_rf_build_node_t* node, size_t seed,
+  internal_libxs_predict_rf_build_node_t* node, int* bin_out, size_t seed,
   int output_idx, int label_off, int regress, int min_leaf, int nclass,
   double* values_scratch, int* index_scratch)
 {
   int result;
+  *bin_out = -1;
   if (NULL != bins && NULL != bin_edge && 0 < nbins
     && LIBXS_PREDICT_RF_BINMIN <= nsub)
   {
-    result = internal_libxs_predict_rf_split_hist(entries, bins, bin_edge,
-      nbins, subset, nsub, nfeat, nfeatsub, node, seed, output_idx, label_off,
-      regress, min_leaf, nclass, values_scratch, index_scratch);
+    result = internal_libxs_predict_rf_split_hist(entries, bins, stride,
+      label_at, bin_edge, nbins, subset, nsub, nfeat, nfeatsub, node, bin_out,
+      seed, output_idx, label_off, regress, min_leaf, nclass, values_scratch,
+      index_scratch);
   }
   else {
     result = internal_libxs_predict_rf_split_sort(entries, subset, nsub, nfeat,
@@ -514,38 +537,64 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_nfeatsub(int nfeat)
 
 
 /**
+ * Moves the pending unit with the most rows to the top of the stack if `largest`
+ * is set, and returns the top. Ties keep the unit pushed last, as depth-first does.
+ */
+LIBXS_API_INLINE int internal_libxs_predict_rf_stack_top(
+  internal_libxs_predict_rf_unit_t* stack, int sp, int largest)
+{
+  const int result = sp - 1;
+  if (0 != largest) {
+    int best = result, i;
+    for (i = result - 1; 0 <= i; --i) {
+      if (stack[best].nc < stack[i].nc) best = i;
+    }
+    if (best != result) {
+      const internal_libxs_predict_rf_unit_t tmp = stack[best];
+      stack[best] = stack[result];
+      stack[result] = tmp;
+    }
+  }
+  return result;
+}
+
+
+/**
  * Grows a subtree from one unit of work into `nodes`, whose entry 0 is that unit's
- * own node. The unit is `si0`, `nc0` and `depth0`: the rows it covers as a range
+ * own node whatever `unit->node` says. The unit gives the rows it covers as a range
  * into `subset`, and how deep it already sits. Growth is depth-first, as it has
- * always been.
+ * always been, except while a frontier is cut.
  *
  * `frontier` bounds the pending stack. Reaching it stops the loop and leaves the
- * pending units in `fr_*`, which is how several tasks take work from one tree: a
+ * pending units in `fr`, which serves as the stack and holds 64 units. That is how
+ * several tasks take work from one tree: a
  * pending unit is a node that exists and has not been grown, and the rows of any
  * two of them are disjoint ranges of `subset`, so growing them shares nothing.
  * Zero grows the subtree whole and writes no frontier, which is what a caller that
- * wants one tree in one task passes.
+ * wants one tree in one task passes. A frontier is cut by growing the pending unit
+ * with the most rows first: depth-first, the units left pending lie along one path
+ * and the first of them holds about half the rows. Either order grows each node
+ * from the same rows, so the tree is the same.
  */
 LIBXS_API_INLINE int internal_libxs_predict_rf_build_part(
   const internal_libxs_predict_rf_grow_t* g, int* subset,
-  int si0, int nc0, int depth0,
+  const internal_libxs_predict_rf_unit_t* unit,
   internal_libxs_predict_rf_build_node_t* nodes, int max_nodes,
-  int frontier, int* fr_si, int* fr_nc, int* fr_depth, int* fr_node,
-  int* fr_count)
+  int frontier, internal_libxs_predict_rf_unit_t* fr, int* fr_count)
 {
   const internal_libxs_predict_entry_t* entries = g->entries;
   const unsigned char* bins = g->bins;
   const double* bin_edge = g->bin_edge;
+  const int stride = g->bin_stride, label_at = g->label_at;
   const int nbins = g->nbins, nfeat = g->nfeat, nfeatsub = g->nfeatsub;
   const int max_depth = g->max_depth, min_leaf = g->min_leaf;
   const int leaf_floor = g->leaf_floor, output_idx = g->output_idx;
   const int label_off = g->label_off, regress = g->regress, nclass = g->nclass;
-  int stack_subset[64], stack_count[64], stack_depth[64], stack_node[64];
+  internal_libxs_predict_rf_unit_t local[64];
+  internal_libxs_predict_rf_unit_t* const stack = (NULL != fr) ? fr : local;
   int sp = 0, nnodes = 0;
-  stack_subset[0] = si0;
-  stack_count[0] = nc0;
-  stack_depth[0] = depth0;
-  stack_node[0] = nnodes++;
+  stack[0] = *unit;
+  stack[0].node = nnodes++;
   nodes[0].feature = -1;
   nodes[0].left = -1;
   nodes[0].right = -1;
@@ -555,14 +604,14 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_part(
   nodes[0].leafp = 0.f;
   sp = 1;
   while (sp > 0 && nnodes < max_nodes - 2 && (0 == frontier || sp < frontier)) {
-    const int si = stack_subset[--sp];
-    const int nc = stack_count[sp];
-    const int depth = stack_depth[sp];
-    const int ni = stack_node[sp];
-    int best_label = 0, best_count = 0, pure = 0, k;
+    const int top = internal_libxs_predict_rf_stack_top(stack, sp, frontier);
+    const int si = stack[top].si, nc = stack[top].nc;
+    const int depth = stack[top].depth, ni = stack[top].node;
+    int best_label = 0, best_count = 0, pure = 0, split_bin = -1, k;
     double mean = 0, dev = 0;
     internal_libxs_predict_rf_build_node_t split;
     LIBXS_MEMZERO(&split);
+    sp = top;
     if (0 != regress) {
       for (k = 0; k < nc; ++k) {
         mean += entries[subset[si + k]].outputs[output_idx];
@@ -579,7 +628,9 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_part(
     else {
       int counts[128] = { 0 };
       for (k = 0; k < nc; ++k) {
-        ++counts[(LIBXS_ROUNDX(int, entries[subset[si + k]].outputs[output_idx]) + label_off) & 127];
+        const int row = subset[si + k];
+        ++counts[(0 <= label_at) ? bins[(size_t)row * stride + label_at]
+          : ((LIBXS_ROUNDX(int, entries[row].outputs[output_idx]) + label_off) & 127)];
       }
       for (k = 0; k < 128; ++k) {
         if (counts[k] > best_count) { best_count = counts[k]; best_label = k; }
@@ -595,8 +646,9 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_part(
       ? (float)((best_count + 1.0) / (nc + ((0 < nclass) ? nclass : 1)))
       : 0.f;
     if (depth >= max_depth || nc <= min_leaf || 0 != pure
-      || 0 == internal_libxs_predict_rf_split(entries, bins, bin_edge, nbins,
-        subset + si, nc, nfeat, nfeatsub, &split,
+      || 0 == internal_libxs_predict_rf_split(entries, bins, stride,
+        label_at, bin_edge, nbins, subset + si, nc, nfeat, nfeatsub,
+        &split, &split_bin,
         (size_t)si * 2654435761u + (size_t)nc, output_idx,
         label_off, regress, leaf_floor, nclass, g->values_scratch,
         g->index_scratch))
@@ -605,37 +657,34 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_part(
       continue;
     }
     { int* sub = subset + si;
-      int i, nleft = 0, nright = 0;
+      int i, nleft = 0, nright = 0, part_pool = 0;
+      int* part = g->index_scratch;
       nodes[ni].feature = split.feature;
       nodes[ni].threshold = split.threshold;
+      if (NULL == part) {
+        part = (int*)LIBXS_PREDICT_MALLOC((size_t)nc * sizeof(int), part_pool);
+      }
+      if (NULL == part) { nodes[ni].feature = -1; continue; }
+      /**
+       * One stable pass: a left row moves down in place, never ahead of where
+       * it is read, and a right row waits in `part`. A split found over the bins
+       * reads its byte rather than the raw input, which selects the same rows.
+       */
       for (i = 0; i < nc; ++i) {
-        if (entries[sub[i]].inputs[split.feature] <= split.threshold) ++nleft;
+        const int row = sub[i];
+        if ((0 <= split_bin)
+          ? (bins[(size_t)row * stride + split.feature] <= split_bin)
+          : (entries[row].inputs[split.feature] <= split.threshold))
+        {
+          sub[nleft++] = row;
+        }
+        else part[nright++] = row;
       }
-      nright = nc - nleft;
+      if (0 < nleft && 0 < nright) {
+        memcpy(sub + nleft, part, (size_t)nright * sizeof(int));
+      }
+      if (NULL == g->index_scratch) LIBXS_PREDICT_FREE(part, part_pool);
       if (0 == nleft || 0 == nright) { nodes[ni].feature = -1; continue; }
-      { int part_pool = 0;
-        int* part = g->index_scratch;
-        if (NULL == part) {
-          part = (int*)LIBXS_PREDICT_MALLOC(
-            (size_t)nc * sizeof(int), part_pool);
-        }
-        if (NULL != part) {
-          int li = 0, ri = 0;
-          for (i = 0; i < nc; ++i) {
-            if (entries[sub[i]].inputs[split.feature] <= split.threshold) {
-              part[li++] = sub[i];
-            }
-            else {
-              part[nleft + ri++] = sub[i];
-            }
-          }
-          memcpy(sub, part, (size_t)nc * sizeof(int));
-          if (NULL == g->index_scratch) {
-            LIBXS_PREDICT_FREE(part, part_pool);
-          }
-        }
-        else { nodes[ni].feature = -1; continue; }
-      }
       /**
        * A child is created before it is known whether the stack has room to
        * process it. Its read-out must be initialized here: when sp saturates
@@ -655,10 +704,8 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_part(
       nodes[nnodes].threshold = 0;
       nodes[nnodes].leafp = nodes[ni].leafp;
       if (sp < 64) {
-        stack_subset[sp] = si;
-        stack_count[sp] = nleft;
-        stack_depth[sp] = depth + 1;
-        stack_node[sp] = nnodes;
+        stack[sp].si = si; stack[sp].nc = nleft;
+        stack[sp].depth = depth + 1; stack[sp].node = nnodes;
         ++sp;
       }
       ++nnodes;
@@ -672,27 +719,27 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_part(
       nodes[nnodes].threshold = 0;
       nodes[nnodes].leafp = nodes[ni].leafp;
       if (sp < 64) {
-        stack_subset[sp] = si + nleft;
-        stack_count[sp] = nright;
-        stack_depth[sp] = depth + 1;
-        stack_node[sp] = nnodes;
+        stack[sp].si = si + nleft; stack[sp].nc = nright;
+        stack[sp].depth = depth + 1; stack[sp].node = nnodes;
         ++sp;
       }
       ++nnodes;
     }
   }
   /* what is left pending is the frontier: nodes that exist and are not grown */
-  if (NULL != fr_count) {
-    int k;
-    for (k = 0; k < sp; ++k) {
-      fr_si[k] = stack_subset[k];
-      fr_nc[k] = stack_count[k];
-      fr_depth[k] = stack_depth[k];
-      fr_node[k] = stack_node[k];
-    }
-    *fr_count = sp;
-  }
+  if (NULL != fr_count) *fr_count = sp;
   return nnodes;
+}
+
+
+/** Orders the units of a frontier by their rows, largest first. */
+LIBXS_API_INLINE int internal_libxs_predict_rf_unit_cmp(
+  const void* a, const void* b, void* ctx)
+{
+  const int na = ((const internal_libxs_predict_rf_unit_t*)a)->nc;
+  const int nb = ((const internal_libxs_predict_rf_unit_t*)b)->nc;
+  LIBXS_UNUSED(ctx);
+  return (na < nb) - (na > nb);
 }
 
 
@@ -705,8 +752,10 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree(
   const internal_libxs_predict_rf_grow_t* g, int* subset, int nsub,
   internal_libxs_predict_rf_build_node_t* nodes, int max_nodes)
 {
-  return internal_libxs_predict_rf_build_part(g, subset, 0, nsub, 0,
-    nodes, max_nodes, 0, NULL, NULL, NULL, NULL, NULL);
+  internal_libxs_predict_rf_unit_t root;
+  root.si = 0; root.nc = nsub; root.depth = 0; root.node = 0;
+  return internal_libxs_predict_rf_build_part(g, subset, &root,
+    nodes, max_nodes, 0, NULL, NULL);
 }
 
 
@@ -775,17 +824,17 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree_parts(
   const internal_libxs_predict_rf_grow_t* g, int* subset, int nsub,
   internal_libxs_predict_rf_build_node_t* nodes, int max_nodes, int frontier)
 {
-  int fr_si[64], fr_nc[64], fr_depth[64], fr_node[64], fc = 0;
-  int result = internal_libxs_predict_rf_build_part(g, subset, 0, nsub, 0,
-    nodes, max_nodes, frontier, fr_si, fr_nc, fr_depth, fr_node, &fc);
-  int i;
+  internal_libxs_predict_rf_unit_t fr[64];
+  int fc = 0, result, i;
+  fr[0].si = 0; fr[0].nc = nsub; fr[0].depth = 0; fr[0].node = 0;
+  result = internal_libxs_predict_rf_build_part(g, subset, fr,
+    nodes, max_nodes, frontier, fr, &fc);
   for (i = 0; i < fc && 0 < result; ++i) {
     const int base = result;
     const int room = max_nodes - base;
     if (2 < room) {
       const int np = internal_libxs_predict_rf_build_part(g, subset,
-        fr_si[i], fr_nc[i], fr_depth[i], nodes + base, room,
-        0, NULL, NULL, NULL, NULL, NULL);
+        fr + i, nodes + base, room, 0, NULL, NULL);
       int j;
       /* the unit grew into its own range and numbered from zero within it */
       for (j = 0; j < np; ++j) {
@@ -794,7 +843,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree_parts(
       }
       /* the unit's node already exists in the top, so its grown form replaces it
        * and the copy at `base` is left for the renumbering to drop */
-      nodes[fr_node[i]] = nodes[base];
+      nodes[fr[i].node] = nodes[base];
       result = base + np;
     }
     else result = 0;
@@ -849,6 +898,25 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_draw(size_t i, size_t boot_n,
 
 
 /**
+ * Puts a bootstrap in row order, counting into `count` (p entries). The draw
+ * decides which rows a tree sees and how often; the order decides nothing a split
+ * counts, and the partition is stable, so every node's rows become a rising run of
+ * the corpus and the gathers read the bins and inputs front to back. A regression
+ * tree adds its sums in another order and agrees to rounding.
+ */
+LIBXS_API_INLINE void internal_libxs_predict_rf_boot_sort(int* bootstrap, int n,
+  int p, int* count)
+{
+  int i, row, k = 0;
+  memset(count, 0, (size_t)p * sizeof(int));
+  for (i = 0; i < n; ++i) ++count[bootstrap[i]];
+  for (row = 0; row < p; ++row) {
+    for (i = count[row]; 0 < i; --i) bootstrap[k++] = row;
+  }
+}
+
+
+/**
  * Error of a small forest grown to max_depth over the first ntrain entries,
  * measured on the rest: the misclassification rate of a folded output, the mean
  * absolute error of a real-valued one. The two are never compared against each
@@ -899,6 +967,7 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_score(
        * ranks depths against each other rather than reporting an error */
       { internal_libxs_predict_rf_grow_t g;
         g.entries = entries; g.bins = NULL; g.bin_edge = NULL; g.nbins = 0;
+        g.bin_stride = 0; g.label_at = -1;
         g.values_scratch = values_scratch; g.index_scratch = index_scratch;
         g.nfeat = m; g.nfeatsub = internal_libxs_predict_rf_nfeatsub(m);
         g.max_depth = max_depth; g.min_leaf = min_leaf; g.leaf_floor = min_leaf;
@@ -957,7 +1026,8 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_score(
 
 /**
  * Places the bin edges at quantiles of each input and allocates the bins the
- * inputs are about to be sorted into. The quantiles are taken from a strided
+ * inputs are about to be sorted into, a row of them per entry followed by the
+ * entry's labels. The quantiles are taken from a strided
  * sample rather than from the whole corpus: 65536 rows put hundreds in each of
  * 256 bins, which is what a quantile needs, and it keeps the sort off a size that
  * grows. Nothing is binned here - that is one binary search per value and the
@@ -973,9 +1043,10 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_edges(libxs_predict_t* model)
   const int m = model->ninputs;
   if (NULL != rf && LIBXS_PREDICT_RF_BINROWS <= p && 0 < m) {
     const int nb = LIBXS_PREDICT_RF_NBINS;
+    const int stride = m + model->noutputs;
     int bins_pool = 0, edge_pool = 0;
     unsigned char* const bins = (unsigned char*)LIBXS_PREDICT_MALLOC(
-      (size_t)p * (size_t)m, bins_pool);
+      (size_t)p * (size_t)stride, bins_pool);
     double* const edge = (double*)LIBXS_PREDICT_MALLOC(
       (size_t)m * (size_t)(nb + 1) * sizeof(double), edge_pool);
     if (NULL != bins && NULL != edge) {
@@ -1005,6 +1076,7 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_edges(libxs_predict_t* model)
       }
       if (NULL != sv) { /* nothing was placed if the sample could not be held */
         rf->bins = bins;
+        rf->bin_stride = stride;
         rf->bin_edge = edge;
         rf->bins_pool = bins_pool;
         rf->edge_pool = edge_pool;
@@ -1021,9 +1093,10 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_edges(libxs_predict_t* model)
 
 
 /**
- * Sorts every input of every entry into its bin. Split across the tasks because
- * it is one search per value, and read by every task afterwards, so it has to be
- * complete before the first tree rather than filled as the trees need it.
+ * Sorts every input of every entry into its bin and writes the entry's labels
+ * after them. Split across the tasks because it is one search per value, and read
+ * by every task afterwards, so it has to be complete before the first tree rather
+ * than filled as the trees need it.
  */
 LIBXS_API_INLINE void internal_libxs_predict_rf_bins_tasks(
   libxs_predict_t* model, int tid, int ntasks)
@@ -1036,7 +1109,7 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_bins_tasks(
     internal_libxs_predict_split(model->nentries, tid, ntasks, &begin, &end);
     for (i = begin; i < end; ++i) {
       const double* const inputs = model->entries[i].inputs;
-      unsigned char* const bin = rf->bins + (size_t)i * m;
+      unsigned char* const bin = rf->bins + (size_t)i * rf->bin_stride;
       for (j = 0; j < m; ++j) {
         const double* const edge = rf->bin_edge + (size_t)j * (nb + 1);
         const double v = inputs[j];
@@ -1050,6 +1123,11 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_bins_tasks(
           if (v <= edge[mid + 1]) hi = mid; else lo = mid + 1;
         }
         bin[j] = (unsigned char)lo;
+      }
+      /* the label a folded output votes with, as the splits fold it */
+      for (j = 0; j < rf->noutputs; ++j) {
+        bin[m + j] = (unsigned char)((0 == rf->regress[j]) ? ((LIBXS_ROUNDX(int,
+          model->entries[i].outputs[j]) + rf->label_offset[j]) & 127) : 0);
       }
     }
   }
@@ -1066,6 +1144,7 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_bins_free(libxs_predict_t* model
     LIBXS_PREDICT_FREE(model->rf->bins, model->rf->bins_pool);
     LIBXS_PREDICT_FREE(model->rf->bin_edge, model->rf->edge_pool);
     model->rf->bins = NULL;
+    model->rf->bin_stride = 0;
     model->rf->bin_edge = NULL;
     model->rf->bins_pool = 0;
     model->rf->edge_pool = 0;
@@ -1320,6 +1399,27 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_team_release(
 }
 
 
+/** What a tree of `output` grows with, over the bins where the model has them. */
+LIBXS_API_INLINE void internal_libxs_predict_rf_grow_init(
+  internal_libxs_predict_rf_grow_t* g, const libxs_predict_t* model,
+  int output, int leaf_floor, double* values_scratch, int* index_scratch)
+{
+  const internal_libxs_predict_rf_t* const rf = model->rf;
+  const int m = model->ninputs;
+  g->entries = model->entries;
+  g->bins = rf->bins; g->bin_edge = rf->bin_edge; g->nbins = rf->nbins;
+  g->bin_stride = rf->bin_stride;
+  g->label_at = (NULL != rf->bins && 0 == rf->regress[output])
+    ? (m + output) : -1;
+  g->values_scratch = values_scratch; g->index_scratch = index_scratch;
+  g->nfeat = m; g->nfeatsub = internal_libxs_predict_rf_nfeatsub(m);
+  g->max_depth = rf->depth[output]; g->min_leaf = LIBXS_PREDICT_RF_MINLEAF;
+  g->leaf_floor = leaf_floor; g->output_idx = output;
+  g->label_off = rf->label_offset[output]; g->regress = rf->regress[output];
+  g->nclass = rf->nclass[output];
+}
+
+
 LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks_independent(
   libxs_predict_t* model, int tid, int ntasks)
 {
@@ -1408,16 +1508,11 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tasks_independent(
             }
           }
         }
+        internal_libxs_predict_rf_boot_sort(bootstrap, p, p, index_scratch);
         if (NULL != nodes) {
           internal_libxs_predict_rf_grow_t g;
-          g.entries = model->entries;
-          g.bins = rf->bins; g.bin_edge = rf->bin_edge; g.nbins = rf->nbins;
-          g.values_scratch = values_scratch; g.index_scratch = index_scratch;
-          g.nfeat = m; g.nfeatsub = internal_libxs_predict_rf_nfeatsub(m);
-          g.max_depth = max_depth; g.min_leaf = min_leaf;
-          g.leaf_floor = leaf_floor; g.output_idx = oi;
-          g.label_off = rf->label_offset[oi]; g.regress = rf->regress[oi];
-          g.nclass = rf->nclass[oi];
+          internal_libxs_predict_rf_grow_init(&g, model, oi, leaf_floor,
+            values_scratch, index_scratch);
           /* the decomposition must answer as the single pass does, so it is
            * selectable and off by default until a task actually holds a unit */
           { const char* fenv = getenv("LIBXS_PREDICT_RF_FRONTIER");
@@ -1485,11 +1580,13 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree_team(
   const size_t boot_coprime = libxs_coprime2(boot_n);
   const int output = tree / rf->ntrees;
   int result;
-  internal_libxs_predict_rf_build_node_t* part = NULL;
+  /* the units this rank grew, freed here once the tree is assembled */
+  internal_libxs_predict_rf_build_node_t* mine[INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX];
+  int mine_pool[INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX], nmine = 0;
   double* values_scratch = NULL;
   int* index_scratch = NULL;
   /* this rank's scratch, then the team's, which rank zero owns */
-  int part_pool = 0, values_pool = 0, index_pool = 0;
+  int values_pool = 0, index_pool = 0;
   int boot_pool = 0, tvalues_pool = 0, tindex_pool = 0, nodes_pool = 0;
   if (0 == rank) {
     const size_t values_count = internal_libxs_predict_rf_values_count(
@@ -1545,60 +1642,68 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree_team(
     && 0 == LIBXS_ATOMIC_LOAD(&ctx->failed, LIBXS_ATOMIC_SEQ_CST))
   {
     internal_libxs_predict_rf_grow_t g;
-    g.entries = model->entries;
-    g.bins = rf->bins; g.bin_edge = rf->bin_edge; g.nbins = rf->nbins;
-    g.values_scratch = ctx->values_scratch;
-    g.index_scratch = ctx->index_scratch;
-    g.nfeat = m; g.nfeatsub = internal_libxs_predict_rf_nfeatsub(m);
-    g.max_depth = rf->depth[output]; g.min_leaf = min_leaf;
-    g.leaf_floor = leaf_floor; g.output_idx = output;
-    g.label_off = rf->label_offset[output]; g.regress = rf->regress[output];
-    g.nclass = rf->nclass[output];
+    internal_libxs_predict_rf_boot_sort(ctx->bootstrap, p, p,
+      ctx->index_scratch);
+    internal_libxs_predict_rf_grow_init(&g, model, output, leaf_floor,
+      ctx->values_scratch, ctx->index_scratch);
+    ctx->fr[0].si = 0; ctx->fr[0].nc = p; ctx->fr[0].depth = 0;
     ctx->top_n = internal_libxs_predict_rf_build_part(&g, ctx->bootstrap,
-      0, p, 0, ctx->nodes, max_nodes, team_size,
-      ctx->fr_si, ctx->fr_nc, ctx->fr_depth, ctx->fr_node,
-      &ctx->nfrontier);
+      ctx->fr, ctx->nodes, max_nodes, LIBXS_MIN(team_size
+        * LIBXS_PREDICT_RF_BUILD_UNITS, INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX),
+      ctx->fr, &ctx->nfrontier);
     if (0 >= ctx->top_n || max_nodes < ctx->top_n
       || INTERNAL_LIBXS_PREDICT_RF_TEAM_MAX < ctx->nfrontier)
     {
       LIBXS_ATOMIC_STORE(&ctx->failed, 1, LIBXS_ATOMIC_SEQ_CST);
     }
+    else {
+      /* taken largest first, the last units to go are the small ones */
+      libxs_sort(ctx->fr, ctx->nfrontier, sizeof(*ctx->fr),
+        internal_libxs_predict_rf_unit_cmp, NULL);
+    }
+    LIBXS_ATOMIC_STORE(&ctx->next, 0, LIBXS_ATOMIC_SEQ_CST);
   }
   libxs_barrier_wait(&ctx->barrier);
-  if (rank < ctx->nfrontier
+  if (0 < ctx->nfrontier
     && 0 == LIBXS_ATOMIC_LOAD(&ctx->failed, LIBXS_ATOMIC_SEQ_CST))
   {
-    const int nc = ctx->fr_nc[rank];
-    const int part_cap = LIBXS_MIN(
-      LIBXS_MAX(nc / leaf_floor * 2 + 1, 3), max_nodes);
-    const size_t values_count = internal_libxs_predict_rf_values_count(
-      rf, output, m, nc);
+    /* the first unit is the largest, so its scratch serves any unit taken */
+    const int ncmax = ctx->fr[0].nc;
+    int u = LIBXS_ATOMIC_FETCH_ADD(&ctx->next, 1, LIBXS_ATOMIC_SEQ_CST);
     internal_libxs_predict_rf_grow_t g;
-    part = (internal_libxs_predict_rf_build_node_t*)LIBXS_PREDICT_MALLOC(
-      (size_t)part_cap * sizeof(internal_libxs_predict_rf_build_node_t),
-      part_pool);
-    values_scratch = (double*)LIBXS_PREDICT_MALLOC(
-      values_count * sizeof(double), values_pool);
-    index_scratch = (int*)LIBXS_PREDICT_MALLOC(
-      (size_t)nc * sizeof(int), index_pool);
-    if (NULL != part && NULL != values_scratch && NULL != index_scratch) {
-      g.entries = model->entries;
-      g.bins = rf->bins; g.bin_edge = rf->bin_edge; g.nbins = rf->nbins;
-      g.values_scratch = values_scratch; g.index_scratch = index_scratch;
-      g.nfeat = m; g.nfeatsub = internal_libxs_predict_rf_nfeatsub(m);
-      g.max_depth = rf->depth[output]; g.min_leaf = min_leaf;
-      g.leaf_floor = leaf_floor; g.output_idx = output;
-      g.label_off = rf->label_offset[output];
-      g.regress = rf->regress[output]; g.nclass = rf->nclass[output];
-      ctx->part_n[rank] = internal_libxs_predict_rf_build_part(&g,
-        ctx->bootstrap, ctx->fr_si[rank], nc, ctx->fr_depth[rank],
-        part, part_cap, 0, NULL, NULL, NULL, NULL, NULL);
-      ctx->part[rank] = part;
-      if (0 >= ctx->part_n[rank]) {
+    if (u < ctx->nfrontier) {
+      values_scratch = (double*)LIBXS_PREDICT_MALLOC(
+        internal_libxs_predict_rf_values_count(rf, output, m, ncmax)
+          * sizeof(double), values_pool);
+      index_scratch = (int*)LIBXS_PREDICT_MALLOC(
+        (size_t)ncmax * sizeof(int), index_pool);
+      if (NULL == values_scratch || NULL == index_scratch) {
         LIBXS_ATOMIC_STORE(&ctx->failed, 1, LIBXS_ATOMIC_SEQ_CST);
       }
     }
-    else LIBXS_ATOMIC_STORE(&ctx->failed, 1, LIBXS_ATOMIC_SEQ_CST);
+    internal_libxs_predict_rf_grow_init(&g, model, output, leaf_floor,
+      values_scratch, index_scratch);
+    while (u < ctx->nfrontier
+      && 0 == LIBXS_ATOMIC_LOAD(&ctx->failed, LIBXS_ATOMIC_SEQ_CST))
+    {
+      const int nc = ctx->fr[u].nc;
+      const int part_cap = LIBXS_MIN(
+        LIBXS_MAX(nc / leaf_floor * 2 + 1, 3), max_nodes);
+      mine[nmine] = (internal_libxs_predict_rf_build_node_t*)
+        LIBXS_PREDICT_MALLOC((size_t)part_cap
+          * sizeof(internal_libxs_predict_rf_build_node_t), mine_pool[nmine]);
+      if (NULL != mine[nmine]) {
+        ctx->part[u] = mine[nmine];
+        ctx->part_n[u] = internal_libxs_predict_rf_build_part(&g,
+          ctx->bootstrap, ctx->fr + u, mine[nmine], part_cap, 0, NULL, NULL);
+        if (0 >= ctx->part_n[u]) {
+          LIBXS_ATOMIC_STORE(&ctx->failed, 1, LIBXS_ATOMIC_SEQ_CST);
+        }
+        ++nmine;
+      }
+      else LIBXS_ATOMIC_STORE(&ctx->failed, 1, LIBXS_ATOMIC_SEQ_CST);
+      u = LIBXS_ATOMIC_FETCH_ADD(&ctx->next, 1, LIBXS_ATOMIC_SEQ_CST);
+    }
   }
   libxs_barrier_wait(&ctx->barrier);
   if (0 == rank
@@ -1624,7 +1729,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree_team(
           ctx->nodes[base + j].right += base;
         }
       }
-      ctx->nodes[ctx->fr_node[frontier]] = ctx->nodes[base];
+      ctx->nodes[ctx->fr[frontier].node] = ctx->nodes[base];
       assembled += np;
     }
     if (0 == LIBXS_ATOMIC_LOAD(&ctx->failed, LIBXS_ATOMIC_SEQ_CST)) {
@@ -1638,9 +1743,11 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_build_tree_team(
   libxs_barrier_wait(&ctx->barrier);
   result = (0 == LIBXS_ATOMIC_LOAD(&ctx->failed, LIBXS_ATOMIC_SEQ_CST))
     ? EXIT_SUCCESS : EXIT_FAILURE;
+  for (; 0 < nmine; --nmine) {
+    LIBXS_PREDICT_FREE(mine[nmine - 1], mine_pool[nmine - 1]);
+  }
   LIBXS_PREDICT_FREE(index_scratch, index_pool);
   LIBXS_PREDICT_FREE(values_scratch, values_pool);
-  LIBXS_PREDICT_FREE(part, part_pool);
   if (0 == rank) {
     LIBXS_PREDICT_FREE(ctx->nodes, nodes_pool);
     LIBXS_PREDICT_FREE(ctx->index_scratch, tindex_pool);
@@ -2084,7 +2191,7 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output_impl(
   const int regress = (NULL != rf->regress) ? rf->regress[output_idx] : 0;
   const int nc = (NULL != rf->nclass) ? rf->nclass[output_idx] : 1;
   const int base = output_idx * rf->ntrees;
-  int votes[128];
+  int votes[128], leaf[LIBXS_PREDICT_RF_LOCKSTEP];
   double bscore[128], lscore[128];
   int best_label = 0, best_count = 0, nvalid = 0, t, k;
   double sum = 0, sqr = 0, boost = 0, result, scale = 1.0;
@@ -2095,13 +2202,40 @@ LIBXS_API_INLINE double internal_libxs_predict_rf_eval_output_impl(
   }
   for (t = 0; t < rf->ntrees; ++t) {
     const internal_libxs_predict_rf_tree_t* tree = &rf->trees[base + t];
+    const int u = t % LIBXS_PREDICT_RF_LOCKSTEP;
     int ni;
+    /* the leaves of the next group of trees, found together and read in order */
+    if (0 == u) {
+      const int nt = LIBXS_MIN(LIBXS_PREDICT_RF_LOCKSTEP, rf->ntrees - t);
+      int active = 1, v;
+      for (v = 0; v < nt; ++v) {
+        const internal_libxs_predict_rf_tree_t* const tv = &rf->trees[base + t + v];
+        leaf[v] = (NULL != tv->nodes && 0 < tv->nnodes && (0 > calib_fold
+          || calib_fold == ((base + t + v) % LIBXS_PREDICT_RF_CALIB_FOLDS)))
+          ? 0 : -1;
+      }
+      while (0 != active) {
+        active = 0;
+        for (v = 0; v < nt; ++v) {
+          const internal_libxs_predict_rf_tree_t* const tv = &rf->trees[base + t + v];
+          const int at = leaf[v];
+          if (0 <= at && at < tv->nnodes && UINT16_MAX != tv->nodes[at].feature) {
+            const internal_libxs_predict_rf_node_t* const nd = &tv->nodes[at];
+            leaf[v] = at + ((inputs[nd->feature] <= nd->value) ? 1 : nd->data.right);
+            active = 1;
+          }
+        }
+      }
+      for (v = 0; v < nt; ++v) {
+        if (leaf[v] >= rf->trees[base + t + v].nnodes) leaf[v] = -1;
+      }
+    }
     if (0 <= calib_fold
       && calib_fold != ((base + t) % LIBXS_PREDICT_RF_CALIB_FOLDS))
     {
       continue;
     }
-    ni = internal_libxs_predict_rf_leafof(tree, inputs);
+    ni = leaf[u];
     if (0 <= ni) {
       if (0 != regress) {
         const double v = tree->nodes[ni].value;
