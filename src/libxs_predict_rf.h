@@ -147,6 +147,14 @@
 #  define LIBXS_PREDICT_RF_PACKET 16
 #endif
 /**
+ * Rows a batch runs through one tree before the next. A packet that walks every
+ * tree in turn has evicted a tree's upper levels by the time it returns to it;
+ * a block keeps them, and its own inputs, in cache for all of its rows.
+ */
+#if !defined(LIBXS_PREDICT_RF_BLOCK)
+#  define LIBXS_PREDICT_RF_BLOCK 512
+#endif
+/**
  * Trees one query descends together, a level at a time: each tree's next node
  * is a load that does not wait for another tree's, so the descents overlap
  * where one after the other they wait on every level of every tree.
@@ -1326,6 +1334,26 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_pack_part(
 }
 
 
+/**
+ * Memory for a packed tree. A descent is a chain of loads through every level,
+ * and a large tree in small pages adds a page walk to most of them, so on Linux
+ * a tree of at least one huge page is aligned to one and asks for them. The
+ * kernel may decline; either way the memory is released by free.
+ */
+LIBXS_API_INLINE void* internal_libxs_predict_rf_nodes_malloc(size_t size)
+{
+  void* result = NULL;
+#if defined(__linux__) && defined(MADV_HUGEPAGE) && defined(_POSIX_C_SOURCE) \
+  && (200112L <= _POSIX_C_SOURCE)
+  const size_t huge = (size_t)2 << 20;
+  if (huge <= size && 0 != posix_memalign(&result, huge, size)) result = NULL;
+  if (NULL != result) madvise(result, size, MADV_HUGEPAGE);
+#endif
+  if (NULL == result) result = malloc(size);
+  return result;
+}
+
+
 LIBXS_API_INLINE int internal_libxs_predict_rf_pack_tree(
   const internal_libxs_predict_rf_build_node_t src[], int nsrc,
   internal_libxs_predict_rf_node_t** packed)
@@ -1334,7 +1362,7 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_pack_tree(
   *packed = NULL;
   if (0 < nsrc) {
     internal_libxs_predict_rf_node_t* const dst =
-      (internal_libxs_predict_rf_node_t*)malloc(
+      (internal_libxs_predict_rf_node_t*)internal_libxs_predict_rf_nodes_malloc(
         (size_t)nsrc * sizeof(internal_libxs_predict_rf_node_t));
     if (NULL != dst) {
       int next = 0;
@@ -2361,61 +2389,81 @@ LIBXS_API_INLINE void internal_libxs_predict_rf_eval_batch_folded(
   const internal_libxs_predict_rf_t* rf, const double inputs[], int ninputs,
   double outputs[], int noutputs, int begin, int end)
 {
-  int first;
-  for (first = begin; first < end; first += LIBXS_PREDICT_RF_PACKET) {
-    const int lanes = LIBXS_MIN(LIBXS_PREDICT_RF_PACKET, end - first);
-    int output;
+  int local[LIBXS_PREDICT_RF_PACKET * 128];
+  int ncmax = 1, nblock = LIBXS_PREDICT_RF_BLOCK, votes_pool = 0;
+  int *votes, first, output;
+  for (output = 0; output < noutputs; ++output) {
+    const int nc = rf->nclass[output];
+    ncmax = LIBXS_MAX(ncmax, (0 < nc && 128 >= nc) ? nc : 128);
+  }
+  votes = (int*)LIBXS_PREDICT_MALLOC((size_t)nblock * ncmax * sizeof(int),
+    votes_pool);
+  /* without the block's counts the rows go a packet at a time, as they fit */
+  if (NULL == votes) {
+    votes = local;
+    nblock = LIBXS_PREDICT_RF_PACKET;
+  }
+  for (first = begin; first < end; first += nblock) {
+    const int nrows = LIBXS_MIN(nblock, end - first);
     for (output = 0; output < noutputs; ++output) {
-      int votes[LIBXS_PREDICT_RF_PACKET][128];
       const int base = output * rf->ntrees;
-      int tree, lane;
-      memset(votes, 0, sizeof(votes));
+      const int nc = rf->nclass[output];
+      const int ncls = (0 < nc && 128 >= nc) ? nc : 128;
+      int tree, row;
+      memset(votes, 0, (size_t)nrows * ncls * sizeof(int));
       for (tree = 0; tree < rf->ntrees; ++tree) {
         const internal_libxs_predict_rf_tree_t* const tr =
           rf->trees + base + tree;
-        int node[LIBXS_PREDICT_RF_PACKET];
-        int active = lanes;
-        for (lane = 0; lane < lanes; ++lane) node[lane] = 0;
-        while (0 < active) {
-          active = 0;
-          LIBXS_PRAGMA_SIMD_REDUCTION(+:active)
+        int packet;
+        for (packet = 0; packet < nrows; packet += LIBXS_PREDICT_RF_PACKET) {
+          const int lanes = LIBXS_MIN(LIBXS_PREDICT_RF_PACKET, nrows - packet);
+          const double* const block = inputs
+            + (size_t)(first + packet) * ninputs;
+          int node[LIBXS_PREDICT_RF_PACKET];
+          int active = lanes, lane;
+          for (lane = 0; lane < lanes; ++lane) node[lane] = 0;
+          while (0 < active) {
+            active = 0;
+            LIBXS_PRAGMA_SIMD_REDUCTION(+:active)
+            for (lane = 0; lane < lanes; ++lane) {
+              const int ni = node[lane];
+              if (0 <= ni && ni < tr->nnodes
+                && UINT16_MAX != tr->nodes[ni].feature)
+              {
+                const internal_libxs_predict_rf_node_t* const nd =
+                  tr->nodes + ni;
+                const double* const input = block + (size_t)lane * ninputs;
+                node[lane] = ni
+                  + ((input[nd->feature] <= nd->value) ? 1 : nd->data.right);
+                ++active;
+              }
+            }
+          }
           for (lane = 0; lane < lanes; ++lane) {
             const int ni = node[lane];
-            if (0 <= ni && ni < tr->nnodes
-              && UINT16_MAX != tr->nodes[ni].feature)
-            {
-              const internal_libxs_predict_rf_node_t* const nd =
-                tr->nodes + ni;
-              const double* const input = inputs
-                + (size_t)(first + lane) * ninputs;
-              node[lane] = ni
-                + ((input[nd->feature] <= nd->value) ? 1 : nd->data.right);
-              ++active;
+            if (0 <= ni && ni < tr->nnodes) {
+              const int label = tr->nodes[ni].label & 127;
+              if (label < ncls) ++votes[(size_t)(packet + lane) * ncls + label];
             }
           }
         }
-        for (lane = 0; lane < lanes; ++lane) {
-          const int ni = node[lane];
-          if (0 <= ni && ni < tr->nnodes) {
-            ++votes[lane][tr->nodes[ni].label & 127];
-          }
-        }
       }
-      for (lane = 0; lane < lanes; ++lane) {
+      for (row = 0; row < nrows; ++row) {
+        const int* const v = votes + (size_t)row * ncls;
         int best = 0, count = 0, label;
-        for (label = 0; label < 128; ++label) {
-          if (count < votes[lane][label]) {
-            count = votes[lane][label];
+        for (label = 0; label < ncls; ++label) {
+          if (count < v[label]) {
+            count = v[label];
             best = label;
           }
         }
-        outputs[(size_t)(first + lane) * noutputs + output] =
+        outputs[(size_t)(first + row) * noutputs + output] =
           (double)(best - rf->label_offset[output]);
       }
     }
   }
+  if (local != votes) LIBXS_PREDICT_FREE(votes, votes_pool);
 }
-
 
 /**
  * Fit P(final hybrid prediction is correct | native RF confidence) from rows

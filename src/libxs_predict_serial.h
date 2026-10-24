@@ -1313,8 +1313,9 @@ LIBXS_API_INLINE int internal_libxs_predict_rf_tree_read(const unsigned char** s
   int scratch_pool = 0, nleaf = 0, k;
   double* scratch = NULL;
   if (EXIT_SUCCESS == result) {
-    tree->nodes = (internal_libxs_predict_rf_node_t*)malloc(
-      (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
+    tree->nodes = (internal_libxs_predict_rf_node_t*)
+      internal_libxs_predict_rf_nodes_malloc(
+        (size_t)nn * sizeof(internal_libxs_predict_rf_node_t));
     scratch = (double*)LIBXS_PREDICT_MALLOC((size_t)nn * sizeof(double),
       scratch_pool);
     tree->nnodes = nn;

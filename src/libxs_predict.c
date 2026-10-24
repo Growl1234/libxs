@@ -14,6 +14,9 @@
 #include <libxs/libxs_gemm.h>
 #include <libxs/libxs_hash.h>
 #include "libxs_main.h"
+#if defined(__linux__)
+# include <sys/mman.h>
+#endif
 
 #if !defined(LIBXS_PREDICT_MAXITER)
 #  define LIBXS_PREDICT_MAXITER 100
