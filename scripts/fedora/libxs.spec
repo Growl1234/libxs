@@ -9,7 +9,7 @@ Summary:        Portable C library for numerics, memory operations, and utilitie
 
 License:        BSD-3-Clause
 URL:            https://github.com/hfp/libxs
-Source0:        https://github.com/hfp/libxs/releases/download/%{version}/%{name}-%{version}.tar.gz
+Source0:        https://github.com/hfp/libxs/archive/%{version}/%{name}-%{version}.tar.gz
 
 BuildRequires:  cmake
 BuildRequires:  gcc
